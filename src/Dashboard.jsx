@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+ import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import dayjs from "dayjs";
 import {
@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
+import { APP_VERSION, WELCOME_MESSAGE } from "./config";
 
 export default function Dashboard() {
   const { usuario } = useUsuario();
@@ -124,6 +125,12 @@ export default function Dashboard() {
 
   return (
     <div className="p-6">
+      {/* Barra de bienvenida y versión */}
+      <div className="bg-blue-50 border-b border-blue-200 p-2 mb-4 text-center rounded-xl shadow-sm">
+        <span className="font-semibold text-blue-900">{WELCOME_MESSAGE}</span>
+        <span className="ml-4 text-xs text-blue-700">{APP_VERSION}</span>
+      </div>
+
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
       {/* Gráfica de ventas por día */}
       <div className="bg-white rounded-xl shadow p-4 mb-6">
