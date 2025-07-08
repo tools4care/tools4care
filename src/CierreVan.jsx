@@ -26,13 +26,15 @@ export default function CierreVan() {
   const [ultimoCierre, setUltimoCierre] = useState(null);
   const [mensaje, setMensaje] = useState("");
   const [tipoMensaje, setTipoMensaje] = useState(""); // "success" o "error"
-  const [mostrarCierres, setMostrarCierres] = useState(false);
+
+  // --- HISTORIAL ---
   const [cierres, setCierres] = useState([]);
+  const [mostrarCierres, setMostrarCierres] = useState(false);
+  const [buscarPorFecha, setBuscarPorFecha] = useState(false);
   const [fechaBuscada, setFechaBuscada] = useState(() => {
     const hoy = new Date();
     return hoy.toISOString().split("T")[0];
   });
-
   const [cierreSeleccionado, setCierreSeleccionado] = useState(null);
 
   // Modal de email (flujo simulado)
@@ -53,9 +55,16 @@ export default function CierreVan() {
   useEffect(() => {
     if (!van?.id) return;
     cargarDatos();
-    cargarCierres(fechaBuscada);
+    // Dependiendo del modo de búsqueda, carga la lista correcta
+    if (mostrarCierres) {
+      if (buscarPorFecha) {
+        cargarCierresPorFecha(fechaBuscada);
+      } else {
+        cargarUltimosCierres();
+      }
+    }
     // eslint-disable-next-line
-  }, [van, fechaBuscada]);
+  }, [van, mostrarCierres, buscarPorFecha, fechaBuscada]);
 
   async function cargarDatos() {
     setCargando(true);
@@ -101,31 +110,32 @@ export default function CierreVan() {
     setCargando(false);
   }
 
-  // Busca cierres del día, y si no encuentra, muestra TODOS para depuración
-  async function cargarCierres(fecha) {
+  // --- HISTORIAL POR FECHA ---
+  async function cargarCierresPorFecha(fecha) {
     if (!van?.id) return;
     const inicio = new Date(fecha + "T00:00:00");
-    // inicio.setHours(inicio.getHours() + 4); // <-- AJUSTA aquí si tu server está en UTC y tú en GMT-4
     const fin = new Date(inicio.getTime() + 24 * 60 * 60 * 1000);
 
     let { data, error } = await supabase
       .from("cierres_van")
       .select("*")
       .eq("van_id", van?.id)
-      .gte("created_at", inicio.toISOString())
-      .lt("created_at", fin.toISOString())
-      .order("created_at", { ascending: false });
+      .gte("fecha", inicio.toISOString())
+      .lt("fecha", fin.toISOString())
+      .order("fecha", { ascending: false });
 
-    // Si no encuentra ninguno por fecha, muestra todos (debug/soporte)
-    if ((!data || data.length === 0) && !error) {
-      const all = await supabase
-        .from("cierres_van")
-        .select("*")
-        .eq("van_id", van?.id)
-        .order("created_at", { ascending: false });
-      data = all.data || [];
-    }
+    setCierres(data || []);
+  }
 
+  // --- HISTORIAL ÚLTIMOS 5 ---
+  async function cargarUltimosCierres() {
+    if (!van?.id) return;
+    const { data, error } = await supabase
+      .from("cierres_van")
+      .select("*")
+      .eq("van_id", van.id)
+      .order("fecha", { ascending: false })
+      .limit(5);
     setCierres(data || []);
   }
 
@@ -165,7 +175,13 @@ export default function CierreVan() {
       setReales(METODOS_PAGO.reduce((acc, cur) => { acc[cur.campo] = ""; return acc; }, {}));
       setComentario("");
       cargarDatos();
-      cargarCierres(fechaBuscada);
+      if (mostrarCierres) {
+        if (buscarPorFecha) {
+          cargarCierresPorFecha(fechaBuscada);
+        } else {
+          cargarUltimosCierres();
+        }
+      }
       setTimeout(() => setMensaje(""), 2500);
     } else {
       setMensaje("Error al guardar el cierre: " + (error?.message || "Error desconocido"));
@@ -191,15 +207,13 @@ export default function CierreVan() {
 
     // Fecha
     let fechaTexto = "-";
-    if (cierre.created_at) {
+    if (cierre.fecha) {
       try {
-        const fechaObj = new Date(cierre.created_at);
+        const fechaObj = new Date(cierre.fecha);
         fechaTexto = isNaN(fechaObj) ? "-" : fechaObj.toLocaleString();
       } catch {
         fechaTexto = "-";
       }
-    } else if (cierre.fecha) {
-      fechaTexto = cierre.fecha;
     } else {
       fechaTexto = new Date().toLocaleString();
     }
@@ -283,8 +297,8 @@ export default function CierreVan() {
     pdf.setTextColor("#777");
     pdf.text(EMPRESA_NOMBRE + " - " + new Date().getFullYear(), pageWidth / 2, 287, { align: "center" });
 
-    const fecha = cierre.created_at
-      ? new Date(cierre.created_at).toISOString().slice(0, 10)
+    const fecha = cierre.fecha
+      ? new Date(cierre.fecha).toISOString().slice(0, 10)
       : new Date().toISOString().slice(0, 10);
     const nombreArchivo = `CierreVan_${cierre.nombre_van || cierre.van_id || "van"}_${fecha}.pdf`;
 
@@ -336,15 +350,13 @@ export default function CierreVan() {
 
     // Fecha siempre presente
     let fechaTexto = "-";
-    if (cierre.created_at) {
+    if (cierre.fecha) {
       try {
-        const fechaObj = new Date(cierre.created_at);
+        const fechaObj = new Date(cierre.fecha);
         fechaTexto = isNaN(fechaObj) ? "-" : fechaObj.toLocaleString();
       } catch {
         fechaTexto = "-";
       }
-    } else if (cierre.fecha) {
-      fechaTexto = cierre.fecha;
     } else {
       fechaTexto = new Date().toLocaleString();
     }
@@ -502,24 +514,48 @@ export default function CierreVan() {
         <div className="flex items-center justify-between mb-2">
           <button
             type="button"
-            onClick={() => setMostrarCierres(m => !m)}
+            onClick={() => {
+              setMostrarCierres(m => !m);
+              // Si ocultas, resetea a modo últimos 5
+              if (mostrarCierres) setBuscarPorFecha(false);
+            }}
             className="px-2 py-1 bg-gray-200 rounded text-sm"
           >
             {mostrarCierres ? "Ocultar cierres anteriores" : "Ver cierres anteriores"}
           </button>
-          <input
-            type="date"
-            className="border p-1 rounded text-sm ml-2"
-            value={fechaBuscada}
-            onChange={e => setFechaBuscada(e.target.value)}
-          />
+          {mostrarCierres && (
+            <div className="flex items-center ml-2">
+              <input
+                type="checkbox"
+                checked={buscarPorFecha}
+                onChange={e => setBuscarPorFecha(e.target.checked)}
+                className="mr-2"
+                id="filtroFecha"
+              />
+              <label htmlFor="filtroFecha" className="text-sm">Filtrar por fecha</label>
+              {buscarPorFecha && (
+                <input
+                  type="date"
+                  className="border p-1 rounded text-sm ml-2"
+                  value={fechaBuscada}
+                  onChange={e => setFechaBuscada(e.target.value)}
+                />
+              )}
+            </div>
+          )}
         </div>
         {mostrarCierres && (
           <ul className="text-sm max-h-48 overflow-y-auto mt-2">
-            {cierres.length === 0 && <li>No hay cierres en esa fecha.</li>}
+            {cierres.length === 0 && (
+              <li>
+                {buscarPorFecha
+                  ? "No hay cierres para esa fecha."
+                  : "No hay cierres registrados."}
+              </li>
+            )}
             {cierres.map(c => (
               <li key={c.id} className="mb-1 border-b pb-1">
-                <b>{c.created_at ? new Date(c.created_at).toLocaleString() : "-"}</b><br />
+                <b>{c.fecha ? new Date(c.fecha).toLocaleString() : "-"}</b><br />
                 Efectivo: <b>${c.efectivo_real ?? c.efectivo ?? "-"}</b> / Tarjeta: <b>${c.tarjeta_real ?? c.tarjeta ?? "-"}</b> / Transferencia: <b>${c.transferencia_real ?? c.transferencia ?? "-"}</b>
                 <br />
                 <span className="text-xs text-gray-500">Comentario: {c.comentario || "—"}</span>
