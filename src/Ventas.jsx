@@ -57,36 +57,39 @@ export default function Ventas() {
   }, [busquedaCliente]);
 
   // --- Cargar productos en stock para la van ---
-  useEffect(() => {
-    async function cargarProductos() {
-      if (!van) return;
+ useEffect(() => {
+  async function cargarProductos() {
+    if (!van) return;
 
-      const { data, error } = await supabase
-        .from("stock_van")
-        .select(`
-          id, producto_id, cantidad,
-          productos ( nombre, precio, codigo )
-        `)
-        .eq("van_id", van.id);
+    // AÑADE la propiedad 'marca' a la consulta si la tienes en tu tabla productos
+    const { data, error } = await supabase
+      .from("stock_van")
+      .select(`
+        id, producto_id, cantidad,
+        productos ( nombre, precio, codigo, marca )
+      `)
+      .eq("van_id", van.id);
 
-      if (error) {
-        setProductos([]);
-        return;
-      }
-
-      const filtro = busquedaProducto.trim().toLowerCase();
-      const filtrados = (data || []).filter(
-        row =>
-          row.cantidad > 0 &&
-          (
-            (row.productos?.nombre || "").toLowerCase().includes(filtro) ||
-            (row.productos?.codigo || "").toLowerCase().includes(filtro)
-          )
-      );
-      setProductos(filtrados);
+    if (error) {
+      setProductos([]);
+      return;
     }
-    cargarProductos();
-  }, [van, busquedaProducto]);
+
+    const filtro = busquedaProducto.trim().toLowerCase();
+    const filtrados = (data || []).filter(
+      row =>
+        row.cantidad > 0 &&
+        (
+          (row.productos?.nombre || "").toLowerCase().includes(filtro) ||
+          (row.productos?.codigo || "").toLowerCase().includes(filtro) ||
+          (row.productos?.marca || "").toLowerCase().includes(filtro)
+        )
+    );
+    setProductos(filtrados);
+  }
+  cargarProductos();
+}, [van, busquedaProducto]);
+
 
   // --- Cargar productos más vendidos (top 5) para la van ---
   useEffect(() => {

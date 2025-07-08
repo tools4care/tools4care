@@ -29,7 +29,7 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
   async function cargarProductos(ubicacion) {
     if (!ubicacion) return;
     let tabla = ubicacion.tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let query = supabase.from(tabla).select("producto_id, cantidad, productos(nombre, marca)");
+    let query = supabase.from(tabla).select("producto_id, cantidad, productos(nombre, marca, codigo)");
     if (ubicacion.tipo === "van") {
       query = query.eq("van_id", ubicacion.id);
     }
@@ -73,10 +73,11 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
     cerrar();
   }
 
-  // Opciones filtradas para el autocompletado
+  // Opciones filtradas para el autocompletado (nombre, marca y código)
   const opcionesFiltradas = productos.filter(item =>
     (item.productos?.nombre || "").toLowerCase().includes(filtro.toLowerCase()) ||
-    (item.productos?.marca || "").toLowerCase().includes(filtro.toLowerCase())
+    (item.productos?.marca || "").toLowerCase().includes(filtro.toLowerCase()) ||
+    (item.productos?.codigo || "").toLowerCase().includes(filtro.toLowerCase())
   );
 
   if (!abierto) return null;
@@ -108,7 +109,7 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
         <div className="relative mb-2">
           <input
             className="border p-2 rounded w-full"
-            placeholder="Buscar producto"
+            placeholder="Buscar producto (nombre, marca o código)"
             value={filtro || productoNombre}
             onChange={e => {
               setFiltro(e.target.value);
@@ -130,12 +131,19 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
                   className="p-2 hover:bg-blue-100 cursor-pointer"
                   onClick={() => {
                     setProductoId(item.producto_id);
-                    setProductoNombre(`${item.productos?.nombre}${item.productos?.marca ? " - " + item.productos?.marca : ""}`);
+                    setProductoNombre(
+                      `${item.productos?.nombre || ""}` +
+                      `${item.productos?.marca ? " - " + item.productos.marca : ""}` +
+                      `${item.productos?.codigo ? " - " + item.productos.codigo : ""}`
+                    );
                     setFiltro("");
                     setMostrarOpciones(false);
                   }}
                 >
-                  {item.productos?.nombre} {item.productos?.marca ? `- ${item.productos?.marca}` : ""} (Disp: {item.cantidad})
+                  {item.productos?.nombre}
+                  {item.productos?.marca ? ` - ${item.productos.marca}` : ""}
+                  {item.productos?.codigo ? ` - ${item.productos.codigo}` : ""}
+                  (Disp: {item.cantidad})
                 </li>
               ))}
             </ul>
