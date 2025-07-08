@@ -1,4 +1,4 @@
- import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import dayjs from "dayjs";
 import {
@@ -7,7 +7,6 @@ import {
 } from "recharts";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
-import { APP_VERSION, WELCOME_MESSAGE } from "./config";
 
 export default function Dashboard() {
   const { usuario } = useUsuario();
@@ -21,6 +20,15 @@ export default function Dashboard() {
   const [stockVan, setStockVan] = useState([]);
   const [clientes, setClientes] = useState([]);
 
+  // NUEVO: Para ver más/menos ventas
+  const [mostrarTodas, setMostrarTodas] = useState(false);
+  const ventasMostrar = mostrarTodas ? ventas : ventas.slice(0, 5);
+
+  // NUEVO: Modal de detalle de venta
+  const [ventaSeleccionada, setVentaSeleccionada] = useState(null);
+  const [detalleProductos, setDetalleProductos] = useState([]);
+  const [cargandoDetalle, setCargandoDetalle] = useState(false);
+
   useEffect(() => {
     cargarDatos();
     cargarClientes();
@@ -29,8 +37,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     // LOGS CRÍTICOS: usuario y van_id en uso
-    console.log("USUARIO ACTUAL EN DASHBOARD:", usuario);
-    console.log("VAN SELECCIONADA CONTEXTO:", van);
+    // console.log("USUARIO ACTUAL EN DASHBOARD:", usuario);
+    // console.log("VAN SELECCIONADA CONTEXTO:", van);
 
     if (van && van.id) {
       cargarStockVan(van.id);
@@ -105,16 +113,12 @@ export default function Dashboard() {
 
   // Trae stock bajo (<5) de la VAN seleccionada y con el nombre real
   async function cargarStockVan(van_id) {
-    // LOG EJECUCIÓN CONSULTA Y RESPUESTA
-    console.log("LLAMANDO cargarStockVan PARA VAN:", van_id);
     const { data, error } = await supabase
       .from("stock_van")
       .select("cantidad, producto_id, productos(nombre, codigo)")
       .eq("van_id", van_id)
       .lt("cantidad", 5)
       .order("cantidad", { ascending: true });
-
-    console.log("RESULTADO STOCK_VAN ===", data, error);
 
     setStockVan((data || []).map(item => ({
       nombre: item.productos?.nombre || item.producto_id,
@@ -123,14 +127,27 @@ export default function Dashboard() {
     })));
   }
 
+  // NUEVO: Cargar detalles de una venta para el modal
+  async function abrirDetalleVenta(venta) {
+    setVentaSeleccionada(venta);
+    setCargandoDetalle(true);
+    // Detalle de productos vendidos
+    const { data: productos } = await supabase
+      .from("detalle_ventas")
+      .select("producto_id, cantidad, precio_unitario, productos(nombre, codigo)")
+      .eq("venta_id", venta.id);
+    setDetalleProductos(productos || []);
+    setCargandoDetalle(false);
+  }
+
+  function cerrarDetalleVenta() {
+    setVentaSeleccionada(null);
+    setDetalleProductos([]);
+    setCargandoDetalle(false);
+  }
+
   return (
     <div className="p-6">
-      {/* Barra de bienvenida y versión */}
-      <div className="bg-blue-50 border-b border-blue-200 p-2 mb-4 text-center rounded-xl shadow-sm">
-        <span className="font-semibold text-blue-900">{WELCOME_MESSAGE}</span>
-        <span className="ml-4 text-xs text-blue-700">{APP_VERSION}</span>
-      </div>
-
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
       {/* Gráfica de ventas por día */}
       <div className="bg-white rounded-xl shadow p-4 mb-6">
@@ -181,43 +198,103 @@ export default function Dashboard() {
         {loading ? (
           <div>Cargando...</div>
         ) : (
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="bg-slate-100">
-                <th className="p-2 text-left">ID</th>
-                <th className="p-2 text-left">Fecha</th>
-                <th className="p-2 text-left">Cliente</th>
-                <th className="p-2 text-left">Total</th>
-                <th className="p-2 text-left">Estado pago</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ventas.map((v) => (
-                <tr key={v.id} className="hover:bg-slate-50">
-                  <td className="p-2 font-mono">{v.id.slice(0, 8)}…</td>
-                  <td className="p-2">{dayjs(v.fecha).format("YYYY-MM-DD")}</td>
-                  <td className="p-2">{getNombreCliente(v.cliente_id)}</td>
-                  <td className="p-2">
-                    {v.total_venta
-                      ? "$" + v.total_venta.toLocaleString("en-US", { minimumFractionDigits: 2 })
-                      : "--"}
-                  </td>
-                  <td className={`p-2 ${v.estado_pago === "pendiente" ? "text-red-600" : "text-green-600"}`}>
-                    {v.estado_pago}
-                  </td>
+          <>
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="p-2 text-left">ID</th>
+                  <th className="p-2 text-left">Fecha</th>
+                  <th className="p-2 text-left">Cliente</th>
+                  <th className="p-2 text-left">Total</th>
+                  <th className="p-2 text-left">Estado pago</th>
                 </tr>
-              ))}
-              {ventas.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="text-center text-gray-400 py-4">
-                    No hay ventas registradas.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {ventasMostrar.map((v) => (
+                  <tr
+                    key={v.id}
+                    className="hover:bg-blue-50 cursor-pointer"
+                    onClick={() => abrirDetalleVenta(v)}
+                  >
+                    <td className="p-2 font-mono">{v.id.slice(0, 8)}…</td>
+                    <td className="p-2">{dayjs(v.fecha).format("YYYY-MM-DD")}</td>
+                    <td className="p-2">{getNombreCliente(v.cliente_id)}</td>
+                    <td className="p-2">
+                      {v.total_venta
+                        ? "$" + v.total_venta.toLocaleString("en-US", { minimumFractionDigits: 2 })
+                        : "--"}
+                    </td>
+                    <td className={`p-2 ${v.estado_pago === "pendiente" ? "text-red-600" : "text-green-600"}`}>
+                      {v.estado_pago}
+                    </td>
+                  </tr>
+                ))}
+                {ventas.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="text-center text-gray-400 py-4">
+                      No hay ventas registradas.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            {/* Botón mostrar más/menos */}
+            {ventas.length > 5 && (
+              <div className="mt-3 text-right">
+                <button
+                  className="px-3 py-1 rounded bg-blue-100 text-blue-700 font-semibold text-xs hover:bg-blue-200"
+                  onClick={() => setMostrarTodas((m) => !m)}
+                >
+                  {mostrarTodas ? "Ver menos" : "Ver más"}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
+
+      {/* Modal de detalle de venta */}
+      {ventaSeleccionada && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md relative">
+            <button
+              className="absolute top-3 right-3 text-gray-700 text-xl font-bold"
+              onClick={cerrarDetalleVenta}
+            >×</button>
+            <h3 className="text-xl font-bold mb-2">Detalle de venta</h3>
+            <div className="mb-2 text-sm text-gray-700">
+              <b>ID:</b> <span className="font-mono">{ventaSeleccionada.id}</span><br />
+              <b>Fecha:</b> {dayjs(ventaSeleccionada.fecha).format("YYYY-MM-DD HH:mm")}<br />
+              <b>Cliente:</b> {getNombreCliente(ventaSeleccionada.cliente_id) || "—"}<br />
+              <b>Total:</b> ${ventaSeleccionada.total_venta?.toFixed(2) || "--"}<br />
+              <b>Estado de pago:</b> <span className={ventaSeleccionada.estado_pago === "pendiente" ? "text-red-600" : "text-green-600"}>{ventaSeleccionada.estado_pago}</span>
+            </div>
+            <div className="mb-2">
+              <b>Productos vendidos:</b>
+              {cargandoDetalle ? (
+                <div className="text-blue-700 text-xs">Cargando productos…</div>
+              ) : (
+                <ul className="text-sm mt-1">
+                  {detalleProductos.length === 0
+                    ? <li className="text-gray-400">No hay productos en esta venta</li>
+                    : detalleProductos.map((p, idx) => (
+                      <li key={idx}>
+                        <span className="font-mono text-gray-500">{p.productos?.codigo || p.producto_id}</span>
+                        <span className="ml-2">{p.productos?.nombre || p.producto_id}</span>
+                        <span className="ml-2">x <b>{p.cantidad}</b></span>
+                        <span className="ml-2 text-gray-500">${p.precio_unitario?.toFixed(2) || "--"}</span>
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+            <button
+              className="mt-4 px-4 py-2 rounded bg-blue-600 text-white font-bold hover:bg-blue-700"
+              onClick={cerrarDetalleVenta}
+            >Cerrar</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

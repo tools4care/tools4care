@@ -1,8 +1,8 @@
-// src/Ventas.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
+import BarcodeScanner from "./BarcodeScanner"; // 👈
 
 const FORMAS_PAGO = [
   { key: "efectivo", label: "Efectivo" },
@@ -26,6 +26,8 @@ export default function Ventas() {
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [productosMasVendidos, setProductosMasVendidos] = useState([]);
+  const [scannerOpen, setScannerOpen] = useState(false); // 👈
+  const [mensajeEscaneo, setMensajeEscaneo] = useState(""); // 👈
 
   // Paso 3: Pagos
   const [pagos, setPagos] = useState([{ forma: "efectivo", monto: 0 }]);
@@ -126,13 +128,55 @@ export default function Ventas() {
     setCarrito(carrito => carrito.filter(p => p.producto_id !== producto_id));
   }
 
+  // --- INTEGRACIÓN SCANNER ---
+  async function handleCodigoEscaneado(codigo) {
+    setMensajeEscaneo(""); // limpia mensaje previo
+
+    // Buscar el producto por código (en productos ya cargados)
+    let productoEncontrado = productos.find(
+      p => p.productos?.codigo?.toString().trim() === codigo.trim()
+    );
+
+    // Si no está cargado en el filtro, buscar en Supabase directo (puede no estar listado por búsqueda actual)
+    if (!productoEncontrado && van) {
+      const { data, error } = await supabase
+        .from("stock_van")
+        .select("id, producto_id, cantidad, productos(nombre, precio, codigo)")
+        .eq("van_id", van.id)
+        .eq("productos.codigo", codigo);
+
+      if (data && data.length > 0) {
+        productoEncontrado = data[0];
+      }
+    }
+
+    if (productoEncontrado && productoEncontrado.cantidad > 0) {
+      handleAgregarProducto(productoEncontrado);
+      setMensajeEscaneo(`Producto "${productoEncontrado.productos?.nombre}" agregado!`);
+    } else {
+      setMensajeEscaneo("Producto no encontrado o sin stock en esta van.");
+    }
+  }
+
   // Guardar venta completa
   async function guardarVenta() {
     setGuardando(true);
     setErrorPago("");
     try {
       if (!usuario?.id) throw new Error("Usuario no sincronizado, reintenta login.");
-      console.log('usuario', usuario); // justo antes del insert de venta
+
+      // Sumar pagos por tipo
+      const pagosMap = {
+        efectivo: 0,
+        tarjeta: 0,
+        transferencia: 0,
+        otro: 0,
+      };
+      pagos.forEach(p => {
+        if (pagosMap[p.forma] !== undefined) {
+          pagosMap[p.forma] += Number(p.monto || 0);
+        }
+      });
 
       // 1. Insertar venta
       const { data: ventaData, error: ventaError } = await supabase
@@ -155,7 +199,12 @@ export default function Ventas() {
             subtotal: p.cantidad * p.precio_unitario,
           })),
           notas: "",
-          pago: pagado
+          pago: pagado,
+          // 👇 Campos individuales para cierre de VAN
+          pago_efectivo: pagosMap.efectivo,
+          pago_tarjeta: pagosMap.tarjeta,
+          pago_transferencia: pagosMap.transferencia,
+          pago_otro: pagosMap.otro,
         }])
         .select()
         .maybeSingle();
@@ -220,6 +269,7 @@ export default function Ventas() {
       setBusquedaProducto("");
       setProductos([]);
       setProductosMasVendidos([]);
+      setMensajeEscaneo("");
 
     } catch (err) {
       setErrorPago("Error guardando venta: " + (err?.message || ""));
@@ -333,18 +383,30 @@ export default function Ventas() {
     );
   }
 
-  // Paso 2: Selección de productos y carrito
+  // Paso 2: Selección de productos y carrito (AQUÍ VA EL SCANNER)
   function renderPasoProductos() {
     return (
       <div>
         <h2 className="text-xl font-bold mb-4">Agregar Productos</h2>
-        <input
-          type="text"
-          placeholder="Buscar producto por nombre o código..."
-          className="w-full border rounded p-2 mb-2"
-          value={busquedaProducto}
-          onChange={e => setBusquedaProducto(e.target.value)}
-        />
+        <div className="flex gap-2 mb-2">
+          <input
+            type="text"
+            placeholder="Buscar producto por nombre o código..."
+            className="w-full border rounded p-2"
+            value={busquedaProducto}
+            onChange={e => setBusquedaProducto(e.target.value)}
+          />
+          <button
+            className="bg-green-600 text-white px-3 py-2 rounded font-bold"
+            type="button"
+            onClick={() => setScannerOpen(true)}
+          >
+            📷 Escanear
+          </button>
+        </div>
+        {mensajeEscaneo && (
+          <div className="mb-2 text-xs text-center font-bold text-blue-700">{mensajeEscaneo}</div>
+        )}
         <div className="max-h-48 overflow-auto mb-2">
           {productos.map(p => (
             <div key={p.producto_id} className="p-2 border-b flex justify-between items-center">
@@ -435,6 +497,13 @@ export default function Ventas() {
             Siguiente
           </button>
         </div>
+        {/* SCANNER MODAL */}
+        {scannerOpen && (
+          <BarcodeScanner
+            onResult={handleCodigoEscaneado}
+            onClose={() => setScannerOpen(false)}
+          />
+        )}
       </div>
     );
   }
