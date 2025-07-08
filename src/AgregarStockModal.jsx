@@ -1,33 +1,44 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { supabase } from "./supabaseClient";
 
 export default function AgregarStockModal({ abierto, cerrar, tipo, ubicacionId, onSuccess }) {
-  const [productos, setProductos] = useState([]);
-  const [productoId, setProductoId] = useState("");
-  const [cantidad, setCantidad] = useState(1);
   const [busqueda, setBusqueda] = useState("");
+  const [resultados, setResultados] = useState([]);
+  const [productoSeleccionado, setProductoSeleccionado] = useState(null);
+  const [cantidad, setCantidad] = useState(1);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [buscando, setBuscando] = useState(false);
 
-  useEffect(() => {
-    if (abierto) {
-      cargarProductos();
-      setBusqueda("");
-      setProductoId("");
-      setCantidad(1);
-      setShowDropdown(false);
+  // Buscar productos en Supabase (por nombre, marca, código)
+  async function buscarProductos(texto) {
+    setBuscando(true);
+    setBusqueda(texto);
+    setShowDropdown(true);
+    if (!texto.trim()) {
+      setResultados([]);
+      setBuscando(false);
+      return;
     }
-    // eslint-disable-next-line
-  }, [abierto]);
-
-  async function cargarProductos() {
-    const { data } = await supabase.from("productos").select("id, nombre, marca, codigo");
-    setProductos(data || []);
+    const { data } = await supabase
+      .from("productos")
+      .select("id, nombre, marca, codigo")
+      .or(
+        `nombre.ilike.%${texto}%,marca.ilike.%${texto}%,codigo.ilike.%${texto}%`
+      )
+      .order("nombre")
+      .limit(20);
+    setResultados(data || []);
+    setBuscando(false);
   }
 
   async function agregarStock(e) {
     e.preventDefault();
+    if (!productoSeleccionado?.id) return;
     let tabla = tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let filtro = tipo === "almacen" ? { producto_id: productoId } : { producto_id: productoId, van_id: ubicacionId };
+    let filtro = tipo === "almacen"
+      ? { producto_id: productoSeleccionado.id }
+      : { producto_id: productoSeleccionado.id, van_id: ubicacionId };
+
     // Busca si ya existe
     let { data: existente } = await supabase.from(tabla).select("*").match(filtro).maybeSingle();
 
@@ -43,51 +54,37 @@ export default function AgregarStockModal({ abierto, cerrar, tipo, ubicacionId, 
     cerrar();
   }
 
-  // Filtra productos por nombre, marca o código
-  const productosFiltrados = productos.filter((p) => {
-    const search = busqueda.toLowerCase();
-    return (
-      (p.nombre || "").toLowerCase().includes(search) ||
-      (p.marca || "").toLowerCase().includes(search) ||
-      (p.codigo || "").toLowerCase().includes(search)
-    );
-  });
-
   if (!abierto) return null;
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
       <form onSubmit={agregarStock} className="bg-white p-6 rounded shadow w-80">
         <h2 className="font-bold mb-4">Agregar Stock</h2>
-        {/* Campo de búsqueda con resultados */}
         <div className="mb-2 relative">
           <input
             type="text"
             className="w-full border rounded p-2"
             placeholder="Buscar producto por nombre, marca o código"
             value={busqueda}
-            onChange={e => {
-              setBusqueda(e.target.value);
-              setShowDropdown(true);
-            }}
-            onFocus={() => setShowDropdown(true)}
+            onChange={e => buscarProductos(e.target.value)}
+            onFocus={() => { setShowDropdown(true); if (busqueda) buscarProductos(busqueda); }}
+            autoComplete="off"
           />
           {showDropdown && busqueda && (
             <div
               className="absolute z-20 bg-white border rounded shadow max-h-40 w-full overflow-y-auto"
               onMouseLeave={() => setShowDropdown(false)}
             >
-              {productosFiltrados.length === 0 && (
+              {buscando && <div className="p-2 text-gray-400">Buscando...</div>}
+              {!buscando && resultados.length === 0 && (
                 <div className="p-2 text-gray-400">No hay productos.</div>
               )}
-              {productosFiltrados.slice(0, 15).map(p => (
+              {!buscando && resultados.map(p => (
                 <div
                   key={p.id}
-                  className={`p-2 cursor-pointer hover:bg-blue-100 ${productoId === p.id ? "bg-blue-200" : ""}`}
+                  className={`p-2 cursor-pointer hover:bg-blue-100 ${productoSeleccionado?.id === p.id ? "bg-blue-200" : ""}`}
                   onClick={() => {
-                    setProductoId(p.id);
-                    setBusqueda(
-                      `${p.nombre}${p.marca ? " - " + p.marca : ""}${p.codigo ? " (" + p.codigo + ")" : ""}`
-                    );
+                    setProductoSeleccionado(p);
+                    setBusqueda(`${p.nombre}${p.marca ? " - " + p.marca : ""}${p.codigo ? " (" + p.codigo + ")" : ""}`);
                     setShowDropdown(false);
                   }}
                 >
@@ -99,8 +96,12 @@ export default function AgregarStockModal({ abierto, cerrar, tipo, ubicacionId, 
             </div>
           )}
         </div>
-        {/* Input hidden para que sea requerido */}
-        <input type="hidden" value={productoId} required onChange={() => {}} />
+        {/* Producto seleccionado */}
+        {productoSeleccionado && (
+          <div className="text-xs mb-2 text-green-700">
+            Seleccionado: <b>{productoSeleccionado.nombre}</b> {productoSeleccionado.marca && `- ${productoSeleccionado.marca}`} {productoSeleccionado.codigo && `(${productoSeleccionado.codigo})`}
+          </div>
+        )}
         <input
           className="w-full border rounded mb-2 p-2"
           type="number"
@@ -113,7 +114,7 @@ export default function AgregarStockModal({ abierto, cerrar, tipo, ubicacionId, 
           <button
             type="submit"
             className="bg-blue-600 text-white px-4 py-1 rounded"
-            disabled={!productoId}
+            disabled={!productoSeleccionado}
           >
             Agregar
           </button>
