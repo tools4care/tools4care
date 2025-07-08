@@ -8,6 +8,7 @@ import Clientes from "./Clientes";
 import Productos from "./Productos";
 import Inventario from "./Inventario";
 import Ventas from "./Ventas";
+import CierreVan from "./CierreVan";
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
 
@@ -39,10 +40,9 @@ function LayoutPrivado() {
           <Route path="/productos" element={<Productos />} />
           <Route path="/inventario" element={<Inventario />} />
           <Route path="/ventas" element={<Ventas />} />
+          <Route path="/cierres" element={<CierreVan />} />
           {/* Redirección para rutas no encontradas */}
-          <Route path="*" element={<Navigate to="/" />} />// src/App.jsx
-<Route path="/van" element={<PrivateRoute><VanSelector /></PrivateRoute>} />
-
+          <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>
     </div>
@@ -56,7 +56,6 @@ export default function App() {
         <Routes>
           {/* Login SIN sidebar */}
           <Route path="/login" element={<Login />} />
-
           {/* Selector de Van SIN sidebar */}
           <Route
             path="/van"
@@ -66,7 +65,6 @@ export default function App() {
               </PrivateRoute>
             }
           />
-
           {/* Resto del sistema CON sidebar */}
           <Route
             path="/*"
