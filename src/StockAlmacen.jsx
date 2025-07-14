@@ -1,18 +1,23 @@
-import { useState, useEffect } from "react";
+// src/Inventario.jsx
+import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useVan } from "./hooks/VanContext";
 
-export default function StockAlmacen() {
-  const [filas, setFilas] = useState([]);
+export default function Inventario() {
+  const { van } = useVan();
+  const [productos, setProductos] = useState([]);
   const [mensaje, setMensaje] = useState("");
 
   useEffect(() => {
-    cargarStock();
-  }, []);
+    if (van) cargarInventario();
+    // eslint-disable-next-line
+  }, [van]);
 
-  async function cargarStock() {
+  async function cargarInventario() {
     setMensaje("");
+    // Ajusta la tabla si tu modelo usa "inventario" o "stock_van"
     const { data, error } = await supabase
-      .from("stock_almacen")
+      .from("inventario")
       .select(`
         id,
         cantidad,
@@ -25,14 +30,19 @@ export default function StockAlmacen() {
           precio
         )
       `)
+      .eq("van_id", van.id)
       .order("id", { ascending: true });
     if (error) setMensaje("Error: " + error.message);
-    else setFilas(data || []);
+    else setProductos(data || []);
+  }
+
+  if (!van) {
+    return <div className="p-6 text-center text-gray-500">Selecciona una van primero.</div>;
   }
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-4 text-blue-900">Stock de Almacén</h2>
+      <h2 className="text-2xl font-bold mb-4 text-blue-900">Inventario de la VAN</h2>
       {mensaje && (
         <div className="bg-red-100 text-red-700 p-2 rounded mb-4">{mensaje}</div>
       )}
@@ -44,11 +54,11 @@ export default function StockAlmacen() {
             <th className="p-2">Marca</th>
             <th className="p-2">Categoría</th>
             <th className="p-2">Precio</th>
-            <th className="p-2">Stock almacén</th>
+            <th className="p-2">Stock</th>
           </tr>
         </thead>
         <tbody>
-          {filas.map((fila) => (
+          {productos.map((fila) => (
             <tr key={fila.id}>
               <td className="p-2">{fila.producto?.codigo}</td>
               <td className="p-2">{fila.producto?.nombre}</td>

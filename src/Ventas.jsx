@@ -26,8 +26,8 @@ export default function Ventas() {
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [productosMasVendidos, setProductosMasVendidos] = useState([]);
-  const [scannerOpen, setScannerOpen] = useState(false); // 👈
-  const [mensajeEscaneo, setMensajeEscaneo] = useState(""); // 👈
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [mensajeEscaneo, setMensajeEscaneo] = useState("");
 
   // Paso 3: Pagos
   const [pagos, setPagos] = useState([{ forma: "efectivo", monto: 0 }]);
@@ -37,7 +37,7 @@ export default function Ventas() {
   // Flujo
   const [paso, setPaso] = useState(1);
 
-  // --- Buscar clientes ---
+  // --- Buscar clientes desde la VISTA ---
   useEffect(() => {
     async function cargarClientes() {
       if (busquedaCliente.trim().length === 0) {
@@ -47,7 +47,7 @@ export default function Ventas() {
       const campos = ["nombre", "negocio", "telefono", "email"];
       const filtros = campos.map(campo => `${campo}.ilike.%${busquedaCliente}%`).join(",");
       const { data } = await supabase
-        .from("clientes")
+        .from("clientes_balance")
         .select("*")
         .or(filtros);
 
@@ -57,39 +57,37 @@ export default function Ventas() {
   }, [busquedaCliente]);
 
   // --- Cargar productos en stock para la van ---
- useEffect(() => {
-  async function cargarProductos() {
-    if (!van) return;
+  useEffect(() => {
+    async function cargarProductos() {
+      if (!van) return;
 
-    // AÑADE la propiedad 'marca' a la consulta si la tienes en tu tabla productos
-    const { data, error } = await supabase
-      .from("stock_van")
-      .select(`
-        id, producto_id, cantidad,
-        productos ( nombre, precio, codigo, marca )
-      `)
-      .eq("van_id", van.id);
+      const { data, error } = await supabase
+        .from("stock_van")
+        .select(`
+          id, producto_id, cantidad,
+          productos ( nombre, precio, codigo, marca )
+        `)
+        .eq("van_id", van.id);
 
-    if (error) {
-      setProductos([]);
-      return;
+      if (error) {
+        setProductos([]);
+        return;
+      }
+
+      const filtro = busquedaProducto.trim().toLowerCase();
+      const filtrados = (data || []).filter(
+        row =>
+          row.cantidad > 0 &&
+          (
+            (row.productos?.nombre || "").toLowerCase().includes(filtro) ||
+            (row.productos?.codigo || "").toLowerCase().includes(filtro) ||
+            (row.productos?.marca || "").toLowerCase().includes(filtro)
+          )
+      );
+      setProductos(filtrados);
     }
-
-    const filtro = busquedaProducto.trim().toLowerCase();
-    const filtrados = (data || []).filter(
-      row =>
-        row.cantidad > 0 &&
-        (
-          (row.productos?.nombre || "").toLowerCase().includes(filtro) ||
-          (row.productos?.codigo || "").toLowerCase().includes(filtro) ||
-          (row.productos?.marca || "").toLowerCase().includes(filtro)
-        )
-    );
-    setProductos(filtrados);
-  }
-  cargarProductos();
-}, [van, busquedaProducto]);
-
+    cargarProductos();
+  }, [van, busquedaProducto]);
 
   // --- Cargar productos más vendidos (top 5) para la van ---
   useEffect(() => {
@@ -142,7 +140,7 @@ export default function Ventas() {
 
     // Si no está cargado en el filtro, buscar en Supabase directo (puede no estar listado por búsqueda actual)
     if (!productoEncontrado && van) {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("stock_van")
         .select("id, producto_id, cantidad, productos(nombre, precio, codigo)")
         .eq("van_id", van.id)
@@ -161,7 +159,7 @@ export default function Ventas() {
     }
   }
 
-  // Guardar venta completa
+  // Guardar venta completa (NO ACTUALIZA YA BALANCE EN CLIENTES)
   async function guardarVenta() {
     setGuardando(true);
     setErrorPago("");
@@ -186,7 +184,7 @@ export default function Ventas() {
         .from("ventas")
         .insert([{
           van_id: van.id,
-          usuario_id: usuario.id, // ID de la tabla usuarios, no de Auth!
+          usuario_id: usuario.id,
           cliente_id: clienteSeleccionado?.id || null,
           total: totalVenta,
           total_venta: totalVenta,
@@ -203,7 +201,6 @@ export default function Ventas() {
           })),
           notas: "",
           pago: pagado,
-          // 👇 Campos individuales para cierre de VAN
           pago_efectivo: pagosMap.efectivo,
           pago_tarjeta: pagosMap.tarjeta,
           pago_transferencia: pagosMap.transferencia,
@@ -244,26 +241,19 @@ export default function Ventas() {
         }
       }
 
-      // 4. Actualizar saldo cliente si hay deuda
-      if (saldoPendiente > 0 && clienteSeleccionado?.id) {
-        const { data: clienteActualizado, error: errorCliente } = await supabase
-          .from("clientes")
-          .select("balance")
-          .eq("id", clienteSeleccionado.id)
-          .single();
-
-        if (!errorCliente) {
-          const balanceActual = clienteActualizado?.balance || 0;
-          await supabase
-            .from("clientes")
-            .update({ balance: balanceActual + saldoPendiente })
-            .eq("id", clienteSeleccionado.id);
-        }
-      }
-
       alert("Venta guardada correctamente");
 
-      // Limpiar estado
+      // --- 🔥 Refresca el cliente desde la vista para tener el balance REAL ---
+      if (clienteSeleccionado?.id) {
+        const { data: clienteActualizado } = await supabase
+          .from("clientes_balance")
+          .select("*")
+          .eq("id", clienteSeleccionado.id)
+          .maybeSingle();
+        setClienteSeleccionado(clienteActualizado);
+      }
+
+      // Limpiar estado (o puedes mantener clienteSeleccionado y solo refrescar la info arriba)
       setClienteSeleccionado(null);
       setCarrito([]);
       setPagos([{ forma: "efectivo", monto: 0 }]);
@@ -386,7 +376,7 @@ export default function Ventas() {
     );
   }
 
-  // Paso 2: Selección de productos y carrito (AQUÍ VA EL SCANNER)
+  // Paso 2: Selección de productos y carrito
   function renderPasoProductos() {
     return (
       <div>
