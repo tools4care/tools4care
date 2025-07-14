@@ -1,3 +1,4 @@
+// src/components/VanSelector.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVan } from "../hooks/VanContext";
@@ -23,7 +24,7 @@ export default function VanSelector({ onSelect }) {
     setVan(van);
     localStorage.setItem("van", JSON.stringify(van));
     if (onSelect) onSelect(van);
-    else navigate("/"); // Por defecto, redirige al home solo si no hay onSelect
+    else navigate("/"); // Por defecto, redirige al home
   }
 
   return (

@@ -1,18 +1,33 @@
 import { useState, useEffect } from "react";
+import { supabase } from "../supabaseClient";
 
-function useUsuarioSesion() {
+// Hook personalizado para obtener la sesión y el usuario actual de Supabase
+export default function useUsuarioSesion() {
   const [usuario, setUsuario] = useState(null);
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    const usuarioGuardado = localStorage.getItem("usuario");
-    if (usuarioGuardado) {
-      setUsuario(JSON.parse(usuarioGuardado));
-    }
-    setCargando(false);
-  }, []); // <--- SOLO UNA VEZ
+    let unsubscribe = null;
+
+    // Carga inicial de la sesión
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUsuario(session?.user ?? null);
+      setCargando(false);
+    });
+
+    // Listener para cambios de sesión (login/logout)
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUsuario(session?.user ?? null);
+      setCargando(false);
+    });
+
+    // Clean-up del listener
+    unsubscribe = listener?.subscription?.unsubscribe;
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
 
   return { usuario, cargando };
 }
-
-export default useUsuarioSesion;

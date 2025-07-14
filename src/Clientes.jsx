@@ -1,7 +1,14 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { useVan } from "./hooks/VanContext"; // Acceso a la van actual
 
-// Mapa ZIP->Ciudad/Estado de ejemplo (puedes expandir)
+const estadosUSA = [
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+  "VA","WA","WV","WI","WY"
+];
+
 const zipToCiudadEstado = (zip) => {
   const mapa = {
     "02118": { ciudad: "Boston", estado: "MA" },
@@ -27,8 +34,10 @@ export default function Clientes() {
     direccion: { calle: "", ciudad: "", estado: "", zip: "" },
   });
   const [mensaje, setMensaje] = useState("");
+  const [estadoInput, setEstadoInput] = useState("");
+  const [estadoOpciones, setEstadoOpciones] = useState(estadosUSA);
 
-  // 1. Cargar clientes (desde la vista clientes_balance)
+  // Cargar clientes
   useEffect(() => { cargarClientes(); }, []);
   async function cargarClientes() {
     const { data, error } = await supabase.from("clientes_balance").select("*");
@@ -36,21 +45,18 @@ export default function Clientes() {
     else setMensaje("Error cargando clientes");
   }
 
-  // 2. Cuando seleccionas cliente, cargar resumen (ventas/pagos/balance)
+  // Cuando seleccionas cliente, cargar resumen
   useEffect(() => {
     async function cargarResumen() {
       if (!clienteSeleccionado) return setResumen({ ventas: [], pagos: [], balance: 0 });
-      // Ventas
       const { data: ventas } = await supabase
         .from("ventas")
         .select("id, fecha, total_venta, total_pagado, estado_pago")
         .eq("cliente_id", clienteSeleccionado.id);
-      // Pagos
       const { data: pagos } = await supabase
         .from("pagos")
         .select("id, fecha_pago, monto, metodo_pago")
         .eq("cliente_id", clienteSeleccionado.id);
-      // Deuda = ventas - pagos (solo ventas con deuda)
       const deudaVentas = (ventas || []).reduce(
         (t, v) => t + ((v.total_venta || 0) - (v.total_pagado || 0)), 0
       );
@@ -60,9 +66,9 @@ export default function Clientes() {
       setResumen({ ventas: ventas || [], pagos: pagos || [], balance });
     }
     cargarResumen();
+    // eslint-disable-next-line
   }, [clienteSeleccionado, mostrarAbono]);
 
-  // Selección robusta: convierte dirección string/null a objeto seguro
   function handleSelectCliente(c) {
     let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
     if (typeof c.direccion === "string" && c.direccion) {
@@ -84,6 +90,7 @@ export default function Clientes() {
       negocio: c.negocio || "",
       direccion,
     });
+    setEstadoInput(direccion.estado || "");
     setMensaje("");
   }
 
@@ -92,11 +99,17 @@ export default function Clientes() {
     if (["calle", "ciudad", "estado", "zip"].includes(name)) {
       setForm((f) => {
         let newDireccion = { ...f.direccion, [name]: value };
+        if (name === "estado") {
+          setEstadoInput(value.toUpperCase());
+          setEstadoOpciones(estadosUSA.filter(s => s.startsWith(value.toUpperCase())));
+        }
         if (name === "zip" && value.length === 5) {
           const { ciudad, estado } = zipToCiudadEstado(value);
           if (ciudad || estado) {
             newDireccion.ciudad = ciudad;
             newDireccion.estado = estado;
+            setEstadoInput(estado);
+            setEstadoOpciones(estadosUSA.filter(s => s.startsWith(estado)));
           }
         }
         return { ...f, direccion: newDireccion };
@@ -106,13 +119,22 @@ export default function Clientes() {
     }
   }
 
+  function handleEstadoSelect(e) {
+    const selected = e.target.value;
+    setForm((f) => ({
+      ...f,
+      direccion: { ...f.direccion, estado: selected }
+    }));
+    setEstadoInput(selected);
+    setEstadoOpciones(estadosUSA.filter(s => s.startsWith(selected)));
+  }
+
   async function handleGuardar(e) {
     e.preventDefault();
     if (!form.nombre) return setMensaje("Nombre y apellido es requerido");
     let direccionFinal = form.direccion || { calle: "", ciudad: "", estado: "", zip: "" };
 
     if (!clienteSeleccionado) {
-      // Nuevo
       const { error } = await supabase.from("clientes").insert([{ ...form, direccion: direccionFinal }]);
       if (error) setMensaje("Error al guardar: " + error.message);
       else {
@@ -121,7 +143,6 @@ export default function Clientes() {
         resetForm();
       }
     } else {
-      // Editar
       const { error } = await supabase.from("clientes")
         .update({ ...form, direccion: direccionFinal })
         .eq("id", clienteSeleccionado.id);
@@ -155,9 +176,10 @@ export default function Clientes() {
       negocio: "",
       direccion: { calle: "", ciudad: "", estado: "", zip: "" },
     });
+    setEstadoInput("");
+    setEstadoOpciones(estadosUSA);
   }
 
-  // Filtrado de tabla
   const clientesFiltrados = clientes.filter((c) => {
     let d = { calle: "", ciudad: "", estado: "", zip: "" };
     if (typeof c.direccion === "string" && c.direccion) {
@@ -166,16 +188,21 @@ export default function Clientes() {
     if (typeof c.direccion === "object" && c.direccion !== null) {
       d = c.direccion;
     }
-    return [
-      c.nombre, c.telefono, c.email, c.negocio,
-      d.calle, d.ciudad, d.estado, d.zip,
-    ].join(" ").toLowerCase().includes(busqueda.toLowerCase())
+    const textoBusqueda = busqueda.toLowerCase();
+    const telefonoCliente = (c.telefono || "").replace(/\D/g, "");
+    const telefonoBusqueda = busqueda.replace(/\D/g, "");
+    return (
+      [
+        c.nombre, c.email, c.negocio,
+        d.calle, d.ciudad, d.estado, d.zip
+      ].join(" ").toLowerCase().includes(textoBusqueda) ||
+      (telefonoBusqueda.length > 2 && telefonoCliente.includes(telefonoBusqueda))
+    );
   });
 
   return (
     <div className="max-w-5xl mx-auto py-7">
       <h2 className="text-3xl font-bold mb-6 text-center text-blue-900">Clientes</h2>
-
       {/* Formulario */}
       <form onSubmit={handleGuardar} className="bg-white p-6 rounded-xl shadow-md mb-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
@@ -206,9 +233,25 @@ export default function Clientes() {
           <label className="font-bold block mb-1">Código Postal</label>
           <input name="zip" className="border rounded-lg p-2 w-full" value={form.direccion.zip} onChange={handleChange} maxLength={5} />
         </div>
+        {/* Estado: select con autocomplete */}
         <div>
           <label className="font-bold block mb-1">Estado</label>
-          <input name="estado" className="border rounded-lg p-2 w-full" value={form.direccion.estado} onChange={handleChange} />
+          <input
+            name="estado"
+            className="border rounded-lg p-2 w-full"
+            placeholder="Ej: MA"
+            value={estadoInput}
+            onChange={handleChange}
+            list="estados-lista"
+            autoComplete="off"
+            maxLength={2}
+            style={{ textTransform: "uppercase" }}
+          />
+          <datalist id="estados-lista">
+            {estadoOpciones.map(e => (
+              <option value={e} key={e}>{e}</option>
+            ))}
+          </datalist>
         </div>
         <div className="sm:col-span-2 flex gap-3 mt-2">
           <button type="submit" className="bg-blue-700 hover:bg-blue-900 text-white font-bold px-6 py-2 rounded-xl transition">
@@ -225,7 +268,6 @@ export default function Clientes() {
           <div className="col-span-2 text-center mt-2 text-blue-700">{mensaje}</div>
         )}
       </form>
-
       {/* Tabla */}
       <div className="bg-white p-4 rounded-xl shadow-lg">
         <h3 className="text-2xl font-bold mb-3 text-blue-900 text-center">Lista de Clientes</h3>
@@ -302,7 +344,6 @@ export default function Clientes() {
           </table>
         </div>
       </div>
-
       {/* MODAL: Abonar, con historial de ventas/pagos */}
       {mostrarAbono && clienteSeleccionado && (
         <ModalAbonar
@@ -317,7 +358,9 @@ export default function Clientes() {
 }
 
 // --- MODAL DE ABONO + HISTORIAL ---
+// Mejoras: validación robusta, doble submit, UX, asocia van_id al pago
 function ModalAbonar({ cliente, resumen, onClose, refresh }) {
+  const { van } = useVan(); // Para asociar el abono a la van actual
   const [monto, setMonto] = useState("");
   const [metodo, setMetodo] = useState("Efectivo");
   const [guardando, setGuardando] = useState(false);
@@ -325,13 +368,33 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
 
   async function guardarAbono(e) {
     e.preventDefault();
+    if (guardando) return;
     setGuardando(true);
     setMensaje("");
+
+    if (!van || !van.id) {
+      setMensaje("Debes seleccionar una VAN antes de abonar.");
+      setGuardando(false);
+      return;
+    }
+
+    if (!monto || isNaN(monto) || Number(monto) <= 0) {
+      setMensaje("Monto inválido. Debe ser mayor a 0.");
+      setGuardando(false);
+      return;
+    }
+    if (Number(monto) > Number(cliente.balance)) {
+      setMensaje("El monto no puede ser mayor al balance pendiente.");
+      setGuardando(false);
+      return;
+    }
+
     const { error } = await supabase.from("pagos").insert([
       {
         cliente_id: cliente.id,
         monto: Number(monto),
         metodo_pago: metodo,
+        van_id: van.id, // Asociamos el abono a la van seleccionada
       }
     ]);
     setGuardando(false);
@@ -356,15 +419,15 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
         <div className="mb-2">
           <span className="font-bold">Balance actual:</span>{" "}
           <span className={Number(cliente.balance) > 0 ? "text-red-600 font-bold" : "text-green-700 font-bold"}>
-  ${Number(cliente.balance).toFixed(2)}
-</span>
-
+            ${Number(cliente.balance).toFixed(2)}
+          </span>
         </div>
         <input
           className="border rounded p-2 mb-2 w-full"
           placeholder="Monto"
           type="number"
           min="1"
+          step="any"
           value={monto}
           onChange={e => setMonto(e.target.value)}
           required
@@ -382,7 +445,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
           type="submit"
           className="bg-blue-700 text-white px-4 py-2 rounded w-full"
           disabled={guardando}
-        >Guardar abono</button>
+        >{guardando ? "Guardando..." : "Guardar abono"}</button>
         <button
           type="button"
           className="bg-gray-400 text-white px-4 py-2 rounded w-full mt-2"
@@ -390,7 +453,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
           disabled={guardando}
         >Cancelar</button>
         {mensaje && (
-          <div className={`mt-2 text-sm ${mensaje.includes("Error") ? "text-red-600" : "text-green-700"}`}>{mensaje}</div>
+          <div className={`mt-2 text-sm ${mensaje.includes("Error") || mensaje.includes("inválido") ? "text-red-600" : "text-green-700"}`}>{mensaje}</div>
         )}
 
         {/* --- HISTORIAL --- */}

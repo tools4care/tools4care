@@ -1,52 +1,32 @@
 import { useState } from "react";
-import { supabase } from "./supabaseClient";
 import { useUsuario } from "./UsuarioContext";
+
+import { supabase } from "./supabaseClient";
 import { useNavigate } from "react-router-dom";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const { setUsuario } = useUsuario();
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setError("");
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message);
-    } else {
+    if (!error) {
       setUsuario(data.user);
       navigate("/van");
+    } else {
+      alert("Error al iniciar sesión");
     }
   };
 
   return (
-    <div className="flex items-center justify-center h-screen bg-gray-50">
-      <form className="bg-white p-8 rounded shadow w-80" onSubmit={handleLogin}>
-        <h2 className="mb-4 text-lg font-bold">Iniciar sesión</h2>
-        {error && <div className="mb-2 text-red-500">{error}</div>}
-        <input
-          type="email"
-          placeholder="Correo"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          className="w-full p-2 mb-3 border rounded"
-          required
-        />
-        <input
-          type="password"
-          placeholder="Contraseña"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          className="w-full p-2 mb-3 border rounded"
-          required
-        />
-        <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded">
-          Iniciar sesión
-        </button>
-      </form>
-    </div>
+    <form onSubmit={handleLogin} className="flex flex-col gap-2 max-w-xs mx-auto mt-20">
+      <h2 className="text-lg font-bold mb-2">Iniciar sesión</h2>
+      <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" className="border px-2 py-1" />
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Contraseña" className="border px-2 py-1" />
+      <button type="submit" className="bg-blue-600 text-white py-2 rounded">Iniciar sesión</button>
+    </form>
   );
 }
