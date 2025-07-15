@@ -1,3 +1,4 @@
+// src/Sidebar.jsx
 import { useNavigate, NavLink } from "react-router-dom";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -13,12 +14,15 @@ import {
   ClipboardList,
   LogOut,
   Truck,
-  UserCircle2
+  UserCircle2,
+  Receipt
 } from "lucide-react";
 
+// MENÚ actualizado con Facturas (y puedes reordenar como prefieras)
 const menuItems = [
   { to: "/", label: "Dashboard", icon: BarChart2, exact: true },
   { to: "/ventas", label: "Ventas", icon: ShoppingCart },
+  { to: "/facturas", label: "Facturas", icon: Receipt }, // <--- NUEVO
   { to: "/clientes", label: "Clientes", icon: Users },
   { to: "/productos", label: "Productos", icon: Box },
   { to: "/inventario", label: "Inventario", icon: ClipboardList },
@@ -53,7 +57,7 @@ export default function Sidebar() {
     <>
       {/* Botón hamburguesa SOLO en móvil */}
       <button
-        className="fixed top-4 left-4 z-[100] lg:hidden bg-blue-700 text-white rounded p-2 shadow focus:outline-none"
+        className="fixed top-4 left-4 z-50 lg:hidden bg-blue-700 text-white rounded p-2 shadow focus:outline-none"
         onClick={() => setOpen(true)}
         aria-label="Abrir menú"
         style={{ display: open ? "none" : "block" }}
@@ -64,18 +68,14 @@ export default function Sidebar() {
       {/* Overlay sólo móvil */}
       {open && (
         <div
-          className="fixed inset-0 bg-black/60 z-[99] lg:hidden"
+          className="fixed inset-0 bg-black bg-opacity-40 z-40 lg:hidden"
           onClick={() => setOpen(false)}
         />
       )}
 
-      {/* Sidebar tipo drawer móvil + fijo en desktop */}
-      <aside className={`
-        fixed z-[100] top-0 left-0 h-full w-64 bg-slate-900 text-white flex flex-col transition-transform duration-300
-        ${open ? "translate-x-0" : "-translate-x-full"} 
-        lg:translate-x-0 lg:static lg:block
-        shadow-2xl
-      `}>
+      {/* Sidebar animado */}
+      <aside className={`fixed z-50 top-0 left-0 h-full w-64 bg-slate-900 text-white flex flex-col transition-transform duration-300 
+        ${open ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 lg:static lg:block`}>
         {/* Header con cerrar menú en mobile */}
         <div className="flex items-center justify-between p-4 border-b border-slate-800 lg:hidden">
           <div className="flex items-center gap-2">

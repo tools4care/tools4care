@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
-import BarcodeScanner from "./BarcodeScanner"; // 👈
+import BarcodeScanner from "./BarcodeScanner";
 
 const FORMAS_PAGO = [
   { key: "efectivo", label: "Efectivo" },
@@ -129,8 +129,14 @@ export default function Ventas() {
     setCarrito(carrito => carrito.filter(p => p.producto_id !== producto_id));
   }
 
-  // --- INTEGRACIÓN SCANNER ---
+  // --- INTEGRACIÓN SCANNER ROBUSTA ---
   async function handleCodigoEscaneado(codigo) {
+    setScannerOpen(false);
+
+    if (!codigo) {
+      setMensajeEscaneo("No se pudo leer el código o la cámara no está disponible.");
+      return;
+    }
     setMensajeEscaneo(""); // limpia mensaje previo
 
     // Buscar el producto por código (en productos ya cargados)
@@ -142,7 +148,7 @@ export default function Ventas() {
     if (!productoEncontrado && van) {
       const { data } = await supabase
         .from("stock_van")
-        .select("id, producto_id, cantidad, productos(nombre, precio, codigo)")
+        .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca )")
         .eq("van_id", van.id)
         .eq("productos.codigo", codigo);
 

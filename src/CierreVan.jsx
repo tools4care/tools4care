@@ -12,7 +12,7 @@ const METODOS_PAGO = [
   { campo: "pago_transferencia", label: "Transferencia" }
 ];
 
-// Hook para movimientos no cerrados
+// Hook para traer ventas y pagos no cerrados
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
@@ -21,9 +21,8 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   useEffect(() => {
     if (!van_id || !fechaInicio || !fechaFin) return;
     setLoading(true);
-
     (async () => {
-      // Trae ventas y pagos NO cerrados (deben incluir cliente_nombre en la consulta)
+      // Asegúrate que tus funciones retornen cliente_nombre (LEFT JOIN con clientes)
       const { data: ventasPend } = await supabase.rpc(
         "ventas_no_cerradas_por_van",
         { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
@@ -41,6 +40,7 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   return { ventas, pagos, loading };
 }
 
+// Tabla de ventas pendientes
 function TablaMovimientosPendientes({ ventas }) {
   const sumBy = (arr, key) => arr.reduce((t, x) => t + Number(x[key] || 0), 0);
   const totalCxc = ventas.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0);
@@ -63,11 +63,17 @@ function TablaMovimientosPendientes({ ventas }) {
           </tr>
         </thead>
         <tbody>
-          {ventas.length === 0 && <tr><td colSpan={8} className="text-gray-400 text-center">Sin ventas pendientes</td></tr>}
-          {ventas.map(v => (
+          {ventas.length === 0 && (
+            <tr>
+              <td colSpan={8} className="text-gray-400 text-center">
+                Sin ventas pendientes
+              </td>
+            </tr>
+          )}
+          {ventas.map((v) => (
             <tr key={v.id}>
               <td className="p-1">{v.fecha?.slice(0, 10) || "-"}</td>
-              <td className="p-1">{v.cliente_nombre || v.cliente_id?.slice(0,8) || "-"}</td>
+              <td className="p-1">{v.cliente_nombre || v.cliente_id?.slice(0, 8) || "-"}</td>
               <td className="p-1">${Number(v.total_venta || 0).toFixed(2)}</td>
               <td className="p-1">${Number(v.pago_efectivo || 0).toFixed(2)}</td>
               <td className="p-1">${Number(v.pago_tarjeta || 0).toFixed(2)}</td>
@@ -94,6 +100,7 @@ function TablaMovimientosPendientes({ ventas }) {
   );
 }
 
+// Tabla de abonos/anticipos de clientes
 function TablaAbonosPendientes({ pagos }) {
   return (
     <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
@@ -110,11 +117,17 @@ function TablaAbonosPendientes({ pagos }) {
           </tr>
         </thead>
         <tbody>
-          {pagos.length === 0 && <tr><td colSpan={6} className="text-gray-400 text-center">Sin abonos/anticipos pendientes</td></tr>}
-          {pagos.map(p => (
+          {pagos.length === 0 && (
+            <tr>
+              <td colSpan={6} className="text-gray-400 text-center">
+                Sin abonos/anticipos pendientes
+              </td>
+            </tr>
+          )}
+          {pagos.map((p) => (
             <tr key={p.id}>
               <td className="p-1">{p.fecha_pago?.slice(0, 10) || "-"}</td>
-              <td className="p-1">{p.cliente_nombre || p.cliente_id?.slice(0,8) || "-"}</td>
+              <td className="p-1">{p.cliente_nombre || p.cliente_id?.slice(0, 8) || "-"}</td>
               <td className="p-1">${Number(p.monto || 0).toFixed(2)}</td>
               <td className="p-1">{p.metodo_pago || "-"}</td>
               <td className="p-1">{p.referencia || "-"}</td>
@@ -127,7 +140,7 @@ function TablaAbonosPendientes({ pagos }) {
   );
 }
 
-// --- PDF COMPLETO PROFESIONAL ---
+// PDF profesional de cierre de VAN
 function generarPDFCierreVan({
   empresa = {
     nombre: "TOOLS4CARE",
@@ -149,7 +162,6 @@ function generarPDFCierreVan({
   const azulSuave = "#e3f2fd";
   const negro = "#222";
 
-  // Encabezado
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
   doc.setTextColor(azul);
@@ -165,7 +177,6 @@ function generarPDFCierreVan({
   doc.setDrawColor(azul);
   doc.line(36, 86, 560, 86);
 
-  // Título, Fechas y Info General
   doc.setFontSize(14);
   doc.setTextColor(azul);
   doc.text("Cierre de Van - Reporte Ejecutivo", 36, 110);
@@ -176,7 +187,6 @@ function generarPDFCierreVan({
   doc.text(`Responsable: ${usuario?.nombre || usuario?.email || "-"}`, 36, 146);
   doc.text(`Fecha cierre: ${new Date().toLocaleString()}`, 320, 146);
 
-  // Resumen Ejecutivo
   doc.setFillColor(azulSuave);
   doc.roundedRect(36, 160, 520, 52, 8, 8, "F");
   doc.setFont("helvetica", "bold");
@@ -192,7 +202,6 @@ function generarPDFCierreVan({
   doc.text(`Transferencia esperado: $${Number(resumen.transferencia_esperado).toFixed(2)}`, 370, 198);
   doc.text(`CXC periodo: $${Number(resumen.cxc_periodo).toFixed(2)}`, 44, 214);
 
-  // Tabla de Ventas
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
   doc.setFontSize(13);
@@ -242,7 +251,6 @@ function generarPDFCierreVan({
     margin: { left: 36, right: 36 }
   });
 
-  // Tabla de Abonos
   let yAbonos = doc.lastAutoTable ? doc.lastAutoTable.finalY + 20 : 320;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
@@ -276,7 +284,6 @@ function generarPDFCierreVan({
     margin: { left: 36, right: 36 }
   });
 
-  // Pie de página
   let yPie = doc.lastAutoTable ? doc.lastAutoTable.finalY + 40 : 760;
   if (yPie > 740) yPie = 740;
   doc.setDrawColor(gris);
@@ -301,20 +308,17 @@ export default function CierreVan() {
   const { usuario } = useUsuario();
   const { van } = useVan();
 
-  // Default: hoy como rango
   const hoy = new Date();
   const fechaHoy = hoy.toISOString().slice(0, 10);
   const [fechaInicio, setFechaInicio] = useState(fechaHoy);
   const [fechaFin, setFechaFin] = useState(fechaHoy);
 
-  // Movimientos
   const { ventas, pagos, loading } = useMovimientosNoCerrados(
     van?.id,
     fechaInicio,
     fechaFin
   );
 
-  // Totales (ventas y pagos)
   const sumBy = (arr, key) => arr.reduce((t, x) => t + Number(x[key] || 0), 0);
   const totalesEsperados = {
     pago_efectivo: sumBy(ventas, "pago_efectivo") + sumBy(pagos.filter(p => p.metodo_pago === "Efectivo"), "monto"),
@@ -323,7 +327,6 @@ export default function CierreVan() {
   };
   const cuentasCobrar = ventas.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0);
 
-  // Inputs de cierre
   const [reales, setReales] = useState({
     pago_efectivo: "",
     pago_tarjeta: "",
@@ -333,7 +336,6 @@ export default function CierreVan() {
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
-  // Guardar cierre
   async function guardarCierre(e) {
     e.preventDefault();
     if (!van?.id || ventas.length + pagos.length === 0) {
@@ -342,9 +344,8 @@ export default function CierreVan() {
     }
     setGuardando(true);
 
-    // IDs de ventas y pagos a cerrar
-    const ventas_ids = ventas.map(v => v.id);
-    const pagos_ids = pagos.map(p => p.id);
+    const ventas_ids = ventas.map((v) => v.id);
+    const pagos_ids = pagos.map((p) => p.id);
 
     const payload = {
       van_id: van.id,
@@ -363,7 +364,6 @@ export default function CierreVan() {
       pagos_ids
     };
 
-    // 1. Inserta cierre
     const { data, error } = await supabase
       .from("cierres_van")
       .insert([payload])
@@ -377,7 +377,6 @@ export default function CierreVan() {
       return;
     }
 
-    // 2. Marca ventas y pagos como cerrados (les asigna el cierre_id)
     const cierre_id = data?.id;
     if (cierre_id) {
       await supabase.rpc("cerrar_ventas_por_van", {
@@ -401,7 +400,6 @@ export default function CierreVan() {
     setTimeout(() => setMensaje(""), 2000);
   }
 
-  // --- Resumen para PDF ---
   const resumenPDF = {
     efectivo_esperado: totalesEsperados.pago_efectivo,
     tarjeta_esperado: totalesEsperados.pago_tarjeta,
@@ -418,7 +416,7 @@ export default function CierreVan() {
           <input
             type="date"
             value={fechaInicio}
-            onChange={e => setFechaInicio(e.target.value)}
+            onChange={(e) => setFechaInicio(e.target.value)}
             className="border p-1 rounded"
           />
         </div>
@@ -427,7 +425,7 @@ export default function CierreVan() {
           <input
             type="date"
             value={fechaFin}
-            onChange={e => setFechaFin(e.target.value)}
+            onChange={(e) => setFechaFin(e.target.value)}
             className="border p-1 rounded"
           />
         </div>
@@ -440,7 +438,7 @@ export default function CierreVan() {
               pagos,
               resumen: resumenPDF,
               fechaInicio,
-              fechaFin
+              fechaFin,
             })
           }
           className="ml-auto bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded font-bold text-sm h-9 mt-6"
@@ -457,29 +455,42 @@ export default function CierreVan() {
           <TablaAbonosPendientes pagos={pagos} />
         </>
       )}
-      {/* FORMULARIO DE CIERRE */}
       <form onSubmit={guardarCierre}>
         {METODOS_PAGO.map(({ campo, label }) => (
           <div key={campo} className="mb-2">
             <label className="block font-bold">{label} esperado:</label>
-            <input className="border bg-gray-100 p-2 w-full mb-1" value={totalesEsperados[campo] || 0} disabled />
+            <input
+              className="border bg-gray-100 p-2 w-full mb-1"
+              value={totalesEsperados[campo] || 0}
+              disabled
+            />
             <label className="block">Contado:</label>
             <input
               className="border p-2 w-full"
               type="number"
               value={reales[campo] || ""}
-              onChange={e => setReales(r => ({ ...r, [campo]: e.target.value }))}
+              onChange={(e) =>
+                setReales((r) => ({ ...r, [campo]: e.target.value }))
+              }
               required
             />
           </div>
         ))}
         <div className="mb-2">
           <label className="block font-bold">Cuentas por cobrar del periodo:</label>
-          <input className="border p-2 w-full mb-1 bg-gray-100" value={cuentasCobrar} disabled />
+          <input
+            className="border p-2 w-full mb-1 bg-gray-100"
+            value={cuentasCobrar}
+            disabled
+          />
         </div>
         <div className="mb-3">
           <label className="block font-bold">Comentario:</label>
-          <textarea className="border p-2 w-full" value={comentario} onChange={e => setComentario(e.target.value)} />
+          <textarea
+            className="border p-2 w-full"
+            value={comentario}
+            onChange={(e) => setComentario(e.target.value)}
+          />
         </div>
         <button
           type="submit"
