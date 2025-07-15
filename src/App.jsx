@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+// src/App.jsx
+import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
 import Login from "./Login";
@@ -9,6 +10,7 @@ import Productos from "./Productos";
 import Inventario from "./Inventario";
 import Ventas from "./Ventas";
 import CierreVan from "./CierreVan";
+import Facturas from "./Facturas";
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
 
@@ -18,6 +20,7 @@ function PrivateRoute({ children }) {
   if (!usuario) return <Navigate to="/login" />;
   return children;
 }
+
 function PrivateRouteWithVan({ children }) {
   const { usuario } = useUsuario();
   const { van } = useVan();
@@ -26,9 +29,7 @@ function PrivateRouteWithVan({ children }) {
   return children;
 }
 
-// Layout principal para rutas privadas (Sidebar, BottomNav y Outlet)
-import { Outlet } from "react-router-dom";
-
+// Layout principal para rutas privadas
 function LayoutPrivado() {
   return (
     <div className="min-h-screen bg-gray-50 flex lg:flex-row flex-col">
@@ -53,6 +54,7 @@ export default function App() {
         <Routes>
           {/* Login SIN sidebar ni bottom nav */}
           <Route path="/login" element={<Login />} />
+
           {/* Selector de Van SIN sidebar ni bottom nav */}
           <Route
             path="/van"
@@ -62,6 +64,7 @@ export default function App() {
               </PrivateRoute>
             }
           />
+
           {/* Resto del sistema CON sidebar y/o bottom nav */}
           <Route
             path="/*"
@@ -78,7 +81,7 @@ export default function App() {
             <Route path="inventario" element={<Inventario />} />
             <Route path="ventas" element={<Ventas />} />
             <Route path="cierres" element={<CierreVan />} />
-            {/* Redirección para rutas no encontradas */}
+            <Route path="facturas" element={<Facturas />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>

@@ -1,7 +1,18 @@
 // src/BottomNav.jsx
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Home, ShoppingCart, Users, Box, MoreHorizontal, ClipboardList, LogOut, Truck, UserCircle2 } from "lucide-react";
+import {
+  Home,
+  ShoppingCart,
+  Users,
+  Box,
+  MoreHorizontal,
+  ClipboardList,
+  LogOut,
+  Truck,
+  UserCircle2,
+  FileText, // <-- icono para Facturación
+} from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { supabase } from "./supabaseClient";
@@ -87,6 +98,12 @@ export default function BottomNav() {
                 onClick={() => handleNav("/inventario")}
               >
                 <ClipboardList size={18} /> Inventario
+              </button>
+              <button
+                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
+                onClick={() => handleNav("/facturas")}
+              >
+                <FileText size={18} /> Facturación
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
