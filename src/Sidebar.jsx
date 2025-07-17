@@ -1,135 +1,123 @@
-// src/Sidebar.jsx
-import { useNavigate, NavLink } from "react-router-dom";
+// src/components/Sidebar.jsx
+import { Link, useLocation } from "react-router-dom";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
-import { supabase } from "./supabaseClient";
-import { useState } from "react";
+// ICONOS Lucide
 import {
-  Menu as MenuIcon,
-  X as CloseIcon,
-  BarChart2,
+  LayoutDashboard,
   ShoppingCart,
+  FileText,
   Users,
-  Box,
-  ClipboardList,
-  LogOut,
-  Truck,
-  UserCircle2,
-  Receipt
+  Package,
+  Boxes,
+  Repeat,
+  LogOut
 } from "lucide-react";
 
-// MENÚ actualizado con Facturas (y puedes reordenar como prefieras)
-const menuItems = [
-  { to: "/", label: "Dashboard", icon: BarChart2, exact: true },
-  { to: "/ventas", label: "Ventas", icon: ShoppingCart },
-  { to: "/facturas", label: "Facturas", icon: Receipt }, // <--- NUEVO
-  { to: "/clientes", label: "Clientes", icon: Users },
-  { to: "/productos", label: "Productos", icon: Box },
-  { to: "/inventario", label: "Inventario", icon: ClipboardList },
-  { to: "/cierres", label: "Cierre de Van", icon: Truck }
-];
+const ICON_SIZE = 22;
 
 export default function Sidebar() {
-  const navigate = useNavigate();
-  const { usuario, setUsuario } = useUsuario();
+  const { usuario } = useUsuario();
   const { van, setVan } = useVan();
-  const [open, setOpen] = useState(false);
+  const location = useLocation();
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setUsuario(null);
-    setVan(null);
+  // Menú de la app
+  const menu = [
+    {
+      to: "/",
+      icon: <LayoutDashboard size={ICON_SIZE} className="text-blue-400" />,
+      text: "Dashboard",
+    },
+    {
+      to: "/ventas",
+      icon: <ShoppingCart size={ICON_SIZE} className="text-green-500" />,
+      text: "Ventas",
+    },
+    {
+      to: "/facturas",
+      icon: <FileText size={ICON_SIZE} className="text-purple-500" />,
+      text: "Facturas",
+    },
+    {
+      to: "/clientes",
+      icon: <Users size={ICON_SIZE} className="text-yellow-500" />,
+      text: "Clientes",
+    },
+    {
+      to: "/productos",
+      icon: <Package size={ICON_SIZE} className="text-pink-500" />,
+      text: "Productos",
+    },
+    {
+      to: "/inventario",
+      icon: <Boxes size={ICON_SIZE} className="text-teal-500" />,
+      text: "Inventario",
+    },
+    {
+      to: "/cierre-van",
+      icon: <Repeat size={ICON_SIZE} className="text-cyan-600" />,
+      text: "Cierre de Van",
+    },
+  ];
+
+  function handleLogout() {
+    // Aquí va tu lógica de logout (si tienes Supabase, etc)
     localStorage.clear();
-    navigate("/login");
-  };
-
-  function handleChangeVan() {
-    setVan(null);
-    localStorage.removeItem("van");
-    navigate("/van");
+    window.location.href = "/login";
   }
 
-  function handleNavLinkClick() {
-    setOpen(false);
-  }
+  // Mostrar botón de "Cambiar VAN" solo si es admin
+  const mostrarCambiarVan = usuario?.rol === "admin";
 
   return (
-    <>
-      {/* Botón hamburguesa SOLO en móvil */}
-      <button
-        className="fixed top-4 left-4 z-50 lg:hidden bg-blue-700 text-white rounded p-2 shadow focus:outline-none"
-        onClick={() => setOpen(true)}
-        aria-label="Abrir menú"
-        style={{ display: open ? "none" : "block" }}
-      >
-        <MenuIcon size={28} />
-      </button>
-
-      {/* Overlay sólo móvil */}
-      {open && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-40 z-40 lg:hidden"
-          onClick={() => setOpen(false)}
-        />
-      )}
-
-      {/* Sidebar animado */}
-      <aside className={`fixed z-50 top-0 left-0 h-full w-64 bg-slate-900 text-white flex flex-col transition-transform duration-300 
-        ${open ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 lg:static lg:block`}>
-        {/* Header con cerrar menú en mobile */}
-        <div className="flex items-center justify-between p-4 border-b border-slate-800 lg:hidden">
-          <div className="flex items-center gap-2">
-            <UserCircle2 size={24} />
-            <span className="font-bold text-lg">Menú</span>
-          </div>
-          <button onClick={() => setOpen(false)} aria-label="Cerrar menú">
-            <CloseIcon size={28} />
-          </button>
+    <aside className="bg-[#162941] text-white min-h-screen w-[220px] flex flex-col justify-between py-5 px-3">
+      <div>
+        <div className="font-bold text-lg mb-6 ml-2 tracking-wide">
+          TOOLS4CARE
         </div>
-        <div className="flex flex-col gap-1 p-4">
-          {menuItems.map(({ to, label, icon: Icon, exact }) => (
-            <NavLink
-              to={to}
+        <nav className="flex flex-col gap-2">
+          {menu.map(({ to, icon, text }) => (
+            <Link
               key={to}
-              className={({ isActive }) =>
-                (isActive
-                  ? "bg-blue-700 text-white "
-                  : "text-gray-200 hover:bg-blue-800 hover:text-white ") +
-                "flex items-center gap-3 rounded px-3 py-2 transition-all font-medium"
-              }
-              end={!!exact}
-              onClick={handleNavLinkClick}
+              to={to}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium hover:bg-[#23395d] transition ${
+                location.pathname === to ? "bg-[#23395d]" : ""
+              }`}
             >
-              <Icon size={22} className="inline-block" />
-              <span>{label}</span>
-            </NavLink>
+              {icon}
+              <span>{text}</span>
+            </Link>
           ))}
-        </div>
-        <div className="mt-auto p-4 text-xs border-t border-slate-800">
-          <div className="flex items-center gap-1 mb-1">
-            <UserCircle2 size={16} />
-            <span>Usuario: </span>
-            <span className="font-bold">{usuario?.email || "Sin sesión"}</span>
-          </div>
-          <div className="flex items-center gap-1 mb-2">
-            <Truck size={16} />
-            <span>VAN: </span>
-            <span className="font-bold">{van?.nombre_van || "No seleccionada"}</span>
-          </div>
+        </nav>
+      </div>
+
+      <div className="mt-6 flex flex-col gap-3">
+        {mostrarCambiarVan && (
           <button
-            onClick={handleChangeVan}
-            className="mt-1 w-full bg-yellow-400 text-black py-2 rounded font-bold hover:bg-yellow-500 transition"
+            onClick={() => {
+              setVan(null);
+              localStorage.removeItem("van");
+              window.location.href = "/vanselector";
+            }}
+            className="w-full bg-yellow-400 hover:bg-yellow-500 text-black py-2 px-3 rounded-lg font-semibold transition mb-2"
           >
             Cambiar VAN
           </button>
-          <button
-            onClick={handleLogout}
-            className="mt-2 w-full bg-red-600 py-2 rounded font-bold hover:bg-red-700 flex items-center justify-center gap-2"
-          >
-            <LogOut size={18} /> Cerrar sesión
-          </button>
+        )}
+        <button
+          onClick={handleLogout}
+          className="w-full bg-red-600 hover:bg-red-700 py-2 px-3 rounded-lg font-semibold flex items-center gap-2 justify-center"
+        >
+          <LogOut size={20} /> Cerrar sesión
+        </button>
+
+        <div className="text-xs mt-5 text-gray-300">
+          <div className="mb-1">Usuario:</div>
+          <div className="font-semibold">{usuario?.email || "-"}</div>
+          <div className="mb-1 mt-2 text-gray-400">VAN:</div>
+          <div className="font-semibold">{van?.nombre_van || "-"}</div>
         </div>
-      </aside>
-    </>
+      </div>
+    </aside>
   );
 }

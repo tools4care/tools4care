@@ -1,126 +1,149 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import BarcodeScanner from "./BarcodeScanner"; // Tu componente de scanner
 import { supabase } from "./supabaseClient";
 
-export default function AgregarStockModal({ abierto, cerrar, tipo, ubicacionId, onSuccess }) {
+export default function AgregarStockModal({
+  abierto, cerrar, tipo, ubicacionId, onSuccess, modoSuma
+}) {
   const [busqueda, setBusqueda] = useState("");
-  const [resultados, setResultados] = useState([]);
-  const [productoSeleccionado, setProductoSeleccionado] = useState(null);
   const [cantidad, setCantidad] = useState(1);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [buscando, setBuscando] = useState(false);
+  const [scannerAbierto, setScannerAbierto] = useState(false);
+  const [productoSeleccionado, setProductoSeleccionado] = useState(null);
+  const [productos, setProductos] = useState([]);
+  const [mensaje, setMensaje] = useState("");
 
-  // Buscar productos en Supabase (por nombre, marca, código)
-  async function buscarProductos(texto) {
-    setBuscando(true);
-    setBusqueda(texto);
-    setShowDropdown(true);
-    if (!texto.trim()) {
-      setResultados([]);
-      setBuscando(false);
+  // Cargar todos los productos al abrir el modal
+  useEffect(() => {
+    if (!abierto) return;
+    setBusqueda("");
+    setCantidad(1);
+    setProductoSeleccionado(null);
+    setMensaje("");
+    async function cargarProductos() {
+      const { data } = await supabase.from("productos").select("*");
+      setProductos(data || []);
+    }
+    cargarProductos();
+  }, [abierto]);
+
+  // Buscar producto automáticamente cuando cambia la búsqueda (por escaneo o input manual)
+  useEffect(() => {
+    if (!busqueda.trim()) {
+      setProductoSeleccionado(null);
+      setMensaje("");
       return;
     }
-    const { data } = await supabase
-      .from("productos")
-      .select("id, nombre, marca, codigo")
-      .or(
-        `nombre.ilike.%${texto}%,marca.ilike.%${texto}%,codigo.ilike.%${texto}%`
-      )
-      .order("nombre")
-      .limit(20);
-    setResultados(data || []);
-    setBuscando(false);
+    const encontrado = productos.find(
+      p =>
+        (p.codigo && p.codigo.toString().toLowerCase() === busqueda.toLowerCase()) ||
+        (p.nombre && p.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+    );
+    if (encontrado) {
+      setProductoSeleccionado(encontrado);
+      setMensaje("");
+    } else {
+      setProductoSeleccionado(null);
+      setMensaje("Producto no encontrado. Puedes verificar el código o crearlo.");
+    }
+  }, [busqueda, productos]);
+
+  // Handler del scanner
+  function handleBarcodeDetected(codigo) {
+    setBusqueda(codigo);
+    setScannerAbierto(false);
   }
 
-  async function agregarStock(e) {
-    e.preventDefault();
-    if (!productoSeleccionado?.id) return;
+  async function agregarStock() {
+    if (!productoSeleccionado || cantidad <= 0) return;
+    // Aquí tu lógica de agregar stock (ajusta según tu backend)
+    // Ejemplo: sumando a stock_almacen o stock_van
     let tabla = tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let filtro = tipo === "almacen"
-      ? { producto_id: productoSeleccionado.id }
-      : { producto_id: productoSeleccionado.id, van_id: ubicacionId };
-
-    // Busca si ya existe
-    let { data: existente } = await supabase.from(tabla).select("*").match(filtro).maybeSingle();
-
-    if (existente) {
-      await supabase.from(tabla)
-        .update({ cantidad: existente.cantidad + Number(cantidad) })
-        .match(filtro);
-    } else {
-      await supabase.from(tabla)
-        .insert([{ ...filtro, cantidad: Number(cantidad) }]);
-    }
-    onSuccess();
+    let datos = {
+      producto_id: productoSeleccionado.id,
+      cantidad,
+    };
+    if (tipo === "van") datos.van_id = ubicacionId;
+    // Aquí puedes mejorar con UPSERT si lo necesitas
+    await supabase.from(tabla).insert([datos]);
+    if (onSuccess) onSuccess();
     cerrar();
   }
 
   if (!abierto) return null;
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-      <form onSubmit={agregarStock} className="bg-white p-6 rounded shadow w-80">
-        <h2 className="font-bold mb-4">Agregar Stock</h2>
-        <div className="mb-2 relative">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
+      <div className="bg-white p-6 rounded-xl shadow-xl min-w-[350px] max-w-xs w-full">
+        <h3 className="font-bold mb-2">Agregar Stock</h3>
+        <div className="mb-2 flex gap-2">
           <input
-            type="text"
-            className="w-full border rounded p-2"
-            placeholder="Buscar producto por nombre, marca o código"
+            className="border rounded p-2 w-full"
+            placeholder="Escanea o escribe código, nombre..."
             value={busqueda}
-            onChange={e => buscarProductos(e.target.value)}
-            onFocus={() => { setShowDropdown(true); if (busqueda) buscarProductos(busqueda); }}
-            autoComplete="off"
+            onChange={e => setBusqueda(e.target.value)}
+            autoFocus
           />
-          {showDropdown && busqueda && (
-            <div
-              className="absolute z-20 bg-white border rounded shadow max-h-40 w-full overflow-y-auto"
-              onMouseLeave={() => setShowDropdown(false)}
-            >
-              {buscando && <div className="p-2 text-gray-400">Buscando...</div>}
-              {!buscando && resultados.length === 0 && (
-                <div className="p-2 text-gray-400">No hay productos.</div>
-              )}
-              {!buscando && resultados.map(p => (
-                <div
-                  key={p.id}
-                  className={`p-2 cursor-pointer hover:bg-blue-100 ${productoSeleccionado?.id === p.id ? "bg-blue-200" : ""}`}
-                  onClick={() => {
-                    setProductoSeleccionado(p);
-                    setBusqueda(`${p.nombre}${p.marca ? " - " + p.marca : ""}${p.codigo ? " (" + p.codigo + ")" : ""}`);
-                    setShowDropdown(false);
-                  }}
-                >
-                  <span className="font-bold">{p.nombre}</span>
-                  <span className="text-xs text-gray-500 ml-2">{p.marca}</span>
-                  <span className="text-xs text-gray-400 ml-2">{p.codigo}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        {/* Producto seleccionado */}
-        {productoSeleccionado && (
-          <div className="text-xs mb-2 text-green-700">
-            Seleccionado: <b>{productoSeleccionado.nombre}</b> {productoSeleccionado.marca && `- ${productoSeleccionado.marca}`} {productoSeleccionado.codigo && `(${productoSeleccionado.codigo})`}
-          </div>
-        )}
-        <input
-          className="w-full border rounded mb-2 p-2"
-          type="number"
-          required
-          min={1}
-          value={cantidad}
-          onChange={e => setCantidad(e.target.value)}
-        />
-        <div className="flex gap-2 mt-2">
           <button
-            type="submit"
-            className="bg-blue-600 text-white px-4 py-1 rounded"
-            disabled={!productoSeleccionado}
+            className="bg-gray-200 rounded px-2"
+            title="Escanear código"
+            type="button"
+            onClick={() => setScannerAbierto(true)}
+          >
+            <span role="img" aria-label="scan">📷</span>
+          </button>
+        </div>
+
+        {/* Info producto seleccionado */}
+        {productoSeleccionado ? (
+          <div className="bg-blue-50 rounded p-2 mb-2 text-xs">
+            <b>Producto:</b> {productoSeleccionado.nombre} <br />
+            <b>Marca:</b> {productoSeleccionado.marca} <br />
+            <b>Código:</b> {productoSeleccionado.codigo}
+          </div>
+        ) : (
+          mensaje && <div className="bg-yellow-100 text-yellow-900 rounded p-2 mb-2 text-xs">{mensaje}</div>
+        )}
+
+        <input
+          className="border rounded p-2 w-full mb-2"
+          type="number"
+          value={cantidad}
+          min={1}
+          onChange={e => setCantidad(Number(e.target.value))}
+        />
+
+        <div className="flex gap-2">
+          <button
+            className="bg-blue-600 text-white px-4 py-1 rounded flex-1"
+            onClick={agregarStock}
+            disabled={!productoSeleccionado || cantidad <= 0}
           >
             Agregar
           </button>
-          <button type="button" className="bg-gray-300 px-4 py-1 rounded" onClick={cerrar}>Cancelar</button>
+          <button className="bg-gray-300 px-4 py-1 rounded flex-1" onClick={cerrar}>
+            Cancelar
+          </button>
         </div>
-      </form>
+
+        {/* Scanner modal */}
+        {scannerAbierto && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 relative">
+              <h4 className="font-bold mb-2">Escanea código de barras</h4>
+              <BarcodeScanner
+                onDetected={handleBarcodeDetected}
+                cerrar={() => setScannerAbierto(false)}
+              />
+              <button
+                onClick={() => setScannerAbierto(false)}
+                className="absolute top-2 right-2 px-3 py-1 rounded bg-red-600 text-white"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

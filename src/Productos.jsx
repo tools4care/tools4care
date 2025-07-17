@@ -1,6 +1,114 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer
+} from "recharts";
+
+// --- MODAL CREAR SUPLIDOR ---
+function CrearSuplidor({ onCreate }) {
+  const [form, setForm] = useState({
+    nombre: "", contacto: "", telefono: "", direccion: "", email: ""
+  });
+  const [cargando, setCargando] = useState(false);
+
+  async function guardarSuplidor(e) {
+    e.preventDefault();
+    setCargando(true);
+    const { data, error } = await supabase
+      .from("suplidores")
+      .insert([form])
+      .select()
+      .maybeSingle();
+    setCargando(false);
+    if (!error) onCreate(data);
+  }
+
+  return (
+    <form onSubmit={guardarSuplidor} className="p-2 bg-gray-50 rounded mt-2">
+      {["nombre", "contacto", "telefono", "direccion", "email"].map(f => (
+        <input
+          key={f}
+          className="border rounded p-2 w-full mb-1"
+          placeholder={f.charAt(0).toUpperCase() + f.slice(1)}
+          value={form[f]}
+          onChange={e => setForm(prev => ({ ...prev, [f]: e.target.value }))}
+          required={f === "nombre"}
+        />
+      ))}
+      <button className="bg-green-600 text-white rounded px-3 py-1 mt-1 w-full" disabled={cargando}>
+        Guardar suplidor
+      </button>
+    </form>
+  );
+}
+
+// --- MODAL BUSCADOR SUPLIDOR ---
+function BuscadorSuplidor({ value, onChange }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [suplidores, setSuplidores] = useState([]);
+  const [showCrear, setShowCrear] = useState(false);
+
+  useEffect(() => {
+    if (!busqueda.trim()) {
+      setSuplidores([]);
+      return;
+    }
+    async function buscar() {
+      const { data } = await supabase
+        .from("suplidores")
+        .select("*")
+        .ilike("nombre", `%${busqueda}%`);
+      setSuplidores(data || []);
+    }
+    buscar();
+  }, [busqueda]);
+
+  return (
+    <div>
+      <input
+        className="border rounded p-2 w-full"
+        value={busqueda}
+        placeholder="Buscar suplidor..."
+        onChange={e => setBusqueda(e.target.value)}
+      />
+      <div className="max-h-32 overflow-auto mt-1 border rounded bg-white">
+        {suplidores.map(s => (
+          <div
+            key={s.id}
+            className={`p-2 hover:bg-blue-100 cursor-pointer ${value === s.id ? "bg-blue-50" : ""}`}
+            onClick={() => {
+              onChange(s.id, s.nombre);
+              setBusqueda(s.nombre);
+            }}
+          >
+            {s.nombre} <span className="text-xs text-gray-500">{s.contacto}</span>
+          </div>
+        ))}
+      </div>
+      <button
+      type="button"
+        className="text-xs text-blue-700 mt-1"
+        onClick={() => setShowCrear(!showCrear)}
+      >
+        {showCrear ? "Cancelar" : "+ Nuevo suplidor"}
+      </button>
+      {showCrear && (
+        <CrearSuplidor
+          onCreate={s => {
+            onChange(s.id, s.nombre);
+            setBusqueda(s.nombre);
+            setShowCrear(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- OPCIONES DE SIZE ---
+const SIZES_COMUNES = [
+  ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "CAJA", "SACO", "BOLSA"
+];
 
 // --- MODAL RESUMEN DE FACTURA ---
 function ModalResumenFactura({ factura, onClose }) {
@@ -10,29 +118,17 @@ function ModalResumenFactura({ factura, onClose }) {
   useEffect(() => {
     async function fetchDetalle() {
       if (!factura) return;
-      setLoading(true);
       const ventaID = factura.venta_id || factura.id || factura.id_venta;
-      console.log("Factura seleccionada:", factura);
-      console.log("Buscando venta con ID:", ventaID);
-
       if (!ventaID) {
         setDetalle(null);
         setLoading(false);
         return;
       }
-
-      // Consulta con campo productos (jsonb)
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("ventas")
-        .select(
-          "id, fecha, total, cliente:cliente_id (nombre, email, telefono), productos"
-        )
+        .select("id, fecha, total, cliente:cliente_id (nombre, email, telefono), productos")
         .eq("id", ventaID)
         .single();
-
-      if (error) {
-        console.error("Error consultando venta:", error.message);
-      }
       setDetalle(data || null);
       setLoading(false);
     }
@@ -59,8 +155,7 @@ function ModalResumenFactura({ factura, onClose }) {
           <div className="text-red-700">
             No se encontró la factura.<br />
             <span className="text-xs text-gray-500">
-              Revisa en consola (F12) el objeto factura y el ID buscado. 
-              Puede que necesites ajustar el campo ID en el código.
+              Revisa en consola (F12) el objeto factura y el ID buscado.
             </span>
           </div>
         ) : (
@@ -102,7 +197,6 @@ function ModalResumenFactura({ factura, onClose }) {
   );
 }
 
-// --- COMPONENTE PRINCIPAL ---
 export default function Productos() {
   const PAGE_SIZE = 50;
   const [productos, setProductos] = useState([]);
@@ -117,27 +211,42 @@ export default function Productos() {
   const [mensaje, setMensaje] = useState("");
   const [tabActivo, setTabActivo] = useState("editar");
 
+  // Size/Custom size
+  const [sizeCustom, setSizeCustom] = useState("");
+  const [isCustomSize, setIsCustomSize] = useState(false);
+
+  // Suplidor
+  const [suplidorId, setSuplidorId] = useState(null);
+  const [suplidorNombre, setSuplidorNombre] = useState("");
+
+  // Notas
+  const [notaProducto, setNotaProducto] = useState("");
+  const [guardandoNota, setGuardandoNota] = useState(false);
+
   // Métricas
   const [ventasPorMes, setVentasPorMes] = useState([]);
   const [loadingMetricas, setLoadingMetricas] = useState(false);
   const [mesSeleccionado, setMesSeleccionado] = useState("");
   const [clientesVenta, setClientesVenta] = useState([]);
   const [facturaSeleccionada, setFacturaSeleccionada] = useState(null);
-
-  // Modal resumen factura
   const [mostrarModalFactura, setMostrarModalFactura] = useState(false);
+  const [tipoGrafico, setTipoGrafico] = useState("cantidad");
+
+  // Indicadores
+  const [indicadores, setIndicadores] = useState({
+    total: 0, mejorMes: "", peorMes: "", promedio: 0,
+  });
 
   // --- FETCH PRODUCTOS ---
-  useEffect(() => {
-    cargarProductos();
-    // eslint-disable-next-line
-  }, [busqueda, pagina]);
+  useEffect(() => { cargarProductos(); }, [busqueda, pagina]);
 
   async function cargarProductos() {
     setLoading(true);
     let query = supabase
-      .from("productos")
-      .select("*", { count: "exact" })
+      // Debería ser así:
+.from("productos")
+.select("*, suplidor:suplidor_id(nombre)")
+
       .order("nombre", { ascending: true });
 
     if (busqueda.trim()) {
@@ -150,8 +259,9 @@ export default function Productos() {
     const hasta = desde + PAGE_SIZE - 1;
     query = query.range(desde, hasta);
 
-    const { data, error, count } = await query;
-    if (!error) {
+    const { data, count, error } = await query;
+    if (error) setMensaje("Error cargando productos: " + error.message);
+    if (data) {
       setProductos(data || []);
       setTotal(count || 0);
     }
@@ -173,12 +283,16 @@ export default function Productos() {
   // --- MODAL EDITAR / MÉTRICAS ---
   function abrirModal(prod) {
     setProductoActual({ ...prod });
-    setMensaje("");
     setTabActivo("editar");
     setVentasPorMes([]);
     setClientesVenta([]);
     setMesSeleccionado("");
     setFacturaSeleccionada(null);
+    setNotaProducto(prod.notas || "");
+    setSizeCustom("");
+    setIsCustomSize(prod.size && !SIZES_COMUNES.includes(prod.size));
+    setSuplidorId(prod.proveedor || ""); // importante: usar proveedor
+    setSuplidorNombre(prod.suplidor?.nombre || "");
     setModalAbierto(true);
   }
   function cerrarModal() {
@@ -188,6 +302,31 @@ export default function Productos() {
     setClientesVenta([]);
     setMesSeleccionado("");
     setFacturaSeleccionada(null);
+    setNotaProducto("");
+    setIsCustomSize(false);
+    setSizeCustom("");
+    setSuplidorId(null);
+    setSuplidorNombre("");
+  }
+
+  // --- AGREGAR NUEVO PRODUCTO ---
+  function agregarProductoNuevo() {
+    setProductoActual({
+      id: null, codigo: "", nombre: "", marca: "", categoria: "",
+      costo: "", precio: "", notas: "", size: "", proveedor: null,
+    });
+    setMensaje("");
+    setTabActivo("editar");
+    setVentasPorMes([]);
+    setClientesVenta([]);
+    setMesSeleccionado("");
+    setFacturaSeleccionada(null);
+    setNotaProducto("");
+    setIsCustomSize(false);
+    setSizeCustom("");
+    setSuplidorId(null);
+    setSuplidorNombre("");
+    setModalAbierto(true);
   }
 
   // --- GUARDAR/ELIMINAR ---
@@ -205,6 +344,9 @@ export default function Productos() {
       categoria: productoActual.categoria,
       costo: productoActual.costo ? Number(productoActual.costo) : null,
       precio: Number(productoActual.precio),
+      size: isCustomSize ? sizeCustom : productoActual.size,
+      proveedor: suplidorId, // <- campo correcto para la relación
+      notas: notaProducto,
     };
 
     let resultado;
@@ -230,6 +372,14 @@ export default function Productos() {
     cerrarModal();
   }
 
+  // --- GUARDAR NOTA DEL PRODUCTO ---
+  async function guardarNotaProducto() {
+    setGuardandoNota(true);
+    await supabase.from("productos").update({ notas: notaProducto }).eq("id", productoActual.id);
+    setGuardandoNota(false);
+    setMensaje("Nota guardada.");
+  }
+
   // --- MÉTRICAS ---
   async function cargarMetricas() {
     if (!productoActual?.id) return;
@@ -239,11 +389,38 @@ export default function Productos() {
     setMesSeleccionado("");
     setFacturaSeleccionada(null);
 
-    const { data, error } = await supabase.rpc("ventas_producto_por_mes", {
+    const { data } = await supabase.rpc("ventas_producto_por_mes", {
       producto_id_param: productoActual.id
     });
     setVentasPorMes(data || []);
     setLoadingMetricas(false);
+
+    // Calcula indicadores
+    if (data && data.length > 0) {
+      let total, mejorMes, peorMes, promedio;
+      if (tipoGrafico === "cantidad") {
+        total = data.reduce((acc, v) => acc + (v.cantidad_vendida || 0), 0);
+        mejorMes = data.reduce((a, b) => (a.cantidad_vendida > b.cantidad_vendida ? a : b)).mes;
+        peorMes = data.reduce((a, b) => (a.cantidad_vendida < b.cantidad_vendida ? a : b)).mes;
+        promedio = total / data.length;
+      } else {
+        total = data.reduce((acc, v) => acc + (v.total_vendido || 0), 0);
+        mejorMes = data.reduce((a, b) => (a.total_vendido > b.total_vendido ? a : b)).mes;
+        peorMes = data.reduce((a, b) => (a.total_vendido < b.total_vendido ? a : b)).mes;
+        promedio = total / data.length;
+      }
+      setIndicadores({
+        total, mejorMes, peorMes, promedio,
+      });
+    } else {
+      setIndicadores({ total: 0, mejorMes: "", peorMes: "", promedio: 0 });
+    }
+  }
+
+  // --- OPCIONES DE TIPO DE GRÁFICO ---
+  function cambiarTipoGrafico(tipo) {
+    setTipoGrafico(tipo);
+    cargarMetricas();
   }
 
   // --- CLICK EN UNA BARRA DEL GRÁFICO ---
@@ -253,7 +430,7 @@ export default function Productos() {
     setClientesVenta([]);
     setFacturaSeleccionada(null);
     setLoadingMetricas(true);
-    const { data: clientes, error } = await supabase.rpc("clientes_producto_mes", {
+    const { data: clientes } = await supabase.rpc("clientes_producto_mes", {
       producto_id_param: productoActual.id,
       mes_param: data.mes
     });
@@ -267,30 +444,9 @@ export default function Productos() {
     setMostrarModalFactura(true);
   }
 
-  // --- AGREGAR NUEVO PRODUCTO ---
-  function agregarProductoNuevo() {
-    setProductoActual({
-      id: null,
-      codigo: "",
-      nombre: "",
-      marca: "",
-      categoria: "",
-      costo: "",
-      precio: ""
-    });
-    setMensaje("");
-    setTabActivo("editar");
-    setVentasPorMes([]);
-    setClientesVenta([]);
-    setMesSeleccionado("");
-    setFacturaSeleccionada(null);
-    setModalAbierto(true);
-  }
-
   return (
     <div>
       <h2 className="text-2xl font-bold mb-4 text-center">Inventario de Productos</h2>
-
       <div className="max-w-2xl mx-auto mb-4 flex gap-2">
         <input
           type="text"
@@ -306,7 +462,6 @@ export default function Productos() {
           + Agregar producto
         </button>
       </div>
-
       <div className="max-w-4xl mx-auto">
         {loading ? (
           <div className="text-center py-6 text-blue-700 font-bold">Cargando...</div>
@@ -318,6 +473,8 @@ export default function Productos() {
                 <th className="p-2">Nombre</th>
                 <th className="p-2">Marca</th>
                 <th className="p-2">Categoría</th>
+                <th className="p-2">Tamaño</th>
+                <th className="p-2">Suplidor</th>
                 <th className="p-2">Costo</th>
                 <th className="p-2">Precio</th>
               </tr>
@@ -325,7 +482,7 @@ export default function Productos() {
             <tbody>
               {productos.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="text-center text-gray-400 py-5">
+                  <td colSpan="8" className="text-center text-gray-400 py-5">
                     {busqueda ? "Sin resultados para la búsqueda." : "No hay productos."}
                   </td>
                 </tr>
@@ -340,6 +497,8 @@ export default function Productos() {
                     <td className="p-2">{p.nombre}</td>
                     <td className="p-2">{p.marca}</td>
                     <td className="p-2">{p.categoria}</td>
+                    <td className="p-2">{p.size}</td>
+                    <td className="p-2">{p.suplidor?.nombre || ""}</td>
                     <td className="p-2">{p.costo}</td>
                     <td className="p-2">{p.precio}</td>
                   </tr>
@@ -348,7 +507,6 @@ export default function Productos() {
             </tbody>
           </table>
         )}
-
         {/* PAGINACIÓN */}
         <div className="flex justify-between items-center mt-4">
           <button
@@ -373,7 +531,6 @@ export default function Productos() {
           Mostrando {productos.length} de {total} productos.
         </div>
       </div>
-
       {/* --- MODAL EDICIÓN / MÉTRICAS --- */}
       {modalAbierto && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30">
@@ -454,6 +611,52 @@ export default function Productos() {
                     />
                   </div>
                   <div>
+                    <label className="font-bold">Tamaño/Size</label>
+                    <select
+                      className="border rounded p-2 w-full"
+                      value={isCustomSize ? "custom" : (productoActual.size || "")}
+                      onChange={e => {
+                        if (e.target.value === "custom") {
+                          setIsCustomSize(true);
+                        } else {
+                          setIsCustomSize(false);
+                          setProductoActual(prev => ({
+                            ...prev,
+                            size: e.target.value,
+                          }));
+                        }
+                      }}
+                    >
+                      <option value="">Selecciona tamaño</option>
+                      {SIZES_COMUNES.map(sz => (
+                        <option value={sz} key={sz}>{sz}</option>
+                      ))}
+                      <option value="custom">Agregar otro tamaño...</option>
+                    </select>
+                    {isCustomSize && (
+                      <input
+                        className="border rounded p-2 mt-1 w-full"
+                        value={sizeCustom}
+                        placeholder="Escribe el tamaño personalizado"
+                        onChange={e => setSizeCustom(e.target.value)}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label className="font-bold">Suplidor</label>
+                    <BuscadorSuplidor
+                      value={suplidorId}
+                      onChange={(id, nombre) => {
+                        setSuplidorId(id);
+                        setSuplidorNombre(nombre);
+                        setProductoActual(prev => ({
+                          ...prev,
+                          proveedor: id, // guarda en el campo proveedor
+                        }));
+                      }}
+                    />
+                  </div>
+                  <div>
                     <label className="font-bold">Costo</label>
                     <input
                       className="border rounded p-2 w-full"
@@ -477,6 +680,25 @@ export default function Productos() {
                       }
                       required
                     />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="font-bold">Notas del producto</label>
+                    <textarea
+                      className="border rounded p-2 w-full"
+                      value={notaProducto}
+                      placeholder="Observaciones especiales, detalles importantes, etc."
+                      onChange={e => setNotaProducto(e.target.value)}
+                    />
+                    {productoActual.id && (
+                      <button
+                        type="button"
+                        className="bg-blue-600 text-white px-3 py-1 rounded mt-2 text-xs"
+                        onClick={guardarNotaProducto}
+                        disabled={guardandoNota}
+                      >
+                        Guardar nota
+                      </button>
+                    )}
                   </div>
                 </div>
                 {mensaje && (
@@ -504,6 +726,54 @@ export default function Productos() {
             {/* TAB MÉTRICAS */}
             {tabActivo === "metricas" && (
               <div>
+                <div className="mb-2 flex gap-2">
+                  <button
+                    className={`px-3 py-1 rounded text-xs font-bold ${
+                      tipoGrafico === "cantidad" ? "bg-blue-700 text-white" : "bg-gray-200"
+                    }`}
+                    onClick={() => cambiarTipoGrafico("cantidad")}
+                  >
+                    Cantidad vendida
+                  </button>
+                  <button
+                    className={`px-3 py-1 rounded text-xs font-bold ${
+                      tipoGrafico === "valor" ? "bg-blue-700 text-white" : "bg-gray-200"
+                    }`}
+                    onClick={() => cambiarTipoGrafico("valor")}
+                  >
+                    Ventas en $
+                  </button>
+                </div>
+                <div className="my-2">
+                  <span className="inline-block bg-blue-50 rounded p-2 border">
+                    <b>Margen de ganancia:</b>{" "}
+                    {productoActual.costo && productoActual.precio
+                      ? (
+                        ((productoActual.precio - productoActual.costo) /
+                        productoActual.precio * 100
+                        ).toFixed(2) + " %"
+                      ) : "—"
+                    }
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 my-4 text-xs text-center">
+                  <div className="p-2 bg-green-50 rounded shadow">
+                    <b>Total vendido:</b>
+                    <div className="text-lg font-bold">{indicadores.total?.toLocaleString()}</div>
+                  </div>
+                  <div className="p-2 bg-blue-50 rounded shadow">
+                    <b>Mejor mes:</b>
+                    <div className="font-bold">{indicadores.mejorMes || "-"}</div>
+                  </div>
+                  <div className="p-2 bg-red-50 rounded shadow">
+                    <b>Peor mes:</b>
+                    <div className="font-bold">{indicadores.peorMes || "-"}</div>
+                  </div>
+                  <div className="p-2 bg-yellow-50 rounded shadow">
+                    <b>Promedio mensual:</b>
+                    <div className="font-bold">{Number(indicadores.promedio).toFixed(1)}</div>
+                  </div>
+                </div>
                 <h3 className="text-lg font-bold mb-2">Ventas por mes (últimos 12 meses):</h3>
                 {loadingMetricas ? (
                   <div className="text-blue-700 mt-2">Cargando...</div>
@@ -514,7 +784,7 @@ export default function Productos() {
                     <BarChart
                       data={ventasPorMes}
                       margin={{ top: 15, right: 30, left: 0, bottom: 5 }}
-                      onClick={(state) => {
+                      onClick={state => {
                         if (state && state.activeLabel) {
                           handleBarClick(
                             ventasPorMes[state.activeTooltipIndex],
@@ -527,7 +797,10 @@ export default function Productos() {
                       <XAxis dataKey="mes" />
                       <YAxis />
                       <Tooltip />
-                      <Bar dataKey="cantidad_vendida" fill="#3b82f6" />
+                      <Bar
+                        dataKey={tipoGrafico === "valor" ? "total_vendido" : "cantidad_vendida"}
+                        fill={tipoGrafico === "valor" ? "#22c55e" : "#3b82f6"}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
