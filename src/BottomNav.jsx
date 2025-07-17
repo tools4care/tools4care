@@ -11,18 +11,18 @@ import {
   LogOut,
   Truck,
   UserCircle2,
-  FileText, // <-- icono para Facturación
+  FileText,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { supabase } from "./supabaseClient";
 
 const items = [
-  { to: "/", label: "Inicio", icon: Home },
-  { to: "/ventas", label: "Ventas", icon: ShoppingCart },
-  { to: "/productos", label: "Productos", icon: Box },
-  { to: "/clientes", label: "Clientes", icon: Users },
-  { action: "more", label: "Más", icon: MoreHorizontal },
+  { to: "/", label: "Inicio", icon: Home, color: "#2563eb" },         // azul
+  { to: "/ventas", label: "Ventas", icon: ShoppingCart, color: "#059669" }, // verde
+  { to: "/productos", label: "Productos", icon: Box, color: "#a21caf" },    // púrpura
+  { to: "/clientes", label: "Clientes", icon: Users, color: "#f59e42" },    // naranja
+  { action: "more", label: "Más", icon: MoreHorizontal, color: "#64748b" }, // gris
 ];
 
 export default function BottomNav() {
@@ -53,14 +53,14 @@ export default function BottomNav() {
   return (
     <>
       <nav className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 shadow z-50 flex justify-around items-center h-16 lg:hidden">
-        {items.map(({ to, label, icon: Icon, action }) =>
+        {items.map(({ to, label, icon: Icon, action, color }) =>
           action === "more" ? (
             <button
               key="more"
               onClick={() => setShowMore(true)}
               className="flex flex-col items-center justify-center px-2 text-gray-500 hover:text-blue-600 transition"
             >
-              <Icon size={22} />
+              <Icon size={22} color={color} />
               <span className="text-xs">{label}</span>
             </button>
           ) : (
@@ -75,7 +75,7 @@ export default function BottomNav() {
               }
               end={to === "/"}
             >
-              <Icon size={22} />
+              <Icon size={22} color={color} />
               <span className="text-xs">{label}</span>
             </NavLink>
           )
@@ -97,39 +97,39 @@ export default function BottomNav() {
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
                 onClick={() => handleNav("/inventario")}
               >
-                <ClipboardList size={18} /> Inventario
+                <ClipboardList size={18} color="#6366f1" /> Inventario
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
                 onClick={() => handleNav("/facturas")}
               >
-                <FileText size={18} /> Facturación
+                <FileText size={18} color="#a21caf" /> Facturación
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
                 onClick={() => handleNav("/cierres")}
               >
-                <Truck size={18} /> Cierre de Van
+                <Truck size={18} color="#059669" /> Cierre de Van
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-yellow-50 text-left"
                 onClick={handleChangeVan}
               >
-                <Box size={18} /> Cambiar VAN
+                <Box size={18} color="#f59e42" /> Cambiar VAN
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-red-50 text-left"
                 onClick={handleLogout}
               >
-                <LogOut size={18} /> Cerrar sesión
+                <LogOut size={18} color="#dc2626" /> Cerrar sesión
               </button>
             </div>
             <div className="mt-2 pt-2 border-t text-xs text-gray-500">
               <div className="flex items-center gap-1 mb-1">
-                <UserCircle2 size={14} /> Usuario: <b className="ml-1">{usuario?.email || "Sin sesión"}</b>
+                <UserCircle2 size={14} color="#2563eb" /> Usuario: <b className="ml-1">{usuario?.email || "Sin sesión"}</b>
               </div>
               <div className="flex items-center gap-1">
-                <Truck size={14} /> VAN: <b className="ml-1">{van?.nombre_van || "No seleccionada"}</b>
+                <Truck size={14} color="#059669" /> VAN: <b className="ml-1">{van?.nombre_van || "No seleccionada"}</b>
               </div>
             </div>
             <button

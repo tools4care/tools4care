@@ -11,33 +11,44 @@ const FORMAS_PAGO = [
   { key: "otro", label: "Otro" },
 ];
 
+// CLAVE PARA STORAGE DE VENTAS EN PROGRESO
+const STORAGE_KEY = "ventas_en_progreso";
+
 export default function Ventas() {
   const { van } = useVan();
   const { usuario } = useUsuario();
 
-  // Paso 1: Cliente
+  // ----------- ESTADOS LIMPIOS AL INICIAR -----------
   const [busquedaCliente, setBusquedaCliente] = useState("");
   const [clientes, setClientes] = useState([]);
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
   const [mostrarCrearCliente, setMostrarCrearCliente] = useState(false);
 
-  // Paso 2: Productos
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [productosMasVendidos, setProductosMasVendidos] = useState([]);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [mensajeEscaneo, setMensajeEscaneo] = useState("");
+  const [notas, setNotas] = useState(""); // NOTAS GENERALES
 
-  // Paso 3: Pagos
   const [pagos, setPagos] = useState([{ forma: "efectivo", monto: 0 }]);
   const [errorPago, setErrorPago] = useState("");
   const [guardando, setGuardando] = useState(false);
 
-  // Flujo
+  // ------------------- NUEVO: VENTAS EN PROGRESO -------------------
+  const [ventasProgreso, setVentasProgreso] = useState([]);
+  const [modalVentasProgreso, setModalVentasProgreso] = useState(false);
+
   const [paso, setPaso] = useState(1);
 
-  // --- Buscar clientes desde la VISTA ---
+  // Cargar ventas en progreso SOLO al montar (para el listado)
+  useEffect(() => {
+    const guardadas = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    setVentasProgreso(guardadas);
+  }, []);
+
+  // Cargar clientes por búsqueda
   useEffect(() => {
     async function cargarClientes() {
       if (busquedaCliente.trim().length === 0) {
@@ -50,17 +61,15 @@ export default function Ventas() {
         .from("clientes_balance")
         .select("*")
         .or(filtros);
-
       setClientes(data || []);
     }
     cargarClientes();
   }, [busquedaCliente]);
 
-  // --- Cargar productos en stock para la van ---
+  // Cargar productos en stock para la van
   useEffect(() => {
     async function cargarProductos() {
       if (!van) return;
-
       const { data, error } = await supabase
         .from("stock_van")
         .select(`
@@ -89,7 +98,7 @@ export default function Ventas() {
     cargarProductos();
   }, [van, busquedaProducto]);
 
-  // --- Cargar productos más vendidos (top 5) para la van ---
+  // Cargar productos más vendidos (top 5) para la van
   useEffect(() => {
     async function cargarMasVendidos() {
       if (!van) return;
@@ -99,14 +108,61 @@ export default function Ventas() {
     cargarMasVendidos();
   }, [van]);
 
-  // Cálculos totales
+  // Cálculos
   const totalVenta = carrito.reduce((t, p) => t + (p.cantidad * p.precio_unitario), 0);
   const pagado = pagos.reduce((s, p) => s + Number(p.monto || 0), 0);
   const saldoPendiente = totalVenta - pagado;
   const devuelto = pagado > totalVenta ? (pagado - totalVenta) : 0;
   const saldoCliente = clienteSeleccionado?.balance || 0;
 
-  // Funciones para manejar carrito
+  // ----------- VENTAS EN PROGRESO: GUARDAR CADA VEZ QUE CAMBIA ALGO IMPORTANTE -----------
+  useEffect(() => {
+    // Solo guardar si hay productos en carrito o cliente seleccionado
+    if (
+      (carrito.length > 0 || clienteSeleccionado) &&
+      paso < 4 // No guardar si ya terminaste
+    ) {
+      let guardadas = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      // Si ya hay una con el mismo ID (opcional, podrías usar Date.now()), actualiza, si no, agrega
+      const id = window.ventaEnProgresoId || (window.ventaEnProgresoId = Date.now());
+      const nueva = {
+        id,
+        cliente: clienteSeleccionado,
+        carrito,
+        pagos,
+        notas,
+        paso,
+        fecha: new Date().toISOString(),
+      };
+      // Reemplaza o agrega
+      guardadas = guardadas.filter(v => v.id !== id);
+      guardadas.unshift(nueva); // más reciente al inicio
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(guardadas.slice(0, 10))); // máximo 10
+      setVentasProgreso(guardadas.slice(0, 10));
+    }
+  }, [clienteSeleccionado, carrito, pagos, notas, paso]);
+
+  // ----------- FUNCIONES DE FLUJO -----------
+
+  function limpiarVenta() {
+    setBusquedaCliente("");
+    setClientes([]);
+    setClienteSeleccionado(null);
+    setMostrarCrearCliente(false);
+    setBusquedaProducto("");
+    setProductos([]);
+    setCarrito([]);
+    setProductosMasVendidos([]);
+    setScannerOpen(false);
+    setMensajeEscaneo("");
+    setNotas("");
+    setPagos([{ forma: "efectivo", monto: 0 }]);
+    setErrorPago("");
+    setGuardando(false);
+    setPaso(1);
+    window.ventaEnProgresoId = null; // reset id
+  }
+
   function handleAgregarProducto(p) {
     const existe = carrito.find(x => x.producto_id === p.producto_id);
     if (!existe) {
@@ -117,6 +173,7 @@ export default function Ventas() {
         cantidad: 1
       }]);
     }
+    setBusquedaProducto(""); // limpiar área para agregar siguiente
   }
   function handleEditarCantidad(producto_id, cantidad) {
     setCarrito(carrito =>
@@ -129,26 +186,23 @@ export default function Ventas() {
     setCarrito(carrito => carrito.filter(p => p.producto_id !== producto_id));
   }
 
-  // --- INTEGRACIÓN SCANNER ROBUSTA ---
   async function handleCodigoEscaneado(codigo) {
     setScannerOpen(false);
-
     if (!codigo) {
       setMensajeEscaneo("No se pudo leer el código o la cámara no está disponible.");
       return;
     }
     setMensajeEscaneo(""); // limpia mensaje previo
 
-    // Buscar el producto por código (en productos ya cargados)
+    // Buscar el producto por código
     let productoEncontrado = productos.find(
       p => p.productos?.codigo?.toString().trim() === codigo.trim()
     );
 
-    // Si no está cargado en el filtro, buscar en Supabase directo (puede no estar listado por búsqueda actual)
     if (!productoEncontrado && van) {
       const { data } = await supabase
         .from("stock_van")
-        .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca )")
+        .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca)")
         .eq("van_id", van.id)
         .eq("productos.codigo", codigo);
 
@@ -156,7 +210,6 @@ export default function Ventas() {
         productoEncontrado = data[0];
       }
     }
-
     if (productoEncontrado && productoEncontrado.cantidad > 0) {
       handleAgregarProducto(productoEncontrado);
       setMensajeEscaneo(`Producto "${productoEncontrado.productos?.nombre}" agregado!`);
@@ -165,14 +218,12 @@ export default function Ventas() {
     }
   }
 
-  // Guardar venta completa (NO ACTUALIZA YA BALANCE EN CLIENTES)
   async function guardarVenta() {
     setGuardando(true);
     setErrorPago("");
     try {
       if (!usuario?.id) throw new Error("Usuario no sincronizado, reintenta login.");
 
-      // Sumar pagos por tipo
       const pagosMap = {
         efectivo: 0,
         tarjeta: 0,
@@ -205,7 +256,7 @@ export default function Ventas() {
             precio_unitario: p.precio_unitario,
             subtotal: p.cantidad * p.precio_unitario,
           })),
-          notas: "",
+          notas,
           pago: pagado,
           pago_efectivo: pagosMap.efectivo,
           pago_tarjeta: pagosMap.tarjeta,
@@ -248,27 +299,13 @@ export default function Ventas() {
       }
 
       alert("Venta guardada correctamente");
+      limpiarVenta();
 
-      // --- 🔥 Refresca el cliente desde la vista para tener el balance REAL ---
-      if (clienteSeleccionado?.id) {
-        const { data: clienteActualizado } = await supabase
-          .from("clientes_balance")
-          .select("*")
-          .eq("id", clienteSeleccionado.id)
-          .maybeSingle();
-        setClienteSeleccionado(clienteActualizado);
-      }
-
-      // Limpiar estado (o puedes mantener clienteSeleccionado y solo refrescar la info arriba)
-      setClienteSeleccionado(null);
-      setCarrito([]);
-      setPagos([{ forma: "efectivo", monto: 0 }]);
-      setPaso(1);
-      setBusquedaCliente("");
-      setBusquedaProducto("");
-      setProductos([]);
-      setProductosMasVendidos([]);
-      setMensajeEscaneo("");
+      // Elimina venta en progreso asociada (si existe)
+      let guardadas = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      guardadas = guardadas.filter(v => v.id !== window.ventaEnProgresoId);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(guardadas));
+      setVentasProgreso(guardadas);
 
     } catch (err) {
       setErrorPago("Error guardando venta: " + (err?.message || ""));
@@ -278,11 +315,38 @@ export default function Ventas() {
     }
   }
 
-  // Paso 1: Selección de cliente
+  // --- Cargar manualmente una venta en progreso seleccionada ---
+  function handleSeleccionarVentaProgreso(venta) {
+    setClienteSeleccionado(venta.cliente);
+    setCarrito(venta.carrito);
+    setPagos(venta.pagos);
+    setNotas(venta.notas);
+    setPaso(venta.paso);
+    window.ventaEnProgresoId = venta.id;
+    setModalVentasProgreso(false);
+  }
+
+  // --- Eliminar una venta en progreso ---
+  function handleEliminarVentaProgreso(id) {
+    let guardadas = ventasProgreso.filter(v => v.id !== id);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(guardadas));
+    setVentasProgreso(guardadas);
+  }
+
+  // --- Render flujo pasos ---
   function renderPasoCliente() {
     return (
       <div>
-        <h2 className="text-xl font-bold mb-4">Selecciona Cliente</h2>
+        <div className="flex justify-between items-center mb-2">
+          <h2 className="text-xl font-bold">Selecciona Cliente</h2>
+          <button
+            className="text-xs bg-blue-100 px-3 py-2 rounded font-bold"
+            onClick={() => setModalVentasProgreso(true)}
+            type="button"
+          >
+            Ventas en Progreso ({ventasProgreso.length})
+          </button>
+        </div>
         {clienteSeleccionado ? (
           <div className="p-3 mb-2 rounded bg-blue-50 border border-blue-200 flex items-center justify-between">
             <div>
@@ -382,7 +446,6 @@ export default function Ventas() {
     );
   }
 
-  // Paso 2: Selección de productos y carrito
   function renderPasoProductos() {
     return (
       <div>
@@ -481,6 +544,15 @@ export default function Ventas() {
             <div className="font-bold mt-2">Total: ${totalVenta.toFixed(2)}</div>
           </div>
         )}
+        {/* Área de notas */}
+        <div className="mt-4">
+          <textarea
+            className="w-full border rounded p-2"
+            placeholder="Notas para la factura..."
+            value={notas}
+            onChange={e => setNotas(e.target.value)}
+          />
+        </div>
         <div className="flex justify-between mt-4">
           <button
             className="bg-gray-400 text-white px-4 py-2 rounded"
@@ -507,7 +579,6 @@ export default function Ventas() {
     );
   }
 
-  // Paso 3: Pagos y guardado
   function renderPasoPago() {
     function handleChangePago(index, campo, valor) {
       setPagos(arr =>
@@ -524,6 +595,9 @@ export default function Ventas() {
     return (
       <div>
         <h2 className="text-xl font-bold mb-4">Pago</h2>
+        <div className="mb-2">
+          Cliente: <b>{clienteSeleccionado?.nombre || "Venta rápida"}</b>
+        </div>
         <div className="font-semibold mb-2">
           Total a pagar: <span className="text-green-700">${totalVenta.toFixed(2)}</span>
         </div>
@@ -614,8 +688,45 @@ export default function Ventas() {
     return <span>{direccion}</span>;
   }
 
+  // --- MODAL PARA VENTAS EN PROGRESO ---
+  function renderVentasProgresoModal() {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
+        <div className="bg-white p-6 rounded shadow-md w-full max-w-lg relative">
+          <h3 className="font-bold mb-3">Ventas en Progreso</h3>
+          {ventasProgreso.length === 0 ? (
+            <div className="text-gray-400">No hay ventas en progreso.</div>
+          ) : (
+            <ul className="divide-y">
+              {ventasProgreso.map(v => (
+                <li key={v.id} className="py-2 flex justify-between items-center">
+                  <div>
+                    <b>{v.cliente?.nombre || "Venta rápida"}</b>
+                    <div className="text-xs text-gray-500">
+                      Productos: {v.carrito.length} | Fecha: {new Date(v.fecha).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="bg-blue-600 text-white px-3 py-1 rounded text-xs" onClick={() => handleSeleccionarVentaProgreso(v)}>
+                      Retomar
+                    </button>
+                    <button className="bg-red-600 text-white px-2 py-1 rounded text-xs" onClick={() => handleEliminarVentaProgreso(v.id)}>
+                      Eliminar
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button className="absolute top-3 right-3 text-lg" onClick={() => setModalVentasProgreso(false)}>✖</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-lg mx-auto p-4 bg-white rounded shadow my-4">
+      {modalVentasProgreso && renderVentasProgresoModal()}
       {paso === 1 && renderPasoCliente()}
       {paso === 2 && renderPasoProductos()}
       {paso === 3 && renderPasoPago()}
