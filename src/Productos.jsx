@@ -86,7 +86,7 @@ function BuscadorSuplidor({ value, onChange }) {
         ))}
       </div>
       <button
-      type="button"
+        type="button"
         className="text-xs text-blue-700 mt-1"
         onClick={() => setShowCrear(!showCrear)}
       >
@@ -105,12 +105,10 @@ function BuscadorSuplidor({ value, onChange }) {
   );
 }
 
-// --- OPCIONES DE SIZE ---
 const SIZES_COMUNES = [
   ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "CAJA", "SACO", "BOLSA"
 ];
 
-// --- MODAL RESUMEN DE FACTURA ---
 function ModalResumenFactura({ factura, onClose }) {
   const [detalle, setDetalle] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -243,10 +241,8 @@ export default function Productos() {
   async function cargarProductos() {
     setLoading(true);
     let query = supabase
-      // Debería ser así:
-.from("productos")
-.select("*, suplidor:suplidor_id(nombre)")
-
+      .from("productos")
+      .select("*, suplidor:suplidor_id(nombre)")
       .order("nombre", { ascending: true });
 
     if (busqueda.trim()) {
@@ -291,7 +287,7 @@ export default function Productos() {
     setNotaProducto(prod.notas || "");
     setSizeCustom("");
     setIsCustomSize(prod.size && !SIZES_COMUNES.includes(prod.size));
-    setSuplidorId(prod.proveedor || ""); // importante: usar proveedor
+    setSuplidorId(prod.proveedor || "");
     setSuplidorNombre(prod.suplidor?.nombre || "");
     setModalAbierto(true);
   }
@@ -345,7 +341,7 @@ export default function Productos() {
       costo: productoActual.costo ? Number(productoActual.costo) : null,
       precio: Number(productoActual.precio),
       size: isCustomSize ? sizeCustom : productoActual.size,
-      proveedor: suplidorId, // <- campo correcto para la relación
+      proveedor: suplidorId,
       notas: notaProducto,
     };
 
@@ -372,7 +368,6 @@ export default function Productos() {
     cerrarModal();
   }
 
-  // --- GUARDAR NOTA DEL PRODUCTO ---
   async function guardarNotaProducto() {
     setGuardandoNota(true);
     await supabase.from("productos").update({ notas: notaProducto }).eq("id", productoActual.id);
@@ -395,7 +390,6 @@ export default function Productos() {
     setVentasPorMes(data || []);
     setLoadingMetricas(false);
 
-    // Calcula indicadores
     if (data && data.length > 0) {
       let total, mejorMes, peorMes, promedio;
       if (tipoGrafico === "cantidad") {
@@ -417,13 +411,11 @@ export default function Productos() {
     }
   }
 
-  // --- OPCIONES DE TIPO DE GRÁFICO ---
   function cambiarTipoGrafico(tipo) {
     setTipoGrafico(tipo);
     cargarMetricas();
   }
 
-  // --- CLICK EN UNA BARRA DEL GRÁFICO ---
   async function handleBarClick(data, index) {
     if (!data?.mes) return;
     setMesSeleccionado(data.mes);
@@ -438,7 +430,6 @@ export default function Productos() {
     setLoadingMetricas(false);
   }
 
-  // --- SELECCIONAR FACTURA ---
   function seleccionarFactura(factura) {
     setFacturaSeleccionada(factura);
     setMostrarModalFactura(true);
@@ -533,7 +524,7 @@ export default function Productos() {
       </div>
       {/* --- MODAL EDICIÓN / MÉTRICAS --- */}
       {modalAbierto && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-xl p-8 w-full max-w-2xl relative">
             <button
               type="button"
@@ -572,6 +563,9 @@ export default function Productos() {
                     <input
                       className="border rounded p-2 w-full"
                       value={productoActual.codigo}
+                      inputMode="numeric"
+                      autoComplete="off"
+                      pattern="[0-9]*"
                       onChange={e =>
                         setProductoActual({ ...productoActual, codigo: e.target.value })
                       }
@@ -584,6 +578,7 @@ export default function Productos() {
                     <input
                       className="border rounded p-2 w-full"
                       value={productoActual.nombre}
+                      autoComplete="off"
                       onChange={e =>
                         setProductoActual({ ...productoActual, nombre: e.target.value })
                       }
@@ -595,6 +590,7 @@ export default function Productos() {
                     <input
                       className="border rounded p-2 w-full"
                       value={productoActual.marca}
+                      autoComplete="off"
                       onChange={e =>
                         setProductoActual({ ...productoActual, marca: e.target.value })
                       }
@@ -605,6 +601,7 @@ export default function Productos() {
                     <input
                       className="border rounded p-2 w-full"
                       value={productoActual.categoria}
+                      autoComplete="off"
                       onChange={e =>
                         setProductoActual({ ...productoActual, categoria: e.target.value })
                       }
@@ -663,6 +660,9 @@ export default function Productos() {
                       value={productoActual.costo}
                       type="number"
                       step="0.01"
+                      inputMode="numeric"
+                      min="0"
+                      autoComplete="off"
                       onChange={e =>
                         setProductoActual({ ...productoActual, costo: e.target.value })
                       }
@@ -675,6 +675,9 @@ export default function Productos() {
                       value={productoActual.precio}
                       type="number"
                       step="0.01"
+                      inputMode="numeric"
+                      min="0"
+                      autoComplete="off"
                       onChange={e =>
                         setProductoActual({ ...productoActual, precio: e.target.value })
                       }
@@ -684,7 +687,7 @@ export default function Productos() {
                   <div className="md:col-span-2">
                     <label className="font-bold">Notas del producto</label>
                     <textarea
-                      className="border rounded p-2 w-full"
+                      className="border rounded p-2 w-full min-h-[60px]"
                       value={notaProducto}
                       placeholder="Observaciones especiales, detalles importantes, etc."
                       onChange={e => setNotaProducto(e.target.value)}
@@ -704,7 +707,7 @@ export default function Productos() {
                 {mensaje && (
                   <div className="text-blue-700 text-center mt-2">{mensaje}</div>
                 )}
-                <div className="flex gap-2 mt-4">
+                <div className="flex gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
                   <button
                     type="submit"
                     className="flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
