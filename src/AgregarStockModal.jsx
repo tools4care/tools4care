@@ -1,149 +1,275 @@
-import { useState, useEffect } from "react";
-import BarcodeScanner from "./BarcodeScanner"; // Tu componente de scanner
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 
 export default function AgregarStockModal({
-  abierto, cerrar, tipo, ubicacionId, onSuccess, modoSuma
+  abierto,
+  cerrar,
+  tipo = "almacen",
+  ubicacionId = null,
+  onSuccess,
+  modoSuma = false,
 }) {
   const [busqueda, setBusqueda] = useState("");
+  const [opciones, setOpciones] = useState([]);
+  const [seleccion, setSeleccion] = useState(null); // Producto seleccionado
   const [cantidad, setCantidad] = useState(1);
-  const [scannerAbierto, setScannerAbierto] = useState(false);
-  const [productoSeleccionado, setProductoSeleccionado] = useState(null);
-  const [productos, setProductos] = useState([]);
   const [mensaje, setMensaje] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // Cargar todos los productos al abrir el modal
+  const timerRef = useRef();
+
   useEffect(() => {
-    if (!abierto) return;
-    setBusqueda("");
-    setCantidad(1);
-    setProductoSeleccionado(null);
-    setMensaje("");
-    async function cargarProductos() {
-      const { data } = await supabase.from("productos").select("*");
-      setProductos(data || []);
+    if (!abierto) {
+      setBusqueda("");
+      setOpciones([]);
+      setSeleccion(null);
+      setCantidad(1);
+      setMensaje("");
     }
-    cargarProductos();
   }, [abierto]);
 
-  // Buscar producto automáticamente cuando cambia la búsqueda (por escaneo o input manual)
+  // --- BUSQUEDA DINAMICA: cada vez que escribes
   useEffect(() => {
+    if (!abierto) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+
     if (!busqueda.trim()) {
-      setProductoSeleccionado(null);
+      setOpciones([]);
+      setSeleccion(null);
       setMensaje("");
       return;
     }
-    const encontrado = productos.find(
-      p =>
-        (p.codigo && p.codigo.toString().toLowerCase() === busqueda.toLowerCase()) ||
-        (p.nombre && p.nombre.toLowerCase().includes(busqueda.toLowerCase()))
-    );
-    if (encontrado) {
-      setProductoSeleccionado(encontrado);
-      setMensaje("");
-    } else {
-      setProductoSeleccionado(null);
-      setMensaje("Producto no encontrado. Puedes verificar el código o crearlo.");
-    }
-  }, [busqueda, productos]);
 
-  // Handler del scanner
-  function handleBarcodeDetected(codigo) {
-    setBusqueda(codigo);
-    setScannerAbierto(false);
+    timerRef.current = setTimeout(() => {
+      buscarOpciones(busqueda.trim());
+    }, 300);
+
+    return () => clearTimeout(timerRef.current);
+    // eslint-disable-next-line
+  }, [busqueda]);
+
+  // Busca tanto en inventario (por ubicacion) como en productos
+  async function buscarOpciones(filtro) {
+    setLoading(true);
+    setOpciones([]);
+    setSeleccion(null);
+    setMensaje("");
+
+    // Busca en inventario actual
+    let tabla = tipo === "almacen" ? "stock_almacen" : "stock_van";
+    let query = supabase
+      .from(tabla)
+      .select("id, cantidad, producto_id, productos(nombre, marca, codigo)")
+      .or(
+        `productos.codigo.ilike.%${filtro}%,productos.nombre.ilike.%${filtro}%,productos.marca.ilike.%${filtro}%`
+      );
+    if (tipo === "van") query = query.eq("van_id", ubicacionId);
+    let { data: inventarioData } = await query;
+
+    // Busca en productos si no existe o para nuevos
+    let { data: productosData } = await supabase
+      .from("productos")
+      .select("*")
+      .or(
+        `codigo.ilike.%${filtro}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`
+      );
+
+    // Normaliza para no duplicar (si está ya en inventario, ignora en productos)
+    let inventarioIds = (inventarioData || []).map(x => x.producto_id);
+    let productosSoloNuevos = (productosData || []).filter(
+      p => !inventarioIds.includes(p.id)
+    );
+    // Junta y normaliza
+    let opcionesTodas = [
+      ...(inventarioData || []).map(x => ({
+        ...x.productos,
+        producto_id: x.producto_id,
+        enInventario: true,
+        cantidad: x.cantidad,
+      })),
+      ...(productosSoloNuevos || []).map(x => ({
+        ...x,
+        producto_id: x.id,
+        enInventario: false,
+        cantidad: 0,
+      })),
+    ];
+
+    setOpciones(opcionesTodas);
+    setLoading(false);
+
+    // Si hay coincidencia exacta, selecciona y muestra mensaje
+    let exact = opcionesTodas.find(
+      opt =>
+        opt.codigo?.toLowerCase() === filtro.toLowerCase() ||
+        opt.nombre?.toLowerCase() === filtro.toLowerCase() ||
+        opt.marca?.toLowerCase() === filtro.toLowerCase()
+    );
+    if (exact) {
+      setSeleccion(exact);
+      setMensaje("¡Coincidencia exacta encontrada! Listo para agregar stock.");
+    } else {
+      setSeleccion(null);
+      setMensaje(
+        opcionesTodas.length === 0
+          ? "No encontrado. Puedes crearlo en Productos."
+          : "Seleccione el producto correcto de la lista."
+      );
+    }
   }
 
-  async function agregarStock() {
-    if (!productoSeleccionado || cantidad <= 0) return;
-    // Aquí tu lógica de agregar stock (ajusta según tu backend)
-    // Ejemplo: sumando a stock_almacen o stock_van
+  async function agregarStock(e) {
+    e.preventDefault();
+    if (!seleccion || !seleccion.producto_id) return;
+
     let tabla = tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let datos = {
-      producto_id: productoSeleccionado.id,
-      cantidad,
+    let payload = {
+      producto_id: seleccion.producto_id,
+      cantidad: Number(cantidad),
     };
-    if (tipo === "van") datos.van_id = ubicacionId;
-    // Aquí puedes mejorar con UPSERT si lo necesitas
-    await supabase.from(tabla).insert([datos]);
-    if (onSuccess) onSuccess();
-    cerrar();
+    if (tipo === "van") payload.van_id = ubicacionId;
+
+    // Si ya existe en inventario y modo suma, suma stock
+    if (seleccion.enInventario && modoSuma) {
+      let { error } = await supabase
+        .from(tabla)
+        .update({ cantidad: seleccion.cantidad + Number(cantidad) })
+        .eq("producto_id", seleccion.producto_id)
+        .maybeSingle();
+      if (!error) {
+        onSuccess && onSuccess();
+        cerrar();
+      }
+      return;
+    }
+
+    // Si es nuevo en inventario
+    let { error } = await supabase.from(tabla).insert([payload]);
+    if (!error) {
+      onSuccess && onSuccess();
+      cerrar();
+    }
   }
 
   if (!abierto) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
-      <div className="bg-white p-6 rounded-xl shadow-xl min-w-[350px] max-w-xs w-full">
-        <h3 className="font-bold mb-2">Agregar Stock</h3>
-        <div className="mb-2 flex gap-2">
-          <input
-            className="border rounded p-2 w-full"
-            placeholder="Escanea o escribe código, nombre..."
-            value={busqueda}
-            onChange={e => setBusqueda(e.target.value)}
-            autoFocus
-          />
-          <button
-            className="bg-gray-200 rounded px-2"
-            title="Escanear código"
-            type="button"
-            onClick={() => setScannerAbierto(true)}
-          >
-            <span role="img" aria-label="scan">📷</span>
-          </button>
-        </div>
+    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+      <form
+        className="bg-white p-6 rounded-xl w-[380px] shadow-xl"
+        onSubmit={agregarStock}
+        autoComplete="off"
+      >
+        <h2 className="font-bold mb-2 text-lg">Agregar Stock</h2>
+        <input
+          className="border p-2 rounded w-full mb-2 font-mono"
+          placeholder="Escanea o busca por código, nombre o marca"
+          value={busqueda}
+          onChange={e => {
+            setBusqueda(e.target.value);
+            setSeleccion(null);
+            setMensaje("");
+          }}
+          autoFocus
+        />
 
-        {/* Info producto seleccionado */}
-        {productoSeleccionado ? (
-          <div className="bg-blue-50 rounded p-2 mb-2 text-xs">
-            <b>Producto:</b> {productoSeleccionado.nombre} <br />
-            <b>Marca:</b> {productoSeleccionado.marca} <br />
-            <b>Código:</b> {productoSeleccionado.codigo}
-          </div>
+        {/* Lista de opciones */}
+        {loading ? (
+          <div className="text-blue-500 mb-2">Buscando...</div>
         ) : (
-          mensaje && <div className="bg-yellow-100 text-yellow-900 rounded p-2 mb-2 text-xs">{mensaje}</div>
+          opciones.length > 0 && (
+            <ul className="border rounded max-h-40 overflow-y-auto mb-3 bg-white">
+              {opciones.map((opt, idx) => {
+                // ¿Coincidencia exacta?
+                let isExact =
+                  (busqueda &&
+                    (opt.codigo?.toLowerCase() === busqueda.toLowerCase() ||
+                      opt.nombre?.toLowerCase() === busqueda.toLowerCase() ||
+                      opt.marca?.toLowerCase() === busqueda.toLowerCase()));
+                return (
+                  <li
+                    key={opt.producto_id}
+                    className={`p-2 border-b cursor-pointer flex flex-col ${
+                      isExact
+                        ? "bg-green-100 text-green-900 font-bold"
+                        : "hover:bg-blue-50"
+                    }`}
+                    onClick={() => {
+                      setSeleccion(opt);
+                      setBusqueda(
+                        opt.codigo
+                          ? opt.codigo
+                          : opt.nombre || opt.marca || ""
+                      );
+                      setMensaje(
+                        isExact
+                          ? "¡Coincidencia exacta encontrada! Listo para agregar stock."
+                          : "Producto seleccionado. Verifica antes de agregar."
+                      );
+                    }}
+                  >
+                    <span>
+                      <b>{opt.nombre}</b> {opt.marca && <>- {opt.marca}</>}
+                    </span>
+                    <span className="text-xs text-gray-600 font-mono">
+                      Código: {opt.codigo || "-"}
+                    </span>
+                    <span className="text-xs">
+                      {opt.enInventario
+                        ? `Inventario actual: ${opt.cantidad}`
+                        : "Nuevo en inventario"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        )}
+
+        {/* Mensaje confirmación */}
+        {mensaje && (
+          <div
+            className={`mb-2 p-2 rounded text-center ${
+              seleccion
+                ? "bg-green-100 text-green-900"
+                : opciones.length === 0
+                ? "bg-red-100 text-red-800"
+                : "bg-yellow-100 text-yellow-800"
+            }`}
+          >
+            {mensaje}
+          </div>
         )}
 
         <input
-          className="border rounded p-2 w-full mb-2"
           type="number"
-          value={cantidad}
+          className="border p-2 rounded w-full mb-2"
           min={1}
-          onChange={e => setCantidad(Number(e.target.value))}
+          value={cantidad}
+          onChange={e => setCantidad(e.target.value)}
+          disabled={!seleccion}
         />
-
-        <div className="flex gap-2">
+        <div className="flex gap-2 mt-2">
           <button
-            className="bg-blue-600 text-white px-4 py-1 rounded flex-1"
-            onClick={agregarStock}
-            disabled={!productoSeleccionado || cantidad <= 0}
+            type="submit"
+            className="bg-blue-700 text-white px-4 py-2 rounded w-full"
+            disabled={!seleccion}
           >
             Agregar
           </button>
-          <button className="bg-gray-300 px-4 py-1 rounded flex-1" onClick={cerrar}>
+          <button
+            type="button"
+            className="bg-gray-300 px-4 py-2 rounded"
+            onClick={cerrar}
+          >
             Cancelar
           </button>
         </div>
-
-        {/* Scanner modal */}
-        {scannerAbierto && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 relative">
-              <h4 className="font-bold mb-2">Escanea código de barras</h4>
-              <BarcodeScanner
-                onDetected={handleBarcodeDetected}
-                cerrar={() => setScannerAbierto(false)}
-              />
-              <button
-                onClick={() => setScannerAbierto(false)}
-                className="absolute top-2 right-2 px-3 py-1 rounded bg-red-600 text-white"
-              >
-                ×
-              </button>
-            </div>
+        {!seleccion && (
+          <div className="mt-3 text-xs text-gray-400 text-center">
+            ¿No aparece? <b>Primero crea el producto</b> desde el módulo de productos.
           </div>
         )}
-      </div>
+      </form>
     </div>
   );
 }

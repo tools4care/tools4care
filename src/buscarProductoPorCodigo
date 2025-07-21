@@ -1,0 +1,17 @@
+async function buscarProductoPorCodigo(codigo) {
+  // Si tu inventario ya está cargado en memoria, puedes filtrar local:
+  // const prod = productos.find(p => p.codigo_barra === codigo);
+
+  // O puedes buscar en Supabase directo:
+  const { data, error } = await supabase
+    .from('productos')
+    .select('*')
+    .eq('codigo_barra', codigo)
+    .single();
+  if (data) {
+    // Muestra el producto, selecciona, etc.
+    setProductoSeleccionado(data);
+  } else {
+    alert("Producto no encontrado");
+  }
+}
