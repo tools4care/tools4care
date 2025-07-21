@@ -17,6 +17,7 @@ export default function Inventario() {
   const [modalTraspasoAbierto, setModalTraspasoAbierto] = useState(false);
   const [inventario, setInventario] = useState([]);
   const [busqueda, setBusqueda] = useState(""); // filtro/buscador
+  const [error, setError] = useState("");
 
   // Cargar ubicaciones: almacén + vans
   useEffect(() => {
@@ -38,25 +39,31 @@ export default function Inventario() {
   // Carga inventario según selección
   useEffect(() => {
     async function fetchInventario() {
+      setError("");
       if (!seleccion) return;
       let tabla = seleccion.tipo === "almacen" ? "stock_almacen" : "stock_van";
-      let query = supabase.from(tabla).select("id, producto_id, cantidad, productos(nombre, marca)");
+      // Incluimos el campo 'codigo'
+      let query = supabase.from(tabla).select("id, producto_id, cantidad, productos(nombre, marca, codigo)");
       if (seleccion.tipo === "van") {
         query = query.eq("van_id", seleccion.id);
       }
-      const { data } = await query;
+      const { data, error } = await query;
+      if (error) setError(error.message);
       setInventario(data || []);
     }
     fetchInventario();
   }, [seleccion, refrescar]);
 
-  // Buscador de producto
+  // Buscador de producto (por nombre, marca o código)
   const inventarioFiltrado = inventario.filter(item => {
     const nombre = item.productos?.nombre?.toLowerCase() || "";
     const marca = item.productos?.marca?.toLowerCase() || "";
+    const codigo = item.productos?.codigo?.toLowerCase() || "";
+    const filtro = busqueda.toLowerCase();
     return (
-      nombre.includes(busqueda.toLowerCase()) ||
-      marca.includes(busqueda.toLowerCase())
+      nombre.includes(filtro) ||
+      marca.includes(filtro) ||
+      codigo.includes(filtro)
     );
   });
 
@@ -80,9 +87,10 @@ export default function Inventario() {
         </select>
         <input
           className="border p-2 rounded"
-          placeholder="Buscar producto o marca"
+          placeholder="Buscar producto, marca o código"
           value={busqueda}
           onChange={e => setBusqueda(e.target.value)}
+          autoFocus
         />
         <button
           className="bg-blue-600 text-white px-3 py-1 rounded"
@@ -97,6 +105,13 @@ export default function Inventario() {
           Transferir Stock
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 mb-2 rounded">
+          <b>Error al cargar inventario:</b> {error}
+        </div>
+      )}
+
       {/* Renderiza inventario */}
       <div className="bg-white rounded shadow p-4">
         {inventarioFiltrado.length === 0 ? (
@@ -105,6 +120,7 @@ export default function Inventario() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-100">
+                <th className="p-2">Código</th>
                 <th className="p-2">Producto</th>
                 <th className="p-2">Marca</th>
                 <th className="p-2">Cantidad</th>
@@ -113,6 +129,7 @@ export default function Inventario() {
             <tbody>
               {inventarioFiltrado.map((item) => (
                 <tr key={`${item.producto_id}_${seleccion.key}`}>
+                  <td className="p-2 font-mono">{item.productos?.codigo || "-"}</td>
                   <td className="p-2">{item.productos?.nombre}</td>
                   <td className="p-2">{item.productos?.marca}</td>
                   <td className="p-2">{item.cantidad}</td>
