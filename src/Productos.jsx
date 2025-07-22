@@ -1,8 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer
 } from "recharts";
+
+// --- Safe Area Padding para iOS/Android ---
+function getSafeTop() {
+  if (typeof window !== "undefined" && window.visualViewport) {
+    return window.visualViewport.offsetTop || 0;
+  }
+  return 0;
+}
 
 // --- MODAL CREAR SUPLIDOR ---
 function CrearSuplidor({ onCreate }) {
@@ -109,6 +117,7 @@ const SIZES_COMUNES = [
   ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "CAJA", "SACO", "BOLSA"
 ];
 
+// --- MODAL RESUMEN DE FACTURA ---
 function ModalResumenFactura({ factura, onClose }) {
   const [detalle, setDetalle] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -195,6 +204,53 @@ function ModalResumenFactura({ factura, onClose }) {
   );
 }
 
+// --- MODAL DE PRODUCTO: Safe area, swipe down ---
+function ModalProducto({ children, onClose, modalAbierto, safeTop = 28 }) {
+  const ref = useRef();
+  // --- Swipe Down para cerrar ---
+  useEffect(() => {
+    if (!modalAbierto) return;
+    let touchStartY = null;
+    let deltaY = 0;
+    function handleTouchStart(e) {
+      touchStartY = e.touches[0].clientY;
+    }
+    function handleTouchMove(e) {
+      if (touchStartY == null) return;
+      deltaY = e.touches[0].clientY - touchStartY;
+      if (deltaY > 50) {
+        onClose();
+      }
+    }
+    const el = ref.current;
+    if (el) {
+      el.addEventListener("touchstart", handleTouchStart);
+      el.addEventListener("touchmove", handleTouchMove);
+    }
+    return () => {
+      if (el) {
+        el.removeEventListener("touchstart", handleTouchStart);
+        el.removeEventListener("touchmove", handleTouchMove);
+      }
+    };
+  }, [modalAbierto, onClose]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
+      <div
+        ref={ref}
+        className="bg-white rounded-t-xl shadow-xl w-full max-w-2xl relative flex flex-col h-[90dvh] overflow-y-auto"
+        style={{
+          paddingTop: `calc(${safeTop}px + env(safe-area-inset-top, 0px))`
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// --------- COMPONENTE PRINCIPAL ---------
 export default function Productos() {
   const PAGE_SIZE = 50;
   const [productos, setProductos] = useState([]);
@@ -435,6 +491,7 @@ export default function Productos() {
     setMostrarModalFactura(true);
   }
 
+  // ------ RENDER ---------
   return (
     <div>
       <h2 className="text-2xl font-bold mb-4 text-center">Inventario de Productos</h2>
@@ -525,367 +582,346 @@ export default function Productos() {
 
       {/* --- MODAL EDICIÓN / MÉTRICAS --- */}
       {modalAbierto && (
-        <div
-          className="fixed inset-0 z-30 flex items-end sm:items-center justify-center bg-black/40 overflow-y-auto"
-          onClick={cerrarModal}
+        <ModalProducto
+          onClose={cerrarModal}
+          modalAbierto={modalAbierto}
+          safeTop={getSafeTop()}
         >
-          <div
-            className="w-full max-w-2xl bg-white rounded-t-3xl sm:rounded-xl shadow-xl px-2 pt-3 pb-28 sm:pb-6 relative animate-modal-in overflow-y-auto"
-            onClick={e => e.stopPropagation()}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            // --- SWIPE DOWN PARA MOBILE ---
-            onTouchStart={e => { window.__swipeY = e.touches[0].clientY; }}
-            onTouchMove={e => {
-              if (window.__swipeY != null) {
-                const delta = e.touches[0].clientY - window.__swipeY;
-                if (delta > 60) {
-                  cerrarModal();
-                  window.__swipeY = null;
-                }
-              }
-            }}
-            onTouchEnd={() => { window.__swipeY = null; }}
+          <button
+            type="button"
+            className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
+            onClick={cerrarModal}
+            title="Cerrar"
+            style={{ zIndex: 100 }}
           >
-            {/* Drag bar visual solo en móvil */}
-            <div className="w-12 h-1.5 rounded bg-gray-300 mx-auto mb-2 sm:hidden" />
+            ×
+          </button>
+          {/* Tabs: Editar / Métricas */}
+          <div className="flex mb-4 border-b mt-2">
             <button
-              type="button"
-              className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
-              onClick={cerrarModal}
-              title="Cerrar"
+              className={`px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+              onClick={() => setTabActivo("editar")}
             >
-              ×
+              Editar producto
             </button>
-            {/* Tabs: Editar / Métricas */}
-            <div className="flex mb-4 border-b">
+            {productoActual.id && (
               <button
-                className={`px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
-                onClick={() => setTabActivo("editar")}
+                className={`px-6 py-2 font-bold ${tabActivo === "metricas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+                onClick={() => {
+                  setTabActivo("metricas");
+                  cargarMetricas();
+                }}
               >
-                Editar producto
+                Métricas
               </button>
-              {productoActual.id && (
-                <button
-                  className={`px-6 py-2 font-bold ${tabActivo === "metricas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
-                  onClick={() => {
-                    setTabActivo("metricas");
-                    cargarMetricas();
-                  }}
-                >
-                  Métricas
-                </button>
-              )}
-            </div>
-            {/* TAB EDITAR */}
-            {tabActivo === "editar" && (
-              <form onSubmit={guardarProducto} autoComplete="off">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div>
-                    <label className="font-bold">Código/UPC*</label>
-                    <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.codigo}
-                      inputMode="numeric"
-                      autoComplete="off"
-                      pattern="[0-9]*"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, codigo: e.target.value })
-                      }
-                      required
-                      autoFocus
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold">Nombre*</label>
-                    <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.nombre}
-                      autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, nombre: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold">Marca</label>
-                    <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.marca}
-                      autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, marca: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold">Categoría</label>
-                    <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.categoria}
-                      autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, categoria: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold">Tamaño/Size</label>
-                    <select
-                      className="border rounded p-2 w-full"
-                      value={isCustomSize ? "custom" : (productoActual.size || "")}
-                      onChange={e => {
-                        if (e.target.value === "custom") {
-                          setIsCustomSize(true);
-                        } else {
-                          setIsCustomSize(false);
-                          setProductoActual(prev => ({
-                            ...prev,
-                            size: e.target.value,
-                          }));
-                        }
-                      }}
-                    >
-                      <option value="">Selecciona tamaño</option>
-                      {SIZES_COMUNES.map(sz => (
-                        <option value={sz} key={sz}>{sz}</option>
-                      ))}
-                      <option value="custom">Agregar otro tamaño...</option>
-                    </select>
-                    {isCustomSize && (
-                      <input
-                        className="border rounded p-2 mt-1 w-full"
-                        value={sizeCustom}
-                        placeholder="Escribe el tamaño personalizado"
-                        onChange={e => setSizeCustom(e.target.value)}
-                      />
-                    )}
-                  </div>
-                  <div>
-                    <label className="font-bold">Suplidor</label>
-                    <BuscadorSuplidor
-                      value={suplidorId}
-                      onChange={(id, nombre) => {
-                        setSuplidorId(id);
-                        setSuplidorNombre(nombre);
+            )}
+          </div>
+          {/* TAB EDITAR */}
+          {tabActivo === "editar" && (
+            <form onSubmit={guardarProducto}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold">Código/UPC*</label>
+                  <input
+                    className="border rounded p-2 w-full"
+                    value={productoActual.codigo}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    pattern="[0-9]*"
+                    onChange={e =>
+                      setProductoActual({ ...productoActual, codigo: e.target.value })
+                    }
+                    required
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Nombre*</label>
+                  <input
+                    className="border rounded p-2 w-full"
+                    value={productoActual.nombre}
+                    autoComplete="off"
+                    onChange={e =>
+                      setProductoActual({ ...productoActual, nombre: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Marca</label>
+                  <input
+                    className="border rounded p-2 w-full"
+                    value={productoActual.marca}
+                    autoComplete="off"
+                    onChange={e =>
+                      setProductoActual({ ...productoActual, marca: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Categoría</label>
+                  <input
+                    className="border rounded p-2 w-full"
+                    value={productoActual.categoria}
+                    autoComplete="off"
+                    onChange={e =>
+                      setProductoActual({ ...productoActual, categoria: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Tamaño/Size</label>
+                  <select
+                    className="border rounded p-2 w-full"
+                    value={isCustomSize ? "custom" : (productoActual.size || "")}
+                    onChange={e => {
+                      if (e.target.value === "custom") {
+                        setIsCustomSize(true);
+                      } else {
+                        setIsCustomSize(false);
                         setProductoActual(prev => ({
                           ...prev,
-                          proveedor: id, // guarda en el campo proveedor
+                          size: e.target.value,
                         }));
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold">Costo</label>
-                    <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.costo}
-                      type="number"
-                      step="0.01"
-                      inputMode="numeric"
-                      min="0"
-                      autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, costo: e.target.value })
                       }
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold">Precio*</label>
-                    <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.precio}
-                      type="number"
-                      step="0.01"
-                      inputMode="numeric"
-                      min="0"
-                      autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, precio: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="font-bold">Notas del producto</label>
-                    <textarea
-                      className="border rounded p-2 w-full min-h-[60px]"
-                      value={notaProducto}
-                      placeholder="Observaciones especiales, detalles importantes, etc."
-                      onChange={e => setNotaProducto(e.target.value)}
-                    />
-                    {productoActual.id && (
-                      <button
-                        type="button"
-                        className="bg-blue-600 text-white px-3 py-1 rounded mt-2 text-xs"
-                        onClick={guardarNotaProducto}
-                        disabled={guardandoNota}
-                      >
-                        Guardar nota
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {mensaje && (
-                  <div className="text-blue-700 text-center mt-2">{mensaje}</div>
-                )}
-                {/* Sticky botones */}
-                <div className="flex gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
-                  <button
-                    type="submit"
-                    className="flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
+                    }}
                   >
-                    {productoActual.id ? "Guardar Cambios" : "Agregar producto"}
-                  </button>
+                    <option value="">Selecciona tamaño</option>
+                    {SIZES_COMUNES.map(sz => (
+                      <option value={sz} key={sz}>{sz}</option>
+                    ))}
+                    <option value="custom">Agregar otro tamaño...</option>
+                  </select>
+                  {isCustomSize && (
+                    <input
+                      className="border rounded p-2 mt-1 w-full"
+                      value={sizeCustom}
+                      placeholder="Escribe el tamaño personalizado"
+                      onChange={e => setSizeCustom(e.target.value)}
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="font-bold">Suplidor</label>
+                  <BuscadorSuplidor
+                    value={suplidorId}
+                    onChange={(id, nombre) => {
+                      setSuplidorId(id);
+                      setSuplidorNombre(nombre);
+                      setProductoActual(prev => ({
+                        ...prev,
+                        proveedor: id,
+                      }));
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Costo</label>
+                  <input
+                    className="border rounded p-2 w-full"
+                    value={productoActual.costo}
+                    type="number"
+                    step="0.01"
+                    inputMode="numeric"
+                    min="0"
+                    autoComplete="off"
+                    onChange={e =>
+                      setProductoActual({ ...productoActual, costo: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Precio*</label>
+                  <input
+                    className="border rounded p-2 w-full"
+                    value={productoActual.precio}
+                    type="number"
+                    step="0.01"
+                    inputMode="numeric"
+                    min="0"
+                    autoComplete="off"
+                    onChange={e =>
+                      setProductoActual({ ...productoActual, precio: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="font-bold">Notas del producto</label>
+                  <textarea
+                    className="border rounded p-2 w-full min-h-[60px]"
+                    value={notaProducto}
+                    placeholder="Observaciones especiales, detalles importantes, etc."
+                    onChange={e => setNotaProducto(e.target.value)}
+                  />
                   {productoActual.id && (
                     <button
                       type="button"
-                      className="flex-1 bg-red-600 text-white rounded px-5 py-2"
-                      onClick={eliminarProducto}
+                      className="bg-blue-600 text-white px-3 py-1 rounded mt-2 text-xs"
+                      onClick={guardarNotaProducto}
+                      disabled={guardandoNota}
                     >
-                      Eliminar
+                      Guardar nota
                     </button>
                   )}
                 </div>
-              </form>
-            )}
-            {/* TAB MÉTRICAS */}
-            {tabActivo === "metricas" && (
-              <div>
-                <div className="mb-2 flex gap-2">
+              </div>
+              {mensaje && (
+                <div className="text-blue-700 text-center mt-2">{mensaje}</div>
+              )}
+              <div className="flex gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
+                <button
+                  type="submit"
+                  className="flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
+                >
+                  {productoActual.id ? "Guardar Cambios" : "Agregar producto"}
+                </button>
+                {productoActual.id && (
                   <button
-                    className={`px-3 py-1 rounded text-xs font-bold ${
-                      tipoGrafico === "cantidad" ? "bg-blue-700 text-white" : "bg-gray-200"
-                    }`}
-                    onClick={() => cambiarTipoGrafico("cantidad")}
+                    type="button"
+                    className="flex-1 bg-red-600 text-white rounded px-5 py-2"
+                    onClick={eliminarProducto}
                   >
-                    Cantidad vendida
+                    Eliminar
                   </button>
-                  <button
-                    className={`px-3 py-1 rounded text-xs font-bold ${
-                      tipoGrafico === "valor" ? "bg-blue-700 text-white" : "bg-gray-200"
-                    }`}
-                    onClick={() => cambiarTipoGrafico("valor")}
-                  >
-                    Ventas en $
-                  </button>
-                </div>
-                <div className="my-2">
-                  <span className="inline-block bg-blue-50 rounded p-2 border">
-                    <b>Margen de ganancia:</b>{" "}
-                    {productoActual.costo && productoActual.precio
-                      ? (
-                        ((productoActual.precio - productoActual.costo) /
-                        productoActual.precio * 100
-                        ).toFixed(2) + " %"
-                      ) : "—"
-                    }
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 my-4 text-xs text-center">
-                  <div className="p-2 bg-green-50 rounded shadow">
-                    <b>Total vendido:</b>
-                    <div className="text-lg font-bold">{indicadores.total?.toLocaleString()}</div>
-                  </div>
-                  <div className="p-2 bg-blue-50 rounded shadow">
-                    <b>Mejor mes:</b>
-                    <div className="font-bold">{indicadores.mejorMes || "-"}</div>
-                  </div>
-                  <div className="p-2 bg-red-50 rounded shadow">
-                    <b>Peor mes:</b>
-                    <div className="font-bold">{indicadores.peorMes || "-"}</div>
-                  </div>
-                  <div className="p-2 bg-yellow-50 rounded shadow">
-                    <b>Promedio mensual:</b>
-                    <div className="font-bold">{Number(indicadores.promedio).toFixed(1)}</div>
-                  </div>
-                </div>
-                <h3 className="text-lg font-bold mb-2">Ventas por mes (últimos 12 meses):</h3>
-                {loadingMetricas ? (
-                  <div className="text-blue-700 mt-2">Cargando...</div>
-                ) : ventasPorMes.length === 0 ? (
-                  <div className="text-gray-400 mt-2">No hay ventas registradas.</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart
-                      data={ventasPorMes}
-                      margin={{ top: 15, right: 30, left: 0, bottom: 5 }}
-                      onClick={state => {
-                        if (state && state.activeLabel) {
-                          handleBarClick(
-                            ventasPorMes[state.activeTooltipIndex],
-                            state.activeTooltipIndex
-                          );
-                        }
-                      }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="mes" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar
-                        dataKey={tipoGrafico === "valor" ? "total_vendido" : "cantidad_vendida"}
-                        fill={tipoGrafico === "valor" ? "#22c55e" : "#3b82f6"}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-                {/* CLIENTES DE UN MES SELECCIONADO */}
-                {mesSeleccionado && (
-                  <div className="mt-5">
-                    <h4 className="font-bold mb-1">Clientes/facturas - {mesSeleccionado}:</h4>
-                    {loadingMetricas ? (
-                      <div className="text-blue-700 mt-2">Buscando...</div>
-                    ) : clientesVenta.length === 0 ? (
-                      <div className="text-gray-400">No hay ventas en este mes.</div>
-                    ) : (
-                      <table className="min-w-full text-xs">
-                        <thead>
-                          <tr>
-                            <th className="p-1 border-b">Cliente</th>
-                            <th className="p-1 border-b">Cantidad</th>
-                            <th className="p-1 border-b">Fecha</th>
-                            <th className="p-1 border-b">Seleccionar</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {clientesVenta.map(c => (
-                            <tr
-                              key={c.venta_id + c.cliente_id}
-                              className={facturaSeleccionada?.venta_id === c.venta_id ? "bg-blue-100" : ""}
-                            >
-                              <td className="p-1 border-b">{c.cliente_nombre || c.nombre || "-"}</td>
-                              <td className="p-1 border-b">{c.cantidad}</td>
-                              <td className="p-1 border-b">
-                                {c.fecha ? new Date(c.fecha).toLocaleDateString("es-DO") : ""}
-                              </td>
-                              <td className="p-1 border-b">
-                                <button
-                                  className={`px-2 py-1 rounded text-xs ${
-                                    facturaSeleccionada?.venta_id === c.venta_id
-                                      ? "bg-blue-600 text-white"
-                                      : "bg-gray-200"
-                                  }`}
-                                  onClick={() => seleccionarFactura(c)}
-                                >
-                                  {facturaSeleccionada?.venta_id === c.venta_id
-                                    ? "Seleccionado"
-                                    : "Seleccionar"}
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
                 )}
               </div>
-            )}
-          </div>
-        </div>
+            </form>
+          )}
+          {/* TAB MÉTRICAS */}
+          {tabActivo === "metricas" && (
+            <div>
+              <div className="mb-2 flex gap-2">
+                <button
+                  className={`px-3 py-1 rounded text-xs font-bold ${
+                    tipoGrafico === "cantidad" ? "bg-blue-700 text-white" : "bg-gray-200"
+                  }`}
+                  onClick={() => cambiarTipoGrafico("cantidad")}
+                >
+                  Cantidad vendida
+                </button>
+                <button
+                  className={`px-3 py-1 rounded text-xs font-bold ${
+                    tipoGrafico === "valor" ? "bg-blue-700 text-white" : "bg-gray-200"
+                  }`}
+                  onClick={() => cambiarTipoGrafico("valor")}
+                >
+                  Ventas en $
+                </button>
+              </div>
+              <div className="my-2">
+                <span className="inline-block bg-blue-50 rounded p-2 border">
+                  <b>Margen de ganancia:</b>{" "}
+                  {productoActual.costo && productoActual.precio
+                    ? (
+                      ((productoActual.precio - productoActual.costo) /
+                      productoActual.precio * 100
+                      ).toFixed(2) + " %"
+                    ) : "—"
+                  }
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 my-4 text-xs text-center">
+                <div className="p-2 bg-green-50 rounded shadow">
+                  <b>Total vendido:</b>
+                  <div className="text-lg font-bold">{indicadores.total?.toLocaleString()}</div>
+                </div>
+                <div className="p-2 bg-blue-50 rounded shadow">
+                  <b>Mejor mes:</b>
+                  <div className="font-bold">{indicadores.mejorMes || "-"}</div>
+                </div>
+                <div className="p-2 bg-red-50 rounded shadow">
+                  <b>Peor mes:</b>
+                  <div className="font-bold">{indicadores.peorMes || "-"}</div>
+                </div>
+                <div className="p-2 bg-yellow-50 rounded shadow">
+                  <b>Promedio mensual:</b>
+                  <div className="font-bold">{Number(indicadores.promedio).toFixed(1)}</div>
+                </div>
+              </div>
+              <h3 className="text-lg font-bold mb-2">Ventas por mes (últimos 12 meses):</h3>
+              {loadingMetricas ? (
+                <div className="text-blue-700 mt-2">Cargando...</div>
+              ) : ventasPorMes.length === 0 ? (
+                <div className="text-gray-400 mt-2">No hay ventas registradas.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart
+                    data={ventasPorMes}
+                    margin={{ top: 15, right: 30, left: 0, bottom: 5 }}
+                    onClick={state => {
+                      if (state && state.activeLabel) {
+                        handleBarClick(
+                          ventasPorMes[state.activeTooltipIndex],
+                          state.activeTooltipIndex
+                        );
+                      }
+                    }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="mes" />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar
+                      dataKey={tipoGrafico === "valor" ? "total_vendido" : "cantidad_vendida"}
+                      fill={tipoGrafico === "valor" ? "#22c55e" : "#3b82f6"}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+              {/* CLIENTES DE UN MES SELECCIONADO */}
+              {mesSeleccionado && (
+                <div className="mt-5">
+                  <h4 className="font-bold mb-1">Clientes/facturas - {mesSeleccionado}:</h4>
+                  {loadingMetricas ? (
+                    <div className="text-blue-700 mt-2">Buscando...</div>
+                  ) : clientesVenta.length === 0 ? (
+                    <div className="text-gray-400">No hay ventas en este mes.</div>
+                  ) : (
+                    <table className="min-w-full text-xs">
+                      <thead>
+                        <tr>
+                          <th className="p-1 border-b">Cliente</th>
+                          <th className="p-1 border-b">Cantidad</th>
+                          <th className="p-1 border-b">Fecha</th>
+                          <th className="p-1 border-b">Seleccionar</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clientesVenta.map(c => (
+                          <tr
+                            key={c.venta_id + c.cliente_id}
+                            className={facturaSeleccionada?.venta_id === c.venta_id ? "bg-blue-100" : ""}
+                          >
+                            <td className="p-1 border-b">{c.cliente_nombre || c.nombre || "-"}</td>
+                            <td className="p-1 border-b">{c.cantidad}</td>
+                            <td className="p-1 border-b">
+                              {c.fecha ? new Date(c.fecha).toLocaleDateString("es-DO") : ""}
+                            </td>
+                            <td className="p-1 border-b">
+                              <button
+                                className={`px-2 py-1 rounded text-xs ${
+                                  facturaSeleccionada?.venta_id === c.venta_id
+                                    ? "bg-blue-600 text-white"
+                                    : "bg-gray-200"
+                                }`}
+                                onClick={() => seleccionarFactura(c)}
+                              >
+                                {facturaSeleccionada?.venta_id === c.venta_id
+                                  ? "Seleccionado"
+                                  : "Seleccionar"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </ModalProducto>
       )}
 
       {/* --- MODAL RESUMEN DE FACTURA --- */}
