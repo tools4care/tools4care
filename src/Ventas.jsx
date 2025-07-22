@@ -4,71 +4,65 @@ import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import BarcodeScanner from "./BarcodeScanner";
 
-const FORMAS_PAGO = [
-  { key: "efectivo", label: "Efectivo" },
-  { key: "tarjeta", label: "Tarjeta" },
-  { key: "transferencia", label: "Transferencia" },
-  { key: "otro", label: "Otro" },
+const PAYMENT_METHODS = [
+  { key: "efectivo", label: "Cash" },
+  { key: "tarjeta", label: "Card" },
+  { key: "transferencia", label: "Transfer" },
+  { key: "otro", label: "Other" },
 ];
 
-// CLAVE PARA STORAGE DE VENTAS EN PROGRESO
-const STORAGE_KEY = "ventas_en_progreso";
+const STORAGE_KEY = "pending_sales";
 
-export default function Ventas() {
+export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
 
-  // ----------- ESTADOS LIMPIOS AL INICIAR -----------
-  const [busquedaCliente, setBusquedaCliente] = useState("");
-  const [clientes, setClientes] = useState([]);
-  const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
-  const [mostrarCrearCliente, setMostrarCrearCliente] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
+  const [clients, setClients] = useState([]);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [showCreateClient, setShowCreateClient] = useState(false);
 
-  const [busquedaProducto, setBusquedaProducto] = useState("");
-  const [productos, setProductos] = useState([]);
-  const [carrito, setCarrito] = useState([]);
-  const [productosMasVendidos, setProductosMasVendidos] = useState([]);
+  const [productSearch, setProductSearch] = useState("");
+  const [products, setProducts] = useState([]);
+  const [cart, setCart] = useState([]);
+  const [topProducts, setTopProducts] = useState([]);
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [mensajeEscaneo, setMensajeEscaneo] = useState("");
-  const [notas, setNotas] = useState(""); // NOTAS GENERALES
+  const [scanMessage, setScanMessage] = useState("");
+  const [notes, setNotes] = useState("");
 
-  const [pagos, setPagos] = useState([{ forma: "efectivo", monto: 0 }]);
-  const [errorPago, setErrorPago] = useState("");
-  const [guardando, setGuardando] = useState(false);
+  const [payments, setPayments] = useState([{ forma: "efectivo", monto: 0 }]);
+  const [paymentError, setPaymentError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  // ------------------- NUEVO: VENTAS EN PROGRESO -------------------
-  const [ventasProgreso, setVentasProgreso] = useState([]);
-  const [modalVentasProgreso, setModalVentasProgreso] = useState(false);
+  const [pendingSales, setPendingSales] = useState([]);
+  const [modalPendingSales, setModalPendingSales] = useState(false);
 
-  const [paso, setPaso] = useState(1);
+  const [step, setStep] = useState(1);
 
-  // Cargar ventas en progreso SOLO al montar (para el listado)
   useEffect(() => {
-    const guardadas = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    setVentasProgreso(guardadas);
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    setPendingSales(saved);
   }, []);
 
-  // Cargar clientes por búsqueda
   useEffect(() => {
-    async function cargarClientes() {
-      if (busquedaCliente.trim().length === 0) {
-        setClientes([]);
+    async function loadClients() {
+      if (clientSearch.trim().length === 0) {
+        setClients([]);
         return;
       }
-      const campos = ["nombre", "negocio", "telefono", "email"];
-      const filtros = campos.map(campo => `${campo}.ilike.%${busquedaCliente}%`).join(",");
+      const fields = ["nombre", "negocio", "telefono", "email"];
+      const filters = fields.map(f => `${f}.ilike.%${clientSearch}%`).join(",");
       const { data } = await supabase
         .from("clientes_balance")
         .select("*")
-        .or(filtros);
-      setClientes(data || []);
+        .or(filters);
+      setClients(data || []);
     }
-    cargarClientes();
-  }, [busquedaCliente]);
+    loadClients();
+  }, [clientSearch]);
 
-  // Cargar productos en stock para la van
   useEffect(() => {
-    async function cargarProductos() {
+    async function loadProducts() {
       if (!van) return;
       const { data, error } = await supabase
         .from("stock_van")
@@ -79,199 +73,188 @@ export default function Ventas() {
         .eq("van_id", van.id);
 
       if (error) {
-        setProductos([]);
+        setProducts([]);
         return;
       }
 
-      const filtro = busquedaProducto.trim().toLowerCase();
-      const filtrados = (data || []).filter(
+      const filter = productSearch.trim().toLowerCase();
+      const filtered = (data || []).filter(
         row =>
           row.cantidad > 0 &&
           (
-            (row.productos?.nombre || "").toLowerCase().includes(filtro) ||
-            (row.productos?.codigo || "").toLowerCase().includes(filtro) ||
-            (row.productos?.marca || "").toLowerCase().includes(filtro)
+            (row.productos?.nombre || "").toLowerCase().includes(filter) ||
+            (row.productos?.codigo || "").toLowerCase().includes(filter) ||
+            (row.productos?.marca || "").toLowerCase().includes(filter)
           )
       );
-      setProductos(filtrados);
+      setProducts(filtered);
     }
-    cargarProductos();
-  }, [van, busquedaProducto]);
+    loadProducts();
+  }, [van, productSearch]);
 
-  // Cargar productos más vendidos (top 5) para la van
   useEffect(() => {
-    async function cargarMasVendidos() {
+    async function loadTopProducts() {
       if (!van) return;
       const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", { van_id_param: van.id });
-      setProductosMasVendidos(error ? [] : data || []);
+      setTopProducts(error ? [] : data || []);
     }
-    cargarMasVendidos();
+    loadTopProducts();
   }, [van]);
 
-  // Cálculos
-  const totalVenta = carrito.reduce((t, p) => t + (p.cantidad * p.precio_unitario), 0);
-  const pagado = pagos.reduce((s, p) => s + Number(p.monto || 0), 0);
-  const saldoPendiente = totalVenta - pagado;
-  const devuelto = pagado > totalVenta ? (pagado - totalVenta) : 0;
-  const saldoCliente = clienteSeleccionado?.balance || 0;
+  const saleTotal = cart.reduce((t, p) => t + (p.cantidad * p.precio_unitario), 0);
+  const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+  const pendingBalance = saleTotal - paid;
+  const change = paid > saleTotal ? (paid - saleTotal) : 0;
+  const clientBalance = selectedClient?.balance || 0;
 
-  // ----------- VENTAS EN PROGRESO: GUARDAR CADA VEZ QUE CAMBIA ALGO IMPORTANTE -----------
   useEffect(() => {
-    // Solo guardar si hay productos en carrito o cliente seleccionado
     if (
-      (carrito.length > 0 || clienteSeleccionado) &&
-      paso < 4 // No guardar si ya terminaste
+      (cart.length > 0 || selectedClient) &&
+      step < 4
     ) {
-      let guardadas = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      // Si ya hay una con el mismo ID (opcional, podrías usar Date.now()), actualiza, si no, agrega
-      const id = window.ventaEnProgresoId || (window.ventaEnProgresoId = Date.now());
-      const nueva = {
+      let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      const id = window.pendingSaleId || (window.pendingSaleId = Date.now());
+      const newPending = {
         id,
-        cliente: clienteSeleccionado,
-        carrito,
-        pagos,
-        notas,
-        paso,
-        fecha: new Date().toISOString(),
+        client: selectedClient,
+        cart,
+        payments,
+        notes,
+        step,
+        date: new Date().toISOString(),
       };
-      // Reemplaza o agrega
-      guardadas = guardadas.filter(v => v.id !== id);
-      guardadas.unshift(nueva); // más reciente al inicio
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(guardadas.slice(0, 10))); // máximo 10
-      setVentasProgreso(guardadas.slice(0, 10));
+      saved = saved.filter(v => v.id !== id);
+      saved.unshift(newPending);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved.slice(0, 10)));
+      setPendingSales(saved.slice(0, 10));
     }
-  }, [clienteSeleccionado, carrito, pagos, notas, paso]);
+  }, [selectedClient, cart, payments, notes, step]);
 
-  // ----------- FUNCIONES DE FLUJO -----------
-
-  function limpiarVenta() {
-    setBusquedaCliente("");
-    setClientes([]);
-    setClienteSeleccionado(null);
-    setMostrarCrearCliente(false);
-    setBusquedaProducto("");
-    setProductos([]);
-    setCarrito([]);
-    setProductosMasVendidos([]);
+  function clearSale() {
+    setClientSearch("");
+    setClients([]);
+    setSelectedClient(null);
+    setShowCreateClient(false);
+    setProductSearch("");
+    setProducts([]);
+    setCart([]);
+    setTopProducts([]);
     setScannerOpen(false);
-    setMensajeEscaneo("");
-    setNotas("");
-    setPagos([{ forma: "efectivo", monto: 0 }]);
-    setErrorPago("");
-    setGuardando(false);
-    setPaso(1);
-    window.ventaEnProgresoId = null; // reset id
+    setScanMessage("");
+    setNotes("");
+    setPayments([{ forma: "efectivo", monto: 0 }]);
+    setPaymentError("");
+    setSaving(false);
+    setStep(1);
+    window.pendingSaleId = null;
   }
 
-  function handleAgregarProducto(p) {
-    const existe = carrito.find(x => x.producto_id === p.producto_id);
-    if (!existe) {
-      setCarrito([...carrito, {
+  function handleAddProduct(p) {
+    const exists = cart.find(x => x.producto_id === p.producto_id);
+    if (!exists) {
+      setCart([...cart, {
         producto_id: p.producto_id,
         nombre: p.productos?.nombre,
         precio_unitario: Number(p.productos?.precio) || 0,
         cantidad: 1
       }]);
     }
-    setBusquedaProducto(""); // limpiar área para agregar siguiente
+    setProductSearch("");
   }
-  function handleEditarCantidad(producto_id, cantidad) {
-    setCarrito(carrito =>
-      carrito.map(item =>
+  function handleEditQuantity(producto_id, cantidad) {
+    setCart(cart =>
+      cart.map(item =>
         item.producto_id === producto_id ? { ...item, cantidad } : item
       )
     );
   }
-  function handleQuitarProducto(producto_id) {
-    setCarrito(carrito => carrito.filter(p => p.producto_id !== producto_id));
+  function handleRemoveProduct(producto_id) {
+    setCart(cart => cart.filter(p => p.producto_id !== producto_id));
   }
 
-  async function handleCodigoEscaneado(codigo) {
+  async function handleBarcodeScanned(code) {
     setScannerOpen(false);
-    if (!codigo) {
-      setMensajeEscaneo("No se pudo leer el código o la cámara no está disponible.");
+    if (!code) {
+      setScanMessage("Could not read the code or the camera is not available.");
       return;
     }
-    setMensajeEscaneo(""); // limpia mensaje previo
+    setScanMessage("");
 
-    // Buscar el producto por código
-    let productoEncontrado = productos.find(
-      p => p.productos?.codigo?.toString().trim() === codigo.trim()
+    let found = products.find(
+      p => p.productos?.codigo?.toString().trim() === code.trim()
     );
 
-    if (!productoEncontrado && van) {
+    if (!found && van) {
       const { data } = await supabase
         .from("stock_van")
         .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca)")
         .eq("van_id", van.id)
-        .eq("productos.codigo", codigo);
+        .eq("productos.codigo", code);
 
       if (data && data.length > 0) {
-        productoEncontrado = data[0];
+        found = data[0];
       }
     }
-    if (productoEncontrado && productoEncontrado.cantidad > 0) {
-      handleAgregarProducto(productoEncontrado);
-      setMensajeEscaneo(`Producto "${productoEncontrado.productos?.nombre}" agregado!`);
+    if (found && found.cantidad > 0) {
+      handleAddProduct(found);
+      setScanMessage(`Product "${found.productos?.nombre}" added!`);
     } else {
-      setMensajeEscaneo("Producto no encontrado o sin stock en esta van.");
+      setScanMessage("Product not found or out of stock in this van.");
     }
   }
 
-  async function guardarVenta() {
-    setGuardando(true);
-    setErrorPago("");
+  async function saveSale() {
+    setSaving(true);
+    setPaymentError("");
     try {
-      if (!usuario?.id) throw new Error("Usuario no sincronizado, reintenta login.");
+      if (!usuario?.id) throw new Error("User not synced, please re-login.");
 
-      const pagosMap = {
+      const paymentMap = {
         efectivo: 0,
         tarjeta: 0,
         transferencia: 0,
         otro: 0,
       };
-      pagos.forEach(p => {
-        if (pagosMap[p.forma] !== undefined) {
-          pagosMap[p.forma] += Number(p.monto || 0);
+      payments.forEach(p => {
+        if (paymentMap[p.forma] !== undefined) {
+          paymentMap[p.forma] += Number(p.monto || 0);
         }
       });
 
-      // 1. Insertar venta
-      const { data: ventaData, error: ventaError } = await supabase
+      const { data: saleData, error: saleError } = await supabase
         .from("ventas")
         .insert([{
           van_id: van.id,
           usuario_id: usuario.id,
-          cliente_id: clienteSeleccionado?.id || null,
-          total: totalVenta,
-          total_venta: totalVenta,
-          total_pagado: pagado,
-          estado_pago: saldoPendiente > 0 ? "pendiente" : "pagado",
-          forma_pago: pagos.map(p => p.forma).join(","),
-          metodo_pago: pagos.map(p => `${p.forma}:${p.monto}`).join(","),
-          productos: carrito.map(p => ({
+          cliente_id: selectedClient?.id || null,
+          total: saleTotal,
+          total_venta: saleTotal,
+          total_pagado: paid,
+          estado_pago: pendingBalance > 0 ? "pendiente" : "pagado",
+          forma_pago: payments.map(p => p.forma).join(","),
+          metodo_pago: payments.map(p => `${p.forma}:${p.monto}`).join(","),
+          productos: cart.map(p => ({
             producto_id: p.producto_id,
             nombre: p.nombre,
             cantidad: p.cantidad,
             precio_unitario: p.precio_unitario,
             subtotal: p.cantidad * p.precio_unitario,
           })),
-          notas,
-          pago: pagado,
-          pago_efectivo: pagosMap.efectivo,
-          pago_tarjeta: pagosMap.tarjeta,
-          pago_transferencia: pagosMap.transferencia,
-          pago_otro: pagosMap.otro,
+          notas: notes,
+          pago: paid,
+          pago_efectivo: paymentMap.efectivo,
+          pago_tarjeta: paymentMap.tarjeta,
+          pago_transferencia: paymentMap.transferencia,
+          pago_otro: paymentMap.otro,
         }])
         .select()
         .maybeSingle();
 
-      if (ventaError) throw ventaError;
+      if (saleError) throw saleError;
 
-      // 2. Insertar detalle_ventas
-      for (let p of carrito) {
+      for (let p of cart) {
         await supabase.from("detalle_ventas").insert([{
-          venta_id: ventaData.id,
+          venta_id: saleData.id,
           producto_id: p.producto_id,
           cantidad: p.cantidad,
           precio_unitario: p.precio_unitario,
@@ -279,8 +262,7 @@ export default function Ventas() {
         }]);
       }
 
-      // 3. Actualizar stock
-      for (let p of carrito) {
+      for (let p of cart) {
         const { data: stockData, error: stockError } = await supabase
           .from("stock_van")
           .select("cantidad")
@@ -289,114 +271,110 @@ export default function Ventas() {
           .single();
 
         if (!stockError) {
-          const nuevoStock = (stockData?.cantidad || 0) - p.cantidad;
+          const newStock = (stockData?.cantidad || 0) - p.cantidad;
           await supabase
             .from("stock_van")
-            .update({ cantidad: nuevoStock })
+            .update({ cantidad: newStock })
             .eq("van_id", van.id)
             .eq("producto_id", p.producto_id);
         }
       }
 
-      alert("Venta guardada correctamente");
-      limpiarVenta();
+      alert("Sale saved successfully");
+      clearSale();
 
-      // Elimina venta en progreso asociada (si existe)
-      let guardadas = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      guardadas = guardadas.filter(v => v.id !== window.ventaEnProgresoId);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(guardadas));
-      setVentasProgreso(guardadas);
+      let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      saved = saved.filter(v => v.id !== window.pendingSaleId);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      setPendingSales(saved);
 
     } catch (err) {
-      setErrorPago("Error guardando venta: " + (err?.message || ""));
+      setPaymentError("Error saving sale: " + (err?.message || ""));
       console.error(err);
     } finally {
-      setGuardando(false);
+      setSaving(false);
     }
   }
 
-  // --- Cargar manualmente una venta en progreso seleccionada ---
-  function handleSeleccionarVentaProgreso(venta) {
-    setClienteSeleccionado(venta.cliente);
-    setCarrito(venta.carrito);
-    setPagos(venta.pagos);
-    setNotas(venta.notas);
-    setPaso(venta.paso);
-    window.ventaEnProgresoId = venta.id;
-    setModalVentasProgreso(false);
+  function handleSelectPendingSale(sale) {
+    setSelectedClient(sale.client);
+    setCart(sale.cart);
+    setPayments(sale.payments);
+    setNotes(sale.notes);
+    setStep(sale.step);
+    window.pendingSaleId = sale.id;
+    setModalPendingSales(false);
   }
 
-  // --- Eliminar una venta en progreso ---
-  function handleEliminarVentaProgreso(id) {
-    let guardadas = ventasProgreso.filter(v => v.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(guardadas));
-    setVentasProgreso(guardadas);
+  function handleDeletePendingSale(id) {
+    let saved = pendingSales.filter(v => v.id !== id);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    setPendingSales(saved);
   }
 
-  // --- Render flujo pasos ---
-  function renderPasoCliente() {
+  function renderStepClient() {
     return (
       <div>
         <div className="flex justify-between items-center mb-2">
-          <h2 className="text-xl font-bold">Selecciona Cliente</h2>
+          <h2 className="text-xl font-bold">Select Client</h2>
           <button
             className="text-xs bg-blue-100 px-3 py-2 rounded font-bold"
-            onClick={() => setModalVentasProgreso(true)}
+            onClick={() => setModalPendingSales(true)}
             type="button"
           >
-            Ventas en Progreso ({ventasProgreso.length})
+            Pending Sales ({pendingSales.length})
           </button>
         </div>
-        {clienteSeleccionado ? (
+        {selectedClient ? (
           <div className="p-3 mb-2 rounded bg-blue-50 border border-blue-200 flex items-center justify-between">
             <div>
               <div className="font-bold text-blue-800">
-                {clienteSeleccionado.nombre} {clienteSeleccionado.apellido || ""}{" "}
-                <span className="text-gray-600 text-sm">{clienteSeleccionado.negocio && `(${clienteSeleccionado.negocio})`}</span>
+                {selectedClient.nombre} {selectedClient.apellido || ""}{" "}
+                <span className="text-gray-600 text-sm">{selectedClient.negocio && `(${selectedClient.negocio})`}</span>
               </div>
-              <div className="text-sm">{renderDireccion(clienteSeleccionado.direccion)}</div>
+              <div className="text-sm">{renderAddress(selectedClient.direccion)}</div>
               <div className="text-sm flex items-center mt-1">
                 <span role="img" aria-label="phone">📞</span>
-                <span className="ml-1">{clienteSeleccionado.telefono}</span>
+                <span className="ml-1">{selectedClient.telefono}</span>
               </div>
-              {Number(saldoCliente) > 0 && (
+              {Number(clientBalance) > 0 && (
                 <div className="text-sm text-red-600 mt-1">
-                  <b>Balance pendiente:</b> ${Number(saldoCliente).toFixed(2)}
+                  <b>Outstanding balance:</b> ${Number(clientBalance).toFixed(2)}
                 </div>
               )}
             </div>
             <button
               className="text-xs text-red-600 underline ml-3"
-              onClick={() => setClienteSeleccionado(null)}
+              onClick={() => setSelectedClient(null)}
             >
-              Cambiar cliente
+              Change client
             </button>
           </div>
         ) : (
           <>
             <input
               type="text"
-              placeholder="Buscar por nombre, negocio, teléfono, email..."
+              placeholder="Search by name, business, phone, email..."
               className="w-full border rounded p-2 mb-2"
-              value={busquedaCliente}
-              onChange={e => setBusquedaCliente(e.target.value)}
+              value={clientSearch}
+              onChange={e => setClientSearch(e.target.value)}
               autoFocus
             />
             <div className="max-h-48 overflow-auto mb-2">
-              {clientes.length === 0 && busquedaCliente.length > 2 && (
-                <div className="text-gray-400 text-sm px-2">Sin resultados</div>
+              {clients.length === 0 && clientSearch.length > 2 && (
+                <div className="text-gray-400 text-sm px-2">No results</div>
               )}
-              {clientes.map(c => (
+              {clients.map(c => (
                 <div
                   key={c.id}
                   className="p-2 rounded cursor-pointer hover:bg-blue-100"
-                  onClick={() => setClienteSeleccionado(c)}
+                  onClick={() => setSelectedClient(c)}
                 >
                   <div className="font-bold">
                     {c.nombre} {c.apellido || ""}{" "}
                     <span className="text-gray-600 text-sm">{c.negocio && `(${c.negocio})`}</span>
                   </div>
-                  <div className="text-xs">{renderDireccion(c.direccion)}</div>
+                  <div className="text-xs">{renderAddress(c.direccion)}</div>
                   <div className="text-xs flex items-center">
                     <span role="img" aria-label="phone">📞</span>
                     <span className="ml-1">{c.telefono}</span>
@@ -410,35 +388,35 @@ export default function Ventas() {
               ))}
             </div>
             <button
-              onClick={() => setMostrarCrearCliente(true)}
+              onClick={() => setShowCreateClient(true)}
               className="w-full bg-green-600 text-white rounded py-2 mb-2"
             >
-              + Crear cliente rápido
+              + Quick create client
             </button>
             <button
-              onClick={() => setClienteSeleccionado({ id: null, nombre: "Venta rápida", balance: 0 })}
+              onClick={() => setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })}
               className="w-full bg-blue-600 text-white rounded py-2"
             >
-              Venta rápida (sin cliente)
+              Quick sale (no client)
             </button>
           </>
         )}
         <div className="flex justify-end mt-4">
           <button
             className="bg-blue-700 text-white px-4 py-2 rounded"
-            disabled={!clienteSeleccionado}
-            onClick={() => setPaso(2)}
+            disabled={!selectedClient}
+            onClick={() => setStep(2)}
           >
-            Siguiente
+            Next
           </button>
         </div>
-        {mostrarCrearCliente && (
-          <CrearClienteRapido
-            onClose={() => setMostrarCrearCliente(false)}
+        {showCreateClient && (
+          <QuickCreateClient
+            onClose={() => setShowCreateClient(false)}
             onCreate={c => {
-              setClienteSeleccionado(c);
-              setMostrarCrearCliente(false);
-              setPaso(2);
+              setSelectedClient(c);
+              setShowCreateClient(false);
+              setStep(2);
             }}
           />
         )}
@@ -446,50 +424,50 @@ export default function Ventas() {
     );
   }
 
-  function renderPasoProductos() {
+  function renderStepProducts() {
     return (
       <div>
-        <h2 className="text-xl font-bold mb-4">Agregar Productos</h2>
+        <h2 className="text-xl font-bold mb-4">Add Products</h2>
         <div className="flex gap-2 mb-2">
           <input
             type="text"
-            placeholder="Buscar producto por nombre o código..."
+            placeholder="Search product by name or code..."
             className="w-full border rounded p-2"
-            value={busquedaProducto}
-            onChange={e => setBusquedaProducto(e.target.value)}
+            value={productSearch}
+            onChange={e => setProductSearch(e.target.value)}
           />
           <button
             className="bg-green-600 text-white px-3 py-2 rounded font-bold"
             type="button"
             onClick={() => setScannerOpen(true)}
           >
-            📷 Escanear
+            📷 Scan
           </button>
         </div>
-        {mensajeEscaneo && (
-          <div className="mb-2 text-xs text-center font-bold text-blue-700">{mensajeEscaneo}</div>
+        {scanMessage && (
+          <div className="mb-2 text-xs text-center font-bold text-blue-700">{scanMessage}</div>
         )}
         <div className="max-h-48 overflow-auto mb-2">
-          {productos.map(p => (
+          {products.map(p => (
             <div key={p.producto_id} className="p-2 border-b flex justify-between items-center">
-              <div onClick={() => handleAgregarProducto(p)} className="flex-1 cursor-pointer">
+              <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
                 <div className="font-bold">{p.productos?.nombre}</div>
                 <div className="text-xs text-gray-500">
-                  Código: {p.productos?.codigo || "N/A"} | Disponible: {p.cantidad} | Precio: ${p.productos?.precio?.toFixed(2)}
+                  Code: {p.productos?.codigo || "N/A"} | Stock: {p.cantidad} | Price: ${p.productos?.precio?.toFixed(2)}
                 </div>
               </div>
-              {carrito.find(x => x.producto_id === p.producto_id) && (
+              {cart.find(x => x.producto_id === p.producto_id) && (
                 <div className="flex items-center gap-2">
                   <button onClick={() =>
-                    handleEditarCantidad(p.producto_id, Math.max(1, (carrito.find(x => x.producto_id === p.producto_id)?.cantidad || 1) - 1))
+                    handleEditQuantity(p.producto_id, Math.max(1, (cart.find(x => x.producto_id === p.producto_id)?.cantidad || 1) - 1))
                   }>-</button>
                   <input
                     type="number"
                     min={1}
                     max={p.cantidad}
-                    value={carrito.find(x => x.producto_id === p.producto_id)?.cantidad || 1}
+                    value={cart.find(x => x.producto_id === p.producto_id)?.cantidad || 1}
                     onChange={e =>
-                      handleEditarCantidad(
+                      handleEditQuantity(
                         p.producto_id,
                         Math.max(1, Math.min(Number(e.target.value), p.cantidad))
                       )
@@ -497,81 +475,81 @@ export default function Ventas() {
                     className="w-12 border rounded"
                   />
                   <button onClick={() =>
-                    handleEditarCantidad(p.producto_id, Math.min(p.cantidad, (carrito.find(x => x.producto_id === p.producto_id)?.cantidad || 1) + 1))
+                    handleEditQuantity(p.producto_id, Math.min(p.cantidad, (cart.find(x => x.producto_id === p.producto_id)?.cantidad || 1) + 1))
                   }>+</button>
                   <button
                     className="text-xs text-red-500"
-                    onClick={() => handleQuitarProducto(p.producto_id)}
-                  >Quitar</button>
+                    onClick={() => handleRemoveProduct(p.producto_id)}
+                  >Remove</button>
                 </div>
               )}
             </div>
           ))}
-          {productos.length === 0 && (
-            <div className="text-gray-400 text-sm px-2">Sin productos para esta van o búsqueda.</div>
+          {products.length === 0 && (
+            <div className="text-gray-400 text-sm px-2">No products for this van or search.</div>
           )}
         </div>
-        {/* Productos más vendidos */}
-        {productosMasVendidos.length > 0 && (
+        {/* Top products */}
+        {topProducts.length > 0 && (
           <div className="bg-yellow-50 rounded border p-3 mt-4">
-            <b>Productos más vendidos</b>
-            {productosMasVendidos.map(p => (
+            <b>Top selling products</b>
+            {topProducts.map(p => (
               <div
                 key={p.producto_id}
                 className="p-2 border-b cursor-pointer hover:bg-yellow-100"
-                onClick={() => handleAgregarProducto({
+                onClick={() => handleAddProduct({
                   producto_id: p.producto_id,
                   productos: { nombre: p.nombre, precio: p.precio },
                   cantidad: p.cantidad_disponible,
                 })}
               >
-                {p.nombre} - Disponible: {p.cantidad_disponible} - Precio: ${p.precio.toFixed(2)}
+                {p.nombre} - Stock: {p.cantidad_disponible} - Price: ${p.precio.toFixed(2)}
               </div>
             ))}
           </div>
         )}
-        {/* Carrito */}
-        {carrito.length > 0 && (
+        {/* Cart */}
+        {cart.length > 0 && (
           <div className="bg-gray-50 rounded border p-3 mt-4">
-            <b>Carrito</b>
-            {carrito.map(p => (
+            <b>Cart</b>
+            {cart.map(p => (
               <div key={p.producto_id} className="flex justify-between">
                 <span>{p.nombre}</span>
                 <span>{p.cantidad} x ${p.precio_unitario.toFixed(2)}</span>
-                <button className="text-xs text-red-500" onClick={() => handleQuitarProducto(p.producto_id)}>Quitar</button>
+                <button className="text-xs text-red-500" onClick={() => handleRemoveProduct(p.producto_id)}>Remove</button>
               </div>
             ))}
-            <div className="font-bold mt-2">Total: ${totalVenta.toFixed(2)}</div>
+            <div className="font-bold mt-2">Total: ${saleTotal.toFixed(2)}</div>
           </div>
         )}
-        {/* Área de notas */}
+        {/* Notes area */}
         <div className="mt-4">
           <textarea
             className="w-full border rounded p-2"
-            placeholder="Notas para la factura..."
-            value={notas}
-            onChange={e => setNotas(e.target.value)}
+            placeholder="Notes for the invoice..."
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
           />
         </div>
         <div className="flex justify-between mt-4">
           <button
             className="bg-gray-400 text-white px-4 py-2 rounded"
-            onClick={() => setPaso(1)}
+            onClick={() => setStep(1)}
           >
-            Atrás
+            Back
           </button>
           <button
             className="bg-blue-700 text-white px-4 py-2 rounded"
-            disabled={carrito.length === 0}
-            onClick={() => setPaso(3)}
+            disabled={cart.length === 0}
+            onClick={() => setStep(3)}
           >
-            Siguiente
+            Next
           </button>
         </div>
         {/* SCANNER MODAL */}
         {scannerOpen && (
           <BarcodeScanner
-            onResult={handleCodigoEscaneado}
+            onResult={handleBarcodeScanned}
             onClose={() => setScannerOpen(false)}
           />
         )}
@@ -579,43 +557,43 @@ export default function Ventas() {
     );
   }
 
-  function renderPasoPago() {
-    function handleChangePago(index, campo, valor) {
-      setPagos(arr =>
-        arr.map((p, i) => i === index ? { ...p, [campo]: valor } : p)
+  function renderStepPayment() {
+    function handleChangePayment(index, field, value) {
+      setPayments(arr =>
+        arr.map((p, i) => i === index ? { ...p, [field]: value } : p)
       );
     }
-    function handleAgregarPago() {
-      setPagos([...pagos, { forma: "efectivo", monto: 0 }]);
+    function handleAddPayment() {
+      setPayments([...payments, { forma: "efectivo", monto: 0 }]);
     }
-    function handleQuitarPago(index) {
-      setPagos(pagos => pagos.length === 1 ? pagos : pagos.filter((_, i) => i !== index));
+    function handleRemovePayment(index) {
+      setPayments(payments => payments.length === 1 ? payments : payments.filter((_, i) => i !== index));
     }
 
     return (
       <div>
-        <h2 className="text-xl font-bold mb-4">Pago</h2>
+        <h2 className="text-xl font-bold mb-4">Payment</h2>
         <div className="mb-2">
-          Cliente: <b>{clienteSeleccionado?.nombre || "Venta rápida"}</b>
+          Client: <b>{selectedClient?.nombre || "Quick sale"}</b>
         </div>
         <div className="font-semibold mb-2">
-          Total a pagar: <span className="text-green-700">${totalVenta.toFixed(2)}</span>
+          Total to pay: <span className="text-green-700">${saleTotal.toFixed(2)}</span>
         </div>
-        {Number(saldoCliente) > 0 && (
+        {Number(clientBalance) > 0 && (
           <div className="mb-2 text-red-600">
-            <b>Saldo pendiente del cliente: ${Number(saldoCliente).toFixed(2)}</b>
+            <b>Client's outstanding balance: ${Number(clientBalance).toFixed(2)}</b>
           </div>
         )}
         <div className="mb-2">
-          <b>Formas de pago:</b>
-          {pagos.map((p, i) => (
+          <b>Payment methods:</b>
+          {payments.map((p, i) => (
             <div className="flex items-center gap-2 mt-1" key={i}>
               <select
                 value={p.forma}
-                onChange={e => handleChangePago(i, "forma", e.target.value)}
+                onChange={e => handleChangePayment(i, "forma", e.target.value)}
                 className="border rounded px-2 py-1"
               >
-                {FORMAS_PAGO.map(fp => (
+                {PAYMENT_METHODS.map(fp => (
                   <option key={fp.key} value={fp.key}>{fp.label}</option>
                 ))}
               </select>
@@ -624,101 +602,99 @@ export default function Ventas() {
                 min={0}
                 step={0.01}
                 value={p.monto}
-                onChange={e => handleChangePago(i, "monto", e.target.value)}
+                onChange={e => handleChangePayment(i, "monto", e.target.value)}
                 className="border rounded px-2 py-1 w-24"
               />
-              {pagos.length > 1 && (
-                <button className="text-xs text-red-600" onClick={() => handleQuitarPago(i)}>Quitar</button>
+              {payments.length > 1 && (
+                <button className="text-xs text-red-600" onClick={() => handleRemovePayment(i)}>Remove</button>
               )}
             </div>
           ))}
-          <button className="text-xs text-blue-700 mt-1" onClick={handleAgregarPago}>+ Agregar forma de pago</button>
+          <button className="text-xs text-blue-700 mt-1" onClick={handleAddPayment}>+ Add payment method</button>
         </div>
         <div className="mb-2">
-          Pagado: <b>${pagado.toFixed(2)}</b>
+          Paid: <b>${paid.toFixed(2)}</b>
         </div>
-        {devuelto > 0 && (
+        {change > 0 && (
           <div className="mb-2 text-green-700">
-            Devuelto al cliente: ${devuelto.toFixed(2)}
+            Change: ${change.toFixed(2)}
           </div>
         )}
-        {saldoPendiente > 0 && (
+        {pendingBalance > 0 && (
           <div className="mb-2 text-orange-600">
-            Saldo pendiente (deuda): ${saldoPendiente.toFixed(2)}
+            Pending balance (debt): ${pendingBalance.toFixed(2)}
           </div>
         )}
         <div className="flex gap-2 mt-4">
           <button
             className="bg-gray-400 text-white px-4 py-2 rounded"
-            onClick={() => setPaso(2)}
-            disabled={guardando}
+            onClick={() => setStep(2)}
+            disabled={saving}
           >
-            Atrás
+            Back
           </button>
           <button
             className="bg-green-700 text-white px-4 py-2 rounded"
-            disabled={guardando}
-            onClick={guardarVenta}
+            disabled={saving}
+            onClick={saveSale}
           >
-            {guardando ? "Guardando..." : "Guardar Venta"}
+            {saving ? "Saving..." : "Save Sale"}
           </button>
         </div>
-        {errorPago && <div className="text-red-600 mt-2">{errorPago}</div>}
+        {paymentError && <div className="text-red-600 mt-2">{paymentError}</div>}
       </div>
     );
   }
 
-  // Render dirección util
-  function renderDireccion(direccion) {
-    if (!direccion) return null;
-    if (typeof direccion === "string") {
-      try { direccion = JSON.parse(direccion); } catch { }
+  function renderAddress(address) {
+    if (!address) return null;
+    if (typeof address === "string") {
+      try { address = JSON.parse(address); } catch { }
     }
-    if (typeof direccion === "object") {
+    if (typeof address === "object") {
       return (
         <span>
           <span role="img" aria-label="pin">📍</span>
-          {direccion.calle && `${direccion.calle}, `}
-          {direccion.ciudad && `${direccion.ciudad}, `}
-          {direccion.estado && `${direccion.estado}`}
-          {direccion.zip && `, ${direccion.zip}`}
+          {address.calle && `${address.calle}, `}
+          {address.ciudad && `${address.ciudad}, `}
+          {address.estado && `${address.estado}`}
+          {address.zip && `, ${address.zip}`}
         </span>
       );
     }
-    return <span>{direccion}</span>;
+    return <span>{address}</span>;
   }
 
-  // --- MODAL PARA VENTAS EN PROGRESO ---
-  function renderVentasProgresoModal() {
+  function renderPendingSalesModal() {
     return (
       <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-lg relative">
-          <h3 className="font-bold mb-3">Ventas en Progreso</h3>
-          {ventasProgreso.length === 0 ? (
-            <div className="text-gray-400">No hay ventas en progreso.</div>
+          <h3 className="font-bold mb-3">Pending Sales</h3>
+          {pendingSales.length === 0 ? (
+            <div className="text-gray-400">No pending sales.</div>
           ) : (
             <ul className="divide-y">
-              {ventasProgreso.map(v => (
+              {pendingSales.map(v => (
                 <li key={v.id} className="py-2 flex justify-between items-center">
                   <div>
-                    <b>{v.cliente?.nombre || "Venta rápida"}</b>
+                    <b>{v.client?.nombre || "Quick sale"}</b>
                     <div className="text-xs text-gray-500">
-                      Productos: {v.carrito.length} | Fecha: {new Date(v.fecha).toLocaleString()}
+                      Products: {v.cart.length} | Date: {new Date(v.date).toLocaleString()}
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button className="bg-blue-600 text-white px-3 py-1 rounded text-xs" onClick={() => handleSeleccionarVentaProgreso(v)}>
-                      Retomar
+                    <button className="bg-blue-600 text-white px-3 py-1 rounded text-xs" onClick={() => handleSelectPendingSale(v)}>
+                      Resume
                     </button>
-                    <button className="bg-red-600 text-white px-2 py-1 rounded text-xs" onClick={() => handleEliminarVentaProgreso(v.id)}>
-                      Eliminar
+                    <button className="bg-red-600 text-white px-2 py-1 rounded text-xs" onClick={() => handleDeletePendingSale(v.id)}>
+                      Delete
                     </button>
                   </div>
                 </li>
               ))}
             </ul>
           )}
-          <button className="absolute top-3 right-3 text-lg" onClick={() => setModalVentasProgreso(false)}>✖</button>
+          <button className="absolute top-3 right-3 text-lg" onClick={() => setModalPendingSales(false)}>✖</button>
         </div>
       </div>
     );
@@ -726,32 +702,32 @@ export default function Ventas() {
 
   return (
     <div className="w-full max-w-lg mx-auto p-4 bg-white rounded shadow my-4">
-      {modalVentasProgreso && renderVentasProgresoModal()}
-      {paso === 1 && renderPasoCliente()}
-      {paso === 2 && renderPasoProductos()}
-      {paso === 3 && renderPasoPago()}
+      {modalPendingSales && renderPendingSalesModal()}
+      {step === 1 && renderStepClient()}
+      {step === 2 && renderStepProducts()}
+      {step === 3 && renderStepPayment()}
     </div>
   );
 }
 
-// --- CrearClienteRapido igual que antes ---
-function CrearClienteRapido({ onClose, onCreate }) {
+// --- QuickCreateClient as before ---
+function QuickCreateClient({ onClose, onCreate }) {
   const [form, setForm] = useState({ nombre: "", apellido: "", telefono: "", email: "" });
-  const [cargando, setCargando] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleCrear(e) {
+  async function handleCreate(e) {
     e.preventDefault();
-    setCargando(true);
+    setLoading(true);
     setError("");
     const { data, error: err } = await supabase
       .from("clientes")
       .insert([form])
       .select()
       .maybeSingle();
-    setCargando(false);
+    setLoading(false);
     if (err) {
-      setError("No se pudo crear el cliente");
+      setError("Could not create client");
       return;
     }
     onCreate(data);
@@ -761,9 +737,9 @@ function CrearClienteRapido({ onClose, onCreate }) {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-20">
       <form
         className="bg-white p-6 rounded shadow-md w-full max-w-md"
-        onSubmit={handleCrear}
+        onSubmit={handleCreate}
       >
-        <h3 className="font-bold mb-2">Nuevo Cliente</h3>
+        <h3 className="font-bold mb-2">New Client</h3>
         {["nombre", "apellido", "telefono", "email"].map(field => (
           <input
             key={field}
@@ -781,16 +757,16 @@ function CrearClienteRapido({ onClose, onCreate }) {
             type="button"
             className="flex-1 bg-gray-400 text-white py-2 rounded"
             onClick={onClose}
-            disabled={cargando}
+            disabled={loading}
           >
-            Cancelar
+            Cancel
           </button>
           <button
             type="submit"
             className="flex-1 bg-blue-700 text-white py-2 rounded"
-            disabled={cargando}
+            disabled={loading}
           >
-            Guardar
+            Save
           </button>
         </div>
       </form>

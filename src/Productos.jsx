@@ -44,7 +44,7 @@ function CrearSuplidor({ onCreate }) {
         />
       ))}
       <button className="bg-green-600 text-white rounded px-3 py-1 mt-1 w-full" disabled={cargando}>
-        Guardar suplidor
+        Save supplier
       </button>
     </form>
   );
@@ -76,7 +76,7 @@ function BuscadorSuplidor({ value, onChange }) {
       <input
         className="border rounded p-2 w-full"
         value={busqueda}
-        placeholder="Buscar suplidor..."
+        placeholder="Search supplier..."
         onChange={e => setBusqueda(e.target.value)}
       />
       <div className="max-h-32 overflow-auto mt-1 border rounded bg-white">
@@ -98,7 +98,7 @@ function BuscadorSuplidor({ value, onChange }) {
         className="text-xs text-blue-700 mt-1"
         onClick={() => setShowCrear(!showCrear)}
       >
-        {showCrear ? "Cancelar" : "+ Nuevo suplidor"}
+        {showCrear ? "Cancel" : "+ New supplier"}
       </button>
       {showCrear && (
         <CrearSuplidor
@@ -114,7 +114,7 @@ function BuscadorSuplidor({ value, onChange }) {
 }
 
 const SIZES_COMUNES = [
-  ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "CAJA", "SACO", "BOLSA"
+  ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "BOX", "SACK", "BAG"
 ];
 
 // --- MODAL RESUMEN DE FACTURA ---
@@ -151,38 +151,38 @@ function ModalResumenFactura({ factura, onClose }) {
           type="button"
           className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
           onClick={onClose}
-          title="Cerrar"
+          title="Close"
         >
           ×
         </button>
-        <h3 className="text-xl font-bold mb-3">Resumen de Factura</h3>
+        <h3 className="text-xl font-bold mb-3">Invoice summary</h3>
         {loading ? (
-          <div className="text-blue-700">Cargando...</div>
+          <div className="text-blue-700">Loading...</div>
         ) : !detalle ? (
           <div className="text-red-700">
-            No se encontró la factura.<br />
+            Invoice not found.<br />
             <span className="text-xs text-gray-500">
-              Revisa en consola (F12) el objeto factura y el ID buscado.
+              Check the "factura" object and ID in the browser console (F12).
             </span>
           </div>
         ) : (
           <div>
             <div className="mb-3">
-              <b>Factura ID:</b> {detalle.id}
+              <b>Invoice ID:</b> {detalle.id}
               <br />
-              <b>Cliente:</b> {detalle.cliente?.nombre || "-"}
+              <b>Client:</b> {detalle.cliente?.nombre || "-"}
               <br />
-              <b>Fecha:</b> {detalle.fecha ? new Date(detalle.fecha).toLocaleDateString("es-DO") : "-"}
+              <b>Date:</b> {detalle.fecha ? new Date(detalle.fecha).toLocaleDateString("en-US") : "-"}
               <br />
               <b>Total:</b> <span className="text-green-700 font-bold">${detalle.total?.toFixed(2) ?? "-"}</span>
             </div>
-            <b>Productos vendidos:</b>
+            <b>Products sold:</b>
             <table className="min-w-full mt-2 text-xs">
               <thead>
                 <tr>
-                  <th className="p-1 border-b">Producto</th>
-                  <th className="p-1 border-b">Cantidad</th>
-                  <th className="p-1 border-b">Precio</th>
+                  <th className="p-1 border-b">Product</th>
+                  <th className="p-1 border-b">Quantity</th>
+                  <th className="p-1 border-b">Price</th>
                   <th className="p-1 border-b">Subtotal</th>
                 </tr>
               </thead>
@@ -250,7 +250,7 @@ function ModalProducto({ children, onClose, modalAbierto, safeTop = 28 }) {
   );
 }
 
-// --------- COMPONENTE PRINCIPAL ---------
+// --------- MAIN COMPONENT ---------
 export default function Productos() {
   const PAGE_SIZE = 50;
   const [productos, setProductos] = useState([]);
@@ -312,7 +312,7 @@ export default function Productos() {
     query = query.range(desde, hasta);
 
     const { data, count, error } = await query;
-    if (error) setMensaje("Error cargando productos: " + error.message);
+    if (error) setMensaje("Error loading products: " + error.message);
     if (data) {
       setProductos(data || []);
       setTotal(count || 0);
@@ -386,7 +386,7 @@ export default function Productos() {
     e.preventDefault();
     setMensaje("");
     if (!productoActual.codigo || !productoActual.nombre || !productoActual.precio) {
-      setMensaje("Completa todos los campos obligatorios.");
+      setMensaje("Complete all required fields.");
       return;
     }
     const dataProducto = {
@@ -404,10 +404,10 @@ export default function Productos() {
     let resultado;
     if (productoActual.id) {
       resultado = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
-      if (!resultado.error) setMensaje("Producto actualizado.");
+      if (!resultado.error) setMensaje("Product updated.");
     } else {
       resultado = await supabase.from("productos").insert([dataProducto]);
-      if (!resultado.error) setMensaje("Producto agregado.");
+      if (!resultado.error) setMensaje("Product added.");
     }
     if (resultado.error) setMensaje("Error: " + resultado.error.message);
     await cargarProductos();
@@ -416,9 +416,9 @@ export default function Productos() {
 
   async function eliminarProducto() {
     if (!productoActual?.id) return;
-    if (!window.confirm("¿Seguro que quieres eliminar este producto?")) return;
+    if (!window.confirm("Are you sure you want to delete this product?")) return;
     const { error } = await supabase.from("productos").delete().eq("id", productoActual.id);
-    if (!error) setMensaje("Producto eliminado.");
+    if (!error) setMensaje("Product deleted.");
     else setMensaje("Error: " + error.message);
     await cargarProductos();
     cerrarModal();
@@ -428,7 +428,7 @@ export default function Productos() {
     setGuardandoNota(true);
     await supabase.from("productos").update({ notas: notaProducto }).eq("id", productoActual.id);
     setGuardandoNota(false);
-    setMensaje("Nota guardada.");
+    setMensaje("Note saved.");
   }
 
   // --- MÉTRICAS ---
@@ -494,11 +494,11 @@ export default function Productos() {
   // ------ RENDER ---------
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-4 text-center">Inventario de Productos</h2>
+      <h2 className="text-2xl font-bold mb-4 text-center">Product Inventory</h2>
       <div className="max-w-2xl mx-auto mb-4 flex gap-2">
         <input
           type="text"
-          placeholder="Buscar por código, nombre, marca, categoría..."
+          placeholder="Search by code, name, brand, category..."
           value={busqueda}
           onChange={handleBuscar}
           className="border rounded p-2 w-full"
@@ -507,31 +507,31 @@ export default function Productos() {
           onClick={agregarProductoNuevo}
           className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap"
         >
-          + Agregar producto
+          + Add product
         </button>
       </div>
       <div className="max-w-4xl mx-auto">
         {loading ? (
-          <div className="text-center py-6 text-blue-700 font-bold">Cargando...</div>
+          <div className="text-center py-6 text-blue-700 font-bold">Loading...</div>
         ) : (
           <table className="min-w-full text-sm bg-white rounded shadow">
             <thead>
               <tr>
-                <th className="p-2">Código/UPC</th>
-                <th className="p-2">Nombre</th>
-                <th className="p-2">Marca</th>
-                <th className="p-2">Categoría</th>
-                <th className="p-2">Tamaño</th>
-                <th className="p-2">Suplidor</th>
-                <th className="p-2">Costo</th>
-                <th className="p-2">Precio</th>
+                <th className="p-2">Code/UPC</th>
+                <th className="p-2">Name</th>
+                <th className="p-2">Brand</th>
+                <th className="p-2">Category</th>
+                <th className="p-2">Size</th>
+                <th className="p-2">Supplier</th>
+                <th className="p-2">Cost</th>
+                <th className="p-2">Price</th>
               </tr>
             </thead>
             <tbody>
               {productos.length === 0 ? (
                 <tr>
                   <td colSpan="8" className="text-center text-gray-400 py-5">
-                    {busqueda ? "Sin resultados para la búsqueda." : "No hay productos."}
+                    {busqueda ? "No results found for your search." : "No products."}
                   </td>
                 </tr>
               ) : (
@@ -555,32 +555,32 @@ export default function Productos() {
             </tbody>
           </table>
         )}
-        {/* PAGINACIÓN */}
+        {/* PAGINATION */}
         <div className="flex justify-between items-center mt-4">
           <button
             className="px-4 py-2 bg-gray-200 rounded"
             onClick={handleAnterior}
             disabled={pagina === 1}
           >
-            Anterior
+            Previous
           </button>
           <span>
-            Página {pagina} de {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+            Page {pagina} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
           </span>
           <button
             className="px-4 py-2 bg-gray-200 rounded"
             onClick={handleSiguiente}
             disabled={pagina * PAGE_SIZE >= total}
           >
-            Siguiente
+            Next
           </button>
         </div>
         <div className="text-xs text-gray-400 mt-2 text-center mb-10">
-          Mostrando {productos.length} de {total} productos.
+          Showing {productos.length} of {total} products.
         </div>
       </div>
 
-      {/* --- MODAL EDICIÓN / MÉTRICAS --- */}
+      {/* --- MODAL EDIT / METRICS --- */}
       {modalAbierto && (
         <ModalProducto
           onClose={cerrarModal}
@@ -591,18 +591,18 @@ export default function Productos() {
             type="button"
             className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
             onClick={cerrarModal}
-            title="Cerrar"
+            title="Close"
             style={{ zIndex: 100 }}
           >
             ×
           </button>
-          {/* Tabs: Editar / Métricas */}
+          {/* Tabs: Edit / Metrics */}
           <div className="flex mb-4 border-b mt-2">
             <button
               className={`px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
               onClick={() => setTabActivo("editar")}
             >
-              Editar producto
+              Edit product
             </button>
             {productoActual.id && (
               <button
@@ -612,16 +612,16 @@ export default function Productos() {
                   cargarMetricas();
                 }}
               >
-                Métricas
+                Metrics
               </button>
             )}
           </div>
-          {/* TAB EDITAR */}
+          {/* TAB EDIT */}
           {tabActivo === "editar" && (
             <form onSubmit={guardarProducto}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <div>
-                  <label className="font-bold">Código/UPC*</label>
+                  <label className="font-bold">Code/UPC*</label>
                   <input
                     className="border rounded p-2 w-full"
                     value={productoActual.codigo}
@@ -636,7 +636,7 @@ export default function Productos() {
                   />
                 </div>
                 <div>
-                  <label className="font-bold">Nombre*</label>
+                  <label className="font-bold">Name*</label>
                   <input
                     className="border rounded p-2 w-full"
                     value={productoActual.nombre}
@@ -648,7 +648,7 @@ export default function Productos() {
                   />
                 </div>
                 <div>
-                  <label className="font-bold">Marca</label>
+                  <label className="font-bold">Brand</label>
                   <input
                     className="border rounded p-2 w-full"
                     value={productoActual.marca}
@@ -659,7 +659,7 @@ export default function Productos() {
                   />
                 </div>
                 <div>
-                  <label className="font-bold">Categoría</label>
+                  <label className="font-bold">Category</label>
                   <input
                     className="border rounded p-2 w-full"
                     value={productoActual.categoria}
@@ -670,7 +670,7 @@ export default function Productos() {
                   />
                 </div>
                 <div>
-                  <label className="font-bold">Tamaño/Size</label>
+                  <label className="font-bold">Size</label>
                   <select
                     className="border rounded p-2 w-full"
                     value={isCustomSize ? "custom" : (productoActual.size || "")}
@@ -686,23 +686,23 @@ export default function Productos() {
                       }
                     }}
                   >
-                    <option value="">Selecciona tamaño</option>
+                    <option value="">Select size</option>
                     {SIZES_COMUNES.map(sz => (
                       <option value={sz} key={sz}>{sz}</option>
                     ))}
-                    <option value="custom">Agregar otro tamaño...</option>
+                    <option value="custom">Add custom size...</option>
                   </select>
                   {isCustomSize && (
                     <input
                       className="border rounded p-2 mt-1 w-full"
                       value={sizeCustom}
-                      placeholder="Escribe el tamaño personalizado"
+                      placeholder="Enter custom size"
                       onChange={e => setSizeCustom(e.target.value)}
                     />
                   )}
                 </div>
                 <div>
-                  <label className="font-bold">Suplidor</label>
+                  <label className="font-bold">Supplier</label>
                   <BuscadorSuplidor
                     value={suplidorId}
                     onChange={(id, nombre) => {
@@ -716,7 +716,7 @@ export default function Productos() {
                   />
                 </div>
                 <div>
-                  <label className="font-bold">Costo</label>
+                  <label className="font-bold">Cost</label>
                   <input
                     className="border rounded p-2 w-full"
                     value={productoActual.costo}
@@ -731,7 +731,7 @@ export default function Productos() {
                   />
                 </div>
                 <div>
-                  <label className="font-bold">Precio*</label>
+                  <label className="font-bold">Price*</label>
                   <input
                     className="border rounded p-2 w-full"
                     value={productoActual.precio}
@@ -747,11 +747,11 @@ export default function Productos() {
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="font-bold">Notas del producto</label>
+                  <label className="font-bold">Product notes</label>
                   <textarea
                     className="border rounded p-2 w-full min-h-[60px]"
                     value={notaProducto}
-                    placeholder="Observaciones especiales, detalles importantes, etc."
+                    placeholder="Special notes, important details, etc."
                     onChange={e => setNotaProducto(e.target.value)}
                   />
                   {productoActual.id && (
@@ -761,7 +761,7 @@ export default function Productos() {
                       onClick={guardarNotaProducto}
                       disabled={guardandoNota}
                     >
-                      Guardar nota
+                      Save note
                     </button>
                   )}
                 </div>
@@ -774,7 +774,7 @@ export default function Productos() {
                   type="submit"
                   className="flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
                 >
-                  {productoActual.id ? "Guardar Cambios" : "Agregar producto"}
+                  {productoActual.id ? "Save changes" : "Add product"}
                 </button>
                 {productoActual.id && (
                   <button
@@ -782,7 +782,7 @@ export default function Productos() {
                     className="flex-1 bg-red-600 text-white rounded px-5 py-2"
                     onClick={eliminarProducto}
                   >
-                    Eliminar
+                    Delete
                   </button>
                 )}
               </div>
@@ -798,7 +798,7 @@ export default function Productos() {
                   }`}
                   onClick={() => cambiarTipoGrafico("cantidad")}
                 >
-                  Cantidad vendida
+                  Quantity sold
                 </button>
                 <button
                   className={`px-3 py-1 rounded text-xs font-bold ${
@@ -806,12 +806,12 @@ export default function Productos() {
                   }`}
                   onClick={() => cambiarTipoGrafico("valor")}
                 >
-                  Ventas en $
+                  Sales in $
                 </button>
               </div>
               <div className="my-2">
                 <span className="inline-block bg-blue-50 rounded p-2 border">
-                  <b>Margen de ganancia:</b>{" "}
+                  <b>Profit margin:</b>{" "}
                   {productoActual.costo && productoActual.precio
                     ? (
                       ((productoActual.precio - productoActual.costo) /
@@ -823,27 +823,27 @@ export default function Productos() {
               </div>
               <div className="grid grid-cols-2 gap-2 my-4 text-xs text-center">
                 <div className="p-2 bg-green-50 rounded shadow">
-                  <b>Total vendido:</b>
+                  <b>Total sold:</b>
                   <div className="text-lg font-bold">{indicadores.total?.toLocaleString()}</div>
                 </div>
                 <div className="p-2 bg-blue-50 rounded shadow">
-                  <b>Mejor mes:</b>
+                  <b>Best month:</b>
                   <div className="font-bold">{indicadores.mejorMes || "-"}</div>
                 </div>
                 <div className="p-2 bg-red-50 rounded shadow">
-                  <b>Peor mes:</b>
+                  <b>Worst month:</b>
                   <div className="font-bold">{indicadores.peorMes || "-"}</div>
                 </div>
                 <div className="p-2 bg-yellow-50 rounded shadow">
-                  <b>Promedio mensual:</b>
+                  <b>Monthly average:</b>
                   <div className="font-bold">{Number(indicadores.promedio).toFixed(1)}</div>
                 </div>
               </div>
-              <h3 className="text-lg font-bold mb-2">Ventas por mes (últimos 12 meses):</h3>
+              <h3 className="text-lg font-bold mb-2">Sales per month (last 12 months):</h3>
               {loadingMetricas ? (
-                <div className="text-blue-700 mt-2">Cargando...</div>
+                <div className="text-blue-700 mt-2">Loading...</div>
               ) : ventasPorMes.length === 0 ? (
-                <div className="text-gray-400 mt-2">No hay ventas registradas.</div>
+                <div className="text-gray-400 mt-2">No sales registered.</div>
               ) : (
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart
@@ -872,19 +872,19 @@ export default function Productos() {
               {/* CLIENTES DE UN MES SELECCIONADO */}
               {mesSeleccionado && (
                 <div className="mt-5">
-                  <h4 className="font-bold mb-1">Clientes/facturas - {mesSeleccionado}:</h4>
+                  <h4 className="font-bold mb-1">Clients/invoices - {mesSeleccionado}:</h4>
                   {loadingMetricas ? (
-                    <div className="text-blue-700 mt-2">Buscando...</div>
+                    <div className="text-blue-700 mt-2">Searching...</div>
                   ) : clientesVenta.length === 0 ? (
-                    <div className="text-gray-400">No hay ventas en este mes.</div>
+                    <div className="text-gray-400">No sales in this month.</div>
                   ) : (
                     <table className="min-w-full text-xs">
                       <thead>
                         <tr>
-                          <th className="p-1 border-b">Cliente</th>
-                          <th className="p-1 border-b">Cantidad</th>
-                          <th className="p-1 border-b">Fecha</th>
-                          <th className="p-1 border-b">Seleccionar</th>
+                          <th className="p-1 border-b">Client</th>
+                          <th className="p-1 border-b">Quantity</th>
+                          <th className="p-1 border-b">Date</th>
+                          <th className="p-1 border-b">Select</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -896,7 +896,7 @@ export default function Productos() {
                             <td className="p-1 border-b">{c.cliente_nombre || c.nombre || "-"}</td>
                             <td className="p-1 border-b">{c.cantidad}</td>
                             <td className="p-1 border-b">
-                              {c.fecha ? new Date(c.fecha).toLocaleDateString("es-DO") : ""}
+                              {c.fecha ? new Date(c.fecha).toLocaleDateString("en-US") : ""}
                             </td>
                             <td className="p-1 border-b">
                               <button
@@ -908,8 +908,8 @@ export default function Productos() {
                                 onClick={() => seleccionarFactura(c)}
                               >
                                 {facturaSeleccionada?.venta_id === c.venta_id
-                                  ? "Seleccionado"
-                                  : "Seleccionar"}
+                                  ? "Selected"
+                                  : "Select"}
                               </button>
                             </td>
                           </tr>
@@ -924,7 +924,7 @@ export default function Productos() {
         </ModalProducto>
       )}
 
-      {/* --- MODAL RESUMEN DE FACTURA --- */}
+      {/* --- MODAL INVOICE SUMMARY --- */}
       {mostrarModalFactura && facturaSeleccionada && (
         <ModalResumenFactura
           factura={facturaSeleccionada}

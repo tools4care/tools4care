@@ -20,11 +20,11 @@ export default function Dashboard() {
   const [stockVan, setStockVan] = useState([]);
   const [clientes, setClientes] = useState([]);
 
-  // NUEVO: Para ver más/menos ventas
+  // For show more/less sales
   const [mostrarTodas, setMostrarTodas] = useState(false);
   const ventasMostrar = mostrarTodas ? ventas : ventas.slice(0, 5);
 
-  // NUEVO: Modal de detalle de venta
+  // Modal for sale details
   const [ventaSeleccionada, setVentaSeleccionada] = useState(null);
   const [detalleProductos, setDetalleProductos] = useState([]);
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
@@ -36,10 +36,6 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    // LOGS CRÍTICOS: usuario y van_id en uso
-    // console.log("USUARIO ACTUAL EN DASHBOARD:", usuario);
-    // console.log("VAN SELECCIONADA CONTEXTO:", van);
-
     if (van && van.id) {
       cargarStockVan(van.id);
     } else {
@@ -48,11 +44,11 @@ export default function Dashboard() {
     // eslint-disable-next-line
   }, [van, usuario]);
 
-  // Cargar ventas y top productos
+  // Load sales and top products
   async function cargarDatos() {
     setLoading(true);
 
-    // Ventas últimos 14 días
+    // Last 14 days sales
     const { data: ventasData } = await supabase
       .from("ventas")
       .select("*")
@@ -61,7 +57,7 @@ export default function Dashboard() {
 
     setVentas(ventasData || []);
 
-    // Gráfica: ventas por día
+    // Sales per day chart
     const ventasPorDiaMap = {};
     (ventasData || []).forEach(v => {
       const fecha = dayjs(v.fecha).format("YYYY-MM-DD");
@@ -72,13 +68,13 @@ export default function Dashboard() {
       .sort((a, b) => (a.fecha > b.fecha ? 1 : -1));
     setVentasPorDia(ventasPorDiaArr);
 
-    // Top productos más vendidos (requiere tabla detalle_ventas)
+    // Top sold products
     const { data: detalle } = await supabase
       .from("detalle_ventas")
       .select("producto_id, cantidad, productos(nombre)")
       .order("cantidad", { ascending: false });
 
-    // Agrupa por producto_id
+    // Group by producto_id
     const productosVendidos = {};
     (detalle || []).forEach(item => {
       if (!item.producto_id) return;
@@ -91,7 +87,7 @@ export default function Dashboard() {
       productosVendidos[item.producto_id].cantidad += (item.cantidad || 0);
     });
 
-    // Solo los 5 más vendidos
+    // Only top 5
     const top = Object.entries(productosVendidos)
       .map(([producto_id, v]) => ({ producto_id, ...v }))
       .sort((a, b) => b.cantidad - a.cantidad)
@@ -111,7 +107,7 @@ export default function Dashboard() {
     return cliente ? cliente.nombre : (id ? id.slice(0, 8) + "…" : "");
   }
 
-  // Trae stock bajo (<5) de la VAN seleccionada y con el nombre real
+  // Get low stock (<5) for selected VAN with real product name
   async function cargarStockVan(van_id) {
     const { data, error } = await supabase
       .from("stock_van")
@@ -127,11 +123,10 @@ export default function Dashboard() {
     })));
   }
 
-  // NUEVO: Cargar detalles de una venta para el modal
+  // Load sale details for modal
   async function abrirDetalleVenta(venta) {
     setVentaSeleccionada(venta);
     setCargandoDetalle(true);
-    // Detalle de productos vendidos
     const { data: productos } = await supabase
       .from("detalle_ventas")
       .select("producto_id, cantidad, precio_unitario, productos(nombre, codigo)")
@@ -149,9 +144,9 @@ export default function Dashboard() {
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
-      {/* Gráfica de ventas por día */}
+      {/* Sales by day chart */}
       <div className="bg-white rounded-xl shadow p-4 mb-6">
-        <h2 className="font-bold mb-2">Ventas últimos 14 días</h2>
+        <h2 className="font-bold mb-2">Sales last 14 days</h2>
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={ventasPorDia}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -162,9 +157,9 @@ export default function Dashboard() {
           </LineChart>
         </ResponsiveContainer>
       </div>
-      {/* Top productos más vendidos */}
+      {/* Top selling products */}
       <div className="bg-white rounded-xl shadow p-4 mb-6">
-        <h2 className="font-bold mb-2">Top productos más vendidos</h2>
+        <h2 className="font-bold mb-2">Top selling products</h2>
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={productosTop}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -176,37 +171,37 @@ export default function Dashboard() {
           </BarChart>
         </ResponsiveContainer>
       </div>
-      {/* Stock bajo de la VAN */}
+      {/* Low stock VAN */}
       <div className="bg-white rounded-xl shadow p-4 mb-6">
-        <h2 className="font-bold mb-2">Stock bajo (Tu VAN)</h2>
+        <h2 className="font-bold mb-2">Low stock (Your VAN)</h2>
         <ul className="list-disc pl-6">
           {stockVan.map((p, idx) => (
             <li key={idx}>
               <span className="font-mono text-gray-500">{p.codigo}</span>
               <span className="ml-2 font-semibold">{p.nombre}</span>
-              — <span className="text-red-600 font-bold">{p.cantidad}</span> en stock
+              — <span className="text-red-600 font-bold">{p.cantidad}</span> in stock
             </li>
           ))}
           {stockVan.length === 0 && (
-            <li className="text-gray-400">No hay productos en stock bajo en tu van</li>
+            <li className="text-gray-400">No low-stock products in your van</li>
           )}
         </ul>
       </div>
-      {/* Tabla de ventas recientes */}
+      {/* Recent sales table */}
       <div className="bg-white rounded-xl shadow p-4">
-        <h2 className="text-lg font-bold mb-2">Ventas recientes</h2>
+        <h2 className="text-lg font-bold mb-2">Recent sales</h2>
         {loading ? (
-          <div>Cargando...</div>
+          <div>Loading…</div>
         ) : (
           <>
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="bg-slate-100">
                   <th className="p-2 text-left">ID</th>
-                  <th className="p-2 text-left">Fecha</th>
-                  <th className="p-2 text-left">Cliente</th>
+                  <th className="p-2 text-left">Date</th>
+                  <th className="p-2 text-left">Client</th>
                   <th className="p-2 text-left">Total</th>
-                  <th className="p-2 text-left">Estado pago</th>
+                  <th className="p-2 text-left">Payment status</th>
                 </tr>
               </thead>
               <tbody>
@@ -225,27 +220,27 @@ export default function Dashboard() {
                         : "--"}
                     </td>
                     <td className={`p-2 ${v.estado_pago === "pendiente" ? "text-red-600" : "text-green-600"}`}>
-                      {v.estado_pago}
+                      {v.estado_pago === "pendiente" ? "Pending" : "Paid"}
                     </td>
                   </tr>
                 ))}
                 {ventas.length === 0 && (
                   <tr>
                     <td colSpan={5} className="text-center text-gray-400 py-4">
-                      No hay ventas registradas.
+                      No sales registered.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
-            {/* Botón mostrar más/menos */}
+            {/* Show more/less button */}
             {ventas.length > 5 && (
               <div className="mt-3 text-right">
                 <button
                   className="px-3 py-1 rounded bg-blue-100 text-blue-700 font-semibold text-xs hover:bg-blue-200"
                   onClick={() => setMostrarTodas((m) => !m)}
                 >
-                  {mostrarTodas ? "Ver menos" : "Ver más"}
+                  {mostrarTodas ? "Show less" : "Show more"}
                 </button>
               </div>
             )}
@@ -253,7 +248,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Modal de detalle de venta */}
+      {/* Sale detail modal */}
       {ventaSeleccionada && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md relative">
@@ -261,22 +256,24 @@ export default function Dashboard() {
               className="absolute top-3 right-3 text-gray-700 text-xl font-bold"
               onClick={cerrarDetalleVenta}
             >×</button>
-            <h3 className="text-xl font-bold mb-2">Detalle de venta</h3>
+            <h3 className="text-xl font-bold mb-2">Sale details</h3>
             <div className="mb-2 text-sm text-gray-700">
               <b>ID:</b> <span className="font-mono">{ventaSeleccionada.id}</span><br />
-              <b>Fecha:</b> {dayjs(ventaSeleccionada.fecha).format("YYYY-MM-DD HH:mm")}<br />
-              <b>Cliente:</b> {getNombreCliente(ventaSeleccionada.cliente_id) || "—"}<br />
+              <b>Date:</b> {dayjs(ventaSeleccionada.fecha).format("YYYY-MM-DD HH:mm")}<br />
+              <b>Client:</b> {getNombreCliente(ventaSeleccionada.cliente_id) || "—"}<br />
               <b>Total:</b> ${ventaSeleccionada.total_venta?.toFixed(2) || "--"}<br />
-              <b>Estado de pago:</b> <span className={ventaSeleccionada.estado_pago === "pendiente" ? "text-red-600" : "text-green-600"}>{ventaSeleccionada.estado_pago}</span>
+              <b>Payment status:</b> <span className={ventaSeleccionada.estado_pago === "pendiente" ? "text-red-600" : "text-green-600"}>
+                {ventaSeleccionada.estado_pago === "pendiente" ? "Pending" : "Paid"}
+              </span>
             </div>
             <div className="mb-2">
-              <b>Productos vendidos:</b>
+              <b>Sold products:</b>
               {cargandoDetalle ? (
-                <div className="text-blue-700 text-xs">Cargando productos…</div>
+                <div className="text-blue-700 text-xs">Loading products…</div>
               ) : (
                 <ul className="text-sm mt-1">
                   {detalleProductos.length === 0
-                    ? <li className="text-gray-400">No hay productos en esta venta</li>
+                    ? <li className="text-gray-400">No products in this sale</li>
                     : detalleProductos.map((p, idx) => (
                       <li key={idx}>
                         <span className="font-mono text-gray-500">{p.productos?.codigo || p.producto_id}</span>
@@ -291,7 +288,7 @@ export default function Dashboard() {
             <button
               className="mt-4 px-4 py-2 rounded bg-blue-600 text-white font-bold hover:bg-blue-700"
               onClick={cerrarDetalleVenta}
-            >Cerrar</button>
+            >Close</button>
           </div>
         </div>
       )}

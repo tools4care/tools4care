@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 
-export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
+export default function ModalTransferStock({ abierto, cerrar, ubicaciones, onSuccess }) {
   const [origenKey, setOrigenKey] = useState("");
   const [destinoKey, setDestinoKey] = useState("");
   const [productos, setProductos] = useState([]);
@@ -9,7 +9,7 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
   const [productoNombre, setProductoNombre] = useState("");
   const [cantidad, setCantidad] = useState(1);
 
-  // Para autocompletar
+  // For autocomplete
   const [filtro, setFiltro] = useState("");
   const [mostrarOpciones, setMostrarOpciones] = useState(false);
 
@@ -48,16 +48,16 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
     let { data: stockOrigen } = await supabase.from(tablaOrigen).select("*").match(filtroOrigen).maybeSingle();
 
     if (!stockOrigen || stockOrigen.cantidad < cantidad) {
-      alert("No hay suficiente stock en el origen.");
+      alert("Not enough stock in the origin.");
       return;
     }
 
-    // Descontar en origen
+    // Deduct from origin
     await supabase.from(tablaOrigen)
       .update({ cantidad: stockOrigen.cantidad - Number(cantidad) })
       .match(filtroOrigen);
 
-    // Sumar en destino
+    // Add to destination
     let tablaDestino = destino.tipo === "almacen" ? "stock_almacen" : "stock_van";
     let filtroDestino = destino.tipo === "almacen" ? { producto_id: productoId } : { producto_id: productoId, van_id: destino.id };
     let { data: stockDestino } = await supabase.from(tablaDestino).select("*").match(filtroDestino).maybeSingle();
@@ -73,7 +73,7 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
     cerrar();
   }
 
-  // Opciones filtradas para el autocompletado (nombre, marca y código)
+  // Filtered options for autocomplete (name, brand, code)
   const opcionesFiltradas = productos.filter(item =>
     (item.productos?.nombre || "").toLowerCase().includes(filtro.toLowerCase()) ||
     (item.productos?.marca || "").toLowerCase().includes(filtro.toLowerCase()) ||
@@ -84,7 +84,7 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
       <form onSubmit={transferirStock} className="bg-white p-6 rounded shadow w-96">
-        <h2 className="font-bold mb-4">Transferir Stock</h2>
+        <h2 className="font-bold mb-4">Transfer Stock</h2>
         <div className="mb-2 flex gap-2">
           <select className="border rounded p-2 flex-1" value={origenKey} onChange={e => {
             setOrigenKey(e.target.value);
@@ -105,11 +105,11 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
             ))}
           </select>
         </div>
-        {/* Autocompletar de producto */}
+        {/* Product autocomplete */}
         <div className="relative mb-2">
           <input
             className="border p-2 rounded w-full"
-            placeholder="Buscar producto (nombre, marca o código)"
+            placeholder="Search product (name, brand or code)"
             value={filtro || productoNombre}
             onChange={e => {
               setFiltro(e.target.value);
@@ -123,7 +123,7 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
           {mostrarOpciones && filtro.length > 0 && (
             <ul className="absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto mt-1">
               {opcionesFiltradas.length === 0 && (
-                <li className="p-2 text-gray-400">No encontrado</li>
+                <li className="p-2 text-gray-400">Not found</li>
               )}
               {opcionesFiltradas.map((item) => (
                 <li
@@ -143,7 +143,7 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
                   {item.productos?.nombre}
                   {item.productos?.marca ? ` - ${item.productos.marca}` : ""}
                   {item.productos?.codigo ? ` - ${item.productos.codigo}` : ""}
-                  (Disp: {item.cantidad})
+                  (Stock: {item.cantidad})
                 </li>
               ))}
             </ul>
@@ -158,8 +158,8 @@ export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuc
           onChange={e => setCantidad(e.target.value)}
         />
         <div className="flex gap-2 mt-2">
-          <button type="submit" className="bg-green-600 text-white px-4 py-1 rounded" disabled={!productoId}>Transferir</button>
-          <button type="button" className="bg-gray-300 px-4 py-1 rounded" onClick={cerrar}>Cancelar</button>
+          <button type="submit" className="bg-green-600 text-white px-4 py-1 rounded" disabled={!productoId}>Transfer</button>
+          <button type="button" className="bg-gray-300 px-4 py-1 rounded" onClick={cerrar}>Cancel</button>
         </div>
       </form>
     </div>

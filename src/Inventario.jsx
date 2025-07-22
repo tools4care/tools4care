@@ -5,81 +5,80 @@ import ModalTraspasoStock from "./ModalTraspasoStock";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 
-export default function Inventario() {
+export default function Inventory() {
   const { van } = useVan();
 
-  const [ubicaciones, setUbicaciones] = useState([
-    { key: "almacen", id: null, nombre: "Almacén Central", tipo: "almacen" }
+  const [locations, setLocations] = useState([
+    { key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" }
   ]);
-  const [seleccion, setSeleccion] = useState({ tipo: "almacen", id: null, nombre: "Almacén Central" });
-  const [refrescar, setRefrescar] = useState(0);
-  const [modalAbierto, setModalAbierto] = useState(false);
-  const [modalTraspasoAbierto, setModalTraspasoAbierto] = useState(false);
-  const [inventario, setInventario] = useState([]);
-  const [busqueda, setBusqueda] = useState(""); // filtro/buscador
+  const [selected, setSelected] = useState({ tipo: "warehouse", id: null, nombre: "Central Warehouse" });
+  const [refresh, setRefresh] = useState(0);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalTransferOpen, setModalTransferOpen] = useState(false);
+  const [inventory, setInventory] = useState([]);
+  const [search, setSearch] = useState(""); // filter/search
   const [error, setError] = useState("");
 
-  // Cargar ubicaciones: almacén + vans
+  // Load locations: warehouse + vans
   useEffect(() => {
-    async function fetchUbicaciones() {
+    async function fetchLocations() {
       const { data: vansData } = await supabase.from("vans").select("id, nombre_van");
-      const vansUbicaciones = (vansData || []).map(v => ({
+      const vansLocations = (vansData || []).map(v => ({
         key: `van_${v.id}`,
         id: v.id,
         nombre: v.nombre_van,
         tipo: "van"
       }));
-      const almacen = { key: "almacen", id: null, nombre: "Almacén Central", tipo: "almacen" };
-      setUbicaciones([almacen, ...vansUbicaciones]);
-      setSeleccion(almacen);
+      const warehouse = { key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" };
+      setLocations([warehouse, ...vansLocations]);
+      setSelected(warehouse);
     }
-    fetchUbicaciones();
+    fetchLocations();
   }, []);
 
-  // Carga inventario según selección
+  // Load inventory by selection
   useEffect(() => {
-    async function fetchInventario() {
+    async function fetchInventory() {
       setError("");
-      if (!seleccion) return;
-      let tabla = seleccion.tipo === "almacen" ? "stock_almacen" : "stock_van";
-      // Incluimos el campo 'codigo'
-      let query = supabase.from(tabla).select("id, producto_id, cantidad, productos(nombre, marca, codigo)");
-      if (seleccion.tipo === "van") {
-        query = query.eq("van_id", seleccion.id);
+      if (!selected) return;
+      let table = selected.tipo === "warehouse" ? "stock_almacen" : "stock_van";
+      let query = supabase.from(table).select("id, producto_id, cantidad, productos(nombre, marca, codigo)");
+      if (selected.tipo === "van") {
+        query = query.eq("van_id", selected.id);
       }
       const { data, error } = await query;
       if (error) setError(error.message);
-      setInventario(data || []);
+      setInventory(data || []);
     }
-    fetchInventario();
-  }, [seleccion, refrescar]);
+    fetchInventory();
+  }, [selected, refresh]);
 
-  // Buscador de producto (por nombre, marca o código)
-  const inventarioFiltrado = inventario.filter(item => {
-    const nombre = item.productos?.nombre?.toLowerCase() || "";
-    const marca = item.productos?.marca?.toLowerCase() || "";
-    const codigo = item.productos?.codigo?.toLowerCase() || "";
-    const filtro = busqueda.toLowerCase();
+  // Product search (by name, brand, or code)
+  const filteredInventory = inventory.filter(item => {
+    const name = item.productos?.nombre?.toLowerCase() || "";
+    const brand = item.productos?.marca?.toLowerCase() || "";
+    const code = item.productos?.codigo?.toLowerCase() || "";
+    const filter = search.toLowerCase();
     return (
-      nombre.includes(filtro) ||
-      marca.includes(filtro) ||
-      codigo.includes(filtro)
+      name.includes(filter) ||
+      brand.includes(filter) ||
+      code.includes(filter)
     );
   });
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <h2 className="text-2xl font-bold mb-4">Inventario de VAN</h2>
+      <h2 className="text-2xl font-bold mb-4">VAN Inventory</h2>
       <div className="mb-4 flex items-center gap-4">
         <select
           className="border rounded p-2"
-          value={seleccion.key}
+          value={selected.key}
           onChange={e => {
-            const sel = ubicaciones.find(u => u.key === e.target.value);
-            setSeleccion(sel || ubicaciones[0]);
+            const sel = locations.find(u => u.key === e.target.value);
+            setSelected(sel || locations[0]);
           }}
         >
-          {ubicaciones.map(u => (
+          {locations.map(u => (
             <option key={u.key} value={u.key}>
               {u.nombre}
             </option>
@@ -87,48 +86,48 @@ export default function Inventario() {
         </select>
         <input
           className="border p-2 rounded"
-          placeholder="Buscar producto, marca o código"
-          value={busqueda}
-          onChange={e => setBusqueda(e.target.value)}
+          placeholder="Search product, brand, or code"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
           autoFocus
         />
         <button
           className="bg-blue-600 text-white px-3 py-1 rounded"
-          onClick={() => setModalAbierto(true)}
+          onClick={() => setModalOpen(true)}
         >
-          Agregar Stock
+          Add Stock
         </button>
         <button
           className="bg-green-600 text-white px-3 py-1 rounded"
-          onClick={() => setModalTraspasoAbierto(true)}
+          onClick={() => setModalTransferOpen(true)}
         >
-          Transferir Stock
+          Transfer Stock
         </button>
       </div>
 
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 mb-2 rounded">
-          <b>Error al cargar inventario:</b> {error}
+          <b>Error loading inventory:</b> {error}
         </div>
       )}
 
-      {/* Renderiza inventario */}
+      {/* Render inventory */}
       <div className="bg-white rounded shadow p-4">
-        {inventarioFiltrado.length === 0 ? (
-          <div className="text-gray-400">No hay productos en inventario.</div>
+        {filteredInventory.length === 0 ? (
+          <div className="text-gray-400">No products in inventory.</div>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-100">
-                <th className="p-2">Código</th>
-                <th className="p-2">Producto</th>
-                <th className="p-2">Marca</th>
-                <th className="p-2">Cantidad</th>
+                <th className="p-2">Code</th>
+                <th className="p-2">Product</th>
+                <th className="p-2">Brand</th>
+                <th className="p-2">Quantity</th>
               </tr>
             </thead>
             <tbody>
-              {inventarioFiltrado.map((item) => (
-                <tr key={`${item.producto_id}_${seleccion.key}`}>
+              {filteredInventory.map((item) => (
+                <tr key={`${item.producto_id}_${selected.key}`}>
                   <td className="p-2 font-mono">{item.productos?.codigo || "-"}</td>
                   <td className="p-2">{item.productos?.nombre}</td>
                   <td className="p-2">{item.productos?.marca}</td>
@@ -140,22 +139,22 @@ export default function Inventario() {
         )}
       </div>
 
-      {/* Modales */}
+      {/* Modals */}
       <AgregarStockModal
-        abierto={modalAbierto}
-        cerrar={() => setModalAbierto(false)}
-        tipo={seleccion.tipo}
-        ubicacionId={seleccion.id}
-        onSuccess={() => setRefrescar(r => r + 1)}
-        modoSuma // <--- Agrega esta prop para indicar que debe sumar stock
+        abierto={modalOpen}
+        cerrar={() => setModalOpen(false)}
+        tipo={selected.tipo}
+        ubicacionId={selected.id}
+        onSuccess={() => setRefresh(r => r + 1)}
+        modoSuma // <--- Add this prop to indicate stock should be added
       />
       <ModalTraspasoStock
-        abierto={modalTraspasoAbierto}
-        cerrar={() => setModalTraspasoAbierto(false)}
-        ubicaciones={ubicaciones}
+        abierto={modalTransferOpen}
+        cerrar={() => setModalTransferOpen(false)}
+        ubicaciones={locations}
         onSuccess={() => {
-          setModalTraspasoAbierto(false);
-          setRefrescar(r => r + 1);
+          setModalTransferOpen(false);
+          setRefresh(r => r + 1);
         }}
       />
     </div>
