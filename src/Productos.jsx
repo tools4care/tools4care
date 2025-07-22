@@ -522,10 +522,34 @@ export default function Productos() {
           Mostrando {productos.length} de {total} productos.
         </div>
       </div>
+
       {/* --- MODAL EDICIÓN / MÉTRICAS --- */}
       {modalAbierto && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-xl p-8 w-full max-w-2xl relative">
+        <div
+          className="fixed inset-0 z-30 flex items-end sm:items-center justify-center bg-black/40 overflow-y-auto"
+          onClick={cerrarModal}
+        >
+          <div
+            className="w-full max-w-2xl bg-white rounded-t-3xl sm:rounded-xl shadow-xl px-2 pt-3 pb-28 sm:pb-6 relative animate-modal-in overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            // --- SWIPE DOWN PARA MOBILE ---
+            onTouchStart={e => { window.__swipeY = e.touches[0].clientY; }}
+            onTouchMove={e => {
+              if (window.__swipeY != null) {
+                const delta = e.touches[0].clientY - window.__swipeY;
+                if (delta > 60) {
+                  cerrarModal();
+                  window.__swipeY = null;
+                }
+              }
+            }}
+            onTouchEnd={() => { window.__swipeY = null; }}
+          >
+            {/* Drag bar visual solo en móvil */}
+            <div className="w-12 h-1.5 rounded bg-gray-300 mx-auto mb-2 sm:hidden" />
             <button
               type="button"
               className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
@@ -556,7 +580,7 @@ export default function Productos() {
             </div>
             {/* TAB EDITAR */}
             {tabActivo === "editar" && (
-              <form onSubmit={guardarProducto}>
+              <form onSubmit={guardarProducto} autoComplete="off">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <div>
                     <label className="font-bold">Código/UPC*</label>
@@ -707,6 +731,7 @@ export default function Productos() {
                 {mensaje && (
                   <div className="text-blue-700 text-center mt-2">{mensaje}</div>
                 )}
+                {/* Sticky botones */}
                 <div className="flex gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
                   <button
                     type="submit"
@@ -862,6 +887,7 @@ export default function Productos() {
           </div>
         </div>
       )}
+
       {/* --- MODAL RESUMEN DE FACTURA --- */}
       {mostrarModalFactura && facturaSeleccionada && (
         <ModalResumenFactura
