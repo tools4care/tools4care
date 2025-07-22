@@ -28,7 +28,7 @@ export default function ReporteDia() {
   const [busqueda, setBusqueda] = useState("");
   const [expandida, setExpandida] = useState(null);
 
-  // Resumen
+  // Summary
   const resumen = ventas.reduce(
     (acc, v) => {
       acc.total += Number(v.total);
@@ -120,10 +120,10 @@ export default function ReporteDia() {
 
   // Helpers
   function nombreCliente(venta) {
-    return venta.clientes?.nombre || "Sin cliente";
+    return venta.clientes?.nombre || "No client";
   }
   function nombreVendedor(venta) {
-    return venta.usuarios?.nombre || "Sin vendedor";
+    return venta.usuarios?.nombre || "No seller";
   }
   function formatoHora(f) {
     const fecha = new Date(f);
@@ -137,35 +137,35 @@ export default function ReporteDia() {
     setExpandida(expandida === id ? null : id);
   }
 
-  // Exportar a PDF
+  // Export to PDF
   function exportarPDF() {
     const doc = new jsPDF();
-    // Logo o Título
+    // Logo or Title
     doc.setFontSize(18);
-    doc.text("Reporte de Ventas del Día", 14, 15);
+    doc.text("Daily Sales Report", 14, 15);
 
-    // Resumen
+    // Summary
     doc.setFontSize(12);
     doc.text(
-      `Fecha: ${filtroFecha || new Date().toISOString().slice(0, 10)}   Total ventas: ${resumen.count}   Monto total: $${resumen.total.toFixed(
+      `Date: ${filtroFecha || new Date().toISOString().slice(0, 10)}   Total sales: ${resumen.count}   Total amount: $${resumen.total.toFixed(
         2
-      )}   Pagado: $${resumen.pagado.toFixed(2)}   Pendiente: $${resumen.pendiente.toFixed(2)}`,
+      )}   Paid: $${resumen.pagado.toFixed(2)}   Pending: $${resumen.pendiente.toFixed(2)}`,
       14,
       25
     );
 
-    // Tabla ventas
+    // Sales table
     autoTable(doc, {
       startY: 30,
       head: [
         [
-          "Hora",
-          "Factura",
-          "Cliente",
-          "Vendedor",
+          "Time",
+          "Invoice",
+          "Client",
+          "Seller",
           "Total",
-          "Estado",
-          "Productos"
+          "Status",
+          "Products"
         ]
       ],
       body: ventas.map((v) => [
@@ -174,7 +174,7 @@ export default function ReporteDia() {
         nombreCliente(v),
         nombreVendedor(v),
         "$" + Number(v.total).toFixed(2),
-        v.estado_pago,
+        v.estado_pago === "pagado" ? "Paid" : "Pending",
         v.detalle_ventas
           .map(
             (d) =>
@@ -186,67 +186,67 @@ export default function ReporteDia() {
       headStyles: { fillColor: [37, 99, 235] }
     });
 
-    doc.save(`reporte_ventas_${filtroFecha || new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`sales_report_${filtroFecha || new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
   return (
     <div className="max-w-5xl mx-auto mt-8 bg-white p-8 rounded-2xl shadow-xl">
       <h2 className="text-3xl font-bold mb-6 text-blue-900 flex items-center gap-3">
-        <BadgeDollarSign className="text-green-600" /> Reporte de Ventas del Día
+        <BadgeDollarSign className="text-green-600" /> Daily Sales Report
       </h2>
-      {/* RESUMEN */}
+      {/* SUMMARY */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-blue-50 rounded-xl p-4 text-center shadow">
           <div className="text-2xl font-bold">${resumen.total.toFixed(2)}</div>
-          <div className="text-xs text-blue-800 font-semibold">Total Vendido</div>
+          <div className="text-xs text-blue-800 font-semibold">Total Sold</div>
         </div>
         <div className="bg-green-50 rounded-xl p-4 text-center shadow">
           <div className="text-2xl font-bold text-green-700">${resumen.pagado.toFixed(2)}</div>
-          <div className="text-xs text-green-800 font-semibold">Pagado</div>
+          <div className="text-xs text-green-800 font-semibold">Paid</div>
         </div>
         <div className="bg-orange-50 rounded-xl p-4 text-center shadow">
           <div className="text-2xl font-bold text-orange-700">${resumen.pendiente.toFixed(2)}</div>
-          <div className="text-xs text-orange-800 font-semibold">Pendiente</div>
+          <div className="text-xs text-orange-800 font-semibold">Pending</div>
         </div>
         <div className="bg-gray-50 rounded-xl p-4 text-center shadow">
           <div className="text-2xl font-bold">{resumen.count}</div>
-          <div className="text-xs text-gray-800 font-semibold">Ventas</div>
+          <div className="text-xs text-gray-800 font-semibold">Sales</div>
         </div>
       </div>
 
-      {/* FILTROS */}
+      {/* FILTERS */}
       <div className="flex flex-wrap gap-4 mb-6 items-end">
         <div>
           <label className="block text-xs font-bold mb-1 flex items-center gap-1">
-            <CheckCircle2 className="w-4 h-4" /> Estado
+            <CheckCircle2 className="w-4 h-4" /> Status
           </label>
           <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} className="border p-2 rounded">
-            <option value="todos">Todos</option>
-            <option value="pagado">Pagado</option>
-            <option value="pendiente">Pendiente</option>
+            <option value="todos">All</option>
+            <option value="pagado">Paid</option>
+            <option value="pendiente">Pending</option>
           </select>
         </div>
         <div>
           <label className="block text-xs font-bold mb-1 flex items-center gap-1">
-            <Users className="w-4 h-4" /> Cliente
+            <Users className="w-4 h-4" /> Client
           </label>
           <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)} className="border p-2 rounded w-36">
-            <option value="">Todos</option>
+            <option value="">All</option>
             {clientes.map(c => <option value={c.id} key={c.id}>{c.nombre}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-xs font-bold mb-1 flex items-center gap-1">
-            <User className="w-4 h-4" /> Vendedor
+            <User className="w-4 h-4" /> Seller
           </label>
           <select value={filtroVendedor} onChange={e => setFiltroVendedor(e.target.value)} className="border p-2 rounded w-36">
-            <option value="">Todos</option>
+            <option value="">All</option>
             {usuarios.map(u => <option value={u.id} key={u.id}>{u.nombre}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-xs font-bold mb-1 flex items-center gap-1">
-            <Calendar className="w-4 h-4" /> Fecha
+            <Calendar className="w-4 h-4" /> Date
           </label>
           <input type="date" value={filtroFecha || new Date().toISOString().slice(0, 10)}
             onChange={e => setFiltroFecha(e.target.value)}
@@ -254,39 +254,39 @@ export default function ReporteDia() {
         </div>
         <div>
           <label className="block text-xs font-bold mb-1 flex items-center gap-1">
-            <Search className="w-4 h-4" /> Buscar
+            <Search className="w-4 h-4" /> Search
           </label>
           <input
             type="text"
             className="border p-2 rounded w-40"
-            placeholder="Cliente, producto, #..."
+            placeholder="Client, product, #..."
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
           />
         </div>
-        {/* Botón Exportar PDF */}
+        {/* Export PDF Button */}
         <div>
           <button
             className="bg-blue-700 hover:bg-blue-800 text-white font-bold flex gap-2 items-center px-5 py-2 rounded-2xl shadow mt-5"
             onClick={exportarPDF}
           >
             <Download className="w-5 h-5" />
-            Exportar PDF
+            Export PDF
           </button>
         </div>
       </div>
 
-      {/* TABLA */}
+      {/* TABLE */}
       <div className="overflow-x-auto rounded-2xl border">
         <table className="min-w-full text-sm">
           <thead className="bg-blue-50">
             <tr>
-              <th className="p-2">Hora</th>
-              <th className="p-2">Factura</th>
-              <th className="p-2">Cliente</th>
-              <th className="p-2">Vendedor</th>
+              <th className="p-2">Time</th>
+              <th className="p-2">Invoice</th>
+              <th className="p-2">Client</th>
+              <th className="p-2">Seller</th>
               <th className="p-2">Total</th>
-              <th className="p-2">Estado</th>
+              <th className="p-2">Status</th>
               <th className="p-2"></th>
             </tr>
           </thead>
@@ -294,7 +294,7 @@ export default function ReporteDia() {
             {ventas.length === 0 && (
               <tr>
                 <td colSpan={7} className="py-8 text-center text-gray-500">
-                  No hay ventas en este periodo.
+                  No sales in this period.
                 </td>
               </tr>
             )}
@@ -309,11 +309,11 @@ export default function ReporteDia() {
                   <td className="p-2">
                     {v.estado_pago === "pagado" ? (
                       <span className="px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-bold flex items-center gap-1">
-                        <CheckCircle2 className="w-4 h-4" /> Pagado
+                        <CheckCircle2 className="w-4 h-4" /> Paid
                       </span>
                     ) : (
                       <span className="px-2 py-1 rounded bg-orange-100 text-orange-700 text-xs font-bold flex items-center gap-1">
-                        <Hourglass className="w-4 h-4" /> Pendiente
+                        <Hourglass className="w-4 h-4" /> Pending
                       </span>
                     )}
                   </td>
@@ -321,7 +321,7 @@ export default function ReporteDia() {
                     <button
                       className="text-blue-700 hover:text-blue-900"
                       onClick={() => expandRow(v.id)}
-                      title="Ver productos"
+                      title="View products"
                     >
                       {expandida === v.id ? <ChevronUp /> : <ChevronDown />}
                     </button>
@@ -330,15 +330,15 @@ export default function ReporteDia() {
                 {expandida === v.id && (
                   <tr>
                     <td colSpan={7} className="bg-blue-50 px-4 py-2">
-                      <b>Productos:</b>
+                      <b>Products:</b>
                       <div className="mt-2">
                         <table className="min-w-full text-xs">
                           <thead>
                             <tr>
-                              <th className="p-1">Producto</th>
-                              <th className="p-1">Marca</th>
-                              <th className="p-1">Cantidad</th>
-                              <th className="p-1">Precio U.</th>
+                              <th className="p-1">Product</th>
+                              <th className="p-1">Brand</th>
+                              <th className="p-1">Quantity</th>
+                              <th className="p-1">Unit Price</th>
                               <th className="p-1">Subtotal</th>
                             </tr>
                           </thead>

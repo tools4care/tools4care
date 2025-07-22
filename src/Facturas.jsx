@@ -1,3 +1,4 @@
+// src/Facturas.jsx
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import jsPDF from "jspdf";
@@ -9,8 +10,16 @@ import { useVan } from "./hooks/VanContext";
 function formatAddress(dir) {
   if (!dir) return "-";
   if (typeof dir === "string") {
-    try { dir = JSON.parse(dir); } catch { return dir; }
+    try {
+      // Si ya es formato EE.UU.
+      if (dir.includes(",") && dir.match(/[A-Z]{2}\s*\d{5}/)) return dir;
+      // Si es string tipo JSON
+      dir = JSON.parse(dir);
+    } catch {
+      return dir;
+    }
   }
+  // Unión formato US
   const partes = [
     dir.calle && dir.calle.trim() ? dir.calle.trim() : null,
     dir.ciudad && dir.ciudad.trim() ? dir.ciudad.trim() : null,
@@ -29,7 +38,7 @@ function formatPhone(phone) {
   return phone;
 }
 
-// PDF generator with English invoice look
+// PDF generator con dirección US para empresa y cliente
 function descargarPDFFactura(factura) {
   const doc = new jsPDF("p", "pt", "a4");
   const azul = "#0B4A6F";
@@ -37,43 +46,49 @@ function descargarPDFFactura(factura) {
   const negro = "#222";
   const empresa = {
     nombre: "TOOLS4CARE",
-    direccion: "26 Howley St, Peabody, MA",
-    telefono: "(555) 123-4567",
+    direccion: "108 Lafayette St, Salem, MA 01970", // Dirección completa formato US
+    telefono: "(978) 594-1624",
     email: "soporte@tools4care.com"
   };
   const dirCliente = formatAddress(factura.cliente_direccion);
   const telCliente = formatPhone(factura.cliente_telefono);
   const emailCliente = factura.cliente_email || "-";
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
   doc.setTextColor(azul);
   doc.text(empresa.nombre, 36, 48);
+
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(negro);
   doc.text(`Address: ${empresa.direccion}`, 36, 65);
   doc.text(`Phone: ${empresa.telefono}  |  Email: ${empresa.email}`, 36, 78);
+
   doc.setLineWidth(1.1);
   doc.setDrawColor(azul);
   doc.line(36, 86, 560, 86);
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
   doc.setTextColor(azul);
   doc.text("INVOICE", 36, 110);
+
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(negro);
   doc.text(`Invoice Number: ${factura.numero_factura || factura.id?.slice(0, 8)}`, 36, 130);
   doc.text(`Date: ${factura.fecha ? new Date(factura.fecha).toLocaleDateString("en-US") : ""}`, 36, 145);
   doc.text(`Client: ${factura.cliente_nombre_c || "-"}`, 36, 160);
-  doc.text(`Address: ${dirCliente}`, 36, 175);
+  doc.text(`Address: ${dirCliente}`, 36, 175); // Dirección cliente formateada US
   doc.text(`Phone: ${telCliente}`, 36, 190);
   doc.text(`Email: ${emailCliente}`, 36, 205);
+
   doc.setTextColor(azul);
   doc.setFont("helvetica", "bold");
   doc.text("Product/Service Details", 36, 230);
 
-  // --- Productos vendidos, con nombre desde productos
+  // --- Productos vendidos
   autoTable(doc, {
     startY: 240,
     head: [["Product", "Quantity", "Unit Price", "Subtotal"]],
@@ -90,6 +105,7 @@ function descargarPDFFactura(factura) {
     styles: { fontSize: 10, lineColor: gris, textColor: "#333" },
     margin: { left: 36, right: 36 }
   });
+
   let totalY = doc.lastAutoTable.finalY + 25;
   doc.setFontSize(11);
   doc.setTextColor(azul);
@@ -99,6 +115,7 @@ function descargarPDFFactura(factura) {
   doc.setFontSize(10);
   doc.setTextColor("#444");
   doc.text(`Status: ${factura.estado_pago === "pagado" ? "Paid" : "Pending"}`, 36, totalY + 25);
+
   let yPie = totalY + 55;
   doc.setDrawColor(gris);
   doc.line(36, yPie, 560, yPie);

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 
-export default function AgregarStockModal({
-  abierto,
+export default function AddStockModal({
+  abierto,    // Mantén igual si el padre lo manda así
   cerrar,
   tipo = "almacen",
   ubicacionId = null,
@@ -11,7 +11,7 @@ export default function AgregarStockModal({
 }) {
   const [busqueda, setBusqueda] = useState("");
   const [opciones, setOpciones] = useState([]);
-  const [seleccion, setSeleccion] = useState(null); // Producto seleccionado
+  const [seleccion, setSeleccion] = useState(null);
   const [cantidad, setCantidad] = useState(1);
   const [mensaje, setMensaje] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,6 @@ export default function AgregarStockModal({
     }
   }, [abierto]);
 
-  // --- BUSQUEDA DINAMICA: cada vez que escribes
   useEffect(() => {
     if (!abierto) return;
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -48,14 +47,12 @@ export default function AgregarStockModal({
     // eslint-disable-next-line
   }, [busqueda]);
 
-  // Busca tanto en inventario (por ubicacion) como en productos
   async function buscarOpciones(filtro) {
     setLoading(true);
     setOpciones([]);
     setSeleccion(null);
     setMensaje("");
 
-    // Busca en inventario actual
     let tabla = tipo === "almacen" ? "stock_almacen" : "stock_van";
     let query = supabase
       .from(tabla)
@@ -66,7 +63,6 @@ export default function AgregarStockModal({
     if (tipo === "van") query = query.eq("van_id", ubicacionId);
     let { data: inventarioData } = await query;
 
-    // Busca en productos si no existe o para nuevos
     let { data: productosData } = await supabase
       .from("productos")
       .select("*")
@@ -74,12 +70,10 @@ export default function AgregarStockModal({
         `codigo.ilike.%${filtro}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`
       );
 
-    // Normaliza para no duplicar (si está ya en inventario, ignora en productos)
     let inventarioIds = (inventarioData || []).map(x => x.producto_id);
     let productosSoloNuevos = (productosData || []).filter(
       p => !inventarioIds.includes(p.id)
     );
-    // Junta y normaliza
     let opcionesTodas = [
       ...(inventarioData || []).map(x => ({
         ...x.productos,
@@ -98,7 +92,6 @@ export default function AgregarStockModal({
     setOpciones(opcionesTodas);
     setLoading(false);
 
-    // Si hay coincidencia exacta, selecciona y muestra mensaje
     let exact = opcionesTodas.find(
       opt =>
         opt.codigo?.toLowerCase() === filtro.toLowerCase() ||
@@ -107,13 +100,13 @@ export default function AgregarStockModal({
     );
     if (exact) {
       setSeleccion(exact);
-      setMensaje("¡Coincidencia exacta encontrada! Listo para agregar stock.");
+      setMensaje("Exact match found! Ready to add stock.");
     } else {
       setSeleccion(null);
       setMensaje(
         opcionesTodas.length === 0
-          ? "No encontrado. Puedes crearlo en Productos."
-          : "Seleccione el producto correcto de la lista."
+          ? "Not found. You can create it in Products."
+          : "Select the correct product from the list."
       );
     }
   }
@@ -129,7 +122,6 @@ export default function AgregarStockModal({
     };
     if (tipo === "van") payload.van_id = ubicacionId;
 
-    // Si ya existe en inventario y modo suma, suma stock
     if (seleccion.enInventario && modoSuma) {
       let { error } = await supabase
         .from(tabla)
@@ -143,7 +135,6 @@ export default function AgregarStockModal({
       return;
     }
 
-    // Si es nuevo en inventario
     let { error } = await supabase.from(tabla).insert([payload]);
     if (!error) {
       onSuccess && onSuccess();
@@ -159,10 +150,10 @@ export default function AgregarStockModal({
         onSubmit={agregarStock}
         autoComplete="off"
       >
-        <h2 className="font-bold mb-2 text-lg">Agregar Stock</h2>
+        <h2 className="font-bold mb-2 text-lg">Add Stock</h2>
         <input
           className="border p-2 rounded w-full mb-2 font-mono"
-          placeholder="Escanea o busca por código, nombre o marca"
+          placeholder="Scan or search by code, name, or brand"
           value={busqueda}
           onChange={e => {
             setBusqueda(e.target.value);
@@ -172,14 +163,13 @@ export default function AgregarStockModal({
           autoFocus
         />
 
-        {/* Lista de opciones */}
+        {/* Options list */}
         {loading ? (
-          <div className="text-blue-500 mb-2">Buscando...</div>
+          <div className="text-blue-500 mb-2">Searching...</div>
         ) : (
           opciones.length > 0 && (
             <ul className="border rounded max-h-40 overflow-y-auto mb-3 bg-white">
               {opciones.map((opt, idx) => {
-                // ¿Coincidencia exacta?
                 let isExact =
                   (busqueda &&
                     (opt.codigo?.toLowerCase() === busqueda.toLowerCase() ||
@@ -202,8 +192,8 @@ export default function AgregarStockModal({
                       );
                       setMensaje(
                         isExact
-                          ? "¡Coincidencia exacta encontrada! Listo para agregar stock."
-                          : "Producto seleccionado. Verifica antes de agregar."
+                          ? "Exact match found! Ready to add stock."
+                          : "Product selected. Check before adding."
                       );
                     }}
                   >
@@ -211,12 +201,12 @@ export default function AgregarStockModal({
                       <b>{opt.nombre}</b> {opt.marca && <>- {opt.marca}</>}
                     </span>
                     <span className="text-xs text-gray-600 font-mono">
-                      Código: {opt.codigo || "-"}
+                      Code: {opt.codigo || "-"}
                     </span>
                     <span className="text-xs">
                       {opt.enInventario
-                        ? `Inventario actual: ${opt.cantidad}`
-                        : "Nuevo en inventario"}
+                        ? `Current stock: ${opt.cantidad}`
+                        : "New in stock"}
                     </span>
                   </li>
                 );
@@ -225,7 +215,7 @@ export default function AgregarStockModal({
           )
         )}
 
-        {/* Mensaje confirmación */}
+        {/* Confirmation message */}
         {mensaje && (
           <div
             className={`mb-2 p-2 rounded text-center ${
@@ -254,19 +244,19 @@ export default function AgregarStockModal({
             className="bg-blue-700 text-white px-4 py-2 rounded w-full"
             disabled={!seleccion}
           >
-            Agregar
+            Add
           </button>
           <button
             type="button"
             className="bg-gray-300 px-4 py-2 rounded"
             onClick={cerrar}
           >
-            Cancelar
+            Cancel
           </button>
         </div>
         {!seleccion && (
           <div className="mt-3 text-xs text-gray-400 text-center">
-            ¿No aparece? <b>Primero crea el producto</b> desde el módulo de productos.
+            Not found? <b>Create the product first</b> in the products module.
           </div>
         )}
       </form>

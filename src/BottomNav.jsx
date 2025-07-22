@@ -18,11 +18,11 @@ import { useVan } from "./hooks/VanContext";
 import { supabase } from "./supabaseClient";
 
 const items = [
-  { to: "/", label: "Inicio", icon: Home, color: "#2563eb" },         // azul
-  { to: "/ventas", label: "Ventas", icon: ShoppingCart, color: "#059669" }, // verde
-  { to: "/productos", label: "Productos", icon: Box, color: "#a21caf" },    // púrpura
-  { to: "/clientes", label: "Clientes", icon: Users, color: "#f59e42" },    // naranja
-  { action: "more", label: "Más", icon: MoreHorizontal, color: "#64748b" }, // gris
+  { to: "/", label: "Home", icon: Home, color: "#2563eb" },
+  { to: "/ventas", label: "Sales", icon: ShoppingCart, color: "#059669" },
+  { to: "/productos", label: "Products", icon: Box, color: "#a21caf" },
+  { to: "/clientes", label: "Customers", icon: Users, color: "#f59e42" },
+  { action: "more", label: "More", icon: MoreHorizontal, color: "#64748b" },
 ];
 
 export default function BottomNav() {
@@ -81,7 +81,7 @@ export default function BottomNav() {
           )
         )}
       </nav>
-      {/* Modal simple inferior */}
+      {/* Simple bottom modal */}
       {showMore && (
         <div
           className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-end"
@@ -91,52 +91,52 @@ export default function BottomNav() {
             className="bg-white w-full rounded-t-2xl p-6 space-y-2"
             onClick={e => e.stopPropagation()}
           >
-            <div className="text-center font-semibold text-lg mb-1">Más opciones</div>
+            <div className="text-center font-semibold text-lg mb-1">More Options</div>
             <div className="flex flex-col gap-2">
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
                 onClick={() => handleNav("/inventario")}
               >
-                <ClipboardList size={18} color="#6366f1" /> Inventario
+                <ClipboardList size={18} color="#6366f1" /> Inventory
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
                 onClick={() => handleNav("/facturas")}
               >
-                <FileText size={18} color="#a21caf" /> Facturación
+                <FileText size={18} color="#a21caf" /> Invoicing
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
                 onClick={() => handleNav("/cierres")}
               >
-                <Truck size={18} color="#059669" /> Cierre de Van
+                <Truck size={18} color="#059669" /> Van Closeout
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-yellow-50 text-left"
                 onClick={handleChangeVan}
               >
-                <Box size={18} color="#f59e42" /> Cambiar VAN
+                <Box size={18} color="#f59e42" /> Change VAN
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-red-50 text-left"
                 onClick={handleLogout}
               >
-                <LogOut size={18} color="#dc2626" /> Cerrar sesión
+                <LogOut size={18} color="#dc2626" /> Log out
               </button>
             </div>
             <div className="mt-2 pt-2 border-t text-xs text-gray-500">
               <div className="flex items-center gap-1 mb-1">
-                <UserCircle2 size={14} color="#2563eb" /> Usuario: <b className="ml-1">{usuario?.email || "Sin sesión"}</b>
+                <UserCircle2 size={14} color="#2563eb" /> User: <b className="ml-1">{usuario?.email || "No session"}</b>
               </div>
               <div className="flex items-center gap-1">
-                <Truck size={14} color="#059669" /> VAN: <b className="ml-1">{van?.nombre_van || "No seleccionada"}</b>
+                <Truck size={14} color="#059669" /> VAN: <b className="ml-1">{van?.nombre_van || "Not selected"}</b>
               </div>
             </div>
             <button
               className="mt-3 w-full text-gray-400 font-medium text-sm"
               onClick={() => setShowMore(false)}
             >
-              Cerrar
+              Close
             </button>
           </div>
         </div>

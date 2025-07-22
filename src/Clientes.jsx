@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
-import { useVan } from "./hooks/VanContext"; // Acceso a la van actual
+import { useVan } from "./hooks/VanContext"; // Access to current van
 
 const estadosUSA = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
@@ -37,15 +37,15 @@ export default function Clientes() {
   const [estadoInput, setEstadoInput] = useState("");
   const [estadoOpciones, setEstadoOpciones] = useState(estadosUSA);
 
-  // Cargar clientes
+  // Load clients
   useEffect(() => { cargarClientes(); }, []);
   async function cargarClientes() {
     const { data, error } = await supabase.from("clientes_balance").select("*");
     if (!error) setClientes(data);
-    else setMensaje("Error cargando clientes");
+    else setMensaje("Error loading clients");
   }
 
-  // Cuando seleccionas cliente, cargar resumen
+  // When selecting client, load summary
   useEffect(() => {
     async function cargarResumen() {
       if (!clienteSeleccionado) return setResumen({ ventas: [], pagos: [], balance: 0 });
@@ -131,14 +131,14 @@ export default function Clientes() {
 
   async function handleGuardar(e) {
     e.preventDefault();
-    if (!form.nombre) return setMensaje("Nombre y apellido es requerido");
+    if (!form.nombre) return setMensaje("Full name is required");
     let direccionFinal = form.direccion || { calle: "", ciudad: "", estado: "", zip: "" };
 
     if (!clienteSeleccionado) {
       const { error } = await supabase.from("clientes").insert([{ ...form, direccion: direccionFinal }]);
-      if (error) setMensaje("Error al guardar: " + error.message);
+      if (error) setMensaje("Error saving: " + error.message);
       else {
-        setMensaje("Cliente guardado con éxito");
+        setMensaje("Client saved successfully");
         cargarClientes();
         resetForm();
       }
@@ -146,9 +146,9 @@ export default function Clientes() {
       const { error } = await supabase.from("clientes")
         .update({ ...form, direccion: direccionFinal })
         .eq("id", clienteSeleccionado.id);
-      if (error) setMensaje("Error al editar: " + error.message);
+      if (error) setMensaje("Error editing: " + error.message);
       else {
-        setMensaje("Cambios guardados con éxito");
+        setMensaje("Changes saved successfully");
         cargarClientes();
         resetForm();
       }
@@ -156,12 +156,12 @@ export default function Clientes() {
   }
 
   async function handleEliminar() {
-    if (!clienteSeleccionado) return setMensaje("Selecciona un cliente primero");
-    if (!window.confirm("¿Eliminar este cliente?")) return;
+    if (!clienteSeleccionado) return setMensaje("Select a client first");
+    if (!window.confirm("Delete this client?")) return;
     const { error } = await supabase.from("clientes").delete().eq("id", clienteSeleccionado.id);
-    if (error) setMensaje("Error al eliminar: " + error.message);
+    if (error) setMensaje("Error deleting: " + error.message);
     else {
-      setMensaje("Cliente eliminado");
+      setMensaje("Client deleted");
       cargarClientes();
       resetForm();
     }
@@ -202,15 +202,15 @@ export default function Clientes() {
 
   return (
     <div className="max-w-5xl mx-auto py-7">
-      <h2 className="text-3xl font-bold mb-6 text-center text-blue-900">Clientes</h2>
-      {/* Formulario */}
+      <h2 className="text-3xl font-bold mb-6 text-center text-blue-900">Clients</h2>
+      {/* Form */}
       <form onSubmit={handleGuardar} className="bg-white p-6 rounded-xl shadow-md mb-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className="font-bold block mb-1">Nombre y Apellido *</label>
+          <label className="font-bold block mb-1">Full Name *</label>
           <input name="nombre" className="border rounded-lg p-2 w-full" value={form.nombre} onChange={handleChange} required />
         </div>
         <div>
-          <label className="font-bold block mb-1">Teléfono</label>
+          <label className="font-bold block mb-1">Phone</label>
           <input name="telefono" className="border rounded-lg p-2 w-full" value={form.telefono} onChange={handleChange} />
         </div>
         <div>
@@ -218,28 +218,28 @@ export default function Clientes() {
           <input name="email" className="border rounded-lg p-2 w-full" value={form.email} onChange={handleChange} />
         </div>
         <div>
-          <label className="font-bold block mb-1">Negocio</label>
+          <label className="font-bold block mb-1">Business</label>
           <input name="negocio" className="border rounded-lg p-2 w-full" value={form.negocio} onChange={handleChange} />
         </div>
         <div>
-          <label className="font-bold block mb-1">Calle</label>
+          <label className="font-bold block mb-1">Street</label>
           <input name="calle" className="border rounded-lg p-2 w-full" value={form.direccion.calle} onChange={handleChange} />
         </div>
         <div>
-          <label className="font-bold block mb-1">Ciudad</label>
+          <label className="font-bold block mb-1">City</label>
           <input name="ciudad" className="border rounded-lg p-2 w-full" value={form.direccion.ciudad} onChange={handleChange} />
         </div>
         <div>
-          <label className="font-bold block mb-1">Código Postal</label>
+          <label className="font-bold block mb-1">ZIP Code</label>
           <input name="zip" className="border rounded-lg p-2 w-full" value={form.direccion.zip} onChange={handleChange} maxLength={5} />
         </div>
-        {/* Estado: select con autocomplete */}
+        {/* State: select with autocomplete */}
         <div>
-          <label className="font-bold block mb-1">Estado</label>
+          <label className="font-bold block mb-1">State</label>
           <input
             name="estado"
             className="border rounded-lg p-2 w-full"
-            placeholder="Ej: MA"
+            placeholder="Eg: MA"
             value={estadoInput}
             onChange={handleChange}
             list="estados-lista"
@@ -255,33 +255,33 @@ export default function Clientes() {
         </div>
         <div className="sm:col-span-2 flex gap-3 mt-2">
           <button type="submit" className="bg-blue-700 hover:bg-blue-900 text-white font-bold px-6 py-2 rounded-xl transition">
-            {clienteSeleccionado ? "Guardar Cambios" : "Guardar Cliente"}
+            {clienteSeleccionado ? "Save Changes" : "Save Client"}
           </button>
           <button type="button" className="bg-gray-400 hover:bg-gray-600 text-white font-bold px-6 py-2 rounded-xl transition" onClick={resetForm}>
-            Limpiar
+            Clear
           </button>
           <button type="button" className="bg-red-700 hover:bg-red-900 text-white font-bold px-6 py-2 rounded-xl transition" disabled={!clienteSeleccionado} onClick={handleEliminar}>
-            Eliminar Cliente
+            Delete Client
           </button>
         </div>
         {mensaje && (
           <div className="col-span-2 text-center mt-2 text-blue-700">{mensaje}</div>
         )}
       </form>
-      {/* Tabla */}
+      {/* Table */}
       <div className="bg-white p-4 rounded-xl shadow-lg">
-        <h3 className="text-2xl font-bold mb-3 text-blue-900 text-center">Lista de Clientes</h3>
-        <input className="border rounded p-2 mb-4 w-full" placeholder="Buscar cliente" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+        <h3 className="text-2xl font-bold mb-3 text-blue-900 text-center">Client List</h3>
+        <input className="border rounded p-2 mb-4 w-full" placeholder="Search client" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-blue-100">
                 <th className="p-2">ID</th>
-                <th className="p-2">Nombre y Apellido</th>
-                <th className="p-2">Teléfono</th>
-                <th className="p-2">Negocio</th>
+                <th className="p-2">Full Name</th>
+                <th className="p-2">Phone</th>
+                <th className="p-2">Business</th>
                 <th className="p-2">Email</th>
-                <th className="p-2">Dirección</th>
+                <th className="p-2">Address</th>
                 <th className="p-2">Balance</th>
                 <th className="p-2"></th>
               </tr>
@@ -327,7 +327,7 @@ export default function Clientes() {
                         onClick={e => { e.stopPropagation(); setClienteSeleccionado(c); setMostrarAbono(true); }}
                         disabled={!c.id}
                       >
-                        Abonar
+                        Payment
                       </button>
                     </td>
                   </tr>
@@ -336,7 +336,7 @@ export default function Clientes() {
               {clientesFiltrados.length === 0 && (
                 <tr>
                   <td colSpan={8} className="text-center text-gray-400 py-4">
-                    No hay resultados.
+                    No results.
                   </td>
                 </tr>
               )}
@@ -344,7 +344,7 @@ export default function Clientes() {
           </table>
         </div>
       </div>
-      {/* MODAL: Abonar, con historial de ventas/pagos */}
+      {/* MODAL: Payment with sales/payment history */}
       {mostrarAbono && clienteSeleccionado && (
         <ModalAbonar
           cliente={clienteSeleccionado}
@@ -357,12 +357,11 @@ export default function Clientes() {
   );
 }
 
-// --- MODAL DE ABONO + HISTORIAL ---
-// Mejoras: validación robusta, doble submit, UX, asocia van_id al pago
+// --- PAYMENT MODAL + HISTORY ---
 function ModalAbonar({ cliente, resumen, onClose, refresh }) {
-  const { van } = useVan(); // Para asociar el abono a la van actual
+  const { van } = useVan();
   const [monto, setMonto] = useState("");
-  const [metodo, setMetodo] = useState("Efectivo");
+  const [metodo, setMetodo] = useState("Cash");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
@@ -373,18 +372,18 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
     setMensaje("");
 
     if (!van || !van.id) {
-      setMensaje("Debes seleccionar una VAN antes de abonar.");
+      setMensaje("You must select a VAN before adding a payment.");
       setGuardando(false);
       return;
     }
 
     if (!monto || isNaN(monto) || Number(monto) <= 0) {
-      setMensaje("Monto inválido. Debe ser mayor a 0.");
+      setMensaje("Invalid amount. Must be greater than 0.");
       setGuardando(false);
       return;
     }
     if (Number(monto) > Number(cliente.balance)) {
-      setMensaje("El monto no puede ser mayor al balance pendiente.");
+      setMensaje("Amount cannot be greater than pending balance.");
       setGuardando(false);
       return;
     }
@@ -394,18 +393,18 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
         cliente_id: cliente.id,
         monto: Number(monto),
         metodo_pago: metodo,
-        van_id: van.id, // Asociamos el abono a la van seleccionada
+        van_id: van.id,
       }
     ]);
     setGuardando(false);
     if (!error) {
-      setMensaje("¡Abono registrado!");
+      setMensaje("Payment registered!");
       setTimeout(() => {
         onClose();
         if (refresh) refresh();
       }, 900);
     } else {
-      setMensaje("Error al guardar abono");
+      setMensaje("Error saving payment");
     }
   }
 
@@ -415,16 +414,16 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
         onSubmit={guardarAbono}
         className="bg-white rounded p-6 w-full max-w-md"
       >
-        <h3 className="font-bold mb-3">Abono para {cliente.nombre}</h3>
+        <h3 className="font-bold mb-3">Payment for {cliente.nombre}</h3>
         <div className="mb-2">
-          <span className="font-bold">Balance actual:</span>{" "}
+          <span className="font-bold">Current Balance:</span>{" "}
           <span className={Number(cliente.balance) > 0 ? "text-red-600 font-bold" : "text-green-700 font-bold"}>
             ${Number(cliente.balance).toFixed(2)}
           </span>
         </div>
         <input
           className="border rounded p-2 mb-2 w-full"
-          placeholder="Monto"
+          placeholder="Amount"
           type="number"
           min="1"
           step="any"
@@ -437,43 +436,43 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
           value={metodo}
           onChange={e => setMetodo(e.target.value)}
         >
-          <option value="Efectivo">Efectivo</option>
-          <option value="Tarjeta">Tarjeta</option>
-          <option value="Transferencia">Transferencia</option>
+          <option value="Cash">Cash</option>
+          <option value="Card">Card</option>
+          <option value="Transfer">Transfer</option>
         </select>
         <button
           type="submit"
           className="bg-blue-700 text-white px-4 py-2 rounded w-full"
           disabled={guardando}
-        >{guardando ? "Guardando..." : "Guardar abono"}</button>
+        >{guardando ? "Saving..." : "Save payment"}</button>
         <button
           type="button"
           className="bg-gray-400 text-white px-4 py-2 rounded w-full mt-2"
           onClick={onClose}
           disabled={guardando}
-        >Cancelar</button>
+        >Cancel</button>
         {mensaje && (
-          <div className={`mt-2 text-sm ${mensaje.includes("Error") || mensaje.includes("inválido") ? "text-red-600" : "text-green-700"}`}>{mensaje}</div>
+          <div className={`mt-2 text-sm ${mensaje.includes("Error") || mensaje.includes("invalid") ? "text-red-600" : "text-green-700"}`}>{mensaje}</div>
         )}
 
-        {/* --- HISTORIAL --- */}
+        {/* --- HISTORY --- */}
         <div className="mt-5">
-          <h4 className="font-bold mb-2 text-blue-900">Historial reciente</h4>
-          <div className="text-sm mb-2 font-bold">Ventas con deuda</div>
+          <h4 className="font-bold mb-2 text-blue-900">Recent History</h4>
+          <div className="text-sm mb-2 font-bold">Sales with debt</div>
           <ul className="mb-3 max-h-24 overflow-y-auto">
-            {resumen.ventas.length === 0 && <li className="text-gray-500">Sin ventas registradas</li>}
+            {resumen.ventas.length === 0 && <li className="text-gray-500">No sales registered</li>}
             {resumen.ventas.map(v => (
               <li key={v.id} className="mb-1">
                 <span className="font-mono text-xs">{v.id.slice(0, 8)}</span> — <span className="font-bold">${(v.total_venta || 0).toFixed(2)}</span>
-                {v.total_pagado > 0 && <> pagado: <span className="font-bold text-green-800">${v.total_pagado.toFixed(2)}</span></>}
+                {v.total_pagado > 0 && <> paid: <span className="font-bold text-green-800">${v.total_pagado.toFixed(2)}</span></>}
                 {v.estado_pago && <> — <span className="italic">{v.estado_pago}</span></>}
                 <span className="ml-2 text-gray-400">{v.fecha?.slice(0,10)}</span>
               </li>
             ))}
           </ul>
-          <div className="text-sm font-bold mb-1">Abonos previos</div>
+          <div className="text-sm font-bold mb-1">Previous payments</div>
           <ul className="max-h-24 overflow-y-auto">
-            {resumen.pagos.length === 0 && <li className="text-gray-500">Sin abonos previos</li>}
+            {resumen.pagos.length === 0 && <li className="text-gray-500">No previous payments</li>}
             {resumen.pagos.map(p => (
               <li key={p.id} className="mb-1">
                 <span className="font-mono text-xs">{p.id.slice(0, 8)}</span> — <span className="font-bold">${(p.monto || 0).toFixed(2)}</span>

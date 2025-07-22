@@ -5,14 +5,14 @@ import { useVan } from "./hooks/VanContext";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-// Métodos de pago
+// Payment methods
 const METODOS_PAGO = [
-  { campo: "pago_efectivo", label: "Efectivo" },
-  { campo: "pago_tarjeta", label: "Tarjeta" },
-  { campo: "pago_transferencia", label: "Transferencia" }
+  { campo: "pago_efectivo", label: "Cash" },
+  { campo: "pago_tarjeta", label: "Card" },
+  { campo: "pago_transferencia", label: "Transfer" }
 ];
 
-// Hook para traer ventas y pagos no cerrados
+// Hook for fetching open sales/payments
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
@@ -22,7 +22,6 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
     if (!van_id || !fechaInicio || !fechaFin) return;
     setLoading(true);
     (async () => {
-      // Asegúrate que tus funciones retornen cliente_nombre (LEFT JOIN con clientes)
       const { data: ventasPend } = await supabase.rpc(
         "ventas_no_cerradas_por_van",
         { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
@@ -40,33 +39,33 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   return { ventas, pagos, loading };
 }
 
-// Tabla de ventas pendientes
+// Pending sales table
 function TablaMovimientosPendientes({ ventas }) {
   const sumBy = (arr, key) => arr.reduce((t, x) => t + Number(x[key] || 0), 0);
   const totalCxc = ventas.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0);
 
   return (
     <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
-      <h3 className="font-bold mb-3 text-lg text-blue-800">Movimientos pendientes de cierre</h3>
-      <b>Ventas pendientes:</b>
+      <h3 className="font-bold mb-3 text-lg text-blue-800">Pending Closeout Movements</h3>
+      <b>Pending Sales:</b>
       <table className="w-full text-xs mb-3">
         <thead>
           <tr className="bg-blue-100">
-            <th className="p-1">Fecha</th>
-            <th className="p-1">Cliente</th>
+            <th className="p-1">Date</th>
+            <th className="p-1">Client</th>
             <th className="p-1">Total</th>
-            <th className="p-1">Efectivo</th>
-            <th className="p-1">Tarjeta</th>
-            <th className="p-1">Transferencia</th>
-            <th className="p-1">Pagado</th>
-            <th className="p-1">CXC</th>
+            <th className="p-1">Cash</th>
+            <th className="p-1">Card</th>
+            <th className="p-1">Transfer</th>
+            <th className="p-1">Paid</th>
+            <th className="p-1">A/R</th>
           </tr>
         </thead>
         <tbody>
           {ventas.length === 0 && (
             <tr>
               <td colSpan={8} className="text-gray-400 text-center">
-                Sin ventas pendientes
+                No pending sales
               </td>
             </tr>
           )}
@@ -85,7 +84,7 @@ function TablaMovimientosPendientes({ ventas }) {
         </tbody>
         <tfoot className="bg-blue-50 font-bold">
           <tr>
-            <td className="p-1">Totales</td>
+            <td className="p-1">Totals</td>
             <td className="p-1"></td>
             <td className="p-1">${sumBy(ventas, "total_venta").toFixed(2)}</td>
             <td className="p-1">${sumBy(ventas, "pago_efectivo").toFixed(2)}</td>
@@ -100,27 +99,27 @@ function TablaMovimientosPendientes({ ventas }) {
   );
 }
 
-// Tabla de abonos/anticipos de clientes
+// Pending customer payments table
 function TablaAbonosPendientes({ pagos }) {
   return (
     <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
-      <h3 className="font-bold mb-3 text-lg text-blue-800">Abonos/Anticipos de clientes incluidos en este cierre</h3>
+      <h3 className="font-bold mb-3 text-lg text-blue-800">Customer Payments/Advances Included in This Closing</h3>
       <table className="w-full text-xs mb-3">
         <thead>
           <tr className="bg-blue-100">
-            <th className="p-1">Fecha</th>
-            <th className="p-1">Cliente</th>
-            <th className="p-1">Monto</th>
-            <th className="p-1">Método</th>
-            <th className="p-1">Referencia</th>
-            <th className="p-1">Notas</th>
+            <th className="p-1">Date</th>
+            <th className="p-1">Client</th>
+            <th className="p-1">Amount</th>
+            <th className="p-1">Method</th>
+            <th className="p-1">Reference</th>
+            <th className="p-1">Notes</th>
           </tr>
         </thead>
         <tbody>
           {pagos.length === 0 && (
             <tr>
               <td colSpan={6} className="text-gray-400 text-center">
-                Sin abonos/anticipos pendientes
+                No pending payments/advances
               </td>
             </tr>
           )}
@@ -140,12 +139,12 @@ function TablaAbonosPendientes({ pagos }) {
   );
 }
 
-// PDF profesional de cierre de VAN
+// PDF generator
 function generarPDFCierreVan({
   empresa = {
     nombre: "TOOLS4CARE",
-    direccion: "26 Howley St, Peabody, MA",
-    telefono: "(555) 123-4567",
+    direccion: "108 Lafayette St, Salem, MA 01970",
+    telefono: "(978) 594-1624",
     email: "soporte@tools4care.com"
   },
   cierre,
@@ -170,8 +169,8 @@ function generarPDFCierreVan({
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(negro);
-  doc.text(`Dirección: ${empresa.direccion}`, 36, 65);
-  doc.text(`Tel: ${empresa.telefono}  |  Email: ${empresa.email}`, 36, 78);
+  doc.text(`Address: ${empresa.direccion}`, 36, 65);
+  doc.text(`Phone: ${empresa.telefono}  |  Email: ${empresa.email}`, 36, 78);
 
   doc.setLineWidth(1.1);
   doc.setDrawColor(azul);
@@ -179,38 +178,38 @@ function generarPDFCierreVan({
 
   doc.setFontSize(14);
   doc.setTextColor(azul);
-  doc.text("Cierre de Van - Reporte Ejecutivo", 36, 110);
+  doc.text("Van Closeout - Executive Report", 36, 110);
   doc.setFontSize(10);
   doc.setTextColor(negro);
-  doc.text(`Periodo: ${fechaInicio} a ${fechaFin}`, 36, 130);
+  doc.text(`Period: ${fechaInicio} to ${fechaFin}`, 36, 130);
   doc.text(`Van: ${cierre?.van_nombre || cierre?.van_id || "-"}`, 320, 130);
-  doc.text(`Responsable: ${usuario?.nombre || usuario?.email || "-"}`, 36, 146);
-  doc.text(`Fecha cierre: ${new Date().toLocaleString()}`, 320, 146);
+  doc.text(`Responsible: ${usuario?.nombre || usuario?.email || "-"}`, 36, 146);
+  doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 320, 146);
 
   doc.setFillColor(azulSuave);
   doc.roundedRect(36, 160, 520, 52, 8, 8, "F");
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
   doc.setFontSize(12);
-  doc.text("RESUMEN EJECUTIVO", 44, 180);
+  doc.text("Executive Summary", 44, 180);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(negro);
-  doc.text(`Efectivo esperado: $${Number(resumen.efectivo_esperado).toFixed(2)}`, 44, 198);
-  doc.text(`Tarjeta esperado: $${Number(resumen.tarjeta_esperado).toFixed(2)}`, 220, 198);
-  doc.text(`Transferencia esperado: $${Number(resumen.transferencia_esperado).toFixed(2)}`, 370, 198);
-  doc.text(`CXC periodo: $${Number(resumen.cxc_periodo).toFixed(2)}`, 44, 214);
+  doc.text(`Expected Cash: $${Number(resumen.efectivo_esperado).toFixed(2)}`, 44, 198);
+  doc.text(`Expected Card: $${Number(resumen.tarjeta_esperado).toFixed(2)}`, 220, 198);
+  doc.text(`Expected Transfer: $${Number(resumen.transferencia_esperado).toFixed(2)}`, 370, 198);
+  doc.text(`A/R in Period: $${Number(resumen.cxc_periodo).toFixed(2)}`, 44, 214);
 
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
   doc.setFontSize(13);
-  doc.text("Ventas pendientes incluidas en este cierre", 36, 240);
+  doc.text("Pending Sales Included in This Report", 36, 240);
 
   autoTable(doc, {
     startY: 250,
     head: [[
-      "Fecha", "Cliente", "Total", "Efectivo", "Tarjeta", "Transferencia", "Pagado", "CXC"
+      "Date", "Client", "Total", "Cash", "Card", "Transfer", "Paid", "A/R"
     ]],
     body: ventas.length === 0 ? [["-", "-", "-", "-", "-", "-", "-", "-"]] : ventas.map(v => [
       v.fecha?.slice(0, 10) || "-",
@@ -234,7 +233,7 @@ function generarPDFCierreVan({
       textColor: "#333"
     },
     foot: [[
-      "Totales",
+      "Totals",
       "",
       "$" + ventas.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2),
       "$" + ventas.reduce((t, v) => t + Number(v.pago_efectivo || 0), 0).toFixed(2),
@@ -255,11 +254,11 @@ function generarPDFCierreVan({
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
   doc.setTextColor(azul);
-  doc.text("Abonos de clientes incluidos en este cierre", 36, yAbonos);
+  doc.text("Customer Payments Included in This Closing", 36, yAbonos);
 
   autoTable(doc, {
     startY: yAbonos + 10,
-    head: [["Fecha", "Cliente", "Monto", "Método", "Referencia", "Notas"]],
+    head: [["Date", "Client", "Amount", "Method", "Reference", "Notes"]],
     body: pagos.length === 0
       ? [["-", "-", "-", "-", "-", "-"]]
       : pagos.map(p => [
@@ -291,17 +290,17 @@ function generarPDFCierreVan({
   doc.setFontSize(8);
   doc.setTextColor("#666");
   doc.text(
-    `Generado automáticamente por TOOLS4CARE  |  ${new Date().toLocaleString()}`,
+    `Automatically generated by TOOLS4CARE  |  ${new Date().toLocaleString()}`,
     36,
     yPie + 15
   );
   doc.text(
-    "Documento confidencial para auditoría y control. Prohibida su distribución sin autorización.",
+    "Confidential document for audit and control. Distribution without authorization is prohibited.",
     36,
     yPie + 30
   );
 
-  doc.save(`CierreVan_${cierre?.van_nombre || cierre?.van_id || ""}_${fechaInicio}_${fechaFin}.pdf`);
+  doc.save(`VanCloseout_${cierre?.van_nombre || cierre?.van_id || ""}_${fechaInicio}_${fechaFin}.pdf`);
 }
 
 export default function CierreVan() {
@@ -321,9 +320,9 @@ export default function CierreVan() {
 
   const sumBy = (arr, key) => arr.reduce((t, x) => t + Number(x[key] || 0), 0);
   const totalesEsperados = {
-    pago_efectivo: sumBy(ventas, "pago_efectivo") + sumBy(pagos.filter(p => p.metodo_pago === "Efectivo"), "monto"),
-    pago_tarjeta: sumBy(ventas, "pago_tarjeta") + sumBy(pagos.filter(p => p.metodo_pago === "Tarjeta"), "monto"),
-    pago_transferencia: sumBy(ventas, "pago_transferencia") + sumBy(pagos.filter(p => p.metodo_pago === "Transferencia"), "monto"),
+    pago_efectivo: sumBy(ventas, "pago_efectivo") + sumBy(pagos.filter(p => p.metodo_pago === "Cash"), "monto"),
+    pago_tarjeta: sumBy(ventas, "pago_tarjeta") + sumBy(pagos.filter(p => p.metodo_pago === "Card"), "monto"),
+    pago_transferencia: sumBy(ventas, "pago_transferencia") + sumBy(pagos.filter(p => p.metodo_pago === "Transfer"), "monto"),
   };
   const cuentasCobrar = ventas.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0);
 
@@ -339,7 +338,7 @@ export default function CierreVan() {
   async function guardarCierre(e) {
     e.preventDefault();
     if (!van?.id || ventas.length + pagos.length === 0) {
-      setMensaje("No hay movimientos para cerrar.");
+      setMensaje("No transactions to close.");
       return;
     }
     setGuardando(true);
@@ -372,7 +371,7 @@ export default function CierreVan() {
 
     if (error) {
       setGuardando(false);
-      setMensaje("Error al guardar el cierre: " + error.message);
+      setMensaje("Error saving closeout: " + error.message);
       setTimeout(() => setMensaje(""), 3500);
       return;
     }
@@ -394,7 +393,7 @@ export default function CierreVan() {
     }
 
     setGuardando(false);
-    setMensaje("¡Cierre registrado correctamente!");
+    setMensaje("Closeout registered successfully!");
     setReales({ pago_efectivo: "", pago_tarjeta: "", pago_transferencia: "" });
     setComentario("");
     setTimeout(() => setMensaje(""), 2000);
@@ -409,10 +408,10 @@ export default function CierreVan() {
 
   return (
     <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
-      <h2 className="font-bold text-xl mb-4 text-blue-900">Cierre de VAN</h2>
+      <h2 className="font-bold text-xl mb-4 text-blue-900">Van Closeout</h2>
       <div className="flex gap-2 mb-4">
         <div>
-          <label className="block text-xs">Desde:</label>
+          <label className="block text-xs">From:</label>
           <input
             type="date"
             value={fechaInicio}
@@ -421,7 +420,7 @@ export default function CierreVan() {
           />
         </div>
         <div>
-          <label className="block text-xs">Hasta:</label>
+          <label className="block text-xs">To:</label>
           <input
             type="date"
             value={fechaFin}
@@ -444,11 +443,11 @@ export default function CierreVan() {
           className="ml-auto bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded font-bold text-sm h-9 mt-6"
           type="button"
         >
-          Descargar PDF
+          Download PDF
         </button>
       </div>
       {loading ? (
-        <div className="text-blue-600">Cargando movimientos…</div>
+        <div className="text-blue-600">Loading transactions...</div>
       ) : (
         <>
           <TablaMovimientosPendientes ventas={ventas} />
@@ -458,13 +457,13 @@ export default function CierreVan() {
       <form onSubmit={guardarCierre}>
         {METODOS_PAGO.map(({ campo, label }) => (
           <div key={campo} className="mb-2">
-            <label className="block font-bold">{label} esperado:</label>
+            <label className="block font-bold">{label} expected:</label>
             <input
               className="border bg-gray-100 p-2 w-full mb-1"
               value={totalesEsperados[campo] || 0}
               disabled
             />
-            <label className="block">Contado:</label>
+            <label className="block">Counted:</label>
             <input
               className="border p-2 w-full"
               type="number"
@@ -477,7 +476,7 @@ export default function CierreVan() {
           </div>
         ))}
         <div className="mb-2">
-          <label className="block font-bold">Cuentas por cobrar del periodo:</label>
+          <label className="block font-bold">Accounts Receivable for the Period:</label>
           <input
             className="border p-2 w-full mb-1 bg-gray-100"
             value={cuentasCobrar}
@@ -485,7 +484,7 @@ export default function CierreVan() {
           />
         </div>
         <div className="mb-3">
-          <label className="block font-bold">Comentario:</label>
+          <label className="block font-bold">Comment:</label>
           <textarea
             className="border p-2 w-full"
             value={comentario}
@@ -497,7 +496,7 @@ export default function CierreVan() {
           className="bg-blue-700 text-white px-4 py-2 rounded font-bold w-full"
           disabled={guardando || ventas.length + pagos.length === 0}
         >
-          {guardando ? "Guardando..." : "Registrar Cierre"}
+          {guardando ? "Saving..." : "Register Closeout"}
         </button>
         {mensaje && (
           <div className="mt-2 p-2 rounded text-center text-sm bg-blue-100 text-blue-700">
