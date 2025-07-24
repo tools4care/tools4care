@@ -1,22 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer
-} from "recharts";
 
-// --- Safe Area Padding para iOS/Android ---
-function getSafeTop() {
-  if (typeof window !== "undefined" && window.visualViewport) {
-    return window.visualViewport.offsetTop || 0;
-  }
-  return 0;
-}
-
-// --- MODAL CREAR SUPLIDOR ---
+// --- Suplidor Modal & Buscador ---
 function CrearSuplidor({ onCreate }) {
-  const [form, setForm] = useState({
-    nombre: "", contacto: "", telefono: "", direccion: "", email: ""
-  });
+  const [form, setForm] = useState({ nombre: "", contacto: "", telefono: "", direccion: "", email: "" });
   const [cargando, setCargando] = useState(false);
 
   async function guardarSuplidor(e) {
@@ -50,7 +37,6 @@ function CrearSuplidor({ onCreate }) {
   );
 }
 
-// --- MODAL BUSCADOR SUPLIDOR ---
 function BuscadorSuplidor({ value, onChange }) {
   const [busqueda, setBusqueda] = useState("");
   const [suplidores, setSuplidores] = useState([]);
@@ -117,139 +103,6 @@ const SIZES_COMUNES = [
   ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "BOX", "SACK", "BAG"
 ];
 
-// --- MODAL RESUMEN DE FACTURA ---
-function ModalResumenFactura({ factura, onClose }) {
-  const [detalle, setDetalle] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchDetalle() {
-      if (!factura) return;
-      const ventaID = factura.venta_id || factura.id || factura.id_venta;
-      if (!ventaID) {
-        setDetalle(null);
-        setLoading(false);
-        return;
-      }
-      const { data } = await supabase
-        .from("ventas")
-        .select("id, fecha, total, cliente:cliente_id (nombre, email, telefono), productos")
-        .eq("id", ventaID)
-        .single();
-      setDetalle(data || null);
-      setLoading(false);
-    }
-    fetchDetalle();
-  }, [factura]);
-
-  if (!factura) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl p-8 w-full max-w-lg relative">
-        <button
-          type="button"
-          className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
-          onClick={onClose}
-          title="Close"
-        >
-          ×
-        </button>
-        <h3 className="text-xl font-bold mb-3">Invoice summary</h3>
-        {loading ? (
-          <div className="text-blue-700">Loading...</div>
-        ) : !detalle ? (
-          <div className="text-red-700">
-            Invoice not found.<br />
-            <span className="text-xs text-gray-500">
-              Check the "factura" object and ID in the browser console (F12).
-            </span>
-          </div>
-        ) : (
-          <div>
-            <div className="mb-3">
-              <b>Invoice ID:</b> {detalle.id}
-              <br />
-              <b>Client:</b> {detalle.cliente?.nombre || "-"}
-              <br />
-              <b>Date:</b> {detalle.fecha ? new Date(detalle.fecha).toLocaleDateString("en-US") : "-"}
-              <br />
-              <b>Total:</b> <span className="text-green-700 font-bold">${detalle.total?.toFixed(2) ?? "-"}</span>
-            </div>
-            <b>Products sold:</b>
-            <table className="min-w-full mt-2 text-xs">
-              <thead>
-                <tr>
-                  <th className="p-1 border-b">Product</th>
-                  <th className="p-1 border-b">Quantity</th>
-                  <th className="p-1 border-b">Price</th>
-                  <th className="p-1 border-b">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(detalle.productos || []).map((item, idx) => (
-                  <tr key={idx}>
-                    <td className="p-1 border-b">{item.producto_nombre || item.nombre || "-"}</td>
-                    <td className="p-1 border-b">{item.cantidad}</td>
-                    <td className="p-1 border-b">${item.precio_unitario?.toFixed(2) ?? "-"}</td>
-                    <td className="p-1 border-b">${((item.cantidad || 0) * (item.precio_unitario || 0)).toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// --- MODAL DE PRODUCTO: Safe area, swipe down ---
-function ModalProducto({ children, onClose, modalAbierto, safeTop = 28 }) {
-  const ref = useRef();
-  // --- Swipe Down para cerrar ---
-  useEffect(() => {
-    if (!modalAbierto) return;
-    let touchStartY = null;
-    let deltaY = 0;
-    function handleTouchStart(e) {
-      touchStartY = e.touches[0].clientY;
-    }
-    function handleTouchMove(e) {
-      if (touchStartY == null) return;
-      deltaY = e.touches[0].clientY - touchStartY;
-      if (deltaY > 50) {
-        onClose();
-      }
-    }
-    const el = ref.current;
-    if (el) {
-      el.addEventListener("touchstart", handleTouchStart);
-      el.addEventListener("touchmove", handleTouchMove);
-    }
-    return () => {
-      if (el) {
-        el.removeEventListener("touchstart", handleTouchStart);
-        el.removeEventListener("touchmove", handleTouchMove);
-      }
-    };
-  }, [modalAbierto, onClose]);
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
-      <div
-        ref={ref}
-        className="bg-white rounded-t-xl shadow-xl w-full max-w-2xl relative flex flex-col h-[90dvh] overflow-y-auto"
-        style={{
-          paddingTop: `calc(${safeTop}px + env(safe-area-inset-top, 0px))`
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
 // --------- MAIN COMPONENT ---------
 export default function Productos() {
   const PAGE_SIZE = 50;
@@ -273,23 +126,23 @@ export default function Productos() {
   const [suplidorId, setSuplidorId] = useState(null);
   const [suplidorNombre, setSuplidorNombre] = useState("");
 
-  // Notas
-  const [notaProducto, setNotaProducto] = useState("");
-  const [guardandoNota, setGuardandoNota] = useState(false);
+  // Para el selector de ubicación inicial
+  const [ubicaciones, setUbicaciones] = useState([{ key: "almacen", nombre: "Central warehouse" }]);
+  const [ubicacionInicial, setUbicacionInicial] = useState("almacen");
 
-  // Métricas
-  const [ventasPorMes, setVentasPorMes] = useState([]);
-  const [loadingMetricas, setLoadingMetricas] = useState(false);
-  const [mesSeleccionado, setMesSeleccionado] = useState("");
-  const [clientesVenta, setClientesVenta] = useState([]);
-  const [facturaSeleccionada, setFacturaSeleccionada] = useState(null);
-  const [mostrarModalFactura, setMostrarModalFactura] = useState(false);
-  const [tipoGrafico, setTipoGrafico] = useState("cantidad");
+  useEffect(() => {
+    cargarUbicaciones();
+  }, []);
 
-  // Indicadores
-  const [indicadores, setIndicadores] = useState({
-    total: 0, mejorMes: "", peorMes: "", promedio: 0,
-  });
+  async function cargarUbicaciones() {
+    const { data: vansData } = await supabase.from("vans").select("id, nombre_van");
+    const vans = (vansData || []).map(v => ({
+      key: `van_${v.id}`,
+      nombre: v.nombre_van,
+      van_id: v.id,
+    }));
+    setUbicaciones([{ key: "almacen", nombre: "Central warehouse" }, ...vans]);
+  }
 
   // --- FETCH PRODUCTOS ---
   useEffect(() => { cargarProductos(); }, [busqueda, pagina]);
@@ -336,13 +189,9 @@ export default function Productos() {
   function abrirModal(prod) {
     setProductoActual({ ...prod });
     setTabActivo("editar");
-    setVentasPorMes([]);
-    setClientesVenta([]);
-    setMesSeleccionado("");
-    setFacturaSeleccionada(null);
-    setNotaProducto(prod.notas || "");
-    setSizeCustom("");
+    setMensaje("");
     setIsCustomSize(prod.size && !SIZES_COMUNES.includes(prod.size));
+    setSizeCustom("");
     setSuplidorId(prod.proveedor || "");
     setSuplidorNombre(prod.suplidor?.nombre || "");
     setModalAbierto(true);
@@ -350,38 +199,33 @@ export default function Productos() {
   function cerrarModal() {
     setModalAbierto(false);
     setProductoActual(null);
-    setVentasPorMes([]);
-    setClientesVenta([]);
-    setMesSeleccionado("");
-    setFacturaSeleccionada(null);
-    setNotaProducto("");
+    setMensaje("");
     setIsCustomSize(false);
     setSizeCustom("");
     setSuplidorId(null);
     setSuplidorNombre("");
+    setUbicacionInicial("almacen");
   }
 
-  // --- AGREGAR NUEVO PRODUCTO ---
+  // --- AGREGAR NUEVO PRODUCTO (MODIFICADO) ---
   function agregarProductoNuevo() {
     setProductoActual({
       id: null, codigo: "", nombre: "", marca: "", categoria: "",
       costo: "", precio: "", notas: "", size: "", proveedor: null,
+      cantidad_inicial: "",
+      ubicacion_inicial: "almacen", // valor por defecto
+      van_id_inicial: null, // para van
     });
-    setMensaje("");
-    setTabActivo("editar");
-    setVentasPorMes([]);
-    setClientesVenta([]);
-    setMesSeleccionado("");
-    setFacturaSeleccionada(null);
-    setNotaProducto("");
     setIsCustomSize(false);
     setSizeCustom("");
     setSuplidorId(null);
     setSuplidorNombre("");
+    setMensaje("");
+    setTabActivo("editar");
     setModalAbierto(true);
   }
 
-  // --- GUARDAR/ELIMINAR ---
+  // --- GUARDAR/ELIMINAR PRODUCTO (CON VALIDACIÓN DE CÓDIGO ÚNICO) ---
   async function guardarProducto(e) {
     e.preventDefault();
     setMensaje("");
@@ -389,6 +233,28 @@ export default function Productos() {
       setMensaje("Complete all required fields.");
       return;
     }
+
+    // --- Chequeo de duplicado (excepto si es el mismo producto) ---
+    const { data: existentes, error: errorExistente } = await supabase
+      .from("productos")
+      .select("id")
+      .eq("codigo", productoActual.codigo);
+
+    if (errorExistente) {
+      setMensaje("Error checking for duplicate code: " + errorExistente.message);
+      return;
+    }
+
+    // Si existe y no es el mismo que estamos editando
+    if (
+      existentes &&
+      existentes.length > 0 &&
+      (!productoActual.id || existentes[0].id !== productoActual.id)
+    ) {
+      setMensaje("Error: There is already a product with this code/UPC.");
+      return;
+    }
+
     const dataProducto = {
       codigo: productoActual.codigo,
       nombre: productoActual.nombre,
@@ -398,18 +264,58 @@ export default function Productos() {
       precio: Number(productoActual.precio),
       size: isCustomSize ? sizeCustom : productoActual.size,
       proveedor: suplidorId,
-      notas: notaProducto,
+      notas: productoActual.notas || "",
     };
 
     let resultado;
+    let nuevoId = productoActual.id;
+
     if (productoActual.id) {
       resultado = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
+      if (resultado?.error) {
+        if (
+          resultado.error.message &&
+          resultado.error.message.toLowerCase().includes("unique")
+        ) {
+          setMensaje("Error: This code/UPC is already in use. Please use another one.");
+        } else {
+          setMensaje("Error: " + resultado.error.message);
+        }
+        return;
+      }
       if (!resultado.error) setMensaje("Product updated.");
     } else {
-      resultado = await supabase.from("productos").insert([dataProducto]);
-      if (!resultado.error) setMensaje("Product added.");
+      const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
+      if (error) {
+        if (
+          error.message &&
+          error.message.toLowerCase().includes("unique")
+        ) {
+          setMensaje("Error: This code/UPC is already in use. Please use another one.");
+        } else {
+          setMensaje("Error: " + error.message);
+        }
+        return;
+      }
+      if (data) {
+        setMensaje("Product added.");
+        nuevoId = data.id;
+        // --- Stock inicial SOLO si cantidad > 0 ---
+        if (productoActual.cantidad_inicial && Number(productoActual.cantidad_inicial) > 0) {
+          let tabla = productoActual.ubicacion_inicial === "almacen" ? "stock_almacen" : "stock_van";
+          let payload = {
+            producto_id: data.id,
+            cantidad: Number(productoActual.cantidad_inicial)
+          };
+          if (tabla === "stock_van") {
+            payload.van_id = productoActual.van_id_inicial;
+          }
+          const { error: errorStock } = await supabase.from(tabla).insert([payload]);
+          if (errorStock) setMensaje("Product saved, error in initial stock: " + errorStock.message);
+        }
+      }
     }
-    if (resultado.error) setMensaje("Error: " + resultado.error.message);
+
     await cargarProductos();
     cerrarModal();
   }
@@ -422,73 +328,6 @@ export default function Productos() {
     else setMensaje("Error: " + error.message);
     await cargarProductos();
     cerrarModal();
-  }
-
-  async function guardarNotaProducto() {
-    setGuardandoNota(true);
-    await supabase.from("productos").update({ notas: notaProducto }).eq("id", productoActual.id);
-    setGuardandoNota(false);
-    setMensaje("Note saved.");
-  }
-
-  // --- MÉTRICAS ---
-  async function cargarMetricas() {
-    if (!productoActual?.id) return;
-    setLoadingMetricas(true);
-    setVentasPorMes([]);
-    setClientesVenta([]);
-    setMesSeleccionado("");
-    setFacturaSeleccionada(null);
-
-    const { data } = await supabase.rpc("ventas_producto_por_mes", {
-      producto_id_param: productoActual.id
-    });
-    setVentasPorMes(data || []);
-    setLoadingMetricas(false);
-
-    if (data && data.length > 0) {
-      let total, mejorMes, peorMes, promedio;
-      if (tipoGrafico === "cantidad") {
-        total = data.reduce((acc, v) => acc + (v.cantidad_vendida || 0), 0);
-        mejorMes = data.reduce((a, b) => (a.cantidad_vendida > b.cantidad_vendida ? a : b)).mes;
-        peorMes = data.reduce((a, b) => (a.cantidad_vendida < b.cantidad_vendida ? a : b)).mes;
-        promedio = total / data.length;
-      } else {
-        total = data.reduce((acc, v) => acc + (v.total_vendido || 0), 0);
-        mejorMes = data.reduce((a, b) => (a.total_vendido > b.total_vendido ? a : b)).mes;
-        peorMes = data.reduce((a, b) => (a.total_vendido < b.total_vendido ? a : b)).mes;
-        promedio = total / data.length;
-      }
-      setIndicadores({
-        total, mejorMes, peorMes, promedio,
-      });
-    } else {
-      setIndicadores({ total: 0, mejorMes: "", peorMes: "", promedio: 0 });
-    }
-  }
-
-  function cambiarTipoGrafico(tipo) {
-    setTipoGrafico(tipo);
-    cargarMetricas();
-  }
-
-  async function handleBarClick(data, index) {
-    if (!data?.mes) return;
-    setMesSeleccionado(data.mes);
-    setClientesVenta([]);
-    setFacturaSeleccionada(null);
-    setLoadingMetricas(true);
-    const { data: clientes } = await supabase.rpc("clientes_producto_mes", {
-      producto_id_param: productoActual.id,
-      mes_param: data.mes
-    });
-    setClientesVenta(clientes || []);
-    setLoadingMetricas(false);
-  }
-
-  function seleccionarFactura(factura) {
-    setFacturaSeleccionada(factura);
-    setMostrarModalFactura(true);
   }
 
   // ------ RENDER ---------
@@ -582,42 +421,26 @@ export default function Productos() {
 
       {/* --- MODAL EDIT / METRICS --- */}
       {modalAbierto && (
-        <ModalProducto
-          onClose={cerrarModal}
-          modalAbierto={modalAbierto}
-          safeTop={getSafeTop()}
-        >
-          <button
-            type="button"
-            className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
-            onClick={cerrarModal}
-            title="Close"
-            style={{ zIndex: 100 }}
-          >
-            ×
-          </button>
-          {/* Tabs: Edit / Metrics */}
-          <div className="flex mb-4 border-b mt-2">
+        <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl relative p-8">
             <button
-              className={`px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
-              onClick={() => setTabActivo("editar")}
+              type="button"
+              className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
+              onClick={cerrarModal}
+              title="Close"
+              style={{ zIndex: 100 }}
             >
-              Edit product
+              ×
             </button>
-            {productoActual.id && (
+            <div className="flex mb-4 border-b mt-2">
               <button
-                className={`px-6 py-2 font-bold ${tabActivo === "metricas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
-                onClick={() => {
-                  setTabActivo("metricas");
-                  cargarMetricas();
-                }}
+                className={`px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+                onClick={() => setTabActivo("editar")}
               >
-                Metrics
+                Edit product
               </button>
-            )}
-          </div>
-          {/* TAB EDIT */}
-          {tabActivo === "editar" && (
+            </div>
+            {/* TAB EDIT */}
             <form onSubmit={guardarProducto}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <div>
@@ -750,22 +573,56 @@ export default function Productos() {
                   <label className="font-bold">Product notes</label>
                   <textarea
                     className="border rounded p-2 w-full min-h-[60px]"
-                    value={notaProducto}
+                    value={productoActual.notas || ""}
                     placeholder="Special notes, important details, etc."
-                    onChange={e => setNotaProducto(e.target.value)}
+                    onChange={e => setProductoActual({ ...productoActual, notas: e.target.value })}
                   />
-                  {productoActual.id && (
-                    <button
-                      type="button"
-                      className="bg-blue-600 text-white px-3 py-1 rounded mt-2 text-xs"
-                      onClick={guardarNotaProducto}
-                      disabled={guardandoNota}
-                    >
-                      Save note
-                    </button>
-                  )}
                 </div>
               </div>
+              {/* --- CAMPOS DE STOCK INICIAL SOLO PARA NUEVO PRODUCTO --- */}
+              {!productoActual.id && (
+                <div className="md:col-span-2 border-t pt-2 mt-2">
+                  <b>Initial stock (optional)</b>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="font-bold">Quantity</label>
+                      <input
+                        className="border rounded p-2 w-full"
+                        type="number"
+                        min="0"
+                        value={productoActual.cantidad_inicial || ""}
+                        onChange={e =>
+                          setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-bold">Location</label>
+                      <select
+                        className="border rounded p-2 w-full"
+                        value={productoActual.ubicacion_inicial}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setProductoActual(prev => ({
+                            ...prev,
+                            ubicacion_inicial: value,
+                            van_id_inicial: value.startsWith("van_")
+                              ? ubicaciones.find(u => u.key === value)?.van_id
+                              : null,
+                          }));
+                        }}
+                      >
+                        {ubicaciones.map(u => (
+                          <option key={u.key} value={u.key}>
+                            {u.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
               {mensaje && (
                 <div className="text-blue-700 text-center mt-2">{mensaje}</div>
               )}
@@ -787,149 +644,8 @@ export default function Productos() {
                 )}
               </div>
             </form>
-          )}
-          {/* TAB MÉTRICAS */}
-          {tabActivo === "metricas" && (
-            <div>
-              <div className="mb-2 flex gap-2">
-                <button
-                  className={`px-3 py-1 rounded text-xs font-bold ${
-                    tipoGrafico === "cantidad" ? "bg-blue-700 text-white" : "bg-gray-200"
-                  }`}
-                  onClick={() => cambiarTipoGrafico("cantidad")}
-                >
-                  Quantity sold
-                </button>
-                <button
-                  className={`px-3 py-1 rounded text-xs font-bold ${
-                    tipoGrafico === "valor" ? "bg-blue-700 text-white" : "bg-gray-200"
-                  }`}
-                  onClick={() => cambiarTipoGrafico("valor")}
-                >
-                  Sales in $
-                </button>
-              </div>
-              <div className="my-2">
-                <span className="inline-block bg-blue-50 rounded p-2 border">
-                  <b>Profit margin:</b>{" "}
-                  {productoActual.costo && productoActual.precio
-                    ? (
-                      ((productoActual.precio - productoActual.costo) /
-                      productoActual.precio * 100
-                      ).toFixed(2) + " %"
-                    ) : "—"
-                  }
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 my-4 text-xs text-center">
-                <div className="p-2 bg-green-50 rounded shadow">
-                  <b>Total sold:</b>
-                  <div className="text-lg font-bold">{indicadores.total?.toLocaleString()}</div>
-                </div>
-                <div className="p-2 bg-blue-50 rounded shadow">
-                  <b>Best month:</b>
-                  <div className="font-bold">{indicadores.mejorMes || "-"}</div>
-                </div>
-                <div className="p-2 bg-red-50 rounded shadow">
-                  <b>Worst month:</b>
-                  <div className="font-bold">{indicadores.peorMes || "-"}</div>
-                </div>
-                <div className="p-2 bg-yellow-50 rounded shadow">
-                  <b>Monthly average:</b>
-                  <div className="font-bold">{Number(indicadores.promedio).toFixed(1)}</div>
-                </div>
-              </div>
-              <h3 className="text-lg font-bold mb-2">Sales per month (last 12 months):</h3>
-              {loadingMetricas ? (
-                <div className="text-blue-700 mt-2">Loading...</div>
-              ) : ventasPorMes.length === 0 ? (
-                <div className="text-gray-400 mt-2">No sales registered.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart
-                    data={ventasPorMes}
-                    margin={{ top: 15, right: 30, left: 0, bottom: 5 }}
-                    onClick={state => {
-                      if (state && state.activeLabel) {
-                        handleBarClick(
-                          ventasPorMes[state.activeTooltipIndex],
-                          state.activeTooltipIndex
-                        );
-                      }
-                    }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="mes" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar
-                      dataKey={tipoGrafico === "valor" ? "total_vendido" : "cantidad_vendida"}
-                      fill={tipoGrafico === "valor" ? "#22c55e" : "#3b82f6"}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-              {/* CLIENTES DE UN MES SELECCIONADO */}
-              {mesSeleccionado && (
-                <div className="mt-5">
-                  <h4 className="font-bold mb-1">Clients/invoices - {mesSeleccionado}:</h4>
-                  {loadingMetricas ? (
-                    <div className="text-blue-700 mt-2">Searching...</div>
-                  ) : clientesVenta.length === 0 ? (
-                    <div className="text-gray-400">No sales in this month.</div>
-                  ) : (
-                    <table className="min-w-full text-xs">
-                      <thead>
-                        <tr>
-                          <th className="p-1 border-b">Client</th>
-                          <th className="p-1 border-b">Quantity</th>
-                          <th className="p-1 border-b">Date</th>
-                          <th className="p-1 border-b">Select</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {clientesVenta.map(c => (
-                          <tr
-                            key={c.venta_id + c.cliente_id}
-                            className={facturaSeleccionada?.venta_id === c.venta_id ? "bg-blue-100" : ""}
-                          >
-                            <td className="p-1 border-b">{c.cliente_nombre || c.nombre || "-"}</td>
-                            <td className="p-1 border-b">{c.cantidad}</td>
-                            <td className="p-1 border-b">
-                              {c.fecha ? new Date(c.fecha).toLocaleDateString("en-US") : ""}
-                            </td>
-                            <td className="p-1 border-b">
-                              <button
-                                className={`px-2 py-1 rounded text-xs ${
-                                  facturaSeleccionada?.venta_id === c.venta_id
-                                    ? "bg-blue-600 text-white"
-                                    : "bg-gray-200"
-                                }`}
-                                onClick={() => seleccionarFactura(c)}
-                              >
-                                {facturaSeleccionada?.venta_id === c.venta_id
-                                  ? "Selected"
-                                  : "Select"}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </ModalProducto>
-      )}
-
-      {/* --- MODAL INVOICE SUMMARY --- */}
-      {mostrarModalFactura && facturaSeleccionada && (
-        <ModalResumenFactura
-          factura={facturaSeleccionada}
-          onClose={() => setMostrarModalFactura(false)}
-        />
+          </div>
+        </div>
       )}
     </div>
   );

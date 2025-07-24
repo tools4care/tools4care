@@ -11,22 +11,49 @@ export default function ModalCreateSupplier({ onClose, onCreate }) {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   async function handleSubmit(e) {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const { data, error: err } = await supabase
-      .from("suplidores")
-      .insert([form])
-      .select()
-      .maybeSingle();
-    setLoading(false);
-    if (err) {
-      setError("Could not create supplier.");
+    setSuccess("");
+
+    // Validar solo nombre requerido
+    if (!form.nombre.trim()) {
+      setError("Name is required.");
+      setLoading(false);
       return;
     }
-    onCreate(data);
+
+    try {
+      const { data, error: err } = await supabase
+        .from("suplidores")
+        .insert([form])
+        .select()
+        .maybeSingle();
+
+      if (err) {
+        setError("Could not create supplier. " + (err.message || ""));
+      } else {
+        setSuccess("Supplier created successfully.");
+        console.log("Suplidor insertado correctamente:", data);
+        // Solo llama onCreate si existe y pasa el nuevo suplidor
+        if (onCreate) onCreate(data);
+        // OPCIONAL: resetea el formulario
+        setForm({
+          nombre: "",
+          telefono: "",
+          contacto: "",
+          direccion: "",
+          email: ""
+        });
+      }
+    } catch (ex) {
+      setError("Unexpected error: " + ex.message);
+    }
+
+    setLoading(false);
   }
 
   return (
@@ -34,6 +61,7 @@ export default function ModalCreateSupplier({ onClose, onCreate }) {
       <form
         className="bg-white p-6 rounded-xl shadow-xl w-full max-w-lg relative"
         onSubmit={handleSubmit}
+        autoComplete="off"
       >
         <button
           className="absolute top-2 right-2 text-2xl text-gray-500 hover:text-black"
@@ -81,6 +109,7 @@ export default function ModalCreateSupplier({ onClose, onCreate }) {
           />
         </div>
         {error && <div className="text-red-600 text-sm my-2">{error}</div>}
+        {success && <div className="text-green-700 text-sm my-2">{success}</div>}
         <div className="flex gap-2 mt-4">
           <button
             className="flex-1 bg-gray-400 text-white py-2 rounded"

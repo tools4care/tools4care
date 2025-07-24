@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 
-export default function AddStockModal({
-  abierto,    // Mantén igual si el padre lo manda así
+export default function AgregarStockModal({
+  abierto,
   cerrar,
   tipo = "almacen",
   ubicacionId = null,
   onSuccess,
-  modoSuma = false,
 }) {
   const [busqueda, setBusqueda] = useState("");
   const [opciones, setOpciones] = useState([]);
@@ -53,14 +52,15 @@ export default function AddStockModal({
     setSeleccion(null);
     setMensaje("");
 
-    let tabla = tipo === "almacen" ? "stock_almacen" : "stock_van";
+    let tabla = tipo === "almacen" || tipo === "warehouse" ? "stock_almacen" : "stock_van";
     let query = supabase
       .from(tabla)
-      .select("id, cantidad, producto_id, productos(nombre, marca, codigo)")
+      .select("id, cantidad, producto_id, van_id, productos(nombre, marca, codigo)")
       .or(
         `productos.codigo.ilike.%${filtro}%,productos.nombre.ilike.%${filtro}%,productos.marca.ilike.%${filtro}%`
       );
     if (tipo === "van") query = query.eq("van_id", ubicacionId);
+    if (tipo === "almacen" || tipo === "warehouse") query = query.is("van_id", null);
     let { data: inventarioData } = await query;
 
     let { data: productosData } = await supabase
@@ -71,9 +71,6 @@ export default function AddStockModal({
       );
 
     let inventarioIds = (inventarioData || []).map(x => x.producto_id);
-    let productosSoloNuevos = (productosData || []).filter(
-      p => !inventarioIds.includes(p.id)
-    );
     let opcionesTodas = [
       ...(inventarioData || []).map(x => ({
         ...x.productos,
@@ -81,7 +78,7 @@ export default function AddStockModal({
         enInventario: true,
         cantidad: x.cantidad,
       })),
-      ...(productosSoloNuevos || []).map(x => ({
+      ...(productosData || []).filter(p => !inventarioIds.includes(p.id)).map(x => ({
         ...x,
         producto_id: x.id,
         enInventario: false,
@@ -111,34 +108,58 @@ export default function AddStockModal({
     }
   }
 
+  // FORZAR SUMA SIEMPRE QUE YA EXISTA EL PRODUCTO (CON .is PARA VAN_ID NULL)
   async function agregarStock(e) {
     e.preventDefault();
     if (!seleccion || !seleccion.producto_id) return;
 
-    let tabla = tipo === "almacen" ? "stock_almacen" : "stock_van";
+    let tabla = tipo === "almacen" || tipo === "warehouse" ? "stock_almacen" : "stock_van";
     let payload = {
       producto_id: seleccion.producto_id,
       cantidad: Number(cantidad),
     };
     if (tipo === "van") payload.van_id = ubicacionId;
 
-    if (seleccion.enInventario && modoSuma) {
-      let { error } = await supabase
+    if (seleccion.enInventario) {
+      // ----------- LOG PARA DEPURAR -----------
+      console.log("Actualizando stock:", {
+        tabla,
+        producto_id: seleccion.producto_id,
+        van_id: tipo === "van" ? ubicacionId : null,
+        cantidad_actual: seleccion.cantidad,
+        cantidad_agregar: Number(cantidad),
+        cantidad_nueva: seleccion.cantidad + Number(cantidad)
+      });
+      // ----------------------------------------
+
+      let query = supabase
         .from(tabla)
         .update({ cantidad: seleccion.cantidad + Number(cantidad) })
-        .eq("producto_id", seleccion.producto_id)
-        .maybeSingle();
+        .eq("producto_id", seleccion.producto_id);
+
+      if (tipo === "van") {
+        query = query.eq("van_id", ubicacionId);
+      } else if (tipo === "almacen" || tipo === "warehouse") {
+        query = query.is("van_id", null);
+      }
+
+      let { error } = await query.maybeSingle();
       if (!error) {
         onSuccess && onSuccess();
         cerrar();
+      } else {
+        setMensaje("Error updating stock: " + error.message);
       }
       return;
     }
 
+    // Si no existe, lo crea
     let { error } = await supabase.from(tabla).insert([payload]);
     if (!error) {
       onSuccess && onSuccess();
       cerrar();
+    } else {
+      setMensaje("Error inserting stock: " + error.message);
     }
   }
 
