@@ -1,56 +1,71 @@
 import { useState } from "react";
+import AjusteStockAlmacen from "./AjusteStockAlmacen";
+import { supabase } from "./supabaseClient";
 
-export default function AjusteStockAlmacen({ producto, onGuardar, onCancelar }) {
-  const [cantidad, setCantidad] = useState(producto ? producto.cantidad : 0);
+// Ejemplo de productos en inventario actual (puedes obtenerlo de tu fetch)
+const inventarioEjemplo = [
+  { id: 1, nombre: "Producto A", cantidad: 10, producto_id: 1 },
+  { id: 2, nombre: "Producto B", cantidad: 5, producto_id: 2 },
+];
 
-  const handleChange = (e) => {
-    const value = e.target.value;
-    // Solo permite valores numéricos, incluidos negativos y vacíos temporales
-    if (/^-?\d*$/.test(value)) {
-      setCantidad(value);
-    }
-  };
+export default function InventarioDemo() {
+  const [modalAbierto, setModalAbierto] = useState(false);
+  const [productoSeleccionado, setProductoSeleccionado] = useState(null);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onGuardar(Number(cantidad));
-  };
+  // Simulación de almacén seleccionado (debes usar tu estado real)
+  const almacenSeleccionado = { id: 1, nombre: "Central Warehouse" };
 
-  if (!producto) return null;
+  async function handleGuardarStock(nuevaCantidad) {
+    // ¡Aquí el truco! Filtra por producto_id Y almacen_id
+    await supabase
+      .from('stock_almacen')
+      .update({ cantidad: nuevaCantidad })
+      .eq('producto_id', productoSeleccionado.producto_id)
+      .eq('almacen_id', almacenSeleccionado.id);
+
+    setModalAbierto(false);
+    // Aquí deberías recargar el inventario real
+    // await fetchInventario();
+  }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-      <div className="bg-white p-6 rounded-lg min-w-[320px] shadow-lg">
-        <h2 className="text-lg font-bold mb-4">Ajuste de Stock - {producto.nombre}</h2>
-        <form onSubmit={handleSubmit}>
-          <label className="block mb-2">
-            Nueva cantidad:
-            <input
-              type="number"
-              value={cantidad}
-              onChange={handleChange}
-              className="border w-full p-2 mt-1"
-              autoFocus
-              required
-            />
-          </label>
-          <div className="flex justify-end gap-2 mt-4">
-            <button
-              type="button"
-              className="bg-gray-200 px-4 py-2 rounded"
-              onClick={onCancelar}
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="bg-green-600 text-white px-4 py-2 rounded"
-            >
-              Guardar
-            </button>
-          </div>
-        </form>
-      </div>
+    <div>
+      <h2 className="text-xl font-bold mb-4">Inventario</h2>
+      <table className="min-w-full border">
+        <thead>
+          <tr>
+            <th className="border p-2">Nombre</th>
+            <th className="border p-2">Cantidad</th>
+            <th className="border p-2">Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {inventarioEjemplo.map((prod) => (
+            <tr key={prod.id}>
+              <td className="border p-2">{prod.nombre}</td>
+              <td className="border p-2">{prod.cantidad}</td>
+              <td className="border p-2">
+                <button
+                  className="bg-blue-500 text-white px-2 py-1 rounded"
+                  onClick={() => {
+                    setProductoSeleccionado(prod);
+                    setModalAbierto(true);
+                  }}
+                >
+                  Ajustar stock
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {modalAbierto && productoSeleccionado && (
+        <AjusteStockAlmacen
+          producto={productoSeleccionado}
+          onGuardar={handleGuardarStock}
+          onCancelar={() => setModalAbierto(false)}
+        />
+      )}
     </div>
   );
 }
