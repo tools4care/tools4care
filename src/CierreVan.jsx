@@ -12,7 +12,7 @@ const METODOS_PAGO = [
   { campo: "pago_transferencia", label: "Transfer" }
 ];
 
-// Hook for fetching open sales/payments
+// HOOK: Fetch movimientos no cerrados
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
@@ -39,9 +39,37 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   return { ventas, pagos, loading };
 }
 
-// Pending sales table
+// --- NUEVO HOOK PARA BUSCAR CIERRES HISTÓRICOS ---
+function useCierresVan(van_id, fechaDesde, fechaHasta) {
+  const [cierres, setCierres] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!van_id || !fechaDesde || !fechaHasta) return;
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from("cierres_van")
+        .select("*")
+        .eq("van_id", van_id)
+        .gte("fecha_inicio", fechaDesde)
+        .lte("fecha_fin", fechaHasta)
+        .order("fecha_fin", { ascending: false });
+      setCierres(data || []);
+      setLoading(false);
+    })();
+  }, [van_id, fechaDesde, fechaHasta]);
+
+  return { cierres, loading };
+}
+
+// --- UTILS ---
+function sumBy(arr, key) {
+  return arr.reduce((t, x) => t + Number(x[key] || 0), 0);
+}
+
+// --- COMPONENTES VISUALES ---
 function TablaMovimientosPendientes({ ventas }) {
-  const sumBy = (arr, key) => arr.reduce((t, x) => t + Number(x[key] || 0), 0);
   const totalCxc = ventas.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0);
 
   return (
@@ -99,7 +127,6 @@ function TablaMovimientosPendientes({ ventas }) {
   );
 }
 
-// Pending customer payments table
 function TablaAbonosPendientes({ pagos }) {
   return (
     <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
@@ -139,7 +166,7 @@ function TablaAbonosPendientes({ pagos }) {
   );
 }
 
-// PDF generator
+// ----------- PDF GENERATOR (igual) -----------
 function generarPDFCierreVan({
   empresa = {
     nombre: "TOOLS4CARE",
@@ -303,6 +330,26 @@ function generarPDFCierreVan({
   doc.save(`VanCloseout_${cierre?.van_nombre || cierre?.van_id || ""}_${fechaInicio}_${fechaFin}.pdf`);
 }
 
+// --- FUNCION PARA CARGAR DETALLE DE UN CIERRE HISTORICO (ventas/pagos por id) ---
+async function cargarDetallesCierre(cierre) {
+  const ventas_ids = cierre.ventas_ids || [];
+  const pagos_ids = cierre.pagos_ids || [];
+  // Devuelve vacío si no hay IDs (puede pasar en cierres antiguos)
+  if (ventas_ids.length === 0 && pagos_ids.length === 0) return { ventas: [], pagos: [] };
+  // Si solo hay uno, supabase espera array, así que forzamos []
+  const ventasIdsArray = Array.isArray(ventas_ids) ? ventas_ids : [ventas_ids];
+  const pagosIdsArray = Array.isArray(pagos_ids) ? pagos_ids : [pagos_ids];
+
+  const { data: ventas } = ventasIdsArray.length
+    ? await supabase.from("ventas").select("*").in("id", ventasIdsArray)
+    : { data: [] };
+  const { data: pagos } = pagosIdsArray.length
+    ? await supabase.from("pagos").select("*").in("id", pagosIdsArray)
+    : { data: [] };
+  return { ventas: ventas || [], pagos: pagos || [] };
+}
+
+// ---------- COMPONENTE PRINCIPAL ----------
 export default function CierreVan() {
   const { usuario } = useUsuario();
   const { van } = useVan();
@@ -312,13 +359,24 @@ export default function CierreVan() {
   const [fechaInicio, setFechaInicio] = useState(fechaHoy);
   const [fechaFin, setFechaFin] = useState(fechaHoy);
 
+  // Filtros para buscar cierres anteriores
+  const [filtroDesde, setFiltroDesde] = useState(fechaHoy);
+  const [filtroHasta, setFiltroHasta] = useState(fechaHoy);
+
+  // Carga los movimientos abiertos actuales
   const { ventas, pagos, loading } = useMovimientosNoCerrados(
     van?.id,
     fechaInicio,
     fechaFin
   );
 
-  const sumBy = (arr, key) => arr.reduce((t, x) => t + Number(x[key] || 0), 0);
+  // Carga los cierres históricos según filtro
+  const { cierres, loading: loadingCierres } = useCierresVan(
+    van?.id,
+    filtroDesde,
+    filtroHasta
+  );
+
   const totalesEsperados = {
     pago_efectivo: sumBy(ventas, "pago_efectivo") + sumBy(pagos.filter(p => p.metodo_pago === "Cash"), "monto"),
     pago_tarjeta: sumBy(ventas, "pago_tarjeta") + sumBy(pagos.filter(p => p.metodo_pago === "Card"), "monto"),
@@ -504,6 +562,80 @@ export default function CierreVan() {
           </div>
         )}
       </form>
+
+      {/* ---------- SECCION: BUSCAR Y DESCARGAR CIERRES PASADOS ---------- */}
+      <div className="mb-10 mt-12 p-4 border-t pt-8">
+        <h3 className="font-bold text-lg mb-2 text-blue-800">Past Closeouts</h3>
+        <div className="flex gap-3 mb-4">
+          <div>
+            <label className="text-xs">From:</label>
+            <input type="date" value={filtroDesde} onChange={e => setFiltroDesde(e.target.value)} className="border p-1 rounded" />
+          </div>
+          <div>
+            <label className="text-xs">To:</label>
+            <input type="date" value={filtroHasta} onChange={e => setFiltroHasta(e.target.value)} className="border p-1 rounded" />
+          </div>
+        </div>
+        {loadingCierres ? (
+          <div className="text-blue-600">Loading...</div>
+        ) : cierres.length === 0 ? (
+          <div className="text-gray-400">No closeouts found for this van and date range.</div>
+        ) : (
+          <table className="w-full text-xs mb-3 bg-white rounded shadow">
+            <thead>
+              <tr className="bg-blue-100">
+                <th className="p-1">Closeout #</th>
+                <th className="p-1">Period</th>
+                <th className="p-1">User</th>
+                <th className="p-1">Efectivo</th>
+                <th className="p-1">Tarjeta</th>
+                <th className="p-1">Transfer</th>
+                <th className="p-1">A/R</th>
+                <th className="p-1">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cierres.map(cierre => (
+                <tr key={cierre.id}>
+                  <td className="p-1">{String(cierre.id).slice(0, 8)}</td>
+                  <td className="p-1">
+                    {cierre.fecha_inicio?.slice(0, 10)} - {cierre.fecha_fin?.slice(0, 10)}
+                  </td>
+                  <td className="p-1">{cierre.usuario_id || "-"}</td>
+                  <td className="p-1">${Number(cierre.efectivo_real || 0).toFixed(2)}</td>
+                  <td className="p-1">${Number(cierre.tarjeta_real || 0).toFixed(2)}</td>
+                  <td className="p-1">${Number(cierre.transferencia_real || 0).toFixed(2)}</td>
+                  <td className="p-1">${Number(cierre.cuentas_por_cobrar || 0).toFixed(2)}</td>
+                  <td className="p-1">
+                    <button
+                      className="bg-blue-700 text-white px-2 py-1 rounded text-xs"
+                      onClick={async () => {
+                        const { ventas, pagos } = await cargarDetallesCierre(cierre);
+                        generarPDFCierreVan({
+                          cierre,
+                          usuario: { nombre: cierre.usuario_id }, // puedes buscar info extra del usuario si quieres
+                          ventas,
+                          pagos,
+                          resumen: {
+                            efectivo_esperado: cierre.efectivo_esperado,
+                            tarjeta_esperado: cierre.tarjeta_esperado,
+                            transferencia_esperado: cierre.transferencia_esperado,
+                            cxc_periodo: cierre.cuentas_por_cobrar
+                          },
+                          fechaInicio: cierre.fecha_inicio,
+                          fechaFin: cierre.fecha_fin,
+                        });
+                      }}
+                    >
+                      PDF
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

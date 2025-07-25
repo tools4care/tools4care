@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 
-export default function ModalTransferStock({ abierto, cerrar, ubicaciones, onSuccess }) {
+export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
   const [origenKey, setOrigenKey] = useState("");
   const [destinoKey, setDestinoKey] = useState("");
   const [productos, setProductos] = useState([]);
@@ -9,7 +9,7 @@ export default function ModalTransferStock({ abierto, cerrar, ubicaciones, onSuc
   const [productoNombre, setProductoNombre] = useState("");
   const [cantidad, setCantidad] = useState(1);
 
-  // For autocomplete
+  // Para autocomplete
   const [filtro, setFiltro] = useState("");
   const [mostrarOpciones, setMostrarOpciones] = useState(false);
 
@@ -23,16 +23,14 @@ export default function ModalTransferStock({ abierto, cerrar, ubicaciones, onSuc
       setFiltro("");
       setCantidad(1);
     }
-    // eslint-disable-next-line
   }, [abierto, ubicaciones]);
 
   async function cargarProductos(ubicacion) {
     if (!ubicacion) return;
-    let tabla = ubicacion.tipo === "almacen" ? "stock_almacen" : "stock_van";
+    let tabla = ubicacion.tipo === "warehouse" || ubicacion.tipo === "almacen" ? "stock_almacen" : "stock_van";
     let query = supabase.from(tabla).select("producto_id, cantidad, productos(nombre, marca, codigo)");
-    if (ubicacion.tipo === "van") {
-      query = query.eq("van_id", ubicacion.id);
-    }
+    if (ubicacion.tipo === "van") query = query.eq("van_id", ubicacion.id);
+    // En almacén central NO poner ningún filtro más, ya que solo hay uno.
     const { data } = await query;
     setProductos(data || []);
   }
@@ -43,24 +41,32 @@ export default function ModalTransferStock({ abierto, cerrar, ubicaciones, onSuc
     const destino = ubicaciones.find(u => u.key === destinoKey);
     if (!origen || !destino || origen.key === destino.key || !productoId) return;
 
-    let tablaOrigen = origen.tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let filtroOrigen = origen.tipo === "almacen" ? { producto_id: productoId } : { producto_id: productoId, van_id: origen.id };
+    // --- Consulta el stock actual en el origen
+    let tablaOrigen = origen.tipo === "warehouse" || origen.tipo === "almacen" ? "stock_almacen" : "stock_van";
+    let filtroOrigen = origen.tipo === "warehouse" || origen.tipo === "almacen"
+      ? { producto_id: productoId }
+      : { producto_id: productoId, van_id: origen.id };
+
     let { data: stockOrigen } = await supabase.from(tablaOrigen).select("*").match(filtroOrigen).maybeSingle();
 
-    if (!stockOrigen || stockOrigen.cantidad < cantidad) {
+    if (!stockOrigen || stockOrigen.cantidad < Number(cantidad)) {
       alert("Not enough stock in the origin.");
       return;
     }
 
-    // Deduct from origin
+    // --- Resta en origen
     await supabase.from(tablaOrigen)
       .update({ cantidad: stockOrigen.cantidad - Number(cantidad) })
       .match(filtroOrigen);
 
-    // Add to destination
-    let tablaDestino = destino.tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let filtroDestino = destino.tipo === "almacen" ? { producto_id: productoId } : { producto_id: productoId, van_id: destino.id };
+    // --- Suma en destino (o inserta si no existe)
+    let tablaDestino = destino.tipo === "warehouse" || destino.tipo === "almacen" ? "stock_almacen" : "stock_van";
+    let filtroDestino = destino.tipo === "warehouse" || destino.tipo === "almacen"
+      ? { producto_id: productoId }
+      : { producto_id: productoId, van_id: destino.id };
+
     let { data: stockDestino } = await supabase.from(tablaDestino).select("*").match(filtroDestino).maybeSingle();
+
     if (stockDestino) {
       await supabase.from(tablaDestino)
         .update({ cantidad: stockDestino.cantidad + Number(cantidad) })
@@ -69,11 +75,12 @@ export default function ModalTransferStock({ abierto, cerrar, ubicaciones, onSuc
       await supabase.from(tablaDestino)
         .insert([{ ...filtroDestino, cantidad: Number(cantidad) }]);
     }
-    onSuccess();
+
+    onSuccess && onSuccess();
     cerrar();
   }
 
-  // Filtered options for autocomplete (name, brand, code)
+  // Opciones de autocomplete
   const opcionesFiltradas = productos.filter(item =>
     (item.productos?.nombre || "").toLowerCase().includes(filtro.toLowerCase()) ||
     (item.productos?.marca || "").toLowerCase().includes(filtro.toLowerCase()) ||
