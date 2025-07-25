@@ -4,8 +4,8 @@ import { supabase } from "./supabaseClient";
 export default function AgregarStockModal({
   abierto,
   cerrar,
-  tipo = "almacen",
-  ubicacionId = null,
+  tipo = "almacen",       // "almacen", "warehouse" o "van"
+  ubicacionId = null,     // id de van, si aplica
   onSuccess,
 }) {
   const [busqueda, setBusqueda] = useState("");
@@ -14,7 +14,6 @@ export default function AgregarStockModal({
   const [cantidad, setCantidad] = useState(1);
   const [mensaje, setMensaje] = useState("");
   const [loading, setLoading] = useState(false);
-
   const timerRef = useRef();
 
   useEffect(() => {
@@ -30,20 +29,16 @@ export default function AgregarStockModal({
   useEffect(() => {
     if (!abierto) return;
     if (timerRef.current) clearTimeout(timerRef.current);
-
     if (!busqueda.trim()) {
       setOpciones([]);
       setSeleccion(null);
       setMensaje("");
       return;
     }
-
     timerRef.current = setTimeout(() => {
       buscarOpciones(busqueda.trim());
     }, 300);
-
     return () => clearTimeout(timerRef.current);
-    // eslint-disable-next-line
   }, [busqueda]);
 
   async function buscarOpciones(filtro) {
@@ -108,60 +103,45 @@ export default function AgregarStockModal({
     }
   }
 
-  // FORZAR SUMA SIEMPRE QUE YA EXISTA EL PRODUCTO (CON .is PARA VAN_ID NULL)
+  // ----------- LÓGICA ROBUSTA SUMA O CREA -------------
   async function agregarStock(e) {
     e.preventDefault();
     if (!seleccion || !seleccion.producto_id) return;
 
     let tabla = tipo === "almacen" || tipo === "warehouse" ? "stock_almacen" : "stock_van";
-    let payload = {
-      producto_id: seleccion.producto_id,
-      cantidad: Number(cantidad),
-    };
-    if (tipo === "van") payload.van_id = ubicacionId;
+    let filtro = { producto_id: seleccion.producto_id };
+    if (tipo === "van") filtro.van_id = ubicacionId;
 
-    if (seleccion.enInventario) {
-      // ----------- LOG PARA DEPURAR -----------
-      console.log("Actualizando stock:", {
-        tabla,
-        producto_id: seleccion.producto_id,
-        van_id: tipo === "van" ? ubicacionId : null,
-        cantidad_actual: seleccion.cantidad,
-        cantidad_agregar: Number(cantidad),
-        cantidad_nueva: seleccion.cantidad + Number(cantidad)
-      });
-      // ----------------------------------------
+    // 1. Consulta si ya existe el stock
+    let { data: yaExiste } = await supabase.from(tabla).select("*").match(filtro).maybeSingle();
 
-      let query = supabase
+    if (yaExiste) {
+      // --- Suma si existe
+      let nuevaCantidad = Number(yaExiste.cantidad) + Number(cantidad);
+      let { error } = await supabase
         .from(tabla)
-        .update({ cantidad: seleccion.cantidad + Number(cantidad) })
-        .eq("producto_id", seleccion.producto_id);
-
-      if (tipo === "van") {
-        query = query.eq("van_id", ubicacionId);
-      } else if (tipo === "almacen" || tipo === "warehouse") {
-        query = query.is("van_id", null);
-      }
-
-      let { error } = await query.maybeSingle();
+        .update({ cantidad: nuevaCantidad })
+        .match(filtro);
       if (!error) {
         onSuccess && onSuccess();
         cerrar();
       } else {
         setMensaje("Error updating stock: " + error.message);
       }
-      return;
-    }
-
-    // Si no existe, lo crea
-    let { error } = await supabase.from(tabla).insert([payload]);
-    if (!error) {
-      onSuccess && onSuccess();
-      cerrar();
     } else {
-      setMensaje("Error inserting stock: " + error.message);
+      // --- Inserta si no existe
+      let payload = { producto_id: seleccion.producto_id, cantidad: Number(cantidad) };
+      if (tipo === "van") payload.van_id = ubicacionId;
+      let { error } = await supabase.from(tabla).insert([payload]);
+      if (!error) {
+        onSuccess && onSuccess();
+        cerrar();
+      } else {
+        setMensaje("Error inserting stock: " + error.message);
+      }
     }
   }
+  // -----------------------------------------------------
 
   if (!abierto) return null;
   return (
@@ -184,13 +164,12 @@ export default function AgregarStockModal({
           autoFocus
         />
 
-        {/* Options list */}
         {loading ? (
           <div className="text-blue-500 mb-2">Searching...</div>
         ) : (
           opciones.length > 0 && (
             <ul className="border rounded max-h-40 overflow-y-auto mb-3 bg-white">
-              {opciones.map((opt, idx) => {
+              {opciones.map((opt) => {
                 let isExact =
                   (busqueda &&
                     (opt.codigo?.toLowerCase() === busqueda.toLowerCase() ||
@@ -236,7 +215,6 @@ export default function AgregarStockModal({
           )
         )}
 
-        {/* Confirmation message */}
         {mensaje && (
           <div
             className={`mb-2 p-2 rounded text-center ${
