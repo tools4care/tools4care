@@ -13,6 +13,27 @@ const PAYMENT_METHODS = [
 
 const STORAGE_KEY = "pending_sales";
 
+// Función para calcular balance y cambio
+function calcularBalanceReal(saleTotal, clientBalance, pagos) {
+  const saldoCliente = Math.max(clientBalance, 0);
+  const totalPendiente = saleTotal + saldoCliente;
+
+  const totalPagado = pagos.reduce((acc, p) => {
+    const monto = Number(p.monto);
+    return acc + (isNaN(monto) || monto < 0 ? 0 : monto);
+  }, 0);
+
+  let balance = totalPendiente - totalPagado;
+  let cambio = 0;
+
+  if (balance < 0) {
+    cambio = Math.abs(balance);
+    balance = 0;
+  }
+
+  return { balance, cambio };
+}
+
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
@@ -103,9 +124,10 @@ export default function Sales() {
 
   const saleTotal = cart.reduce((t, p) => t + (p.cantidad * p.precio_unitario), 0);
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
-  const pendingBalance = saleTotal - paid;
-  const change = paid > saleTotal ? (paid - saleTotal) : 0;
   const clientBalance = selectedClient?.balance || 0;
+
+  // Uso función para obtener balance real y cambio
+  const { balance: pendingBalance, cambio: change } = calcularBalanceReal(saleTotal, clientBalance, payments);
 
   useEffect(() => {
     if (
@@ -221,32 +243,43 @@ export default function Sales() {
         }
       });
 
+      const totalPagado = payments.reduce((acc, p) => acc + Number(p.monto || 0), 0);
+      const totalDeuda = saleTotal + Math.max(clientBalance, 0);
+
+      if (totalPagado > totalDeuda) {
+        setPaymentError("Paid amount exceeds total debt. Please check payments.");
+        setSaving(false);
+        return;
+      }
+
+      const venta_a_guardar = {
+        van_id: van.id,
+        usuario_id: usuario.id,
+        cliente_id: selectedClient?.id || null,
+        total: saleTotal,
+        total_venta: saleTotal,
+        total_pagado: totalPagado,
+        estado_pago: pendingBalance > 0 ? "pendiente" : "pagado",
+        forma_pago: payments.map(p => p.forma).join(","),
+        metodo_pago: payments.map(p => `${p.forma}:${p.monto}`).join(","),
+        productos: cart.map(p => ({
+          producto_id: p.producto_id,
+          nombre: p.nombre,
+          cantidad: p.cantidad,
+          precio_unitario: p.precio_unitario,
+          subtotal: p.cantidad * p.precio_unitario,
+        })),
+        notas: notes,
+        pago: totalPagado,
+        pago_efectivo: paymentMap.efectivo,
+        pago_tarjeta: paymentMap.tarjeta,
+        pago_transferencia: paymentMap.transferencia,
+        pago_otro: paymentMap.otro,
+      };
+
       const { data: saleData, error: saleError } = await supabase
         .from("ventas")
-        .insert([{
-          van_id: van.id,
-          usuario_id: usuario.id,
-          cliente_id: selectedClient?.id || null,
-          total: saleTotal,
-          total_venta: saleTotal,
-          total_pagado: paid,
-          estado_pago: pendingBalance > 0 ? "pendiente" : "pagado",
-          forma_pago: payments.map(p => p.forma).join(","),
-          metodo_pago: payments.map(p => `${p.forma}:${p.monto}`).join(","),
-          productos: cart.map(p => ({
-            producto_id: p.producto_id,
-            nombre: p.nombre,
-            cantidad: p.cantidad,
-            precio_unitario: p.precio_unitario,
-            subtotal: p.cantidad * p.precio_unitario,
-          })),
-          notas: notes,
-          pago: paid,
-          pago_efectivo: paymentMap.efectivo,
-          pago_tarjeta: paymentMap.tarjeta,
-          pago_transferencia: paymentMap.transferencia,
-          pago_otro: paymentMap.otro,
-        }])
+        .insert([venta_a_guardar])
         .select()
         .maybeSingle();
 
@@ -280,7 +313,7 @@ export default function Sales() {
         }
       }
 
-      alert("Sale saved successfully");
+      alert("Sale saved successfully\n" + (change > 0 ? `Change to give: $${change.toFixed(2)}` : ""));
       clearSale();
 
       let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
