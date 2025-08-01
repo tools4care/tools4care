@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
-import { useVan } from "./hooks/VanContext"; // Access to current van
+import { useVan } from "./hooks/VanContext";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 const estadosUSA = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
@@ -9,6 +10,7 @@ const estadosUSA = [
   "VA","WA","WV","WI","WY"
 ];
 
+// Mapas para autollenar ZIP
 const zipToCiudadEstado = (zip) => {
   const mapa = {
     "02118": { ciudad: "Boston", estado: "MA" },
@@ -23,21 +25,17 @@ export default function Clientes() {
   const [clientes, setClientes] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
+  const [mostrarStats, setMostrarStats] = useState(false);
+  const [mostrarEdicion, setMostrarEdicion] = useState(false);
   const [mostrarAbono, setMostrarAbono] = useState(false);
   const [resumen, setResumen] = useState({ ventas: [], pagos: [], balance: 0 });
-
-  const [form, setForm] = useState({
-    nombre: "",
-    telefono: "",
-    email: "",
-    negocio: "",
-    direccion: { calle: "", ciudad: "", estado: "", zip: "" },
-  });
   const [mensaje, setMensaje] = useState("");
   const [estadoInput, setEstadoInput] = useState("");
   const [estadoOpciones, setEstadoOpciones] = useState(estadosUSA);
 
-  // Load clients
+  // Para seleccionar mes y filtrar ventas en detalle
+  const [mesSeleccionado, setMesSeleccionado] = useState(null);
+
   useEffect(() => { cargarClientes(); }, []);
   async function cargarClientes() {
     const { data, error } = await supabase.from("clientes_balance").select("*");
@@ -45,7 +43,6 @@ export default function Clientes() {
     else setMensaje("Error loading clients");
   }
 
-  // When selecting client, load summary
   useEffect(() => {
     async function cargarResumen() {
       if (!clienteSeleccionado) return setResumen({ ventas: [], pagos: [], balance: 0 });
@@ -57,20 +54,45 @@ export default function Clientes() {
         .from("pagos")
         .select("id, fecha_pago, monto, metodo_pago")
         .eq("cliente_id", clienteSeleccionado.id);
+      // Corregido: Aseguramos que no sumamos valores negativos
       const deudaVentas = (ventas || []).reduce(
-        (t, v) => t + ((v.total_venta || 0) - (v.total_pagado || 0)), 0
+        (t, v) => t + Math.max(0, (v.total_venta || 0) - (v.total_pagado || 0)), 0
       );
       const abonos = (pagos || []).reduce((t, p) => t + (p.monto || 0), 0);
       const balance = Math.max(deudaVentas - abonos, 0);
 
       setResumen({ ventas: ventas || [], pagos: pagos || [], balance });
+      setMesSeleccionado(null); // Reset mes al cambiar cliente
     }
-    cargarResumen();
-    // eslint-disable-next-line
-  }, [clienteSeleccionado, mostrarAbono]);
+    if (clienteSeleccionado && (mostrarStats || mostrarEdicion || mostrarAbono)) cargarResumen();
+  }, [clienteSeleccionado, mostrarStats, mostrarEdicion, mostrarAbono]);
 
-  function handleSelectCliente(c) {
+  const [form, setForm] = useState({
+    nombre: "",
+    telefono: "",
+    email: "",
+    negocio: "",
+    direccion: { calle: "", ciudad: "", estado: "", zip: "" },
+  });
+
+  function abrirNuevoCliente() {
+    setForm({
+      nombre: "",
+      telefono: "",
+      email: "",
+      negocio: "",
+      direccion: { calle: "", ciudad: "", estado: "", zip: "" },
+    });
+    setEstadoInput("");
+    setEstadoOpciones(estadosUSA);
+    setClienteSeleccionado(null);
+    setMostrarEdicion(true);
+    setMensaje("");
+  }
+
+  function handleEditCliente() {
     let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
+    const c = clienteSeleccionado;
     if (typeof c.direccion === "string" && c.direccion) {
       try { direccion = JSON.parse(c.direccion); } catch {}
     }
@@ -82,7 +104,6 @@ export default function Clientes() {
         zip: c.direccion.zip || "",
       };
     }
-    setClienteSeleccionado(c);
     setForm({
       nombre: c.nombre || "",
       telefono: c.telefono || "",
@@ -91,7 +112,8 @@ export default function Clientes() {
       direccion,
     });
     setEstadoInput(direccion.estado || "");
-    setMensaje("");
+    setEstadoOpciones(estadosUSA);
+    setMostrarEdicion(true);
   }
 
   function handleChange(e) {
@@ -119,65 +141,44 @@ export default function Clientes() {
     }
   }
 
-  function handleEstadoSelect(e) {
-    const selected = e.target.value;
-    setForm((f) => ({
-      ...f,
-      direccion: { ...f.direccion, estado: selected }
-    }));
-    setEstadoInput(selected);
-    setEstadoOpciones(estadosUSA.filter(s => s.startsWith(selected)));
-  }
-
   async function handleGuardar(e) {
     e.preventDefault();
     if (!form.nombre) return setMensaje("Full name is required");
     let direccionFinal = form.direccion || { calle: "", ciudad: "", estado: "", zip: "" };
 
     if (!clienteSeleccionado) {
+      // Nuevo cliente
       const { error } = await supabase.from("clientes").insert([{ ...form, direccion: direccionFinal }]);
       if (error) setMensaje("Error saving: " + error.message);
       else {
         setMensaje("Client saved successfully");
+        setMostrarEdicion(false);
         cargarClientes();
-        resetForm();
       }
     } else {
+      // Editar cliente
       const { error } = await supabase.from("clientes")
         .update({ ...form, direccion: direccionFinal })
         .eq("id", clienteSeleccionado.id);
       if (error) setMensaje("Error editing: " + error.message);
       else {
         setMensaje("Changes saved successfully");
+        setMostrarEdicion(false);
         cargarClientes();
-        resetForm();
       }
     }
   }
 
-  async function handleEliminar() {
-    if (!clienteSeleccionado) return setMensaje("Select a client first");
-    if (!window.confirm("Delete this client?")) return;
-    const { error } = await supabase.from("clientes").delete().eq("id", clienteSeleccionado.id);
+  async function handleEliminar(cliente) {
+    if (!cliente || !window.confirm("Delete this client?")) return;
+    const { error } = await supabase.from("clientes").delete().eq("id", cliente.id);
     if (error) setMensaje("Error deleting: " + error.message);
     else {
       setMensaje("Client deleted");
+      setMostrarStats(false);
+      setClienteSeleccionado(null);
       cargarClientes();
-      resetForm();
     }
-  }
-
-  function resetForm() {
-    setClienteSeleccionado(null);
-    setForm({
-      nombre: "",
-      telefono: "",
-      email: "",
-      negocio: "",
-      direccion: { calle: "", ciudad: "", estado: "", zip: "" },
-    });
-    setEstadoInput("");
-    setEstadoOpciones(estadosUSA);
   }
 
   const clientesFiltrados = clientes.filter((c) => {
@@ -200,78 +201,69 @@ export default function Clientes() {
     );
   });
 
+  // Obtiene lista de meses únicos en ventas para el dropdown de filtro
+  const mesesUnicos = Array.from(new Set((resumen.ventas || []).map(v => v.fecha?.slice(0, 7)).filter(Boolean))).sort();
+
+  // Filtrar ventas por mes seleccionado
+  const ventasFiltradas = mesSeleccionado
+    ? resumen.ventas.filter(v => v.fecha?.startsWith(mesSeleccionado))
+    : resumen.ventas;
+
+  // Para gráfico agrupamos todas las ventas sin filtro mes (histórico)
+  const comprasPorMes = {};
+  let lifetimeTotal = 0;
+  (resumen.ventas || []).forEach(v => {
+    if (!v.fecha || !v.total_venta) return;
+    const mes = v.fecha.slice(0, 7);
+    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
+    lifetimeTotal += Number(v.total_venta || 0);
+  });
+
+  // Para gráfico últimos 12 meses
+  const mesesGrafico = [];
+  const hoy = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+    const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    mesesGrafico.unshift(label);
+  }
+  const dataChart = mesesGrafico.map(mes => ({
+    mes,
+    compras: comprasPorMes[mes] || 0
+  }));
+
   return (
-    <div className="max-w-5xl mx-auto py-7">
+    <div className="max-w-5xl mx-auto py-7 px-2">
       <h2 className="text-3xl font-bold mb-6 text-center text-blue-900">Clients</h2>
-      {/* Form */}
-      <form onSubmit={handleGuardar} className="bg-white p-6 rounded-xl shadow-md mb-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="font-bold block mb-1">Full Name *</label>
-          <input name="nombre" className="border rounded-lg p-2 w-full" value={form.nombre} onChange={handleChange} required />
-        </div>
-        <div>
-          <label className="font-bold block mb-1">Phone</label>
-          <input name="telefono" className="border rounded-lg p-2 w-full" value={form.telefono} onChange={handleChange} />
-        </div>
-        <div>
-          <label className="font-bold block mb-1">Email</label>
-          <input name="email" className="border rounded-lg p-2 w-full" value={form.email} onChange={handleChange} />
-        </div>
-        <div>
-          <label className="font-bold block mb-1">Business</label>
-          <input name="negocio" className="border rounded-lg p-2 w-full" value={form.negocio} onChange={handleChange} />
-        </div>
-        <div>
-          <label className="font-bold block mb-1">Street</label>
-          <input name="calle" className="border rounded-lg p-2 w-full" value={form.direccion.calle} onChange={handleChange} />
-        </div>
-        <div>
-          <label className="font-bold block mb-1">City</label>
-          <input name="ciudad" className="border rounded-lg p-2 w-full" value={form.direccion.ciudad} onChange={handleChange} />
-        </div>
-        <div>
-          <label className="font-bold block mb-1">ZIP Code</label>
-          <input name="zip" className="border rounded-lg p-2 w-full" value={form.direccion.zip} onChange={handleChange} maxLength={5} />
-        </div>
-        {/* State: select with autocomplete */}
-        <div>
-          <label className="font-bold block mb-1">State</label>
-          <input
-            name="estado"
-            className="border rounded-lg p-2 w-full"
-            placeholder="Eg: MA"
-            value={estadoInput}
-            onChange={handleChange}
-            list="estados-lista"
-            autoComplete="off"
-            maxLength={2}
-            style={{ textTransform: "uppercase" }}
-          />
-          <datalist id="estados-lista">
-            {estadoOpciones.map(e => (
-              <option value={e} key={e}>{e}</option>
-            ))}
-          </datalist>
-        </div>
-        <div className="sm:col-span-2 flex gap-3 mt-2">
-          <button type="submit" className="bg-blue-700 hover:bg-blue-900 text-white font-bold px-6 py-2 rounded-xl transition">
-            {clienteSeleccionado ? "Save Changes" : "Save Client"}
-          </button>
-          <button type="button" className="bg-gray-400 hover:bg-gray-600 text-white font-bold px-6 py-2 rounded-xl transition" onClick={resetForm}>
-            Clear
-          </button>
-          <button type="button" className="bg-red-700 hover:bg-red-900 text-white font-bold px-6 py-2 rounded-xl transition" disabled={!clienteSeleccionado} onClick={handleEliminar}>
-            Delete Client
-          </button>
-        </div>
-        {mensaje && (
-          <div className="col-span-2 text-center mt-2 text-blue-700">{mensaje}</div>
-        )}
-      </form>
-      {/* Table */}
-      <div className="bg-white p-4 rounded-xl shadow-lg">
+
+      <button
+        className="bg-blue-700 text-white px-6 py-2 rounded-xl font-bold mb-5"
+        onClick={() => {
+          setClienteSeleccionado(null);
+          setMostrarEdicion(true);
+          setForm({
+            nombre: "",
+            telefono: "",
+            email: "",
+            negocio: "",
+            direccion: { calle: "", ciudad: "", estado: "", zip: "" },
+          });
+          setEstadoInput("");
+          setEstadoOpciones(estadosUSA);
+          setMensaje("");
+        }}
+      >
+        New Client
+      </button>
+
+      <div className="bg-white p-2 md:p-4 rounded-xl shadow-lg">
         <h3 className="text-2xl font-bold mb-3 text-blue-900 text-center">Client List</h3>
-        <input className="border rounded p-2 mb-4 w-full" placeholder="Search client" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+        <input
+          className="border rounded p-2 mb-4 w-full"
+          placeholder="Search client"
+          value={busqueda}
+          onChange={e => setBusqueda(e.target.value)}
+        />
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
@@ -283,7 +275,7 @@ export default function Clientes() {
                 <th className="p-2">Email</th>
                 <th className="p-2">Address</th>
                 <th className="p-2">Balance</th>
-                <th className="p-2"></th>
+                <th className="p-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -295,16 +287,14 @@ export default function Clientes() {
                 if (typeof c.direccion === "object" && c.direccion !== null) {
                   d = c.direccion;
                 }
-                const isSelected = clienteSeleccionado && clienteSeleccionado.id === c.id;
                 return (
                   <tr
                     key={c.id}
-                    className={
-                      isSelected
-                        ? "bg-yellow-50 font-bold"
-                        : "hover:bg-blue-50 cursor-pointer"
-                    }
-                    onClick={() => handleSelectCliente(c)}
+                    className="hover:bg-blue-50 cursor-pointer"
+                    onClick={() => {
+                      setClienteSeleccionado({ ...c, direccion: d });
+                      setMostrarStats(true);
+                    }}
                   >
                     <td className="p-2 font-mono">{c.id.slice(0, 8)}…</td>
                     <td className="p-2">{c.nombre}</td>
@@ -321,13 +311,12 @@ export default function Clientes() {
                         </span>
                       }
                     </td>
-                    <td>
+                    <td className="p-2 flex flex-col gap-2 md:flex-row">
                       <button
-                        className="bg-green-600 text-white px-3 py-1 rounded text-xs"
-                        onClick={e => { e.stopPropagation(); setClienteSeleccionado(c); setMostrarAbono(true); }}
-                        disabled={!c.id}
+                        className="bg-green-600 text-white px-3 py-1 rounded text-xs w-full md:w-auto"
+                        onClick={e => { e.stopPropagation(); setClienteSeleccionado({ ...c, direccion: d }); setMostrarAbono(true); }}
                       >
-                        Payment
+                        Register Payment
                       </button>
                     </td>
                   </tr>
@@ -344,20 +333,226 @@ export default function Clientes() {
           </table>
         </div>
       </div>
-      {/* MODAL: Payment with sales/payment history */}
+
+      {/* Modal Estadística y Detalle */}
+      {mostrarStats && clienteSeleccionado && (
+        <ClienteStatsModal
+          open={mostrarStats}
+          cliente={clienteSeleccionado}
+          resumen={resumen}
+          mesSeleccionado={mesSeleccionado}
+          setMesSeleccionado={setMesSeleccionado}
+          onClose={() => setMostrarStats(false)}
+          onEdit={() => { setMostrarStats(false); handleEditCliente(); }}
+          onDelete={handleEliminar}
+        />
+      )}
+
+      {/* Modal edición */}
+      {mostrarEdicion && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-2">
+          <form
+            onSubmit={handleGuardar}
+            className="bg-white p-6 rounded-xl shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto"
+          >
+            <h3 className="text-xl font-bold mb-4 text-blue-800">{clienteSeleccionado ? "Edit Client" : "New Client"}</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="font-bold block mb-1">Full Name *</label>
+                <input name="nombre" className="border rounded-lg p-2 w-full" value={form.nombre} onChange={handleChange} required />
+              </div>
+              <div>
+                <label className="font-bold block mb-1">Phone</label>
+                <input name="telefono" className="border rounded-lg p-2 w-full" value={form.telefono} onChange={handleChange} />
+              </div>
+              <div>
+                <label className="font-bold block mb-1">Email</label>
+                <input name="email" className="border rounded-lg p-2 w-full" value={form.email} onChange={handleChange} />
+              </div>
+              <div>
+                <label className="font-bold block mb-1">Business</label>
+                <input name="negocio" className="border rounded-lg p-2 w-full" value={form.negocio} onChange={handleChange} />
+              </div>
+              <div>
+                <label className="font-bold block mb-1">ZIP Code</label>
+                <input name="zip" className="border rounded-lg p-2 w-full" value={form.direccion.zip} onChange={handleChange} maxLength={5} />
+              </div>
+              <div>
+                <label className="font-bold block mb-1">Street</label>
+                <input name="calle" className="border rounded-lg p-2 w-full" value={form.direccion.calle} onChange={handleChange} />
+              </div>
+              <div>
+                <label className="font-bold block mb-1">City</label>
+                <input name="ciudad" className="border rounded-lg p-2 w-full" value={form.direccion.ciudad} onChange={handleChange} />
+              </div>
+              <div>
+                <label className="font-bold block mb-1">State</label>
+                <input
+                  name="estado"
+                  className="border rounded-lg p-2 w-full"
+                  placeholder="Eg: MA"
+                  value={estadoInput}
+                  onChange={handleChange}
+                  list="estados-lista"
+                  autoComplete="off"
+                  maxLength={2}
+                  style={{ textTransform: "uppercase" }}
+                />
+                <datalist id="estados-lista">
+                  {estadoOpciones.map(e => (
+                    <option value={e} key={e}>{e}</option>
+                  ))}
+                </datalist>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button type="submit" className="bg-blue-700 text-white font-bold px-6 py-2 rounded-xl transition">
+                Save Client
+              </button>
+              <button type="button" className="bg-gray-400 text-white font-bold px-6 py-2 rounded-xl transition" onClick={() => setMostrarEdicion(false)}>
+                Cancel
+              </button>
+            </div>
+            {mensaje && (
+              <div className="col-span-2 text-center mt-2 text-blue-700">{mensaje}</div>
+            )}
+          </form>
+        </div>
+      )}
+
+      {/* Modal Abono */}
       {mostrarAbono && clienteSeleccionado && (
         <ModalAbonar
           cliente={clienteSeleccionado}
           resumen={resumen}
           onClose={() => setMostrarAbono(false)}
-          refresh={() => { cargarClientes(); }}
+          refresh={cargarClientes}
         />
       )}
     </div>
   );
 }
 
-// --- PAYMENT MODAL + HISTORY ---
+// --- MODAL DE ESTADÍSTICAS Y GRÁFICO + VENTAS POR MES SELECCIONADO ---
+function ClienteStatsModal({ open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete }) {
+  if (!open || !cliente) return null;
+
+  // Agrupar ventas por mes
+  const comprasPorMes = {};
+  let lifetimeTotal = 0;
+  (resumen.ventas || []).forEach(v => {
+    if (!v.fecha || !v.total_venta) return;
+    const mes = v.fecha.slice(0, 7); // yyyy-mm
+    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
+    lifetimeTotal += Number(v.total_venta || 0);
+  });
+
+  // Últimos 12 meses para gráfico
+  const mesesGrafico = [];
+  const hoy = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+    const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    mesesGrafico.unshift(label);
+  }
+  const dataChart = mesesGrafico.map(mes => ({
+    mes,
+    compras: comprasPorMes[mes] || 0
+  }));
+
+  // Opciones para selector mes
+  const mesesUnicos = Object.keys(comprasPorMes).sort().reverse();
+
+  // Filtrar ventas por mes seleccionado
+  const ventasFiltradas = mesSeleccionado
+    ? resumen.ventas.filter(v => v.fecha?.startsWith(mesSeleccionado))
+    : resumen.ventas;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center p-2">
+      <div className="bg-white rounded-xl p-6 shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto relative">
+        <button
+          className="absolute right-4 top-3 text-2xl text-gray-400 hover:text-gray-800"
+          onClick={onClose}
+        >×</button>
+        <div className="font-bold text-lg text-blue-800 mb-1">{cliente.nombre}</div>
+        <div className="mb-1 text-sm">
+          <div><b>Email:</b> {cliente.email}</div>
+          <div><b>Phone:</b> {cliente.telefono}</div>
+          <div><b>Business:</b> {cliente.negocio}</div>
+          <div><b>Address:</b> {[cliente?.direccion?.calle, cliente?.direccion?.ciudad, cliente?.direccion?.estado, cliente?.direccion?.zip].filter(Boolean).join(", ")}</div>
+        </div>
+
+        {/* Selector mes */}
+        <div className="mb-3">
+          <label className="font-bold">Filter sales by month:</label>
+          <select
+            className="border rounded p-2 w-full"
+            value={mesSeleccionado || ""}
+            onChange={e => setMesSeleccionado(e.target.value || null)}
+          >
+            <option value="">All months</option>
+            {mesesUnicos.map(mes => (
+              <option key={mes} value={mes}>{mes}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="font-bold mb-2">Purchases by Month (last 12 months):</div>
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={dataChart}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="mes" fontSize={10} angle={-45} textAnchor="end" height={40} />
+            <YAxis fontSize={12} />
+            <Tooltip formatter={v => `$${v.toFixed(2)}`} />
+            <Bar dataKey="compras" fill="#1976D2" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+
+        <div className="mt-3 mb-1">
+          <b>Lifetime Total: <span className="text-green-700">${lifetimeTotal.toFixed(2)}</span></b>
+        </div>
+
+        <div className="mt-5 mb-3">
+          <h4 className="font-bold mb-2 text-blue-900">Sales / Invoices {mesSeleccionado ? `for ${mesSeleccionado}` : "(all)"}</h4>
+          {ventasFiltradas.length === 0 ? (
+            <div className="text-gray-500">No sales or invoices found.</div>
+          ) : (
+            <table className="min-w-full text-sm border border-gray-300 rounded">
+              <thead>
+                <tr className="bg-blue-100">
+                  <th className="border px-2 py-1">ID</th>
+                  <th className="border px-2 py-1">Date</th>
+                  <th className="border px-2 py-1">Total</th>
+                  <th className="border px-2 py-1">Paid</th>
+                  <th className="border px-2 py-1">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ventasFiltradas.map((v) => (
+                  <tr key={v.id} className="border-b cursor-default hover:bg-blue-50">
+                    <td className="border px-2 py-1 font-mono">{v.id.slice(0, 8)}…</td>
+                    <td className="border px-2 py-1">{v.fecha?.slice(0, 10)}</td>
+                    <td className="border px-2 py-1">${(v.total_venta || 0).toFixed(2)}</td>
+                    <td className="border px-2 py-1">${(v.total_pagado || 0).toFixed(2)}</td>
+                    <td className="border px-2 py-1 italic">{v.estado_pago || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="flex gap-3 mt-3">
+          <button className="bg-yellow-500 text-white font-bold px-4 py-1 rounded" onClick={onEdit}>Edit</button>
+          <button className="bg-red-700 text-white font-bold px-4 py-1 rounded" onClick={() => onDelete(cliente)}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- MODAL DE ABONO ---
 function ModalAbonar({ cliente, resumen, onClose, refresh }) {
   const { van } = useVan();
   const [monto, setMonto] = useState("");
@@ -365,11 +560,24 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
+  // Agrupar compras por mes y lifetime
+  const comprasPorMes = {};
+  let totalLifetime = 0;
+  (resumen.ventas || []).forEach(v => {
+    if (!v.fecha || !v.total_venta) return;
+    const mes = v.fecha.slice(0, 7); // yyyy-mm
+    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
+    totalLifetime += Number(v.total_venta || 0);
+  });
+
   async function guardarAbono(e) {
     e.preventDefault();
     if (guardando) return;
     setGuardando(true);
     setMensaje("");
+
+    const balance = Number(cliente.balance) || 0;
+    const montoNum = Number(monto);
 
     if (!van || !van.id) {
       setMensaje("You must select a VAN before adding a payment.");
@@ -377,21 +585,47 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
       return;
     }
 
-    if (!monto || isNaN(monto) || Number(monto) <= 0) {
+    if (!monto || isNaN(montoNum) || montoNum <= 0) {
       setMensaje("Invalid amount. Must be greater than 0.");
       setGuardando(false);
       return;
     }
-    if (Number(monto) > Number(cliente.balance)) {
-      setMensaje("Amount cannot be greater than pending balance.");
+
+    if (balance <= 0) {
+      setMensaje(`This client has no pending balance. You must return $${montoNum.toFixed(2)} to the client.`);
       setGuardando(false);
+      return;
+    }
+
+    if (montoNum > balance) {
+      setMensaje(
+        `Payment exceeds the client's pending balance by $${(montoNum - balance).toFixed(2)}. Only $${balance.toFixed(2)} will be recorded. You must return the extra to the client.`
+      );
+      const { error } = await supabase.from("pagos").insert([
+        {
+          cliente_id: cliente.id,
+          monto: balance,
+          metodo_pago: metodo,
+          van_id: van.id,
+        }
+      ]);
+      setGuardando(false);
+      if (!error) {
+        setMensaje("Payment registered up to the pending balance. Extra returned to client.");
+        setTimeout(() => {
+          onClose();
+          if (refresh) refresh();
+        }, 1000);
+      } else {
+        setMensaje("Error saving payment");
+      }
       return;
     }
 
     const { error } = await supabase.from("pagos").insert([
       {
         cliente_id: cliente.id,
-        monto: Number(monto),
+        monto: montoNum,
         metodo_pago: metodo,
         van_id: van.id,
       }
@@ -409,10 +643,10 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-30">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-30 p-4">
       <form
         onSubmit={guardarAbono}
-        className="bg-white rounded p-6 w-full max-w-md"
+        className="bg-white rounded p-6 w-full max-w-lg overflow-y-auto max-h-[90vh]"
       >
         <h3 className="font-bold mb-3">Payment for {cliente.nombre}</h3>
         <div className="mb-2">
@@ -454,6 +688,21 @@ function ModalAbonar({ cliente, resumen, onClose, refresh }) {
         {mensaje && (
           <div className={`mt-2 text-sm ${mensaje.includes("Error") || mensaje.includes("invalid") ? "text-red-600" : "text-green-700"}`}>{mensaje}</div>
         )}
+
+        {/* --- HISTORIAL DE COMPRAS POR MES Y TOTAL --- */}
+        <div className="mt-5 mb-3">
+          <h4 className="font-bold mb-2 text-blue-900">Customer Purchase History</h4>
+          <div className="text-sm mb-2 font-bold">Monthly Purchases:</div>
+          <ul className="mb-3 max-h-28 overflow-y-auto">
+            {Object.keys(comprasPorMes).length === 0 && <li className="text-gray-500">No sales registered</li>}
+            {Object.entries(comprasPorMes).sort((a,b) => b[0].localeCompare(a[0])).map(([mes, total]) => (
+              <li key={mes} className="mb-1">
+                <span className="font-mono">{mes}</span>: <span className="font-bold">${total.toFixed(2)}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="font-bold">Lifetime Total: <span className="text-green-700">${totalLifetime.toFixed(2)}</span></div>
+        </div>
 
         {/* --- HISTORY --- */}
         <div className="mt-5">
