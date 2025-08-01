@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const estadosUSA = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
@@ -39,14 +41,8 @@ export default function Clientes() {
   useEffect(() => { cargarClientes(); }, []);
   async function cargarClientes() {
     const { data, error } = await supabase.from("clientes_balance").select("*");
-    if (!error) {
-      // Ajustamos balance para que nunca sea negativo
-      const clientesAjustados = data.map(c => ({
-        ...c,
-        balance: c.balance < 0 ? 0 : c.balance
-      }));
-      setClientes(clientesAjustados);
-    } else setMensaje("Error loading clients");
+    if (!error) setClientes(data);
+    else setMensaje("Error loading clients");
   }
 
   useEffect(() => {
@@ -60,8 +56,7 @@ export default function Clientes() {
         .from("pagos")
         .select("id, fecha_pago, monto, metodo_pago")
         .eq("cliente_id", clienteSeleccionado.id);
-
-      // Corregido: Aseguramos que no sumamos valores negativos y balance mínimo 0
+      // Asegurar que no sumamos valores negativos
       const deudaVentas = (ventas || []).reduce(
         (t, v) => t + Math.max(0, (v.total_venta || 0) - (v.total_pagado || 0)), 0
       );
@@ -239,6 +234,87 @@ export default function Clientes() {
     compras: comprasPorMes[mes] || 0
   }));
 
+  // Función para formatear fecha en MM/DD/YYYY
+  function formatDateUS(dateStr) {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d)) return "";
+    return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+  }
+
+  // Función para generar PDF en inglés con datos de Tools4Care y cliente
+  async function generatePDF() {
+    if (!clienteSeleccionado) return;
+
+    const doc = new jsPDF();
+
+    // Business Info Tools4Care (modifícalo con tu info real)
+    const businessName = "Tools4Care";
+    const businessAddress = "108 Lafayette St, Salem, MA 01970";
+    const businessPhone = "(978) 594-1624";
+    const reportTitle = "Sales Report";
+
+    doc.setFontSize(18);
+    doc.text(businessName, 14, 20);
+    doc.setFontSize(11);
+    doc.text(businessAddress, 14, 27);
+    doc.text(`Phone: ${businessPhone}`, 14, 34);
+
+    // Línea separadora
+    doc.setLineWidth(0.5);
+    doc.line(14, 38, 196, 38);
+
+    // Cliente info
+    doc.setFontSize(14);
+    doc.text("Client Information:", 14, 46);
+    doc.setFontSize(12);
+    doc.text(`Full Name: ${clienteSeleccionado.nombre || ""}`, 14, 53);
+    doc.text(`Business Name: ${clienteSeleccionado.negocio || ""}`, 14, 60);
+    const direccionCliente = clienteSeleccionado.direccion || {};
+    const direccionTexto = [
+      direccionCliente.calle,
+      direccionCliente.ciudad,
+      direccionCliente.estado,
+      direccionCliente.zip
+    ].filter(Boolean).join(", ");
+    doc.text(`Address: ${direccionTexto}`, 14, 67);
+    doc.text(`Phone: ${clienteSeleccionado.telefono || ""}`, 14, 74);
+
+    // Línea separadora
+    doc.setLineWidth(0.5);
+    doc.line(14, 78, 196, 78);
+
+    // Título y fecha del reporte
+    doc.setFontSize(16);
+    doc.text(reportTitle, 14, 86);
+    const todayStr = new Date().toLocaleDateString("en-US");
+    doc.setFontSize(11);
+    doc.text(`Date: ${todayStr}`, 14, 93);
+
+    // Datos de ventas por mes para tabla
+    const ventasData = Object.entries(comprasPorMes)
+      .map(([mes, total]) => [mes, `$${total.toFixed(2)}`])
+      .sort((a,b) => b[0].localeCompare(a[0]));
+
+    // Tabla ventas por mes
+    autoTable(doc, {
+      startY: 100,
+      head: [["Month", "Total Sales"]],
+      body: ventasData,
+      theme: "grid",
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [25, 118, 210] },
+    });
+
+    // Total acumulado al final
+    const finalY = doc.lastAutoTable.finalY || 110;
+    doc.setFontSize(12);
+    doc.text(`Lifetime Total Sales: $${lifetimeTotal.toFixed(2)}`, 14, finalY + 10);
+
+    // Guardar PDF
+    doc.save(`SalesReport_${clienteSeleccionado.nombre || "Client"}.pdf`);
+  }
+
   return (
     <div className="max-w-5xl mx-auto py-7 px-2">
       <h2 className="text-3xl font-bold mb-6 text-center text-blue-900">Clients</h2>
@@ -352,6 +428,7 @@ export default function Clientes() {
           onClose={() => setMostrarStats(false)}
           onEdit={() => { setMostrarStats(false); handleEditCliente(); }}
           onDelete={handleEliminar}
+          generatePDF={generatePDF}
         />
       )}
 
@@ -441,7 +518,7 @@ export default function Clientes() {
 }
 
 // --- MODAL DE ESTADÍSTICAS Y GRÁFICO + VENTAS POR MES SELECCIONADO ---
-function ClienteStatsModal({ open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete }) {
+function ClienteStatsModal({ open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete, generatePDF }) {
   if (!open || !cliente) return null;
 
   // Agrupar ventas por mes
@@ -489,6 +566,14 @@ function ClienteStatsModal({ open, cliente, resumen, mesSeleccionado, setMesSele
           <div><b>Business:</b> {cliente.negocio}</div>
           <div><b>Address:</b> {[cliente?.direccion?.calle, cliente?.direccion?.ciudad, cliente?.direccion?.estado, cliente?.direccion?.zip].filter(Boolean).join(", ")}</div>
         </div>
+
+        {/* Botón para generar PDF */}
+        <button
+          className="bg-blue-600 text-white px-4 py-2 rounded mb-4"
+          onClick={generatePDF}
+        >
+          Download Sales Report (PDF)
+        </button>
 
         {/* Selector mes */}
         <div className="mb-3">
