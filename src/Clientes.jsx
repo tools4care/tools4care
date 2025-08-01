@@ -39,8 +39,14 @@ export default function Clientes() {
   useEffect(() => { cargarClientes(); }, []);
   async function cargarClientes() {
     const { data, error } = await supabase.from("clientes_balance").select("*");
-    if (!error) setClientes(data);
-    else setMensaje("Error loading clients");
+    if (!error) {
+      // Ajustamos balance para que nunca sea negativo
+      const clientesAjustados = data.map(c => ({
+        ...c,
+        balance: c.balance < 0 ? 0 : c.balance
+      }));
+      setClientes(clientesAjustados);
+    } else setMensaje("Error loading clients");
   }
 
   useEffect(() => {
@@ -54,7 +60,8 @@ export default function Clientes() {
         .from("pagos")
         .select("id, fecha_pago, monto, metodo_pago")
         .eq("cliente_id", clienteSeleccionado.id);
-      // Corregido: Aseguramos que no sumamos valores negativos
+
+      // Corregido: Aseguramos que no sumamos valores negativos y balance mínimo 0
       const deudaVentas = (ventas || []).reduce(
         (t, v) => t + Math.max(0, (v.total_venta || 0) - (v.total_pagado || 0)), 0
       );

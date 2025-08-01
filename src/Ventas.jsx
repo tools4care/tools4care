@@ -13,27 +13,6 @@ const PAYMENT_METHODS = [
 
 const STORAGE_KEY = "pending_sales";
 
-// Función para calcular balance y cambio
-function calcularBalanceReal(saleTotal, clientBalance, pagos) {
-  const saldoCliente = Math.max(clientBalance, 0);
-  const totalPendiente = saleTotal + saldoCliente;
-
-  const totalPagado = pagos.reduce((acc, p) => {
-    const monto = Number(p.monto);
-    return acc + (isNaN(monto) || monto < 0 ? 0 : monto);
-  }, 0);
-
-  let balance = totalPendiente - totalPagado;
-  let cambio = 0;
-
-  if (balance < 0) {
-    cambio = Math.abs(balance);
-    balance = 0;
-  }
-
-  return { balance, cambio };
-}
-
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
@@ -60,11 +39,7 @@ export default function Sales() {
 
   const [step, setStep] = useState(1);
 
-  useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    setPendingSales(saved);
-  }, []);
-
+  // Carga clientes con balance para mostrar
   useEffect(() => {
     async function loadClients() {
       if (clientSearch.trim().length === 0) {
@@ -82,6 +57,7 @@ export default function Sales() {
     loadClients();
   }, [clientSearch]);
 
+  // Carga productos del van
   useEffect(() => {
     async function loadProducts() {
       if (!van) return;
@@ -113,6 +89,7 @@ export default function Sales() {
     loadProducts();
   }, [van, productSearch]);
 
+  // Carga productos más vendidos
   useEffect(() => {
     async function loadTopProducts() {
       if (!van) return;
@@ -122,12 +99,23 @@ export default function Sales() {
     loadTopProducts();
   }, [van]);
 
+  // Calculos básicos de totales
   const saleTotal = cart.reduce((t, p) => t + (p.cantidad * p.precio_unitario), 0);
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
   const clientBalance = selectedClient?.balance || 0;
 
-  // Uso función para obtener balance real y cambio
-  const { balance: pendingBalance, cambio: change } = calcularBalanceReal(saleTotal, clientBalance, payments);
+  // Total pendiente incluyendo deuda actual (solo si deuda > 0)
+  const deudaCliente = clientBalance > 0 ? clientBalance : 0;
+  const totalPendiente = saleTotal + deudaCliente;
+
+  // Nuevo balance cliente, sin negativo
+  const nuevoBalance = totalPendiente - paid < 0 ? 0 : totalPendiente - paid;
+
+  // Cambio a entregar (si pagó de más)
+  const change = paid > totalPendiente ? paid - totalPendiente : 0;
+
+  // Mostrar advertencia si pagó más que total pendiente
+  const mostrarAdvertencia = paid > totalPendiente;
 
   useEffect(() => {
     if (
@@ -243,14 +231,9 @@ export default function Sales() {
         }
       });
 
-      const totalPagado = payments.reduce((acc, p) => acc + Number(p.monto || 0), 0);
-      const totalDeuda = saleTotal + Math.max(clientBalance, 0);
-
-      if (totalPagado > totalDeuda) {
-        setPaymentError("Paid amount exceeds total debt. Please check payments.");
-        setSaving(false);
-        return;
-      }
+      const totalPagado = payments.reduce((sum, p) => sum + Number(p.monto || 0), 0);
+      const totalAPagar = saleTotal + deudaCliente;
+      const balanceClienteNuevo = totalAPagar - totalPagado < 0 ? 0 : totalAPagar - totalPagado;
 
       const venta_a_guardar = {
         van_id: van.id,
@@ -259,7 +242,7 @@ export default function Sales() {
         total: saleTotal,
         total_venta: saleTotal,
         total_pagado: totalPagado,
-        estado_pago: pendingBalance > 0 ? "pendiente" : "pagado",
+        estado_pago: balanceClienteNuevo > 0 ? "pendiente" : "pagado",
         forma_pago: payments.map(p => p.forma).join(","),
         metodo_pago: payments.map(p => `${p.forma}:${p.monto}`).join(","),
         productos: cart.map(p => ({
@@ -313,7 +296,14 @@ export default function Sales() {
         }
       }
 
-      alert("Sale saved successfully\n" + (change > 0 ? `Change to give: $${change.toFixed(2)}` : ""));
+      if (selectedClient?.id) {
+        await supabase
+          .from("clientes")
+          .update({ balance: balanceClienteNuevo })
+          .eq("id", selectedClient.id);
+      }
+
+      alert("Sale saved successfully\n" + (totalPagado > totalAPagar ? `Change to give: $${(totalPagado - totalAPagar).toFixed(2)}` : ""));
       clearSale();
 
       let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -344,6 +334,8 @@ export default function Sales() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
     setPendingSales(saved);
   }
+
+  // Render funciones paso a paso (clientes, productos, pago)...
 
   function renderStepClient() {
     return (
@@ -612,9 +604,9 @@ export default function Sales() {
         <div className="font-semibold mb-2">
           Total to pay: <span className="text-green-700">${saleTotal.toFixed(2)}</span>
         </div>
-        {Number(clientBalance) > 0 && (
+        {deudaCliente > 0 && (
           <div className="mb-2 text-red-600">
-            <b>Client's outstanding balance: ${Number(clientBalance).toFixed(2)}</b>
+            <b>Client's outstanding balance: ${deudaCliente.toFixed(2)}</b>
           </div>
         )}
         <div className="mb-2">
@@ -653,9 +645,9 @@ export default function Sales() {
             Change: ${change.toFixed(2)}
           </div>
         )}
-        {pendingBalance > 0 && (
+        {mostrarAdvertencia && (
           <div className="mb-2 text-orange-600">
-            Pending balance (debt): ${pendingBalance.toFixed(2)}
+            Paid amount exceeds total debt. Please check payments.
           </div>
         )}
         <div className="flex gap-2 mt-4">
@@ -743,7 +735,6 @@ export default function Sales() {
   );
 }
 
-// --- QuickCreateClient as before ---
 function QuickCreateClient({ onClose, onCreate }) {
   const [form, setForm] = useState({ nombre: "", apellido: "", telefono: "", email: "" });
   const [loading, setLoading] = useState(false);
