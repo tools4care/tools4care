@@ -213,6 +213,7 @@ export default function Sales() {
     }
   }
 
+  // --- BLOQUE CORREGIDO ---
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
@@ -233,7 +234,9 @@ export default function Sales() {
 
       const totalPagado = payments.reduce((sum, p) => sum + Number(p.monto || 0), 0);
       const totalAPagar = saleTotal + deudaCliente;
-      const balanceClienteNuevo = totalAPagar - totalPagado < 0 ? 0 : totalAPagar - totalPagado;
+      // --- CLAVE: Solo registro como pagado lo máximo que debía, el resto es change ---
+      const totalPagadoReal = Math.min(totalPagado, totalAPagar);
+      const balanceClienteNuevo = totalAPagar - totalPagadoReal < 0 ? 0 : totalAPagar - totalPagadoReal;
 
       const venta_a_guardar = {
         van_id: van.id,
@@ -241,7 +244,7 @@ export default function Sales() {
         cliente_id: selectedClient?.id || null,
         total: saleTotal,
         total_venta: saleTotal,
-        total_pagado: totalPagado,
+        total_pagado: totalPagadoReal,
         estado_pago: balanceClienteNuevo > 0 ? "pendiente" : "pagado",
         forma_pago: payments.map(p => p.forma).join(","),
         metodo_pago: payments.map(p => `${p.forma}:${p.monto}`).join(","),
@@ -253,11 +256,11 @@ export default function Sales() {
           subtotal: p.cantidad * p.precio_unitario,
         })),
         notas: notes,
-        pago: totalPagado,
-        pago_efectivo: paymentMap.efectivo,
-        pago_tarjeta: paymentMap.tarjeta,
-        pago_transferencia: paymentMap.transferencia,
-        pago_otro: paymentMap.otro,
+        pago: totalPagadoReal,
+        pago_efectivo: Math.min(paymentMap.efectivo, totalAPagar),
+        pago_tarjeta: Math.min(paymentMap.tarjeta, totalAPagar),
+        pago_transferencia: Math.min(paymentMap.transferencia, totalAPagar),
+        pago_otro: Math.min(paymentMap.otro, totalAPagar),
       };
 
       const { data: saleData, error: saleError } = await supabase
@@ -318,6 +321,7 @@ export default function Sales() {
       setSaving(false);
     }
   }
+  // --- FIN BLOQUE CORREGIDO ---
 
   function handleSelectPendingSale(sale) {
     setSelectedClient(sale.client);
