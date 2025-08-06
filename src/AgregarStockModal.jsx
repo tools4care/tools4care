@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
+import { useNavigate } from "react-router-dom";
 
 export default function AgregarStockModal({
   abierto,
@@ -15,6 +16,8 @@ export default function AgregarStockModal({
   const [mensaje, setMensaje] = useState("");
   const [loading, setLoading] = useState(false);
   const timerRef = useRef();
+
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!abierto) {
@@ -226,6 +229,20 @@ export default function AgregarStockModal({
             }`}
           >
             {mensaje}
+            {/* --- Botón para crear producto si no existe --- */}
+            {!seleccion && opciones.length === 0 && busqueda.trim() && (
+              <button
+                type="button"
+                className="mt-2 bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
+                onClick={() => {
+                  // Navega al formulario de crear producto con el código pre-llenado
+                  navigate(`/productos/nuevo?codigo=${encodeURIComponent(busqueda.trim())}`);
+                  cerrar();
+                }}
+              >
+                Crear producto con código: {busqueda.trim()}
+              </button>
+            )}
           </div>
         )}
 

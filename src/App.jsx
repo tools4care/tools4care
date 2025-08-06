@@ -77,6 +77,9 @@ export default function App() {
             {/* HIJOS de LayoutPrivado */}
             <Route path="" element={<Dashboard />} />
             <Route path="clientes" element={<Clientes />} />
+            <Route path="clientes/nuevo" element={<Clientes modoCrear={true} />} /> {/* Nueva ruta para crear cliente */}
+            {/* Ruta especial para agregar producto directo */}
+            <Route path="productos/nuevo" element={<Productos />} />
             <Route path="productos" element={<Productos />} />
             <Route path="inventario" element={<Inventario />} />
             <Route path="ventas" element={<Ventas />} />
