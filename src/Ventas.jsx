@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import BarcodeScanner from "./BarcodeScanner";
+import { useNavigate } from "react-router-dom";
 
 const PAYMENT_METHODS = [
   { key: "efectivo", label: "Cash" },
@@ -16,11 +17,11 @@ const STORAGE_KEY = "pending_sales";
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
+  const navigate = useNavigate();
 
   const [clientSearch, setClientSearch] = useState("");
   const [clients, setClients] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
-  const [showCreateClient, setShowCreateClient] = useState(false);
 
   const [productSearch, setProductSearch] = useState("");
   const [products, setProducts] = useState([]);
@@ -29,6 +30,7 @@ export default function Sales() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
   const [notes, setNotes] = useState("");
+  const [noProductFound, setNoProductFound] = useState(""); // NUEVO
 
   const [payments, setPayments] = useState([{ forma: "efectivo", monto: 0 }]);
   const [paymentError, setPaymentError] = useState("");
@@ -39,7 +41,7 @@ export default function Sales() {
 
   const [step, setStep] = useState(1);
 
-  // Carga clientes con balance para mostrar
+  // -------- CLIENTES ---------
   useEffect(() => {
     async function loadClients() {
       if (clientSearch.trim().length === 0) {
@@ -57,9 +59,10 @@ export default function Sales() {
     loadClients();
   }, [clientSearch]);
 
-  // Carga productos del van
+  // --------- PRODUCTOS ---------
   useEffect(() => {
     async function loadProducts() {
+      setNoProductFound(""); // limpiar mensaje
       if (!van) return;
       const { data, error } = await supabase
         .from("stock_van")
@@ -85,11 +88,16 @@ export default function Sales() {
           )
       );
       setProducts(filtered);
+
+      // Si hay búsqueda y no hay productos, activar botón de crear producto
+      if (productSearch.trim() && filtered.length === 0) {
+        setNoProductFound(productSearch.trim());
+      }
     }
     loadProducts();
   }, [van, productSearch]);
 
-  // Carga productos más vendidos
+  // --------- PRODUCTOS MÁS VENDIDOS ---------
   useEffect(() => {
     async function loadTopProducts() {
       if (!van) return;
@@ -103,20 +111,13 @@ export default function Sales() {
   const saleTotal = cart.reduce((t, p) => t + (p.cantidad * p.precio_unitario), 0);
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
   const clientBalance = selectedClient?.balance || 0;
-
-  // Total pendiente incluyendo deuda actual (solo si deuda > 0)
   const deudaCliente = clientBalance > 0 ? clientBalance : 0;
   const totalPendiente = saleTotal + deudaCliente;
-
-  // Nuevo balance cliente, sin negativo
   const nuevoBalance = totalPendiente - paid < 0 ? 0 : totalPendiente - paid;
-
-  // Cambio a entregar (si pagó de más)
   const change = paid > totalPendiente ? paid - totalPendiente : 0;
-
-  // Mostrar advertencia si pagó más que total pendiente
   const mostrarAdvertencia = paid > totalPendiente;
 
+  // Guardar venta pendiente local
   useEffect(() => {
     if (
       (cart.length > 0 || selectedClient) &&
@@ -144,7 +145,6 @@ export default function Sales() {
     setClientSearch("");
     setClients([]);
     setSelectedClient(null);
-    setShowCreateClient(false);
     setProductSearch("");
     setProducts([]);
     setCart([]);
@@ -213,7 +213,6 @@ export default function Sales() {
     }
   }
 
-  // --- BLOQUE CORREGIDO ---
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
@@ -234,7 +233,6 @@ export default function Sales() {
 
       const totalPagado = payments.reduce((sum, p) => sum + Number(p.monto || 0), 0);
       const totalAPagar = saleTotal + deudaCliente;
-      // --- CLAVE: Solo registro como pagado lo máximo que debía, el resto es change ---
       const totalPagadoReal = Math.min(totalPagado, totalAPagar);
       const balanceClienteNuevo = totalAPagar - totalPagadoReal < 0 ? 0 : totalAPagar - totalPagadoReal;
 
@@ -321,7 +319,6 @@ export default function Sales() {
       setSaving(false);
     }
   }
-  // --- FIN BLOQUE CORREGIDO ---
 
   function handleSelectPendingSale(sale) {
     setSelectedClient(sale.client);
@@ -339,8 +336,7 @@ export default function Sales() {
     setPendingSales(saved);
   }
 
-  // Render funciones paso a paso (clientes, productos, pago)...
-
+  // --------- RENDER PASO 1: CLIENTE ---------
   function renderStepClient() {
     return (
       <div>
@@ -417,7 +413,7 @@ export default function Sales() {
               ))}
             </div>
             <button
-              onClick={() => setShowCreateClient(true)}
+              onClick={() => navigate("/clientes/nuevo")}
               className="w-full bg-green-600 text-white rounded py-2 mb-2"
             >
               + Quick create client
@@ -439,20 +435,11 @@ export default function Sales() {
             Next
           </button>
         </div>
-        {showCreateClient && (
-          <QuickCreateClient
-            onClose={() => setShowCreateClient(false)}
-            onCreate={c => {
-              setSelectedClient(c);
-              setShowCreateClient(false);
-              setStep(2);
-            }}
-          />
-        )}
       </div>
     );
   }
 
+  // --------- RENDER PASO 2: PRODUCTOS ---------
   function renderStepProducts() {
     return (
       <div>
@@ -473,6 +460,19 @@ export default function Sales() {
             📷 Scan
           </button>
         </div>
+        {noProductFound && (
+          <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3 mb-2 text-yellow-800 rounded flex items-center justify-between">
+            <span>
+              No product found for "<b>{noProductFound}</b>"
+            </span>
+            <button
+              className="ml-4 bg-yellow-500 text-white rounded px-3 py-1"
+              onClick={() => navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)}
+            >
+              Create Product
+            </button>
+          </div>
+        )}
         {scanMessage && (
           <div className="mb-2 text-xs text-center font-bold text-blue-700">{scanMessage}</div>
         )}
@@ -514,11 +514,10 @@ export default function Sales() {
               )}
             </div>
           ))}
-          {products.length === 0 && (
+          {products.length === 0 && !noProductFound && (
             <div className="text-gray-400 text-sm px-2">No products for this van or search.</div>
           )}
         </div>
-        {/* Top products */}
         {topProducts.length > 0 && (
           <div className="bg-yellow-50 rounded border p-3 mt-4">
             <b>Top selling products</b>
@@ -537,7 +536,6 @@ export default function Sales() {
             ))}
           </div>
         )}
-        {/* Cart */}
         {cart.length > 0 && (
           <div className="bg-gray-50 rounded border p-3 mt-4">
             <b>Cart</b>
@@ -551,7 +549,6 @@ export default function Sales() {
             <div className="font-bold mt-2">Total: ${saleTotal.toFixed(2)}</div>
           </div>
         )}
-        {/* Notes area */}
         <div className="mt-4">
           <textarea
             className="w-full border rounded p-2"
@@ -575,7 +572,6 @@ export default function Sales() {
             Next
           </button>
         </div>
-        {/* SCANNER MODAL */}
         {scannerOpen && (
           <BarcodeScanner
             onResult={handleBarcodeScanned}
@@ -735,69 +731,6 @@ export default function Sales() {
       {step === 1 && renderStepClient()}
       {step === 2 && renderStepProducts()}
       {step === 3 && renderStepPayment()}
-    </div>
-  );
-}
-
-function QuickCreateClient({ onClose, onCreate }) {
-  const [form, setForm] = useState({ nombre: "", apellido: "", telefono: "", email: "" });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handleCreate(e) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    const { data, error: err } = await supabase
-      .from("clientes")
-      .insert([form])
-      .select()
-      .maybeSingle();
-    setLoading(false);
-    if (err) {
-      setError("Could not create client");
-      return;
-    }
-    onCreate(data);
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-20">
-      <form
-        className="bg-white p-6 rounded shadow-md w-full max-w-md"
-        onSubmit={handleCreate}
-      >
-        <h3 className="font-bold mb-2">New Client</h3>
-        {["nombre", "apellido", "telefono", "email"].map(field => (
-          <input
-            key={field}
-            type={field === "email" ? "email" : "text"}
-            placeholder={field.charAt(0).toUpperCase() + field.slice(1)}
-            className="w-full border rounded p-2 mb-2"
-            value={form[field]}
-            onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))}
-            required={field !== "telefono"}
-          />
-        ))}
-        {error && <div className="text-red-600 text-sm mb-2">{error}</div>}
-        <div className="flex gap-2 mt-4">
-          <button
-            type="button"
-            className="flex-1 bg-gray-400 text-white py-2 rounded"
-            onClick={onClose}
-            disabled={loading}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="flex-1 bg-blue-700 text-white py-2 rounded"
-            disabled={loading}
-          >
-            Save
-          </button>
-        </div>
-      </form>
     </div>
   );
 }
