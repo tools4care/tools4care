@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 // --- Suplidor Modal & Buscador ---
 function CrearSuplidor({ onCreate }) {
@@ -104,6 +105,241 @@ const SIZES_COMUNES = [
   ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "BOX", "SACK", "BAG"
 ];
 
+// --------------- COMPONENTE DE PESTAÑA DE VENTAS --------------
+function PestañaVentas({ productoId, nombre }) {
+  const [ventasMes, setVentasMes] = useState([]);
+  const [meses, setMeses] = useState([]);
+  const [mesSeleccionado, setMesSeleccionado] = useState("");
+  const [facturas, setFacturas] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!productoId) return;
+    (async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("detalle_ventas")
+        .select(`
+          cantidad,
+          venta_id,
+          ventas:venta_id(fecha, cliente_id)
+        `)
+        .eq("producto_id", productoId);
+
+      if (error) {
+        setVentasMes([]);
+        setMeses([]);
+        setMesSeleccionado("");
+        setFacturas([]);
+        setLoading(false);
+        return;
+      }
+
+      // Agrupar por mes
+      const agrupado = {};
+      (data || []).forEach((item) => {
+        const fecha = item.ventas?.fecha || "";
+        if (!fecha) return;
+        const mes = fecha.slice(0, 7);
+        agrupado[mes] = (agrupado[mes] || 0) + (item.cantidad || 0);
+      });
+      const ventasPorMes = Object.keys(agrupado)
+        .sort((a, b) => b.localeCompare(a))
+        .map((mes) => ({ mes, cantidad: agrupado[mes] }));
+
+      setVentasMes(ventasPorMes);
+      setMeses(ventasPorMes.map(x => x.mes));
+      setMesSeleccionado(ventasPorMes.length > 0 ? ventasPorMes[0].mes : "");
+      setLoading(false);
+
+      if (ventasPorMes.length > 0) {
+        cargarFacturas(productoId, ventasPorMes[0].mes);
+      }
+    })();
+  }, [productoId]);
+
+  async function cargarFacturas(productoId, mes) {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("detalle_ventas")
+      .select(`
+        venta_id,
+        cantidad,
+        ventas:venta_id(fecha, cliente_id)
+      `)
+      .eq("producto_id", productoId);
+
+    let detalles = [];
+    if (!error && data) {
+      detalles = data.filter(
+        d => d.ventas && d.ventas.fecha && d.ventas.fecha.startsWith(mes)
+      );
+    }
+    // Traer nombres de clientes
+    let clientesIds = Array.from(new Set(detalles.map(d => d.ventas?.cliente_id).filter(Boolean)));
+    let clientesNombres = {};
+    if (clientesIds.length > 0) {
+      const { data: clientesData } = await supabase
+        .from("clientes")
+        .select("id, nombre")
+        .in("id", clientesIds);
+      if (clientesData) {
+        clientesData.forEach(c => { clientesNombres[c.id] = c.nombre; });
+      }
+    }
+    const facturasMes = detalles.map(f => ({
+      venta_id: f.venta_id,
+      cantidad: f.cantidad,
+      fecha: f.ventas?.fecha,
+      cliente: clientesNombres[f.ventas?.cliente_id] || f.ventas?.cliente_id || "",
+    }));
+    setFacturas(facturasMes);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    if (productoId && mesSeleccionado) {
+      cargarFacturas(productoId, mesSeleccionado);
+    }
+  }, [mesSeleccionado, productoId]);
+
+  return (
+    <div>
+      <h3 className="font-bold text-blue-900 mb-4">Sales for "{nombre}"</h3>
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={ventasMes}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="mes" fontSize={12} />
+          <YAxis fontSize={12} />
+        <Tooltip formatter={v => `${v} units`} />
+          <Bar dataKey="cantidad" fill="#1976D2" radius={[6, 6, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="my-4">
+        <label className="font-bold">Select month:</label>
+        <select
+          className="border rounded p-2 ml-2"
+          value={mesSeleccionado}
+          onChange={e => setMesSeleccionado(e.target.value)}
+        >
+          {meses.map(m => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <h4 className="font-bold mb-2">Invoices for {mesSeleccionado || "..."}</h4>
+        {loading ? (
+          <div className="text-blue-600">Loading...</div>
+        ) : facturas.length === 0 ? (
+          <div className="text-gray-500">No invoices for this month.</div>
+        ) : (
+          <table className="min-w-full text-sm border border-gray-300 rounded">
+            <thead>
+              <tr className="bg-blue-100">
+                <th className="border px-2 py-1">Invoice ID</th>
+                <th className="border px-2 py-1">Date</th>
+                <th className="border px-2 py-1">Client</th>
+                <th className="border px-2 py-1">Quantity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {facturas.map(f => (
+                <tr key={f.venta_id + "-" + f.fecha} className="border-b">
+                  <td className="border px-2 py-1 font-mono">{f.venta_id}</td>
+                  <td className="border px-2 py-1">{f.fecha?.slice(0, 10)}</td>
+                  <td className="border px-2 py-1">{f.cliente}</td>
+                  <td className="border px-2 py-1">{f.cantidad}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --------- HELPER: sumar stock en ubicación seleccionada (incremental) ---------
+async function addStockSeleccionado(productoId, productoActual) {
+  const qty = Number(productoActual.cantidad_inicial || 0);
+  if (!qty || qty <= 0) return;
+
+  const esAlmacen = productoActual.ubicacion_inicial === "almacen";
+
+  if (esAlmacen) {
+    // ALMACÉN: incrementa si existe, crea si no
+    const { data: existente } = await supabase
+      .from("stock_almacen")
+      .select("id, cantidad")
+      .eq("producto_id", productoId)
+      .maybeSingle();
+
+    if (existente?.id) {
+      await supabase
+        .from("stock_almacen")
+        .update({ cantidad: Number(existente.cantidad || 0) + qty })
+        .eq("id", existente.id);
+    } else {
+      await supabase.from("stock_almacen").insert([
+        { producto_id: productoId, cantidad: qty },
+      ]);
+    }
+
+    // Log de movimiento (si la tabla existe)
+    try {
+      await supabase.from("movimientos_stock").insert([
+        {
+          producto_id: productoId,
+          tipo: "AJUSTE_POSITIVO",
+          cantidad: qty,
+          ubicacion: "almacen",
+          van_id: null,
+          motivo: "Alta desde formulario de producto",
+          fecha: new Date().toISOString(),
+        },
+      ]);
+    } catch (_) {}
+  } else {
+    // VAN: requiere van_id
+    const vanId = productoActual.van_id_inicial;
+    if (!vanId) return;
+
+    const { data: existente } = await supabase
+      .from("stock_van")
+      .select("id, cantidad")
+      .eq("producto_id", productoId)
+      .eq("van_id", vanId)
+      .maybeSingle();
+
+    if (existente?.id) {
+      await supabase
+        .from("stock_van")
+        .update({ cantidad: Number(existente.cantidad || 0) + qty })
+        .eq("id", existente.id);
+    } else {
+      await supabase.from("stock_van").insert([
+        { producto_id: productoId, van_id: vanId, cantidad: qty },
+      ]);
+    }
+
+    // Log de movimiento (si la tabla existe)
+    try {
+      await supabase.from("movimientos_stock").insert([
+        {
+          producto_id: productoId,
+          tipo: "AJUSTE_POSITIVO",
+          cantidad: qty,
+          ubicacion: "van",
+          van_id: vanId,
+          motivo: "Alta desde formulario de producto",
+          fecha: new Date().toISOString(),
+        },
+      ]);
+    } catch (_) {}
+  }
+}
+
 // --------- MAIN COMPONENT ---------
 export default function Productos() {
   const PAGE_SIZE = 50;
@@ -127,11 +363,11 @@ export default function Productos() {
   const [suplidorId, setSuplidorId] = useState(null);
   const [suplidorNombre, setSuplidorNombre] = useState("");
 
-  // Para el selector de ubicación inicial
+  // Ubicaciones
   const [ubicaciones, setUbicaciones] = useState([{ key: "almacen", nombre: "Central warehouse" }]);
   const [ubicacionInicial, setUbicacionInicial] = useState("almacen");
 
-  // --- NEW: Hooks para leer la URL ---
+  // URL helpers
   const location = useLocation();
   const navigate = useNavigate();
   const modalAutoOpenRef = useRef(false);
@@ -150,14 +386,13 @@ export default function Productos() {
     setUbicaciones([{ key: "almacen", nombre: "Central warehouse" }, ...vans]);
   }
 
-  // --- FETCH PRODUCTOS ---
   useEffect(() => { cargarProductos(); }, [busqueda, pagina]);
 
   async function cargarProductos() {
     setLoading(true);
     let query = supabase
       .from("productos")
-      .select("*, suplidor:suplidor_id(nombre)")
+      .select("*, suplidor:suplidor_id(nombre)", { count: "exact" })
       .order("nombre", { ascending: true });
 
     if (busqueda.trim()) {
@@ -172,10 +407,8 @@ export default function Productos() {
 
     const { data, count, error } = await query;
     if (error) setMensaje("Error loading products: " + error.message);
-    if (data) {
-      setProductos(data || []);
-      setTotal(count || 0);
-    }
+    setProductos(data || []);
+    setTotal(count || 0);
     setLoading(false);
   }
 
@@ -191,9 +424,14 @@ export default function Productos() {
     if (pagina > 1) setPagina(pagina - 1);
   }
 
-  // --- MODAL EDITAR / MÉTRICAS ---
   function abrirModal(prod) {
-    setProductoActual({ ...prod });
+    setProductoActual({
+      ...prod,
+      // campos de "add stock now"
+      cantidad_inicial: "",
+      ubicacion_inicial: "almacen",
+      van_id_inicial: null,
+    });
     setTabActivo("editar");
     setMensaje("");
     setIsCustomSize(prod.size && !SIZES_COMUNES.includes(prod.size));
@@ -202,8 +440,8 @@ export default function Productos() {
     setSuplidorNombre(prod.suplidor?.nombre || "");
     setModalAbierto(true);
   }
+
   function cerrarModal() {
-    // Si estoy en /productos/nuevo, hago redirect a /productos para evitar bucle
     if (location.pathname.endsWith("/productos/nuevo")) {
       navigate("/productos");
     }
@@ -217,7 +455,6 @@ export default function Productos() {
     setUbicacionInicial("almacen");
   }
 
-  // --- AGREGAR NUEVO PRODUCTO (MODIFICADO y mejorado para ruta /productos/nuevo) ---
   function agregarProductoNuevo(codigoForzado = "") {
     let codigoInicial = codigoForzado;
     if (location.pathname.endsWith("/productos/nuevo")) {
@@ -228,8 +465,8 @@ export default function Productos() {
       id: null, codigo: codigoInicial, nombre: "", marca: "", categoria: "",
       costo: "", precio: "", notas: "", size: "", proveedor: null,
       cantidad_inicial: "",
-      ubicacion_inicial: "almacen", // valor por defecto
-      van_id_inicial: null, // para van
+      ubicacion_inicial: "almacen",
+      van_id_inicial: null,
     });
     setIsCustomSize(false);
     setSizeCustom("");
@@ -240,7 +477,6 @@ export default function Productos() {
     setModalAbierto(true);
   }
 
-  // --- ABRIR MODAL AUTOMÁTICAMENTE SI ES RUTA /productos/nuevo ---
   useEffect(() => {
     if (
       location.pathname.endsWith("/productos/nuevo") &&
@@ -250,14 +486,12 @@ export default function Productos() {
       modalAutoOpenRef.current = true;
       agregarProductoNuevo();
     }
-    // Si sales de esa ruta, permite que vuelva a abrir
     if (!location.pathname.endsWith("/productos/nuevo")) {
       modalAutoOpenRef.current = false;
     }
-    // eslint-disable-next-line
-  }, [location.pathname]);
+  }, [location.pathname, modalAbierto]);
 
-  // --- GUARDAR/ELIMINAR PRODUCTO (CON VALIDACIÓN DE CÓDIGO ÚNICO) ---
+  // --- GUARDAR/ELIMINAR PRODUCTO + SIEMPRE POSIBLE AGREGAR STOCK ---
   async function guardarProducto(e) {
     e.preventDefault();
     setMensaje("");
@@ -266,7 +500,7 @@ export default function Productos() {
       return;
     }
 
-    // --- Chequeo de duplicado (excepto si es el mismo producto) ---
+    // Duplicado de código
     const { data: existentes, error: errorExistente } = await supabase
       .from("productos")
       .select("id")
@@ -277,7 +511,6 @@ export default function Productos() {
       return;
     }
 
-    // Si existe y no es el mismo que estamos editando
     if (
       existentes &&
       existentes.length > 0 &&
@@ -299,54 +532,46 @@ export default function Productos() {
       notas: productoActual.notas || "",
     };
 
-    let resultado;
-    let nuevoId = productoActual.id;
+    let productoId = productoActual.id;
 
     if (productoActual.id) {
-      resultado = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
-      if (resultado?.error) {
-        if (
-          resultado.error.message &&
-          resultado.error.message.toLowerCase().includes("unique")
-        ) {
-          setMensaje("Error: This code/UPC is already in use. Please use another one.");
-        } else {
-          setMensaje("Error: " + resultado.error.message);
-        }
+      // update
+      const { error } = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
+      if (error) {
+        setMensaje(error.message?.toLowerCase().includes("unique")
+          ? "Error: This code/UPC is already in use. Please use another one."
+          : "Error: " + error.message);
         return;
       }
-      if (!resultado.error) setMensaje("Product updated.");
+      setMensaje("Product updated.");
     } else {
+      // insert
       const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
       if (error) {
-        if (
-          error.message &&
-          error.message.toLowerCase().includes("unique")
-        ) {
-          setMensaje("Error: This code/UPC is already in use. Please use another one.");
-        } else {
-          setMensaje("Error: " + error.message);
-        }
+        setMensaje(error.message?.toLowerCase().includes("unique")
+          ? "Error: This code/UPC is already in use. Please use another one."
+          : "Error: " + error.message);
         return;
       }
-      if (data) {
-        setMensaje("Product added.");
-        nuevoId = data.id;
-        // --- Stock inicial SOLO si cantidad > 0 ---
-        if (productoActual.cantidad_inicial && Number(productoActual.cantidad_inicial) > 0) {
-          let tabla = productoActual.ubicacion_inicial === "almacen" ? "stock_almacen" : "stock_van";
-          let payload = {
-            producto_id: data.id,
-            cantidad: Number(productoActual.cantidad_inicial)
-          };
-          if (tabla === "stock_van") {
-            payload.van_id = productoActual.van_id_inicial;
-          }
-          const { error: errorStock } = await supabase.from(tabla).insert([payload]);
-          if (errorStock) setMensaje("Product saved, error in initial stock: " + errorStock.message);
-        }
-      }
+      productoId = data.id;
+      setMensaje("Product added.");
     }
+
+    // --- SIEMPRE: sumar stock en la ubicación seleccionada (incremental) ---
+    try {
+      await addStockSeleccionado(productoId, productoActual);
+    } catch (e2) {
+      setMensaje(prev => (prev ? prev + " " : "") + "Error adding stock: " + (e2?.message || e2));
+    }
+
+    // limpiar campos de add stock para evitar doble inserción en futuros guardados
+    setProductoActual(prev => prev ? {
+      ...prev,
+      id: productoId,
+      cantidad_inicial: "",
+      ubicacion_inicial: "almacen",
+      van_id_inicial: null
+    } : prev);
 
     await cargarProductos();
     cerrarModal();
@@ -452,7 +677,7 @@ export default function Productos() {
       </div>
 
       {/* --- MODAL EDIT / METRICS --- */}
-      {modalAbierto && (
+      {modalAbierto && productoActual && (
         <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl relative p-8">
             <button
@@ -471,211 +696,224 @@ export default function Productos() {
               >
                 Edit product
               </button>
+              <button
+                className={`px-6 py-2 font-bold ${tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+                onClick={() => setTabActivo("ventas")}
+              >
+                Sales
+              </button>
             </div>
-            {/* TAB EDIT */}
-            <form onSubmit={guardarProducto}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold">Code/UPC*</label>
-                  <input
-                    className="border rounded p-2 w-full"
-                    value={productoActual.codigo}
-                    inputMode="numeric"
-                    autoComplete="off"
-                    pattern="[0-9]*"
-                    onChange={e =>
-                      setProductoActual({ ...productoActual, codigo: e.target.value })
-                    }
-                    required
-                    autoFocus
-                  />
-                </div>
-                <div>
-                  <label className="font-bold">Name*</label>
-                  <input
-                    className="border rounded p-2 w-full"
-                    value={productoActual.nombre}
-                    autoComplete="off"
-                    onChange={e =>
-                      setProductoActual({ ...productoActual, nombre: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="font-bold">Brand</label>
-                  <input
-                    className="border rounded p-2 w-full"
-                    value={productoActual.marca}
-                    autoComplete="off"
-                    onChange={e =>
-                      setProductoActual({ ...productoActual, marca: e.target.value })
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="font-bold">Category</label>
-                  <input
-                    className="border rounded p-2 w-full"
-                    value={productoActual.categoria}
-                    autoComplete="off"
-                    onChange={e =>
-                      setProductoActual({ ...productoActual, categoria: e.target.value })
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="font-bold">Size</label>
-                  <select
-                    className="border rounded p-2 w-full"
-                    value={isCustomSize ? "custom" : (productoActual.size || "")}
-                    onChange={e => {
-                      if (e.target.value === "custom") {
-                        setIsCustomSize(true);
-                      } else {
-                        setIsCustomSize(false);
-                        setProductoActual(prev => ({
-                          ...prev,
-                          size: e.target.value,
-                        }));
-                      }
-                    }}
-                  >
-                    <option value="">Select size</option>
-                    {SIZES_COMUNES.map(sz => (
-                      <option value={sz} key={sz}>{sz}</option>
-                    ))}
-                    <option value="custom">Add custom size...</option>
-                  </select>
-                  {isCustomSize && (
+            {tabActivo === "editar" ? (
+              <form onSubmit={guardarProducto}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div>
+                    <label className="font-bold">Code/UPC*</label>
                     <input
-                      className="border rounded p-2 mt-1 w-full"
-                      value={sizeCustom}
-                      placeholder="Enter custom size"
-                      onChange={e => setSizeCustom(e.target.value)}
+                      className="border rounded p-2 w-full"
+                      value={productoActual.codigo}
+                      inputMode="numeric"
+                      autoComplete="off"
+                      pattern="[0-9]*"
+                      onChange={e =>
+                        setProductoActual({ ...productoActual, codigo: e.target.value })
+                      }
+                      required
+                      autoFocus
                     />
-                  )}
-                </div>
-                <div>
-                  <label className="font-bold">Supplier</label>
-                  <BuscadorSuplidor
-                    value={suplidorId}
-                    onChange={(id, nombre) => {
-                      setSuplidorId(id);
-                      setSuplidorNombre(nombre);
-                      setProductoActual(prev => ({
-                        ...prev,
-                        proveedor: id,
-                      }));
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="font-bold">Cost</label>
-                  <input
-                    className="border rounded p-2 w-full"
-                    value={productoActual.costo}
-                    type="number"
-                    step="0.01"
-                    inputMode="numeric"
-                    min="0"
-                    autoComplete="off"
-                    onChange={e =>
-                      setProductoActual({ ...productoActual, costo: e.target.value })
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="font-bold">Price*</label>
-                  <input
-                    className="border rounded p-2 w-full"
-                    value={productoActual.precio}
-                    type="number"
-                    step="0.01"
-                    inputMode="numeric"
-                    min="0"
-                    autoComplete="off"
-                    onChange={e =>
-                      setProductoActual({ ...productoActual, precio: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="font-bold">Product notes</label>
-                  <textarea
-                    className="border rounded p-2 w-full min-h-[60px]"
-                    value={productoActual.notas || ""}
-                    placeholder="Special notes, important details, etc."
-                    onChange={e => setProductoActual({ ...productoActual, notas: e.target.value })}
-                  />
-                </div>
-              </div>
-              {/* --- CAMPOS DE STOCK INICIAL SOLO PARA NUEVO PRODUCTO --- */}
-              {!productoActual.id && (
-                <div className="md:col-span-2 border-t pt-2 mt-2">
-                  <b>Initial stock (optional)</b>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="font-bold">Quantity</label>
-                      <input
-                        className="border rounded p-2 w-full"
-                        type="number"
-                        min="0"
-                        value={productoActual.cantidad_inicial || ""}
-                        onChange={e =>
-                          setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })
-                        }
-                        placeholder="0"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-bold">Location</label>
-                      <select
-                        className="border rounded p-2 w-full"
-                        value={productoActual.ubicacion_inicial}
-                        onChange={e => {
-                          const value = e.target.value;
+                  </div>
+                  <div>
+                    <label className="font-bold">Name*</label>
+                    <input
+                      className="border rounded p-2 w-full"
+                      value={productoActual.nombre}
+                      autoComplete="off"
+                      onChange={e =>
+                        setProductoActual({ ...productoActual, nombre: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold">Brand</label>
+                    <input
+                      className="border rounded p-2 w-full"
+                      value={productoActual.marca}
+                      autoComplete="off"
+                      onChange={e =>
+                        setProductoActual({ ...productoActual, marca: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold">Category</label>
+                    <input
+                      className="border rounded p-2 w-full"
+                      value={productoActual.categoria}
+                      autoComplete="off"
+                      onChange={e =>
+                        setProductoActual({ ...productoActual, categoria: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold">Size</label>
+                    <select
+                      className="border rounded p-2 w-full"
+                      value={isCustomSize ? "custom" : (productoActual.size || "")}
+                      onChange={e => {
+                        if (e.target.value === "custom") {
+                          setIsCustomSize(true);
+                        } else {
+                          setIsCustomSize(false);
                           setProductoActual(prev => ({
                             ...prev,
-                            ubicacion_inicial: value,
-                            van_id_inicial: value.startsWith("van_")
-                              ? ubicaciones.find(u => u.key === value)?.van_id
-                              : null,
+                            size: e.target.value,
                           }));
-                        }}
-                      >
-                        {ubicaciones.map(u => (
-                          <option key={u.key} value={u.key}>
-                            {u.nombre}
-                          </option>
-                        ))}
-                      </select>
+                        }
+                      }}
+                    >
+                      <option value="">Select size</option>
+                      {SIZES_COMUNES.map(sz => (
+                        <option value={sz} key={sz}>{sz}</option>
+                      ))}
+                      <option value="custom">Add custom size...</option>
+                    </select>
+                    {isCustomSize && (
+                      <input
+                        className="border rounded p-2 mt-1 w-full"
+                        value={sizeCustom}
+                        placeholder="Enter custom size"
+                        onChange={e => setSizeCustom(e.target.value)}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label className="font-bold">Supplier</label>
+                    <BuscadorSuplidor
+                      value={suplidorId}
+                      onChange={(id, nombre) => {
+                        setSuplidorId(id);
+                        setSuplidorNombre(nombre);
+                        setProductoActual(prev => ({
+                          ...prev,
+                          proveedor: id,
+                        }));
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold">Cost</label>
+                    <input
+                      className="border rounded p-2 w-full"
+                      value={productoActual.costo}
+                      type="number"
+                      step="0.01"
+                      inputMode="numeric"
+                      min="0"
+                      autoComplete="off"
+                      onChange={e =>
+                        setProductoActual({ ...productoActual, costo: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold">Price*</label>
+                    <input
+                      className="border rounded p-2 w-full"
+                      value={productoActual.precio}
+                      type="number"
+                      step="0.01"
+                      inputMode="numeric"
+                      min="0"
+                      autoComplete="off"
+                      onChange={e =>
+                        setProductoActual({ ...productoActual, precio: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+
+                  {/* --- SIEMPRE disponible: agregar stock ahora --- */}
+                  <div className="md:col-span-2 border-t pt-2 mt-2">
+                    <b>Add stock now (optional)</b>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="font-bold">Quantity</label>
+                        <input
+                          className="border rounded p-2 w-full"
+                          type="number"
+                          min="0"
+                          value={productoActual.cantidad_inicial || ""}
+                          onChange={e =>
+                            setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })
+                          }
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-bold">Location</label>
+                        <select
+                          className="border rounded p-2 w-full"
+                          value={productoActual.ubicacion_inicial}
+                          onChange={e => {
+                            const value = e.target.value;
+                            setProductoActual(prev => ({
+                              ...prev,
+                              ubicacion_inicial: value,
+                              van_id_inicial: value.startsWith("van_")
+                                ? ubicaciones.find(u => u.key === value)?.van_id
+                                : null,
+                            }));
+                          }}
+                        >
+                          {ubicaciones.map(u => (
+                            <option key={u.key} value={u.key}>
+                              {u.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      If you set a quantity & location, stock will be added when you save.
+                    </p>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="font-bold">Product notes</label>
+                    <textarea
+                      className="border rounded p-2 w-full min-h-[60px]"
+                      value={productoActual.notas || ""}
+                      placeholder="Special notes, important details, etc."
+                      onChange={e => setProductoActual({ ...productoActual, notas: e.target.value })}
+                    />
                   </div>
                 </div>
-              )}
-              {mensaje && (
-                <div className="text-blue-700 text-center mt-2">{mensaje}</div>
-              )}
-              <div className="flex gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
-                <button
-                  type="submit"
-                  className="flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
-                >
-                  {productoActual.id ? "Save changes" : "Add product"}
-                </button>
-                {productoActual.id && (
-                  <button
-                    type="button"
-                    className="flex-1 bg-red-600 text-white rounded px-5 py-2"
-                    onClick={eliminarProducto}
-                  >
-                    Delete
-                  </button>
+
+                {mensaje && (
+                  <div className="text-blue-700 text-center mt-2">{mensaje}</div>
                 )}
-              </div>
-            </form>
+                <div className="flex gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
+                  <button
+                    type="submit"
+                    className="flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
+                  >
+                    {productoActual.id ? "Save changes" : "Add product"}
+                  </button>
+                  {productoActual.id && (
+                    <button
+                      type="button"
+                      className="flex-1 bg-red-600 text-white rounded px-5 py-2"
+                      onClick={eliminarProducto}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </form>
+            ) : (
+              <PestañaVentas productoId={productoActual.id} nombre={productoActual.nombre} />
+            )}
           </div>
         </div>
       )}
