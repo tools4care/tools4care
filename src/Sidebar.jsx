@@ -11,7 +11,8 @@ import {
   Package,
   Boxes,
   Repeat,
-  LogOut
+  LogOut,
+  CreditCard, // <--- NUEVO: icono para CXC
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -57,6 +58,12 @@ export default function Sidebar() {
       to: "/cierres",
       icon: <Repeat size={ICON_SIZE} className="text-cyan-600" />,
       text: "Van Closeout",
+    },
+    // ---- NUEVO ÍTEM: Cuentas por Cobrar (CXC) ----
+    {
+      to: "/cxc",
+      icon: <CreditCard size={ICON_SIZE} className="text-orange-400" />,
+      text: "Accounts Receivable",
     },
   ];
 

@@ -13,6 +13,9 @@ import CierreVan from "./CierreVan";
 import Facturas from "./Facturas";
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
+import CuentasPorCobrar from "./CuentasPorCobrar.jsx";
+
+
 
 // Rutas privadas
 function PrivateRoute({ children }) {
@@ -77,13 +80,20 @@ export default function App() {
             {/* HIJOS de LayoutPrivado */}
             <Route path="" element={<Dashboard />} />
             <Route path="clientes" element={<Clientes />} />
+
             {/* Ruta especial para agregar producto directo */}
             <Route path="productos/nuevo" element={<Productos />} />
             <Route path="productos" element={<Productos />} />
+
             <Route path="inventario" element={<Inventario />} />
             <Route path="ventas" element={<Ventas />} />
             <Route path="cierres" element={<CierreVan />} />
             <Route path="facturas" element={<Facturas />} />
+
+            {/* >>> NUEVO: Cuentas por Cobrar (DB) */}
+            <Route path="cxc" element={<CuentasPorCobrar />} />
+
+
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>
