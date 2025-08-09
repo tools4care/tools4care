@@ -15,16 +15,21 @@ const PAYMENT_METHODS = [
 
 const STORAGE_KEY = "pending_sales";
 
-/* --------- Política simple de límite por score (si hay historial) --------- */
-function limitByScore(score) {
-  const s = Number(score || 600);
+/* --------- Política de límite (alineada con CxC) ---------
+   Ejemplos:
+   - score 592  -> $150 (tu caso)
+   - score 600+ -> $250
+   - tiers superiores escalan suavemente
+*/
+function policyLimit(score) {
+  const s = Number(score ?? 600);
   if (s < 500) return 0;
-  if (s < 550) return 200;
-  if (s < 600) return 400;
-  if (s < 650) return 600;
-  if (s < 700) return 800;
-  if (s < 750) return 1000;
-  return 1500;
+  if (s < 600) return 150;  // 592 -> $150
+  if (s < 650) return 250;  // 600 -> $250
+  if (s < 700) return 350;
+  if (s < 750) return 500;
+  if (s < 800) return 750;
+  return 1000;
 }
 
 function fmt(n) {
@@ -68,8 +73,13 @@ export default function Sales() {
 
   const [step, setStep] = useState(1);
 
-  // NEW: estado de historial del cliente
-  const [clientHistory, setClientHistory] = useState({ has: false, ventas: 0, pagos: 0, loading: false });
+  // Historial del cliente (para decidir si mostramos panel de crédito)
+  const [clientHistory, setClientHistory] = useState({
+    has: false,
+    ventas: 0,
+    pagos: 0,
+    loading: false,
+  });
 
   /* ---------- CLIENTES ---------- */
   useEffect(() => {
@@ -95,7 +105,6 @@ export default function Sales() {
         return;
       }
       setClientHistory((h) => ({ ...h, loading: true }));
-      // Cuenta ventas/pagos sin traer filas
       const [{ count: vCount }, { count: pCount }] = await Promise.all([
         supabase.from("ventas").select("id", { count: "exact", head: true }).eq("cliente_id", id),
         supabase.from("pagos").select("id", { count: "exact", head: true }).eq("cliente_id", id),
@@ -106,20 +115,19 @@ export default function Sales() {
     fetchHistory();
   }, [selectedClient?.id]);
 
-  /* ---------- PRODUCTOS: van ---------- */
+  /* ---------- PRODUCTOS (van) ---------- */
   useEffect(() => {
     async function loadProducts() {
       setNoProductFound("");
       if (!van) return;
       const { data, error } = await supabase
         .from("stock_van")
-        .select(
-          `
+        .select(`
           id, producto_id, cantidad,
           productos ( nombre, precio, codigo, marca )
-        `
-        )
+        `)
         .eq("van_id", van.id);
+
       if (error) {
         setProducts([]);
         return;
@@ -140,11 +148,10 @@ export default function Sales() {
     loadProducts();
   }, [van, productSearch]);
 
-  /* ---------- TOP productos ---------- */
+  /* ---------- TOP productos (silencioso si no existe el RPC) ---------- */
   useEffect(() => {
     async function loadTopProducts() {
       if (!van) return;
-      // Si tu RPC no existe, simplemente no mostramos (evita error 404)
       try {
         const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
           van_id_param: van.id,
@@ -169,8 +176,12 @@ export default function Sales() {
   const amountToCredit = Math.max(0, totalAPagar - totalPagadoReal);
 
   const clientScore = Number(selectedClient?.score_credito ?? 600);
+
+  // Mostrar panel de crédito sólo si tiene historial o ya tiene balance
   const showCreditPanel = !!selectedClient && (clientHistory.has || clientBalance > 0);
-  const creditLimit = showCreditPanel ? limitByScore(clientScore) : 0;
+
+  // **AQUÍ** aplicamos la política alineada a CxC
+  const creditLimit = showCreditPanel ? policyLimit(clientScore) : 0;
   const creditAvailable = Math.max(0, creditLimit - clientBalance);
   const creditAvailableAfter = Math.max(0, creditLimit - (clientBalance + amountToCredit));
 
@@ -233,9 +244,7 @@ export default function Sales() {
   }
   function handleEditQuantity(producto_id, cantidad) {
     setCart((cart) =>
-      cart.map((item) =>
-        item.producto_id === producto_id ? { ...item, cantidad } : item
-      )
+      cart.map((item) => (item.producto_id === producto_id ? { ...item, cantidad } : item))
     );
   }
   function handleRemoveProduct(producto_id) {
@@ -249,15 +258,11 @@ export default function Sales() {
       return;
     }
     setScanMessage("");
-    let found = products.find(
-      (p) => p.productos?.codigo?.toString().trim() === code.trim()
-    );
+    let found = products.find((p) => p.productos?.codigo?.toString().trim() === code.trim());
     if (!found && van) {
       const { data } = await supabase
         .from("stock_van")
-        .select(
-          "id, producto_id, cantidad, productos(nombre, precio, codigo, marca)"
-        )
+        .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca)")
         .eq("van_id", van.id)
         .eq("productos.codigo", code);
       if (data && data.length > 0) found = data[0];
@@ -277,12 +282,10 @@ export default function Sales() {
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!selectedClient?.id) throw new Error("Select a client first.");
 
-      // Validar crédito solo si mostramos panel (tiene historial o balance)
+      // Validar crédito sólo si mostramos panel (tiene historial o balance)
       if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
         setPaymentError(
-          `Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(
-            creditAvailable
-          )} is available.`
+          `Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
         );
         setSaving(false);
         return;
@@ -291,9 +294,7 @@ export default function Sales() {
       // Confirmación si hay parte a crédito
       if (amountToCredit > 0) {
         const ok = window.confirm(
-          `This sale will leave ${fmt(
-            amountToCredit
-          )} on the customer's account (credit).\n` +
+          `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
             (showCreditPanel
               ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
                   creditAvailable
@@ -517,9 +518,7 @@ export default function Sales() {
                 >
                   <div className="font-bold">
                     {c.nombre} {c.apellido || ""}{" "}
-                    <span className="text-gray-600 text-sm">
-                      {c.negocio && `(${c.negocio})`}
-                    </span>
+                    <span className="text-gray-600 text-sm">{c.negocio && `(${c.negocio})`}</span>
                   </div>
                   <div className="text-xs">{renderAddress(c.direccion)}</div>
                   <div className="text-xs flex items-center">
@@ -527,14 +526,12 @@ export default function Sales() {
                     <span className="ml-1">{c.telefono}</span>
                   </div>
                   {Number(getClientBalance(c)) > 0 && (
-                    <div className="text-xs text-red-600">
-                      Balance: {fmt(getClientBalance(c))}
-                    </div>
+                    <div className="text-xs text-red-600">Balance: {fmt(getClientBalance(c))}</div>
                   )}
                 </div>
               ))}
             </div>
-            {/* FIX: navegar al módulo de clientes en vez de dashboard */}
+            {/* Navegar al módulo de crear cliente */}
             <button
               onClick={() => navigate("/clientes/nuevo", { replace: false })}
               className="w-full bg-green-600 text-white rounded py-2 mb-2"
@@ -542,9 +539,7 @@ export default function Sales() {
               + Quick create client
             </button>
             <button
-              onClick={() =>
-                setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })
-              }
+              onClick={() => setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })}
               className="w-full bg-blue-600 text-white rounded py-2"
             >
               Quick sale (no client)
@@ -578,7 +573,7 @@ export default function Sales() {
             value={productSearch}
             onChange={(e) => setProductSearch(e.target.value)}
           />
-          <button
+        <button
             className="bg-green-600 text-white px-3 py-2 rounded font-bold"
             type="button"
             onClick={() => setScannerOpen(true)}
@@ -594,32 +589,23 @@ export default function Sales() {
             </span>
             <button
               className="ml-4 bg-yellow-500 text-white rounded px-3 py-1"
-              onClick={() =>
-                navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)
-              }
+              onClick={() => navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)}
             >
               Create Product
             </button>
           </div>
         )}
         {scanMessage && (
-          <div className="mb-2 text-xs text-center font-bold text-blue-700">
-            {scanMessage}
-          </div>
+          <div className="mb-2 text-xs text-center font-bold text-blue-700">{scanMessage}</div>
         )}
 
-        {/* Lista de productos de la van */}
         <div className="max-h-48 overflow-auto mb-2">
           {products.map((p) => (
-            <div
-              key={p.producto_id}
-              className="p-2 border-b flex justify-between items-center hover:bg-gray-50"
-            >
+            <div key={p.producto_id} className="p-2 border-b flex justify-between items-center hover:bg-gray-50">
               <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
                 <div className="font-semibold">{p.productos?.nombre}</div>
                 <div className="text-xs text-gray-500">
-                  Code: {p.productos?.codigo || "N/A"} · Stock: {p.cantidad} · Price:{" "}
-                  {fmt(p.productos?.precio)}
+                  Code: {p.productos?.codigo || "N/A"} · Stock: {p.cantidad} · Price: {fmt(p.productos?.precio)}
                 </div>
               </div>
               {cart.find((x) => x.producto_id === p.producto_id) && (
@@ -629,10 +615,7 @@ export default function Sales() {
                     onClick={() =>
                       handleEditQuantity(
                         p.producto_id,
-                        Math.max(
-                          1,
-                          (cart.find((x) => x.producto_id === p.producto_id)?.cantidad || 1) - 1
-                        )
+                        Math.max(1, (cart.find((x) => x.producto_id === p.producto_id)?.cantidad || 1) - 1)
                       )
                     }
                   >
@@ -642,9 +625,7 @@ export default function Sales() {
                     type="number"
                     min={1}
                     max={p.cantidad}
-                    value={
-                      cart.find((x) => x.producto_id === p.producto_id)?.cantidad || 1
-                    }
+                    value={cart.find((x) => x.producto_id === p.producto_id)?.cantidad || 1}
                     onChange={(e) =>
                       handleEditQuantity(
                         p.producto_id,
@@ -658,19 +639,13 @@ export default function Sales() {
                     onClick={() =>
                       handleEditQuantity(
                         p.producto_id,
-                        Math.min(
-                          p.cantidad,
-                          (cart.find((x) => x.producto_id === p.producto_id)?.cantidad || 1) + 1
-                        )
+                        Math.min(p.cantidad, (cart.find((x) => x.producto_id === p.producto_id)?.cantidad || 1) + 1)
                       )
                     }
                   >
                     +
                   </button>
-                  <button
-                    className="text-xs text-red-500"
-                    onClick={() => handleRemoveProduct(p.producto_id)}
-                  >
+                  <button className="text-xs text-red-500" onClick={() => handleRemoveProduct(p.producto_id)}>
                     Remove
                   </button>
                 </div>
@@ -678,13 +653,10 @@ export default function Sales() {
             </div>
           ))}
           {products.length === 0 && !noProductFound && (
-            <div className="text-gray-400 text-sm px-2">
-              No products for this van or search.
-            </div>
+            <div className="text-gray-400 text-sm px-2">No products for this van or search.</div>
           )}
         </div>
 
-        {/* Top productos */}
         {topProducts.length > 0 && (
           <div className="bg-yellow-50 rounded border p-3 mt-4">
             <b>Top selling products</b>
@@ -706,14 +678,11 @@ export default function Sales() {
           </div>
         )}
 
-        {/* Carrito visual */}
         {cart.length > 0 && (
           <div className="bg-white rounded border p-3 mt-4">
             <div className="flex items-center justify-between mb-2">
               <b>Cart</b>
-              <div className="text-lg font-bold text-blue-800">
-                Total: {fmt(saleTotal)}
-              </div>
+              <div className="text-lg font-bold text-blue-800">Total: {fmt(saleTotal)}</div>
             </div>
             <div className="divide-y">
               {cart.map((p) => (
@@ -736,13 +705,8 @@ export default function Sales() {
                     >
                       +
                     </button>
-                    <div className="w-24 text-right font-semibold">
-                      {fmt(p.cantidad * p.precio_unitario)}
-                    </div>
-                    <button
-                      className="text-xs text-red-600 ml-2"
-                      onClick={() => handleRemoveProduct(p.producto_id)}
-                    >
+                    <div className="w-24 text-right font-semibold">{fmt(p.cantidad * p.precio_unitario)}</div>
+                    <button className="text-xs text-red-600 ml-2" onClick={() => handleRemoveProduct(p.producto_id)}>
                       Remove
                     </button>
                   </div>
@@ -752,7 +716,6 @@ export default function Sales() {
           </div>
         )}
 
-        {/* Notas */}
         <div className="mt-4">
           <textarea
             className="w-full border rounded p-2"
@@ -762,7 +725,6 @@ export default function Sales() {
           />
         </div>
 
-        {/* Resumen de crédito */}
         {selectedClient && (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="bg-white border rounded p-3">
@@ -858,9 +820,7 @@ export default function Sales() {
                 className="border rounded px-2 py-1"
               >
                 {PAYMENT_METHODS.map((fp) => (
-                  <option key={fp.key} value={fp.key}>
-                    {fp.label}
-                  </option>
+                  <option key={fp.key} value={fp.key}>{fp.label}</option>
                 ))}
               </select>
               <input
@@ -878,9 +838,7 @@ export default function Sales() {
               )}
             </div>
           ))}
-          <button className="text-xs text-blue-700 mt-1" onClick={handleAddPayment}>
-            + Add payment method
-          </button>
+          <button className="text-xs text-blue-700 mt-1" onClick={handleAddPayment}>+ Add payment method</button>
         </div>
 
         <div className="mb-2">Paid: <b>{fmt(paid)}</b></div>

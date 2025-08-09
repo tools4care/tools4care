@@ -12,6 +12,7 @@ import {
   Truck,
   UserCircle2,
   FileText,
+  CreditCard, // NUEVO ícono para CXC
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -22,6 +23,8 @@ const items = [
   { to: "/ventas", label: "Sales", icon: ShoppingCart, color: "#059669" },
   { to: "/productos", label: "Products", icon: Box, color: "#a21caf" },
   { to: "/clientes", label: "Customers", icon: Users, color: "#f59e42" },
+  // NUEVO: tab directo de CXC
+  { to: "/cxc", label: "Accounts", icon: CreditCard, color: "#0ea5e9" },
   { action: "more", label: "More", icon: MoreHorizontal, color: "#64748b" },
 ];
 
@@ -81,6 +84,7 @@ export default function BottomNav() {
           )
         )}
       </nav>
+
       {/* Simple bottom modal */}
       {showMore && (
         <div
@@ -89,7 +93,7 @@ export default function BottomNav() {
         >
           <div
             className="bg-white w-full rounded-t-2xl p-6 space-y-2"
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="text-center font-semibold text-lg mb-1">More Options</div>
             <div className="flex flex-col gap-2">
@@ -111,11 +115,12 @@ export default function BottomNav() {
               >
                 <Truck size={18} color="#059669" /> Van Closeout
               </button>
+              {/* NUEVO: acceso a CXC desde el modal */}
               <button
-                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-yellow-50 text-left"
-                onClick={handleChangeVan}
+                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
+                onClick={() => handleNav("/cxc")}
               >
-                <Box size={18} color="#f59e42" /> Change VAN
+                <CreditCard size={18} color="#0ea5e9" /> Accounts Receivable
               </button>
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-red-50 text-left"
@@ -124,14 +129,18 @@ export default function BottomNav() {
                 <LogOut size={18} color="#dc2626" /> Log out
               </button>
             </div>
+
             <div className="mt-2 pt-2 border-t text-xs text-gray-500">
               <div className="flex items-center gap-1 mb-1">
-                <UserCircle2 size={14} color="#2563eb" /> User: <b className="ml-1">{usuario?.email || "No session"}</b>
+                <UserCircle2 size={14} color="#2563eb" /> User:
+                <b className="ml-1">{usuario?.email || "No session"}</b>
               </div>
               <div className="flex items-center gap-1">
-                <Truck size={14} color="#059669" /> VAN: <b className="ml-1">{van?.nombre_van || "Not selected"}</b>
+                <Truck size={14} color="#059669" /> VAN:
+                <b className="ml-1">{van?.nombre_van || "Not selected"}</b>
               </div>
             </div>
+
             <button
               className="mt-3 w-full text-gray-400 font-medium text-sm"
               onClick={() => setShowMore(false)}
