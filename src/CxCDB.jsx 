@@ -1,0 +1,311 @@
+// src/CuentasPorCobrarDB.jsx
+import { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "./supabaseClient";
+import { useUsuario } from "./UsuarioContext";
+import { useVan } from "./hooks/VanContext";
+
+const METODOS = [
+  { key: "efectivo", label: "Efectivo" },
+  { key: "tarjeta", label: "Tarjeta" },
+  { key: "transferencia", label: "Transferencia" },
+  { key: "otro", label: "Otro" },
+];
+
+export default function CuentasPorCobrarDB() {
+  const { usuario } = useUsuario();
+  const { van } = useVan();
+
+  const [loading, setLoading] = useState(true);
+  const [clientes, setClientes] = useState([]);
+  const [q, setQ] = useState("");
+  const [error, setError] = useState("");
+
+  // Modal de abono
+  const [modalAbonoOpen, setModalAbonoOpen] = useState(false);
+  const [clienteSel, setClienteSel] = useState(null);
+  const [monto, setMonto] = useState("");
+  const [metodo, setMetodo] = useState("efectivo");
+  const [nota, setNota] = useState("");
+
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => cargar(q), 300);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  async function cargar(filtro = "") {
+    try {
+      setLoading(true);
+      setError("");
+      let query = supabase
+        .from("clientes")
+        .select("id,nombre,telefono,balance")
+        .gt("balance", 0)
+        .order("balance", { ascending: false });
+
+      if (filtro?.trim()) {
+        // Búsqueda simple: nombre o teléfono contiene
+        query = query.or(
+          `nombre.ilike.%${filtro.trim()}%,telefono.ilike.%${filtro.trim()}%`
+        );
+      }
+
+      const { data, error: err } = await query;
+      if (err) throw err;
+
+      setClientes(data || []);
+    } catch (e) {
+      console.error(e);
+      setError(e.message || "Error al cargar CxC");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function abrirAbono(cliente) {
+    setClienteSel(cliente);
+    setMonto("");
+    setMetodo("efectivo");
+    setNota("");
+    setModalAbonoOpen(true);
+  }
+
+  function cerrarAbono() {
+    setModalAbonoOpen(false);
+    setClienteSel(null);
+    setMonto("");
+    setMetodo("efectivo");
+    setNota("");
+  }
+
+  const totalCxc = useMemo(
+    () => clientes.reduce((acc, c) => acc + (Number(c.balance) || 0), 0),
+    [clientes]
+  );
+
+  async function guardarAbono() {
+    try {
+      if (!usuario?.id) throw new Error("Usuario no autenticado.");
+      if (!van?.id) throw new Error("Seleccione una van activa.");
+      if (!clienteSel?.id) throw new Error("Cliente inválido.");
+      const m = Number(monto);
+      if (!m || m <= 0) throw new Error("Monto inválido.");
+      const balanceActual = Number(clienteSel.balance) || 0;
+      if (m > balanceActual) {
+        throw new Error(
+          `El abono (${m.toFixed(2)}) no puede exceder el balance (${balanceActual.toFixed(2)}).`
+        );
+      }
+
+      // Optimistic update: aplica en memoria
+      setClientes((prev) =>
+        prev.map((c) =>
+          c.id === clienteSel.id
+            ? { ...c, balance: Number((balanceActual - m).toFixed(2)) }
+            : c
+        )
+      );
+
+      // 1) Insertar abono
+      const { error: errAbono } = await supabase.from("abonos").insert([
+        {
+          cliente_id: clienteSel.id,
+          monto: m,
+          metodo,
+          nota: nota?.trim() || null,
+          fecha: new Date().toISOString(),
+          usuario_id: usuario.id,
+          van_id: van.id,
+        },
+      ]);
+      if (errAbono) throw errAbono;
+
+      // 2) Actualizar balance cliente (no negativo)
+      const nuevoBalance = Math.max(0, balanceActual - m);
+      const { error: errCli } = await supabase
+        .from("clientes")
+        .update({ balance: nuevoBalance })
+        .eq("id", clienteSel.id);
+      if (errCli) throw errCli;
+
+      cerrarAbono();
+    } catch (e) {
+      // revertir optimistic si algo falló
+      await cargar(q);
+      alert(e.message || "Error al registrar abono.");
+    }
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto">
+      <header className="flex items-center justify-between gap-3 mb-4">
+        <div>
+          <h1 className="text-2xl font-bold">Cuentas por Cobrar</h1>
+          <p className="text-sm text-gray-500">
+            Van: <span className="font-medium">{van?.nombre || van?.id}</span>
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-sm text-gray-500">Total por cobrar</p>
+          <p className="text-2xl font-semibold">
+            ${totalCxc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+        </div>
+      </header>
+
+      <div className="mb-4 flex items-center gap-2">
+        <input
+          placeholder="Buscar por nombre o teléfono…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="w-full sm:w-80 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+        <button
+          onClick={() => cargar(q)}
+          className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+        >
+          Buscar
+        </button>
+        <button
+          onClick={() => {
+            setQ("");
+            cargar("");
+          }}
+          className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200"
+        >
+          Limpiar
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-3 p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">
+          {error}
+        </div>
+      )}
+
+      <div className="overflow-x-auto bg-white rounded-xl shadow">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 text-gray-600">
+              <th className="text-left font-semibold px-4 py-3">Cliente</th>
+              <th className="text-left font-semibold px-4 py-3">Teléfono</th>
+              <th className="text-right font-semibold px-4 py-3">Balance</th>
+              <th className="text-right font-semibold px-4 py-3">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
+                  Cargando…
+                </td>
+              </tr>
+            ) : clientes.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
+                  Sin cuentas por cobrar.
+                </td>
+              </tr>
+            ) : (
+              clientes.map((c) => (
+                <tr key={c.id} className="border-t">
+                  <td className="px-4 py-3">{c.nombre}</td>
+                  <td className="px-4 py-3">{c.telefono || "-"}</td>
+                  <td className="px-4 py-3 text-right font-medium">
+                    ${Number(c.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => abrirAbono(c)}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                    >
+                      Abonar
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modal Abono */}
+      {modalAbonoOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-3">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-5">
+            <h2 className="text-lg font-semibold mb-1">Registrar abono</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Cliente: <span className="font-medium">{clienteSel?.nombre}</span>{" "}
+              — Balance:{" "}
+              <span className="font-medium">
+                ${Number(clienteSel?.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm mb-1">Monto</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm mb-1">Método</label>
+                <select
+                  value={metodo}
+                  onChange={(e) => setMetodo(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {METODOS.map((m) => (
+                    <option key={m.key} value={m.key}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm mb-1">Nota (opcional)</label>
+                <textarea
+                  value={nota}
+                  onChange={(e) => setNota(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Comentario del abono…"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                onClick={cerrarAbono}
+                className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={guardarAbono}
+                className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

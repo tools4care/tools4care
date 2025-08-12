@@ -15,9 +15,7 @@ import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
 import CuentasPorCobrar from "./CuentasPorCobrar.jsx";
 
-
-
-// Rutas privadas
+// --- Guards ---
 function PrivateRoute({ children }) {
   const { usuario } = useUsuario();
   if (!usuario) return <Navigate to="/login" />;
@@ -32,19 +30,16 @@ function PrivateRouteWithVan({ children }) {
   return children;
 }
 
-// Layout principal para rutas privadas
+// --- Layout ---
 function LayoutPrivado() {
   return (
     <div className="min-h-screen bg-gray-50 flex lg:flex-row flex-col">
-      {/* Sidebar solo desktop */}
       <div className="hidden lg:block">
         <Sidebar />
       </div>
-      {/* Main */}
       <main className="flex-1 pt-4 pb-20 px-2 sm:px-6 transition-all duration-300">
-        <Outlet /> {/* Aquí salen los hijos */}
+        <Outlet />
       </main>
-      {/* Bottom nav solo mobile */}
       <BottomNav />
     </div>
   );
@@ -55,10 +50,10 @@ export default function App() {
     <UsuarioProvider>
       <VanProvider>
         <Routes>
-          {/* Login SIN sidebar ni bottom nav */}
+          {/* Público */}
           <Route path="/login" element={<Login />} />
 
-          {/* Selector de Van SIN sidebar ni bottom nav */}
+          {/* Selección de VAN */}
           <Route
             path="/van"
             element={
@@ -68,7 +63,7 @@ export default function App() {
             }
           />
 
-          {/* Resto del sistema CON sidebar y/o bottom nav */}
+          {/* Privado */}
           <Route
             path="/*"
             element={
@@ -77,11 +72,14 @@ export default function App() {
               </PrivateRouteWithVan>
             }
           >
-            {/* HIJOS de LayoutPrivado */}
+            {/* Hijos */}
             <Route path="" element={<Dashboard />} />
-            <Route path="clientes" element={<Clientes />} />
 
-            {/* Ruta especial para agregar producto directo */}
+            {/* Clientes */}
+            <Route path="clientes" element={<Clientes />} />
+            <Route path="clientes/nuevo" element={<Clientes />} /> {/* <-- AÑADIDO */}
+
+            {/* Productos */}
             <Route path="productos/nuevo" element={<Productos />} />
             <Route path="productos" element={<Productos />} />
 
@@ -89,11 +87,9 @@ export default function App() {
             <Route path="ventas" element={<Ventas />} />
             <Route path="cierres" element={<CierreVan />} />
             <Route path="facturas" element={<Facturas />} />
-
-            {/* >>> NUEVO: Cuentas por Cobrar (DB) */}
             <Route path="cxc" element={<CuentasPorCobrar />} />
 
-
+            {/* Catch-all (dejar al final) */}
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>
