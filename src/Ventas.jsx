@@ -424,7 +424,8 @@ export default function Sales() {
     try {
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!van?.id) throw new Error("Select a VAN first.");
-      if (!selectedClient?.id) throw new Error("Select a client first.");
+      // ✅ Permitir Quick sale (sin id de cliente), solo exigimos haber elegido cliente o quick sale
+      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
       if (cart.length === 0) throw new Error("Add at least one product.");
 
       if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
@@ -530,7 +531,8 @@ export default function Sales() {
       }
 
       // 4) Si hubo pago extra (más allá de la nueva venta), aplícalo a deudas anteriores (FIFO) vía RPC
-      if (payOldDebt > 0) {
+      // ✅ Solo si hay cliente real (con id)
+      if (payOldDebt > 0 && selectedClient?.id) {
         try {
           const { error: rpcError } = await supabase.rpc("cxc_registrar_pago", {
             p_cliente_id: selectedClient.id,
