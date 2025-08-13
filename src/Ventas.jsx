@@ -38,6 +38,26 @@ function fmt(n) {
   })}`;
 }
 
+/* ---------- NUEVO: helpers de pricing ---------- */
+function r2(n) {
+  return Math.round(Number(n || 0) * 100) / 100;
+}
+
+/**
+ * Prioridad:
+ *  1) bulk override si qty >= bulkMin y hay bulkPrice
+ *  2) % descuento (si existe)
+ *  3) precio base
+ */
+function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
+  const q = Number(qty || 0);
+  const hasBulk = bulkMin != null && bulkPrice != null && q >= Number(bulkMin);
+  if (hasBulk) return r2(bulkPrice);
+  const pctNum = Number(pct || 0);
+  if (pctNum > 0) return r2(base * (1 - pctNum / 100));
+  return r2(base);
+}
+
 function getClientBalance(c) {
   if (!c) return 0;
   // Primero el saldo real enriquecido, luego los campos locales
@@ -205,7 +225,7 @@ export default function Sales() {
         .from("stock_van")
         .select(`
           id, producto_id, cantidad,
-          productos ( nombre, precio, codigo, marca )
+          productos ( nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price )
         `)
         .eq("van_id", van.id);
 
@@ -330,14 +350,25 @@ export default function Sales() {
 
   function handleAddProduct(p) {
     const exists = cart.find((x) => x.producto_id === p.producto_id);
+    // meta para poder recalcular precio al cambiar qty
+    const meta = {
+      base: Number(p.productos?.precio) || 0,
+      pct: Number(p.productos?.descuento_pct) || 0,
+      bulkMin: p.productos?.bulk_min_qty != null ? Number(p.productos.bulk_min_qty) : null,
+      bulkPrice: p.productos?.bulk_unit_price != null ? Number(p.productos.bulk_unit_price) : null,
+    };
     if (!exists) {
+      const qty = 1;
       setCart([
         ...cart,
         {
           producto_id: p.producto_id,
           nombre: p.productos?.nombre,
-          precio_unitario: Number(p.productos?.precio) || 0,
-          cantidad: 1,
+          // NUEVO: guarda meta
+          _pricing: meta,
+          // unitario efectivo
+          precio_unitario: unitPriceFromProduct(meta, qty),
+          cantidad: qty,
         },
       ]);
     }
@@ -346,7 +377,16 @@ export default function Sales() {
 
   function handleEditQuantity(producto_id, cantidad) {
     setCart((cart) =>
-      cart.map((item) => (item.producto_id === producto_id ? { ...item, cantidad } : item))
+      cart.map((item) => {
+        if (item.producto_id !== producto_id) return item;
+        const qty = Math.max(1, Number(cantidad));
+        const meta = item._pricing || { base: item.precio_unitario, pct: 0 };
+        return {
+          ...item,
+          cantidad: qty,
+          precio_unitario: unitPriceFromProduct(meta, qty),
+        };
+      })
     );
   }
 
@@ -365,7 +405,7 @@ export default function Sales() {
     if (!found && van) {
       const { data } = await supabase
         .from("stock_van")
-        .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca)")
+        .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price)")
         .eq("van_id", van.id)
         .eq("productos.codigo", code);
       if (data && data.length > 0) found = data[0];
@@ -502,7 +542,6 @@ export default function Sales() {
             console.warn("RPC apply old debt failed:", rpcError?.message);
           }
         } catch (e) {
-          console.warn("RPC not available:", e?.message);
         }
       }
 
@@ -904,7 +943,15 @@ export default function Sales() {
                   onClick={() =>
                     handleAddProduct({
                       producto_id: p.producto_id,
-                      productos: { nombre: p.nombre, precio: p.precio },
+                      productos: {
+                        nombre: p.nombre,
+                        precio: p.precio,
+                        codigo: p.codigo,
+                        // por si la vista no trae campos nuevos
+                        descuento_pct: p.descuento_pct ?? null,
+                        bulk_min_qty: p.bulk_min_qty ?? null,
+                        bulk_unit_price: p.bulk_unit_price ?? null,
+                      },
                       cantidad: p.cantidad_disponible,
                     })
                   }
@@ -941,7 +988,12 @@ export default function Sales() {
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-900">{p.nombre}</div>
-                      <div className="text-sm text-gray-600">{fmt(p.precio_unitario)} each</div>
+                      <div className="text-sm text-gray-600">
+                        {fmt(p.precio_unitario)} each
+                        {p._pricing?.bulkMin && p._pricing?.bulkPrice && p.cantidad >= p._pricing.bulkMin && (
+                          <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
+                        )}
+                      </div>
                     </div>
                     
                     <div className="flex items-center justify-between sm:justify-end gap-3">
