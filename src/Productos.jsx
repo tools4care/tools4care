@@ -115,6 +115,10 @@ function PestañaVentas({ productoId, nombre }) {
   const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // NUEVO: ventas por día (últimos 30)
+  const [porDia, setPorDia] = useState([]);
+
+  // Utilidad: YYYY-MM desde ISO/string
   function yyyymm(d) {
     if (!d) return "";
     const s = typeof d === "string" ? d : new Date(d).toISOString();
@@ -125,6 +129,7 @@ function PestañaVentas({ productoId, nombre }) {
     if (!productoId) return;
     (async () => {
       setLoading(true);
+      // 1) detalle_ventas del producto
       const { data: det, error: errDet } = await supabase
         .from("detalle_ventas")
         .select("venta_id,cantidad")
@@ -135,10 +140,12 @@ function PestañaVentas({ productoId, nombre }) {
         setMeses([]);
         setMesSeleccionado("");
         setFacturas([]);
+        setPorDia([]);
         setLoading(false);
         return;
       }
 
+      // 2) ventas para esos IDs
       const ventaIds = Array.from(new Set(det.map(d => d.venta_id).filter(Boolean)));
       const { data: ventasRows } = await supabase
         .from("ventas")
@@ -146,6 +153,7 @@ function PestañaVentas({ productoId, nombre }) {
         .in("id", ventaIds);
 
       const mapVenta = new Map((ventasRows || []).map(v => [v.id, v]));
+      // Enriquecer
       const enriquecido = det
         .map(d => {
           const v = mapVenta.get(d.venta_id);
@@ -154,6 +162,7 @@ function PestañaVentas({ productoId, nombre }) {
         })
         .filter(Boolean);
 
+      // 3) Agrupar por mes
       const agg = {};
       for (const r of enriquecido) {
         const key = yyyymm(r.fecha);
@@ -168,11 +177,27 @@ function PestañaVentas({ productoId, nombre }) {
       setMeses(lista.map(x => x.mes));
       setMesSeleccionado(lista[0]?.mes || "");
 
+      // 4) Facturas del primer mes seleccionado
       if (lista[0]) {
         await cargarFacturasMes(enriquecido, lista[0].mes);
       } else {
         setFacturas([]);
       }
+
+      // 5) Ventas por día (últimos 30)
+      const byDay = {};
+      (ventasRows || []).forEach(v => {
+        const d = (v.fecha || "").slice(0, 10);
+        const cant = (det || []).filter(x => x.venta_id === v.id)
+          .reduce((t, x) => t + Number(x.cantidad || 0), 0);
+        byDay[d] = (byDay[d] || 0) + cant;
+      });
+      const rows = Object.entries(byDay)
+        .sort((a, b) => b[0].localeCompare(a[0]))
+        .slice(0, 30)
+        .map(([dia, qty]) => ({ dia, qty }));
+      setPorDia(rows);
+
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -181,6 +206,7 @@ function PestañaVentas({ productoId, nombre }) {
   async function cargarFacturasMes(detallesEnriquecidos, mes) {
     const filtrado = (detallesEnriquecidos || []).filter(d => yyyymm(d.fecha) === mes);
 
+    // Traer nombres de clientes en un solo query
     const idsClientes = Array.from(new Set(filtrado.map(f => f.cliente_id).filter(Boolean)));
     const nombres = {};
     if (idsClientes.length > 0) {
@@ -191,6 +217,7 @@ function PestañaVentas({ productoId, nombre }) {
       (clientesData || []).forEach(c => { nombres[c.id] = c.nombre; });
     }
 
+    // Formatear lista
     const lista = filtrado.map(f => ({
       venta_id: f.venta_id,
       cantidad: f.cantidad,
@@ -200,10 +227,12 @@ function PestañaVentas({ productoId, nombre }) {
     setFacturas(lista);
   }
 
+  // Cuando cambia el mes, recargar facturas usando los datos ya traídos
   useEffect(() => {
     if (!productoId || !mesSeleccionado) return;
     (async () => {
       setLoading(true);
+      // Reusar el pipeline: traemos de nuevo los enriquecidos (barato & simple)
       const { data: det } = await supabase
         .from("detalle_ventas")
         .select("venta_id,cantidad")
@@ -296,6 +325,33 @@ function PestañaVentas({ productoId, nombre }) {
           </div>
         )}
       </div>
+
+      {/* NUEVO: Ventas diarias (últimos 30 días) */}
+      <div className="mt-4 border rounded-lg">
+        <div className="px-3 py-2 font-bold bg-gray-50 border-b">Daily sales (last 30 days)</div>
+        {porDia.length === 0 ? (
+          <div className="p-3 text-gray-500">No daily sales.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="bg-gray-100">
+                  <th className="border px-2 py-1 text-left">Date</th>
+                  <th className="border px-2 py-1 text-right">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {porDia.map(r => (
+                  <tr key={r.dia} className="border-b">
+                    <td className="border px-2 py-1">{r.dia}</td>
+                    <td className="border px-2 py-1 text-right">{r.qty}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -308,6 +364,7 @@ async function addStockSeleccionado(productoId, productoActual) {
   const esAlmacen = productoActual.ubicacion_inicial === "almacen";
 
   if (esAlmacen) {
+    // ALMACÉN: incrementa si existe, crea si no
     const { data: existente } = await supabase
       .from("stock_almacen")
       .select("id, cantidad")
@@ -325,6 +382,7 @@ async function addStockSeleccionado(productoId, productoActual) {
       ]);
     }
 
+    // Log de movimiento (si la tabla existe)
     try {
       await supabase.from("movimientos_stock").insert([
         {
@@ -339,6 +397,7 @@ async function addStockSeleccionado(productoId, productoActual) {
       ]);
     } catch (_) {}
   } else {
+    // VAN: requiere van_id
     const vanId = productoActual.van_id_inicial;
     if (!vanId) return;
 
@@ -360,6 +419,7 @@ async function addStockSeleccionado(productoId, productoActual) {
       ]);
     }
 
+    // Log de movimiento (si la tabla existe)
     try {
       await supabase.from("movimientos_stock").insert([
         {
@@ -390,6 +450,10 @@ export default function Productos() {
   const [productoActual, setProductoActual] = useState(null);
   const [mensaje, setMensaje] = useState("");
   const [tabActivo, setTabActivo] = useState("editar");
+
+  // NUEVO: KPIs de stock y última venta
+  const [stockResumen, setStockResumen] = useState({ unidades: 0, valor: 0 });
+  const [ultimaVenta, setUltimaVenta] = useState(null);
 
   // Size/Custom size
   const [sizeCustom, setSizeCustom] = useState("");
@@ -460,12 +524,62 @@ export default function Productos() {
     if (pagina > 1) setPagina(pagina - 1);
   }
 
+  // NUEVO: KPIs del producto
+  async function cargarKpisProducto(prodId, costoUnit = 0) {
+    try {
+      // stock almacén
+      const { data: sa } = await supabase
+        .from("stock_almacen")
+        .select("cantidad")
+        .eq("producto_id", prodId);
+      const sumAlmacen = (sa || []).reduce((t, r) => t + Number(r.cantidad || 0), 0);
+
+      // stock vans
+      const { data: sv } = await supabase
+        .from("stock_van")
+        .select("cantidad")
+        .eq("producto_id", prodId);
+      const sumVans = (sv || []).reduce((t, r) => t + Number(r.cantidad || 0), 0);
+
+      const total = sumAlmacen + sumVans;
+
+      setStockResumen({
+        unidades: total,
+        valor: total * Number(costoUnit || 0)
+      });
+
+      // última venta
+      const { data: dv } = await supabase
+        .from("detalle_ventas")
+        .select("venta_id")
+        .eq("producto_id", prodId);
+
+      const ventaIds = Array.from(new Set((dv || []).map(d => d.venta_id).filter(Boolean)));
+      if (ventaIds.length > 0) {
+        const { data: v } = await supabase
+          .from("ventas")
+          .select("fecha")
+          .in("id", ventaIds)
+          .order("fecha", { ascending: false })
+          .limit(1);
+        setUltimaVenta(v?.[0]?.fecha || null);
+      } else {
+        setUltimaVenta(null);
+      }
+    } catch {
+      setStockResumen({ unidades: 0, valor: 0 });
+      setUltimaVenta(null);
+    }
+  }
+
   function abrirModal(prod) {
     setProductoActual({
       ...prod,
+      // campos de "add stock now"
       cantidad_inicial: "",
       ubicacion_inicial: "almacen",
       van_id_inicial: null,
+      // asegurar campos nuevos existan en estado
       descuento_pct: prod.descuento_pct ?? "",
       bulk_min_qty: prod.bulk_min_qty ?? "",
       bulk_unit_price: prod.bulk_unit_price ?? "",
@@ -477,6 +591,14 @@ export default function Productos() {
     setSuplidorId(prod.proveedor || "");
     setSuplidorNombre(prod.suplidor?.nombre || "");
     setModalAbierto(true);
+
+    if (prod?.id) {
+      // Cargar KPIs basado en el costo actual del producto
+      setTimeout(() => cargarKpisProducto(prod.id, Number(prod.costo || 0)), 0);
+    } else {
+      setStockResumen({ unidades: 0, valor: 0 });
+      setUltimaVenta(null);
+    }
   }
 
   function cerrarModal() {
@@ -491,6 +613,8 @@ export default function Productos() {
     setSuplidorId(null);
     setSuplidorNombre("");
     setUbicacionInicial("almacen");
+    setStockResumen({ unidades: 0, valor: 0 });
+    setUltimaVenta(null);
   }
 
   function agregarProductoNuevo(codigoForzado = "") {
@@ -502,9 +626,11 @@ export default function Productos() {
     setProductoActual({
       id: null, codigo: codigoInicial, nombre: "", marca: "", categoria: "",
       costo: "", precio: "", notas: "", size: "", proveedor: null,
+      // pricing nuevos
       descuento_pct: "",
       bulk_min_qty: "",
       bulk_unit_price: "",
+      // add stock now
       cantidad_inicial: "",
       ubicacion_inicial: "almacen",
       van_id_inicial: null,
@@ -516,6 +642,8 @@ export default function Productos() {
     setMensaje("");
     setTabActivo("editar");
     setModalAbierto(true);
+    setStockResumen({ unidades: 0, valor: 0 });
+    setUltimaVenta(null);
   }
 
   useEffect(() => {
@@ -532,6 +660,7 @@ export default function Productos() {
     }
   }, [location.pathname, modalAbierto]);
 
+  // --- GUARDAR/ELIMINAR PRODUCTO + SIEMPRE POSIBLE AGREGAR STOCK ---
   async function guardarProducto(e) {
     e.preventDefault();
     setMensaje("");
@@ -540,6 +669,7 @@ export default function Productos() {
       return;
     }
 
+    // Duplicado de código
     const { data: existentes, error: errorExistente } = await supabase
       .from("productos")
       .select("id")
@@ -569,11 +699,13 @@ export default function Productos() {
       size: isCustomSize ? sizeCustom : productoActual.size,
       proveedor: suplidorId,
       notas: productoActual.notas || "",
+      // NUEVO: pricing por producto
       descuento_pct: productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
       bulk_min_qty: productoActual.bulk_min_qty !== "" ? Number(productoActual.bulk_min_qty) : null,
       bulk_unit_price: productoActual.bulk_unit_price !== "" ? Number(productoActual.bulk_unit_price) : null,
     };
 
+    // (opcional) validación suave: bulk por debajo del costo
     if (
       dataProducto.bulk_unit_price != null &&
       dataProducto.costo != null &&
@@ -588,6 +720,7 @@ export default function Productos() {
     let productoId = productoActual.id;
 
     if (productoActual.id) {
+      // update
       const { error } = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
       if (error) {
         setMensaje(error.message?.toLowerCase().includes("unique")
@@ -597,6 +730,7 @@ export default function Productos() {
       }
       setMensaje("Product updated.");
     } else {
+      // insert
       const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
       if (error) {
         setMensaje(error.message?.toLowerCase().includes("unique")
@@ -608,12 +742,14 @@ export default function Productos() {
       setMensaje("Product added.");
     }
 
+    // --- SIEMPRE: sumar stock en la ubicación seleccionada (incremental) ---
     try {
       await addStockSeleccionado(productoId, productoActual);
     } catch (e2) {
       setMensaje(prev => (prev ? prev + " " : "") + "Error adding stock: " + (e2?.message || e2));
     }
 
+    // limpiar campos de add stock para evitar doble inserción en futuros guardados
     setProductoActual(prev => prev ? {
       ...prev,
       id: productoId,
@@ -667,11 +803,154 @@ export default function Productos() {
     cerrarModal();
   }
 
+  // === Etiqueta escaneable (Code128 / UPC / EAN13 / Code39) ===
+// Incluye: Nombre, MARCA - TAMAÑO, Precio grande, código de barras real y dígitos.
+// Mantiene una sola página para evitar hojas en blanco.
+function imprimirEtiqueta(prod, opts = {}) {
+  if (!prod) return;
+
+  // Tamaño de tu etiqueta física (ajústalo si tu rollo es distinto)
+  const LABEL_W = opts.widthMm  || "100mm";
+  const LABEL_H = opts.heightMm || "60mm";
+  const MARGIN  = opts.marginMm || "6mm";
+
+  const fmtMoney = (n) =>
+    `$${Number(n || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+
+  const name  = String(prod.nombre || "").toUpperCase();
+  const brand = String(prod.marca || "").toUpperCase();
+  const size  = String(prod.size  || "").toUpperCase();
+  const price = fmtMoney(prod.precio);
+  const code  = String(prod.codigo ?? "").trim();
+
+  if (!code) {
+    alert("Este producto no tiene código/UPC para generar el código de barras.");
+    return;
+  }
+
+  // Elegimos automáticamente el tipo de código más conveniente
+  // - 12 dígitos -> UPC-A
+  // - 13 dígitos -> EAN-13
+  // - Alfanumérico compatible -> Code39 (si quieres “estilo retail viejo”)
+  // - En cualquier otro caso -> Code128 (robusto y compacto)
+  let format = "CODE128";
+  if (/^\d{12}$/.test(code)) format = "UPC";
+  else if (/^\d{13}$/.test(code)) format = "EAN13";
+  else if (/^[0-9A-Z.\- $/+%]+$/.test(code.toUpperCase())) format = "CODE39";
+
+  const safe = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Label - ${safe(name)}</title>
+  <style>
+    @page { size: ${LABEL_W} ${LABEL_H}; margin: ${MARGIN}; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: #111;
+    }
+    .label {
+      width: ${LABEL_W};
+      height: calc(${LABEL_H} - 0mm);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 6px;
+      overflow: hidden;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: start;
+      gap: 10px;
+    }
+    .name   { font-weight: 800; font-size: 18px; line-height: 1.1; }
+    .meta   { font-size: 11px; color: #555; margin-top: 2px; }
+    .price  { font-weight: 900; font-size: 30px; line-height: 1; white-space: nowrap; }
+    .barcode-wrap { display: flex; justify-content: center; align-items: center; margin-top: 4px; }
+    #barcode { width: 100%; max-width: 100%; }
+    .upc { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+           font-size: 12px; text-align: center; margin-top: 2px; }
+    .footer {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 2px; font-size: 10px; color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="label">
+    <div class="row">
+      <div>
+        <div class="name">${safe(name)}</div>
+        <div class="meta">${safe([brand, size].filter(Boolean).join(" - "))}</div>
+      </div>
+      <div class="price">${safe(price)}</div>
+    </div>
+
+    <div class="barcode-wrap">
+      <svg id="barcode"></svg>
+    </div>
+    <div class="upc">${safe(code)}</div>
+
+    <div class="footer">
+      <div>Printed: ${safe(new Date().toLocaleString())}</div>
+      <div>${safe(brand || "")}</div>
+    </div>
+  </div>
+
+  <!-- JsBarcode para generar barras reales escaneables -->
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <script>
+    (function () {
+      const value  = ${JSON.stringify(code)};
+      const format = ${JSON.stringify(format)};
+      const svg = document.getElementById('barcode');
+
+      // Ajustes equilibrados para etiqueta pequeña
+      JsBarcode(svg, value, {
+        format,
+        displayValue: false,    // mostramos los dígitos aparte (más limpio)
+        lineColor: "#111",
+        margin: 0,
+        marginTop: 0,
+        marginBottom: 0,
+        width: 2,               // grosor de barra (sube/baja si necesitas)
+        height: 46              // alto de barras (ajusta si tu etiqueta es más baja)
+      });
+
+      // Imprime cuando el SVG esté listo
+      setTimeout(() => { try { window.print(); } catch(e) {} }, 150);
+    })();
+  </script>
+</body>
+</html>`;
+
+  const w = window.open("", "_blank");
+  if (!w) {
+    alert("Habilita los pop-ups del navegador para imprimir la etiqueta.");
+    return;
+  }
+  w.document.open("text/html", "replace");
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+}
+
+
+
   // ------ RENDER ---------
   return (
     <div className="px-2 sm:px-4">
       <h2 className="text-2xl font-bold mb-4 text-center">Product Inventory</h2>
 
+      {/* Buscador + botón: apilados en móvil, lado a lado en pantallas amplias */}
       <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
         <input
           type="text"
@@ -736,6 +1015,7 @@ export default function Productos() {
           </div>
         )}
 
+        {/* PAGINATION */}
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-between items-center mt-4">
           <button
             className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50"
@@ -760,6 +1040,7 @@ export default function Productos() {
         </div>
       </div>
 
+      {/* --- MODAL EDIT / METRICS --- */}
       {modalAbierto && productoActual && (
         <div className="fixed inset-0 bg-black/40 flex justify-center items-end sm:items-center z-50 p-0 sm:p-6">
           <div className="bg-white w-full h-[100vh] sm:h-auto sm:max-h-[90vh] sm:rounded-xl shadow-xl max-w-2xl relative p-4 sm:p-8 overflow-y-auto">
@@ -772,6 +1053,26 @@ export default function Productos() {
             >
               ×
             </button>
+
+            {/* NUEVO: KPIs arriba del modal */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
+                <div className="text-xs text-blue-700 uppercase font-semibold">On Hand</div>
+                <div className="text-lg font-bold text-blue-900">{stockResumen.unidades}</div>
+              </div>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-center">
+                <div className="text-xs text-emerald-700 uppercase font-semibold">On Hand $</div>
+                <div className="text-lg font-bold text-emerald-900">
+                  ${Number(stockResumen.valor || 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 text-center">
+                <div className="text-xs text-gray-600 uppercase font-semibold">Last Sold</div>
+                <div className="text-sm font-bold text-gray-800">
+                  {ultimaVenta ? new Date(ultimaVenta).toLocaleDateString() : "—"}
+                </div>
+              </div>
+            </div>
 
             <div className="flex mb-4 border-b mt-6 sm:mt-2">
               <button
@@ -918,6 +1219,27 @@ export default function Productos() {
                     />
                   </div>
 
+                  {/* NUEVO: Margen y Markup en vivo */}
+                  <div className="md:col-span-2">
+                    {(() => {
+                      const c = Number(productoActual?.costo || 0);
+                      const p = Number(productoActual?.precio || 0);
+                      const margin = p > 0 ? ((p - c) / p) * 100 : 0;   // margen sobre venta
+                      const markup = c > 0 ? ((p - c) / c) * 100 : 0;   // sobre costo
+                      return (
+                        <div className="mt-1 flex flex-wrap gap-2 text-sm">
+                          <span className="inline-flex items-center rounded-full bg-blue-50 text-blue-800 px-3 py-1">
+                            Margin: <b className="ml-1">{margin.toFixed(1)}%</b>
+                          </span>
+                          <span className="inline-flex items-center rounded-full bg-violet-50 text-violet-800 px-3 py-1">
+                            Markup: <b className="ml-1">{markup.toFixed(1)}%</b>
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* --- NUEVO: % descuento auto y bulk pricing --- */}
                   <div>
                     <label className="font-bold">% Off (auto-applied)</label>
                     <input
@@ -973,6 +1295,7 @@ export default function Productos() {
                     </p>
                   </div>
 
+                  {/* --- SIEMPRE disponible: agregar stock ahora --- */}
                   <div className="md:col-span-2 border-t pt-2 mt-2">
                     <b>Add stock now (optional)</b>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1040,6 +1363,16 @@ export default function Productos() {
                   >
                     {productoActual.id ? "Save changes" : "Add product"}
                   </button>
+
+                  {/* EXTRA: imprimir etiqueta */}
+                  <button
+                    type="button"
+                    className="sm:flex-1 bg-gray-200 text-gray-800 rounded px-5 py-2"
+                    onClick={() => imprimirEtiqueta(productoActual)}
+                  >
+                    🖨️ Print label
+                  </button>
+
                   {productoActual.id && (
                     <button
                       type="button"
