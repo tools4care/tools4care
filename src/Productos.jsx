@@ -1,6 +1,8 @@
+// src/Productos.jsx
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
+// ⚠️ Eliminado: import PricingRulesEditor from "./components/PricingRulesEditor";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 // --- Suplidor Modal & Buscador ---
@@ -113,20 +115,22 @@ function PestañaVentas({ productoId, nombre }) {
   const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  function yyyymm(d) {
+    if (!d) return "";
+    const s = typeof d === "string" ? d : new Date(d).toISOString();
+    return s.slice(0, 7);
+  }
+
   useEffect(() => {
     if (!productoId) return;
     (async () => {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data: det, error: errDet } = await supabase
         .from("detalle_ventas")
-        .select(`
-          cantidad,
-          venta_id,
-          ventas:venta_id(fecha, cliente_id)
-        `)
+        .select("venta_id,cantidad")
         .eq("producto_id", productoId);
 
-      if (error) {
+      if (errDet || !det || det.length === 0) {
         setVentasMes([]);
         setMeses([]);
         setMesSeleccionado("");
@@ -135,86 +139,119 @@ function PestañaVentas({ productoId, nombre }) {
         return;
       }
 
-      // Agrupar por mes
-      const agrupado = {};
-      (data || []).forEach((item) => {
-        const fecha = item.ventas?.fecha || "";
-        if (!fecha) return;
-        const mes = fecha.slice(0, 7);
-        agrupado[mes] = (agrupado[mes] || 0) + (item.cantidad || 0);
-      });
-      const ventasPorMes = Object.keys(agrupado)
-        .sort((a, b) => b.localeCompare(a))
-        .map((mes) => ({ mes, cantidad: agrupado[mes] }));
+      const ventaIds = Array.from(new Set(det.map(d => d.venta_id).filter(Boolean)));
+      const { data: ventasRows } = await supabase
+        .from("ventas")
+        .select("id,fecha,cliente_id")
+        .in("id", ventaIds);
 
-      setVentasMes(ventasPorMes);
-      setMeses(ventasPorMes.map(x => x.mes));
-      setMesSeleccionado(ventasPorMes.length > 0 ? ventasPorMes[0].mes : "");
-      setLoading(false);
+      const mapVenta = new Map((ventasRows || []).map(v => [v.id, v]));
+      const enriquecido = det
+        .map(d => {
+          const v = mapVenta.get(d.venta_id);
+          if (!v) return null;
+          return { venta_id: d.venta_id, cantidad: d.cantidad || 0, fecha: v.fecha, cliente_id: v.cliente_id };
+        })
+        .filter(Boolean);
 
-      if (ventasPorMes.length > 0) {
-        cargarFacturas(productoId, ventasPorMes[0].mes);
+      const agg = {};
+      for (const r of enriquecido) {
+        const key = yyyymm(r.fecha);
+        if (!key) continue;
+        agg[key] = (agg[key] || 0) + Number(r.cantidad || 0);
       }
+      const lista = Object.keys(agg)
+        .sort((a, b) => b.localeCompare(a))
+        .map(m => ({ mes: m, cantidad: agg[m] }));
+
+      setVentasMes(lista);
+      setMeses(lista.map(x => x.mes));
+      setMesSeleccionado(lista[0]?.mes || "");
+
+      if (lista[0]) {
+        await cargarFacturasMes(enriquecido, lista[0].mes);
+      } else {
+        setFacturas([]);
+      }
+      setLoading(false);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productoId]);
 
-  async function cargarFacturas(productoId, mes) {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("detalle_ventas")
-      .select(`
-        venta_id,
-        cantidad,
-        ventas:venta_id(fecha, cliente_id)
-      `)
-      .eq("producto_id", productoId);
+  async function cargarFacturasMes(detallesEnriquecidos, mes) {
+    const filtrado = (detallesEnriquecidos || []).filter(d => yyyymm(d.fecha) === mes);
 
-    let detalles = [];
-    if (!error && data) {
-      detalles = data.filter(
-        d => d.ventas && d.ventas.fecha && d.ventas.fecha.startsWith(mes)
-      );
-    }
-    // Traer nombres de clientes
-    let clientesIds = Array.from(new Set(detalles.map(d => d.ventas?.cliente_id).filter(Boolean)));
-    let clientesNombres = {};
-    if (clientesIds.length > 0) {
+    const idsClientes = Array.from(new Set(filtrado.map(f => f.cliente_id).filter(Boolean)));
+    const nombres = {};
+    if (idsClientes.length > 0) {
       const { data: clientesData } = await supabase
         .from("clientes")
-        .select("id, nombre")
-        .in("id", clientesIds);
-      if (clientesData) {
-        clientesData.forEach(c => { clientesNombres[c.id] = c.nombre; });
-      }
+        .select("id,nombre")
+        .in("id", idsClientes);
+      (clientesData || []).forEach(c => { nombres[c.id] = c.nombre; });
     }
-    const facturasMes = detalles.map(f => ({
+
+    const lista = filtrado.map(f => ({
       venta_id: f.venta_id,
       cantidad: f.cantidad,
-      fecha: f.ventas?.fecha,
-      cliente: clientesNombres[f.ventas?.cliente_id] || f.ventas?.cliente_id || "",
+      fecha: f.fecha,
+      cliente: nombres[f.cliente_id] || f.cliente_id || "",
     }));
-    setFacturas(facturasMes);
-    setLoading(false);
+    setFacturas(lista);
   }
 
   useEffect(() => {
-    if (productoId && mesSeleccionado) {
-      cargarFacturas(productoId, mesSeleccionado);
-    }
+    if (!productoId || !mesSeleccionado) return;
+    (async () => {
+      setLoading(true);
+      const { data: det } = await supabase
+        .from("detalle_ventas")
+        .select("venta_id,cantidad")
+        .eq("producto_id", productoId);
+
+      const ventaIds = Array.from(new Set((det || []).map(d => d.venta_id).filter(Boolean)));
+      const { data: ventasRows } = await supabase
+        .from("ventas")
+        .select("id,fecha,cliente_id")
+        .in("id", ventaIds);
+
+      const mapVenta = new Map((ventasRows || []).map(v => [v.id, v]));
+      const enriquecido = (det || [])
+        .map(d => {
+          const v = mapVenta.get(d.venta_id);
+          if (!v) return null;
+          return { venta_id: d.venta_id, cantidad: d.cantidad || 0, fecha: v.fecha, cliente_id: v.cliente_id };
+        })
+        .filter(Boolean);
+
+      await cargarFacturasMes(enriquecido, mesSeleccionado);
+      setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mesSeleccionado, productoId]);
 
   return (
     <div>
       <h3 className="font-bold text-blue-900 mb-4">Sales for "{nombre}"</h3>
-      <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={ventasMes}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="mes" fontSize={12} />
-          <YAxis fontSize={12} />
-        <Tooltip formatter={v => `${v} units`} />
-          <Bar dataKey="cantidad" fill="#1976D2" radius={[6, 6, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+
+      <div className="border-2 border-dashed border-blue-200 rounded-lg p-3 min-h-[160px] flex items-center justify-center">
+        {ventasMes.length === 0 ? (
+          <div className="text-blue-600 text-sm">No sales yet.</div>
+        ) : (
+          <div className="w-full h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={ventasMes}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="mes" fontSize={12} />
+                <YAxis fontSize={12} />
+                <Tooltip formatter={v => `${v} units`} />
+                <Bar dataKey="cantidad" fill="#1976D2" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
       <div className="my-4">
         <label className="font-bold">Select month:</label>
         <select
@@ -227,33 +264,36 @@ function PestañaVentas({ productoId, nombre }) {
           ))}
         </select>
       </div>
-      <div>
-        <h4 className="font-bold mb-2">Invoices for {mesSeleccionado || "..."}</h4>
+
+      <div className="border rounded-lg">
+        <div className="px-3 py-2 font-bold bg-gray-50 border-b">Invoices for …</div>
         {loading ? (
-          <div className="text-blue-600">Loading...</div>
+          <div className="p-3 text-blue-600">Loading...</div>
         ) : facturas.length === 0 ? (
-          <div className="text-gray-500">No invoices for this month.</div>
+          <div className="p-3 text-gray-500">No invoices for this month.</div>
         ) : (
-          <table className="min-w-full text-sm border border-gray-300 rounded">
-            <thead>
-              <tr className="bg-blue-100">
-                <th className="border px-2 py-1">Invoice ID</th>
-                <th className="border px-2 py-1">Date</th>
-                <th className="border px-2 py-1">Client</th>
-                <th className="border px-2 py-1">Quantity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {facturas.map(f => (
-                <tr key={f.venta_id + "-" + f.fecha} className="border-b">
-                  <td className="border px-2 py-1 font-mono">{f.venta_id}</td>
-                  <td className="border px-2 py-1">{f.fecha?.slice(0, 10)}</td>
-                  <td className="border px-2 py-1">{f.cliente}</td>
-                  <td className="border px-2 py-1">{f.cantidad}</td>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="bg-blue-100">
+                  <th className="border px-2 py-1">Invoice ID</th>
+                  <th className="border px-2 py-1">Date</th>
+                  <th className="border px-2 py-1">Client</th>
+                  <th className="border px-2 py-1">Quantity</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {facturas.map(f => (
+                  <tr key={f.venta_id + "-" + (f.fecha || "")} className="border-b">
+                    <td className="border px-2 py-1 font-mono">{f.venta_id}</td>
+                    <td className="border px-2 py-1">{(f.fecha || "").slice(0, 10)}</td>
+                    <td className="border px-2 py-1">{f.cliente}</td>
+                    <td className="border px-2 py-1">{f.cantidad}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
@@ -268,7 +308,6 @@ async function addStockSeleccionado(productoId, productoActual) {
   const esAlmacen = productoActual.ubicacion_inicial === "almacen";
 
   if (esAlmacen) {
-    // ALMACÉN: incrementa si existe, crea si no
     const { data: existente } = await supabase
       .from("stock_almacen")
       .select("id, cantidad")
@@ -286,7 +325,6 @@ async function addStockSeleccionado(productoId, productoActual) {
       ]);
     }
 
-    // Log de movimiento (si la tabla existe)
     try {
       await supabase.from("movimientos_stock").insert([
         {
@@ -301,7 +339,6 @@ async function addStockSeleccionado(productoId, productoActual) {
       ]);
     } catch (_) {}
   } else {
-    // VAN: requiere van_id
     const vanId = productoActual.van_id_inicial;
     if (!vanId) return;
 
@@ -323,7 +360,6 @@ async function addStockSeleccionado(productoId, productoActual) {
       ]);
     }
 
-    // Log de movimiento (si la tabla existe)
     try {
       await supabase.from("movimientos_stock").insert([
         {
@@ -427,10 +463,12 @@ export default function Productos() {
   function abrirModal(prod) {
     setProductoActual({
       ...prod,
-      // campos de "add stock now"
       cantidad_inicial: "",
       ubicacion_inicial: "almacen",
       van_id_inicial: null,
+      descuento_pct: prod.descuento_pct ?? "",
+      bulk_min_qty: prod.bulk_min_qty ?? "",
+      bulk_unit_price: prod.bulk_unit_price ?? "",
     });
     setTabActivo("editar");
     setMensaje("");
@@ -464,6 +502,9 @@ export default function Productos() {
     setProductoActual({
       id: null, codigo: codigoInicial, nombre: "", marca: "", categoria: "",
       costo: "", precio: "", notas: "", size: "", proveedor: null,
+      descuento_pct: "",
+      bulk_min_qty: "",
+      bulk_unit_price: "",
       cantidad_inicial: "",
       ubicacion_inicial: "almacen",
       van_id_inicial: null,
@@ -491,7 +532,6 @@ export default function Productos() {
     }
   }, [location.pathname, modalAbierto]);
 
-  // --- GUARDAR/ELIMINAR PRODUCTO + SIEMPRE POSIBLE AGREGAR STOCK ---
   async function guardarProducto(e) {
     e.preventDefault();
     setMensaje("");
@@ -500,7 +540,6 @@ export default function Productos() {
       return;
     }
 
-    // Duplicado de código
     const { data: existentes, error: errorExistente } = await supabase
       .from("productos")
       .select("id")
@@ -530,12 +569,25 @@ export default function Productos() {
       size: isCustomSize ? sizeCustom : productoActual.size,
       proveedor: suplidorId,
       notas: productoActual.notas || "",
+      descuento_pct: productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
+      bulk_min_qty: productoActual.bulk_min_qty !== "" ? Number(productoActual.bulk_min_qty) : null,
+      bulk_unit_price: productoActual.bulk_unit_price !== "" ? Number(productoActual.bulk_unit_price) : null,
     };
+
+    if (
+      dataProducto.bulk_unit_price != null &&
+      dataProducto.costo != null &&
+      dataProducto.bulk_unit_price < dataProducto.costo
+    ) {
+      const ok = window.confirm(
+        "⚠️ The bulk unit price is below cost. Do you still want to save?"
+      );
+      if (!ok) return;
+    }
 
     let productoId = productoActual.id;
 
     if (productoActual.id) {
-      // update
       const { error } = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
       if (error) {
         setMensaje(error.message?.toLowerCase().includes("unique")
@@ -545,7 +597,6 @@ export default function Productos() {
       }
       setMensaje("Product updated.");
     } else {
-      // insert
       const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
       if (error) {
         setMensaje(error.message?.toLowerCase().includes("unique")
@@ -557,14 +608,12 @@ export default function Productos() {
       setMensaje("Product added.");
     }
 
-    // --- SIEMPRE: sumar stock en la ubicación seleccionada (incremental) ---
     try {
       await addStockSeleccionado(productoId, productoActual);
     } catch (e2) {
       setMensaje(prev => (prev ? prev + " " : "") + "Error adding stock: " + (e2?.message || e2));
     }
 
-    // limpiar campos de add stock para evitar doble inserción en futuros guardados
     setProductoActual(prev => prev ? {
       ...prev,
       id: productoId,
@@ -577,21 +626,53 @@ export default function Productos() {
     cerrarModal();
   }
 
+  // Borrado seguro sin 409
   async function eliminarProducto() {
     if (!productoActual?.id) return;
-    if (!window.confirm("Are you sure you want to delete this product?")) return;
-    const { error } = await supabase.from("productos").delete().eq("id", productoActual.id);
-    if (!error) setMensaje("Product deleted.");
-    else setMensaje("Error: " + error.message);
+    const id = productoActual.id;
+
+    const { count: ventasCount, error: errDet } = await supabase
+      .from("detalle_ventas")
+      .select("*", { count: "exact", head: true })
+      .eq("producto_id", id);
+
+    if (errDet) {
+      setMensaje("Error checking dependencies: " + errDet.message);
+      return;
+    }
+
+    if ((ventasCount ?? 0) > 0) {
+      setMensaje(`Cannot delete: this product is used in ${ventasCount} sale(s).`);
+      alert(`No se puede borrar: este producto aparece en ${ventasCount} venta(s).`);
+      return;
+    }
+
+    if (!window.confirm("This will permanently delete the product. Continue?")) return;
+
+    await Promise.allSettled([
+      supabase.from("movimientos_stock").delete().eq("producto_id", id),
+      supabase.from("stock_almacen").delete().eq("producto_id", id),
+      supabase.from("stock_van").delete().eq("producto_id", id),
+    ]);
+
+    const { error } = await supabase.from("productos").delete().eq("id", id);
+    if (error) {
+      setMensaje("Error: " + error.message);
+      console.error(error);
+      return;
+    }
+
+    setMensaje("Product deleted.");
     await cargarProductos();
     cerrarModal();
   }
 
   // ------ RENDER ---------
   return (
-    <div>
+    <div className="px-2 sm:px-4">
       <h2 className="text-2xl font-bold mb-4 text-center">Product Inventory</h2>
-      <div className="max-w-2xl mx-auto mb-4 flex gap-2">
+
+      <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
         <input
           type="text"
           placeholder="Search by code, name, brand, category..."
@@ -606,65 +687,68 @@ export default function Productos() {
           + Add product
         </button>
       </div>
-      <div className="max-w-4xl mx-auto">
+
+      <div className="max-w-6xl mx-auto">
         {loading ? (
           <div className="text-center py-6 text-blue-700 font-bold">Loading...</div>
         ) : (
-          <table className="min-w-full text-sm bg-white rounded shadow">
-            <thead>
-              <tr>
-                <th className="p-2">Code/UPC</th>
-                <th className="p-2">Name</th>
-                <th className="p-2">Brand</th>
-                <th className="p-2">Category</th>
-                <th className="p-2">Size</th>
-                <th className="p-2">Supplier</th>
-                <th className="p-2">Cost</th>
-                <th className="p-2">Price</th>
-              </tr>
-            </thead>
-            <tbody>
-              {productos.length === 0 ? (
-                <tr>
-                  <td colSpan="8" className="text-center text-gray-400 py-5">
-                    {busqueda ? "No results found for your search." : "No products."}
-                  </td>
+          <div className="overflow-x-auto rounded shadow bg-white">
+            <table className="min-w-[780px] w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="p-2 text-left">Code/UPC</th>
+                  <th className="p-2 text-left">Name</th>
+                  <th className="p-2 text-left hidden md:table-cell">Brand</th>
+                  <th className="p-2 text-left hidden lg:table-cell">Category</th>
+                  <th className="p-2 text-left hidden lg:table-cell">Size</th>
+                  <th className="p-2 text-left hidden xl:table-cell">Supplier</th>
+                  <th className="p-2 text-right hidden md:table-cell">Cost</th>
+                  <th className="p-2 text-right">Price</th>
                 </tr>
-              ) : (
-                productos.map((p) => (
-                  <tr
-                    key={p.id}
-                    className="hover:bg-blue-100 cursor-pointer"
-                    onClick={() => abrirModal(p)}
-                  >
-                    <td className="p-2">{p.codigo}</td>
-                    <td className="p-2">{p.nombre}</td>
-                    <td className="p-2">{p.marca}</td>
-                    <td className="p-2">{p.categoria}</td>
-                    <td className="p-2">{p.size}</td>
-                    <td className="p-2">{p.suplidor?.nombre || ""}</td>
-                    <td className="p-2">{p.costo}</td>
-                    <td className="p-2">{p.precio}</td>
+              </thead>
+              <tbody>
+                {productos.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="text-center text-gray-400 py-5">
+                      {busqueda ? "No results found for your search." : "No products."}
+                    </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  productos.map((p) => (
+                    <tr
+                      key={p.id}
+                      className="hover:bg-blue-50 cursor-pointer border-t"
+                      onClick={() => abrirModal(p)}
+                    >
+                      <td className="p-2 font-mono truncate max-w-[140px]">{p.codigo}</td>
+                      <td className="p-2 truncate">{p.nombre}</td>
+                      <td className="p-2 hidden md:table-cell truncate">{p.marca}</td>
+                      <td className="p-2 hidden lg:table-cell truncate">{p.categoria}</td>
+                      <td className="p-2 hidden lg:table-cell">{p.size}</td>
+                      <td className="p-2 hidden xl:table-cell truncate">{p.suplidor?.nombre || ""}</td>
+                      <td className="p-2 text-right hidden md:table-cell">{p.costo}</td>
+                      <td className="p-2 text-right font-semibold">{p.precio}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
-        {/* PAGINATION */}
-        <div className="flex justify-between items-center mt-4">
+
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-between items-center mt-4">
           <button
-            className="px-4 py-2 bg-gray-200 rounded"
+            className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50"
             onClick={handleAnterior}
             disabled={pagina === 1}
           >
             Previous
           </button>
-          <span>
+          <span className="text-sm">
             Page {pagina} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
           </span>
           <button
-            className="px-4 py-2 bg-gray-200 rounded"
+            className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50"
             onClick={handleSiguiente}
             disabled={pagina * PAGE_SIZE >= total}
           >
@@ -676,10 +760,9 @@ export default function Productos() {
         </div>
       </div>
 
-      {/* --- MODAL EDIT / METRICS --- */}
       {modalAbierto && productoActual && (
-        <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl relative p-8">
+        <div className="fixed inset-0 bg-black/40 flex justify-center items-end sm:items-center z-50 p-0 sm:p-6">
+          <div className="bg-white w-full h-[100vh] sm:h-auto sm:max-h-[90vh] sm:rounded-xl shadow-xl max-w-2xl relative p-4 sm:p-8 overflow-y-auto">
             <button
               type="button"
               className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
@@ -689,20 +772,22 @@ export default function Productos() {
             >
               ×
             </button>
-            <div className="flex mb-4 border-b mt-2">
+
+            <div className="flex mb-4 border-b mt-6 sm:mt-2">
               <button
-                className={`px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
                 onClick={() => setTabActivo("editar")}
               >
                 Edit product
               </button>
               <button
-                className={`px-6 py-2 font-bold ${tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
                 onClick={() => setTabActivo("ventas")}
               >
                 Sales
               </button>
             </div>
+
             {tabActivo === "editar" ? (
               <form onSubmit={guardarProducto}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -833,10 +918,64 @@ export default function Productos() {
                     />
                   </div>
 
-                  {/* --- SIEMPRE disponible: agregar stock ahora --- */}
+                  <div>
+                    <label className="font-bold">% Off (auto-applied)</label>
+                    <input
+                      className="border rounded p-2 w-full"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={productoActual.descuento_pct ?? ""}
+                      onChange={e =>
+                        setProductoActual({ ...productoActual, descuento_pct: e.target.value })
+                      }
+                      placeholder="e.g. 10"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      It automatically applies in sales if bulk pricing does not apply.
+                    </p>
+                  </div>
+
+                  <div className="md:col-span-2 border rounded p-3">
+                    <b>Bulk pricing (optional)</b>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                      <div>
+                        <label className="font-bold">Min. qty (≥)</label>
+                        <input
+                          className="border rounded p-2 w-full"
+                          type="number"
+                          min="1"
+                          value={productoActual.bulk_min_qty ?? ""}
+                          onChange={e =>
+                            setProductoActual(prev => ({ ...prev, bulk_min_qty: e.target.value }))
+                          }
+                          placeholder="e.g. 10"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-bold">Unit price at that qty</label>
+                        <input
+                          className="border rounded p-2 w-full"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={productoActual.bulk_unit_price ?? ""}
+                          onChange={e =>
+                            setProductoActual(prev => ({ ...prev, bulk_unit_price: e.target.value }))
+                          }
+                          placeholder="e.g. 9.60"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      If qty ≥ Min. qty, this unit price overrides base/% off in Sales.
+                    </p>
+                  </div>
+
                   <div className="md:col-span-2 border-t pt-2 mt-2">
                     <b>Add stock now (optional)</b>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
                         <label className="font-bold">Quantity</label>
                         <input
@@ -893,17 +1032,18 @@ export default function Productos() {
                 {mensaje && (
                   <div className="text-blue-700 text-center mt-2">{mensaje}</div>
                 )}
-                <div className="flex gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
+
+                <div className="flex flex-col sm:flex-row gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
                   <button
                     type="submit"
-                    className="flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
+                    className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
                   >
                     {productoActual.id ? "Save changes" : "Add product"}
                   </button>
                   {productoActual.id && (
                     <button
                       type="button"
-                      className="flex-1 bg-red-600 text-white rounded px-5 py-2"
+                      className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2"
                       onClick={eliminarProducto}
                     >
                       Delete
