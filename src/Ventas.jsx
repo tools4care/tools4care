@@ -418,13 +418,15 @@ export default function Sales() {
     }
   }
 
+  // ===================== NUEVO: saveSale con RPC + fallback =====================
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
+
+    // --- Validaciones previas (igual que antes) ---
     try {
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!van?.id) throw new Error("Select a VAN first.");
-      // ✅ Permitir Quick sale (sin id de cliente), solo exigimos haber elegido cliente o quick sale
       if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
       if (cart.length === 0) throw new Error("Add at least one product.");
 
@@ -436,7 +438,6 @@ export default function Sales() {
         return;
       }
 
-      // Confirmación si deja crédito
       if (amountToCredit > 0) {
         const ok = window.confirm(
           `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
@@ -447,13 +448,10 @@ export default function Sales() {
               : `\n(No credit history yet)\n\n`) +
             `Do you want to continue?`
         );
-        if (!ok) {
-          setSaving(false);
-          return;
-        }
+        if (!ok) { setSaving(false); return; }
       }
 
-      // Distribución de pagos: primero a la venta nueva, luego (si hay extra) a deudas anteriores
+      // Mapa de pagos y montos
       const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
       payments.forEach((p) => {
         if (paymentMap[p.forma] !== undefined) {
@@ -461,103 +459,143 @@ export default function Sales() {
         }
       });
 
-      // Lo máximo que puede aplicarse a ESTA venta
       const paidForSale = Math.min(paid, saleTotal);
       const payOldDebt = Math.max(0, paid - paidForSale);
 
-      const venta_a_guardar = {
-        van_id: van.id,
-        usuario_id: usuario.id,
-        cliente_id: selectedClient?.id || null,
-        total: saleTotal,
-        total_venta: saleTotal,
-        total_pagado: paidForSale, // <= nunca mayor que total_venta
-        estado_pago: paidForSale >= saleTotal ? "pagado" : paidForSale > 0 ? "parcial" : "pendiente",
-        forma_pago: payments.map((p) => p.forma).join(","),
-        metodo_pago: payments.map((p) => `${p.forma}:${p.monto}`).join(","),
-        productos: cart.map((p) => ({
-          producto_id: p.producto_id,
-          nombre: p.nombre,
-          cantidad: p.cantidad,
-          precio_unitario: p.precio_unitario,
-          subtotal: p.cantidad * p.precio_unitario,
-        })),
-        notas: notes,
-        pago: paidForSale, // pago aplicado a esta venta
-        pago_efectivo: Math.min(paymentMap.efectivo, paidForSale),
-        pago_tarjeta: Math.min(paymentMap.tarjeta, paidForSale),
-        pago_transferencia: Math.min(paymentMap.transferencia, paidForSale),
-        pago_otro: Math.min(paymentMap.otro, paidForSale),
-      };
+      const items = cart.map((p) => ({
+        producto_id: p.producto_id,
+        cantidad: Number(p.cantidad),
+        precio_unitario: Number(p.precio_unitario),
+      }));
 
-      // 1) Crear la venta
-      const { data: saleData, error: saleError } = await supabase
-        .from("ventas")
-        .insert([venta_a_guardar])
-        .select()
-        .maybeSingle();
-      if (saleError) throw saleError;
+      // -------- PRIMERA OPCIÓN: RPC transaccional ultra-rápido --------
+      try {
+        const { data, error } = await supabase.rpc("ventas_guardar_v3", {
+          p_van_id: van.id,
+          p_usuario_id: usuario.id,
+          p_cliente_id: selectedClient?.id || null,
+          p_productos: items,
+          p_pago_total: Number(paidForSale),
+          p_pago_map: {
+            efectivo: Number(paymentMap.efectivo || 0),
+            tarjeta: Number(paymentMap.tarjeta || 0),
+            transferencia: Number(paymentMap.transferencia || 0),
+            otro: Number(paymentMap.otro || 0),
+          },
+          p_pago_deuda: Number(payOldDebt || 0),
+          p_notas: notes || null,
+        });
 
-      // 2) Insertar detalle de venta
-      for (let p of cart) {
-        await supabase.from("detalle_ventas").insert([
-          {
-            venta_id: saleData.id,
+        if (error) throw error; // si el RPC falló, salta al catch y hacemos fallback
+
+        alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
+        clearSale();
+
+        // limpiar pendientes locales
+        let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        saved = saved.filter((v) => v.id !== window.pendingSaleId);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+        setPendingSales(saved);
+        return; // éxito por RPC
+      } catch (rpcErr) {
+        console.warn("RPC ventas_guardar_v3 unavailable or failed. Falling back to legacy flow.", rpcErr?.message || rpcErr);
+        // sigue abajo al fallback
+      }
+
+      // -------- SEGUNDA OPCIÓN (fallback): flujo legacy que ya tenías --------
+      async function fallbackOriginalFlow() {
+        // 1) Crear la venta
+        const venta_a_guardar = {
+          van_id: van.id,
+          usuario_id: usuario.id,
+          cliente_id: selectedClient?.id || null,
+          total: saleTotal,
+          total_venta: saleTotal,
+          total_pagado: Math.min(paid, saleTotal),
+          estado_pago:
+            Math.min(paid, saleTotal) >= saleTotal ? "pagado" :
+            Math.min(paid, saleTotal) > 0 ? "parcial" : "pendiente",
+          forma_pago: payments.map((p) => p.forma).join(","),
+          metodo_pago: payments.map((p) => `${p.forma}:${p.monto}`).join(","),
+          productos: cart.map((p) => ({
             producto_id: p.producto_id,
+            nombre: p.nombre,
             cantidad: p.cantidad,
             precio_unitario: p.precio_unitario,
             subtotal: p.cantidad * p.precio_unitario,
-          },
-        ]);
-      }
+          })),
+          notas: notes,
+          pago: Math.min(paid, saleTotal),
+          pago_efectivo: Math.min(paymentMap.efectivo, Math.min(paid, saleTotal)),
+          pago_tarjeta: Math.min(paymentMap.tarjeta, Math.min(paid, saleTotal)),
+          pago_transferencia: Math.min(paymentMap.transferencia, Math.min(paid, saleTotal)),
+          pago_otro: Math.min(paymentMap.otro, Math.min(paid, saleTotal)),
+        };
 
-      // 3) Descontar stock
-      for (let p of cart) {
-        const { data: stockData, error: stockError } = await supabase
-          .from("stock_van")
-          .select("cantidad")
-          .eq("van_id", van.id)
-          .eq("producto_id", p.producto_id)
-          .single();
+        const { data: saleData, error: saleError } = await supabase
+          .from("ventas")
+          .insert([venta_a_guardar])
+          .select()
+          .maybeSingle();
+        if (saleError) throw saleError;
 
-        if (!stockError) {
-          const newStock = (stockData?.cantidad || 0) - p.cantidad;
-          await supabase
+        // 2) detalle_ventas
+        for (let p of cart) {
+          await supabase.from("detalle_ventas").insert([
+            {
+              venta_id: saleData.id,
+              producto_id: p.producto_id,
+              cantidad: p.cantidad,
+              precio_unitario: p.precio_unitario,
+              subtotal: p.cantidad * p.precio_unitario,
+            },
+          ]);
+        }
+
+        // 3) actualizar stock
+        for (let p of cart) {
+          const { data: stockData, error: stockError } = await supabase
             .from("stock_van")
-            .update({ cantidad: newStock })
+            .select("cantidad")
             .eq("van_id", van.id)
-            .eq("producto_id", p.producto_id);
-        }
-      }
+            .eq("producto_id", p.producto_id)
+            .single();
 
-      // 4) Si hubo pago extra (más allá de la nueva venta), aplícalo a deudas anteriores (FIFO) vía RPC
-      // ✅ Solo si hay cliente real (con id)
-      if (payOldDebt > 0 && selectedClient?.id) {
-        try {
-          const { error: rpcError } = await supabase.rpc("cxc_registrar_pago", {
-            p_cliente_id: selectedClient.id,
-            p_monto: payOldDebt,
-            p_metodo: "mix",
-            p_van_id: van.id,
-          });
-          if (rpcError) {
-            console.warn("RPC apply old debt failed:", rpcError?.message);
+          if (!stockError) {
+            const newStock = (stockData?.cantidad || 0) - p.cantidad;
+            await supabase
+              .from("stock_van")
+              .update({ cantidad: newStock })
+              .eq("van_id", van.id)
+              .eq("producto_id", p.producto_id);
           }
-        } catch (e) {
         }
+
+        // 4) pago a deudas anteriores (si aplica)
+        const payOldDebt = Math.max(0, paid - Math.min(paid, saleTotal));
+        if (payOldDebt > 0 && selectedClient?.id) {
+          try {
+            const { error: rpcError } = await supabase.rpc("cxc_registrar_pago", {
+              p_cliente_id: selectedClient.id,
+              p_monto: payOldDebt,
+              p_metodo: "mix",
+              p_van_id: van.id,
+            });
+            if (rpcError) console.warn("RPC apply old debt failed:", rpcError?.message);
+          } catch (_) {}
+        }
+
+        alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
+        clearSale();
+
+        // limpiar pendientes locales
+        let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        saved = saved.filter((v) => v.id !== window.pendingSaleId);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+        setPendingSales(saved);
       }
 
-      alert(
-        "✅ Sale saved successfully\n" +
-          (change > 0 ? `💰 Change to give: ${fmt(change)}` : "")
-      );
-      clearSale();
-
-      // Limpiar venta pendiente local
-      let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      saved = saved.filter((v) => v.id !== window.pendingSaleId);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-      setPendingSales(saved);
+      await fallbackOriginalFlow();
     } catch (err) {
       setPaymentError("❌ Error saving sale: " + (err?.message || ""));
       console.error(err);
@@ -565,6 +603,7 @@ export default function Sales() {
       setSaving(false);
     }
   }
+  // ===================== fin saveSale =====================
 
   function handleSelectPendingSale(sale) {
     setSelectedClient(sale.client);
@@ -1239,7 +1278,7 @@ export default function Sales() {
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row gap-3 pt-4">
+        <div className="flex col sm:flex-row gap-3 pt-4">
           <button 
             className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
             onClick={() => setStep(2)} 

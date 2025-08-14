@@ -488,33 +488,77 @@ export default function Productos() {
 
   useEffect(() => { cargarProductos(); }, [busqueda, pagina]);
 
+  // ✅ MEJORADO: búsqueda por código exacto cuando el término es puro dígito (escáner)
   async function cargarProductos() {
     setLoading(true);
-    let query = supabase
-      .from("productos")
-      .select("*, suplidor:suplidor_id(nombre)", { count: "exact" })
-      .order("nombre", { ascending: true });
 
-    if (busqueda.trim()) {
-      query = query.or(
-        `codigo.ilike.%${busqueda}%,nombre.ilike.%${busqueda}%,marca.ilike.%${busqueda}%,categoria.ilike.%${busqueda}%`
-      );
-    }
+    const term = busqueda.trim();
+    const termNoSpaces = term.replace(/\s+/g, "");
+    const isPureDigits = /^\d+$/.test(termNoSpaces);
+    const isLikelyBarcode = isPureDigits && termNoSpaces.length >= 6; // 6+ para ser flexible (UPC/EAN suelen ser 8/12/13)
 
+    const baseSelect = "*, suplidor:suplidor_id(nombre)";
     const desde = (pagina - 1) * PAGE_SIZE;
     const hasta = desde + PAGE_SIZE - 1;
-    query = query.range(desde, hasta);
 
-    const { data, count, error } = await query;
-    if (error) setMensaje("Error loading products: " + error.message);
-    setProductos(data || []);
-    setTotal(count || 0);
-    setLoading(false);
+    try {
+      // 1) Si parece código de barras → búsqueda EXACTA por 'codigo'
+      if (isLikelyBarcode) {
+        const { data: exactData, count: exactCount, error: exactErr } = await supabase
+          .from("productos")
+          .select(baseSelect, { count: "exact" })
+          .eq("codigo", termNoSpaces) // coincidencia exacta
+          .range(desde, hasta);
+
+        if (exactErr) throw exactErr;
+
+        // Si hay resultados exactos, los usamos y salimos (evita listados largos al escanear)
+        if ((exactData?.length || 0) > 0) {
+          setProductos(exactData || []);
+          setTotal(exactCount || exactData.length || 0);
+          setLoading(false);
+          return;
+        }
+        // Si no encontró exacto, caemos al fallback difuso (debajo)
+      }
+
+      // 2) Búsqueda difusa (anterior) para nombres, marcas, categorías y código parcial
+      let query = supabase
+        .from("productos")
+        .select(baseSelect, { count: "exact" })
+        .order("nombre", { ascending: true });
+
+      if (term) {
+        // Afinado: demos prioridad a codigo que EMPIECE por el término si es numérico
+        if (isPureDigits) {
+          query = query.or(
+            `codigo.ilike.${termNoSpaces}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`
+          );
+        } else {
+          query = query.or(
+            `codigo.ilike.%${term}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`
+          );
+        }
+      }
+
+      const { data, count, error } = await query.range(desde, hasta);
+      if (error) throw error;
+
+      setProductos(data || []);
+      setTotal(count || 0);
+    } catch (err) {
+      setProductos([]);
+      setTotal(0);
+      setMensaje("Error loading products: " + (err?.message || err));
+    } finally {
+      setLoading(false);
+    }
   }
 
   function handleBuscar(e) {
     setPagina(1);
-    setBusqueda(e.target.value);
+    // Limpia espacios “fantasma” que a veces agregan los escáneres
+    setBusqueda((e.target.value || "").replace(/\s+/g, ""));
   }
 
   function handleSiguiente() {
