@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+// CierreVan.jsx
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -26,13 +27,95 @@ const DENOMINACIONES = [
   { nombre: "Pennies", valor: 0.01 }
 ];
 
+const NO_CLIENTE = "Quick sale / No client";
+
+/* ======================= HELPERS ======================= */
+function displayName(cli) {
+  if (!cli) return "";
+  const nombre = [cli.nombre, cli.apellido].filter(Boolean).join(" ").trim();
+  return cli.negocio ? `${nombre || cli.id} (${cli.negocio})` : (nombre || cli.id);
+}
+
+/**
+ * Devuelve un diccionario donde la MISMA ficha de cliente queda accesible por:
+ *   - dic[cliente.id]
+ *   - dic[cliente.credito_id]  (para cuando las ventas/pagos traen el crédito en vez del id)
+ */
+async function fetchClientesDic(idsOrCreditIds) {
+  const keys = Array.from(new Set((idsOrCreditIds || []).filter(Boolean)));
+  const dic = {};
+  if (!keys.length) return dic;
+
+  // 1) Buscar por id en "clientes"
+  try {
+    const { data } = await supabase
+      .from("clientes")
+      .select("id, nombre, apellido, negocio, credito_id")
+      .in("id", keys);
+    for (const c of data || []) {
+      dic[c.id] = c;
+      if (c.credito_id) dic[c.credito_id] = c;
+    }
+  } catch {}
+
+  // Faltantes tras #1
+  const missingAfter1 = keys.filter(k => !dic[k]);
+
+  // 2) Buscar por id en "clientes_balance"
+  if (missingAfter1.length) {
+    try {
+      const { data } = await supabase
+        .from("clientes_balance")
+        .select("id, nombre, apellido, negocio, credito_id")
+        .in("id", missingAfter1);
+      for (const c of data || []) {
+        dic[c.id] = c;
+        if (c.credito_id) dic[c.credito_id] = c;
+      }
+    } catch {}
+  }
+
+  // Faltantes tras #2
+  const missingAfter2 = keys.filter(k => !dic[k]);
+
+  // 3) Buscar por credito_id en "clientes_balance" (clave: el array venía con credito_id)
+  if (missingAfter2.length) {
+    try {
+      const { data } = await supabase
+        .from("clientes_balance")
+        .select("id, nombre, apellido, negocio, credito_id")
+        .in("credito_id", missingAfter2);
+      for (const c of data || []) {
+        // guardamos por ambos
+        dic[c.id] = c;
+        if (c.credito_id) dic[c.credito_id] = c;
+      }
+    } catch {}
+  }
+
+  return dic;
+}
+
+function useClientesPorIds(idsOrCreditIds) {
+  const [dic, setDic] = useState({});
+  const key = useMemo(
+    () => (idsOrCreditIds || []).filter(Boolean).sort().join(","),
+    [idsOrCreditIds]
+  );
+  useEffect(() => {
+    if (!key) { setDic({}); return; }
+    (async () => setDic(await fetchClientesDic(idsOrCreditIds)))();
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return dic;
+}
+/* ======================================================= */
+
 // HOOK para buscar días con movimientos pendientes de cierre
 function useFechasPendientes(van_id) {
   const [fechas, setFechas] = useState([]);
   useEffect(() => {
     if (!van_id) return;
     (async () => {
-      // Este RPC debe devolver ["2025-07-28", "2025-07-29", ...]
       const { data } = await supabase.rpc("fechas_pendientes_cierre_van", { van_id_param: van_id });
       setFechas(data || []);
     })();
@@ -71,7 +154,6 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
 function useCierresVan(van_id, fechaDesde, fechaHasta) {
   const [cierres, setCierres] = useState([]);
   const [loading, setLoading] = useState(false);
-
   useEffect(() => {
     if (!van_id || !fechaDesde || !fechaHasta) return;
     setLoading(true);
@@ -87,11 +169,10 @@ function useCierresVan(van_id, fechaDesde, fechaHasta) {
       setLoading(false);
     })();
   }, [van_id, fechaDesde, fechaHasta]);
-
   return { cierres, loading };
 }
 
-// HOOK para traer usuarios por IDs
+// HOOK para traer usuarios por IDs (tabla de cierres)
 function useUsuariosPorIds(usuarioIds) {
   const [usuarios, setUsuarios] = useState({});
   useEffect(() => {
@@ -109,7 +190,7 @@ function useUsuariosPorIds(usuarioIds) {
   return usuarios;
 }
 
-// HOOK para traer vans por IDs
+// HOOK para traer vans por IDs (tabla de cierres)
 function useVansPorIds(vanIds) {
   const [vans, setVans] = useState({});
   useEffect(() => {
@@ -132,9 +213,12 @@ function sumBy(arr, key) {
   return arr.reduce((t, x) => t + Number(x[key] || 0), 0);
 }
 
-// ---------- TABLAS ----------
+/* ======================= TABLAS ======================= */
 function TablaMovimientosPendientes({ ventas }) {
-  const totalCxc = ventas.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0);
+  const totalCxc = ventas.reduce(
+    (t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)),
+    0
+  );
   return (
     <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
       <h3 className="font-bold mb-3 text-lg text-blue-800">Pending Closeout Movements</h3>
@@ -163,7 +247,10 @@ function TablaMovimientosPendientes({ ventas }) {
           {ventas.map((v) => (
             <tr key={v.id}>
               <td className="p-1">{v.fecha?.slice(0, 10) || "-"}</td>
-              <td className="p-1">{v.cliente_nombre || v.cliente_id?.slice(0, 8) || "-"}</td>
+              <td className="p-1">
+                {v.cliente_nombre ||
+                  (v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE)}
+              </td>
               <td className="p-1">${Number(v.total_venta || 0).toFixed(2)}</td>
               <td className="p-1">${Number(v.pago_efectivo || 0).toFixed(2)}</td>
               <td className="p-1">${Number(v.pago_tarjeta || 0).toFixed(2)}</td>
@@ -216,7 +303,10 @@ function TablaAbonosPendientes({ pagos }) {
           {pagos.map((p) => (
             <tr key={p.id}>
               <td className="p-1">{p.fecha_pago?.slice(0, 10) || "-"}</td>
-              <td className="p-1">{p.cliente_nombre || p.cliente_id?.slice(0, 8) || "-"}</td>
+              <td className="p-1">
+                {p.cliente_nombre ||
+                  (p.cliente_id ? p.cliente_id.slice(0, 8) : NO_CLIENTE)}
+              </td>
               <td className="p-1">${Number(p.monto || 0).toFixed(2)}</td>
               <td className="p-1">{p.metodo_pago || "-"}</td>
               <td className="p-1">{p.referencia || "-"}</td>
@@ -332,7 +422,9 @@ async function cargarDetallesCierre(cierre) {
   return { ventas: ventas || [], pagos: pagos || [] };
 }
 
-// GENERADOR DE PDF
+/* =========================
+   GENERADOR DE PDF MEJORADO
+   ========================= */
 function generarPDFCierreVan({
   empresa = {
     nombre: "TOOLS4CARE",
@@ -355,6 +447,7 @@ function generarPDFCierreVan({
   const azulSuave = "#e3f2fd";
   const negro = "#222";
 
+  // Marca
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
   doc.setTextColor(azul);
@@ -370,16 +463,27 @@ function generarPDFCierreVan({
   doc.setDrawColor(azul);
   doc.line(36, 86, 560, 86);
 
+  // Cabecera (dos columnas, con wrapping)
+  const vanId = cierre?.van_id || "-";
+  const vanLabel = [vanNombre || cierre?.van_nombre || "-", `ID: ${vanId}`]
+    .filter(Boolean)
+    .join(" — ");
+  const userLine = `${usuario?.nombre || usuario?.email || cierre?.usuario_id || "-"}${usuario?.email ? " | " + usuario.email : ""}${cierre?.usuario_id ? " (ID: " + cierre.usuario_id + ")" : ""}`;
+
   doc.setFontSize(14);
   doc.setTextColor(azul);
   doc.text("Van Closeout - Executive Report", 36, 110);
+
   doc.setFontSize(10);
   doc.setTextColor(negro);
+  // Izquierda
   doc.text(`Period: ${fechaInicio} to ${fechaFin}`, 36, 130);
-  doc.text(`Van: ${vanNombre || cierre?.van_nombre || cierre?.van_id || "-"}`, 320, 130);
-  doc.text(`Responsible: ${usuario?.nombre || usuario?.email || cierre?.usuario_id || "-"}`, 36, 146);
-  doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 320, 146);
+  doc.text(doc.splitTextToSize(`Responsible: ${userLine}`, 240), 36, 146);
+  // Derecha
+  doc.text(doc.splitTextToSize(`Van: ${vanLabel}`, 220), 316, 130);
+  doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 316, 146);
 
+  // Resumen
   doc.setFillColor(azulSuave);
   doc.roundedRect(36, 160, 520, 52, 8, 8, "F");
   doc.setFont("helvetica", "bold");
@@ -395,6 +499,7 @@ function generarPDFCierreVan({
   doc.text(`Expected Transfer: $${Number(resumen.transferencia_esperado).toFixed(2)}`, 370, 198);
   doc.text(`A/R in Period: $${Number(resumen.cxc_periodo).toFixed(2)}`, 44, 214);
 
+  // Ventas
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
   doc.setFontSize(13);
@@ -402,30 +507,22 @@ function generarPDFCierreVan({
 
   autoTable(doc, {
     startY: 250,
-    head: [[
-      "Date", "Client", "Total", "Cash", "Card", "Transfer", "Paid", "A/R"
-    ]],
-    body: ventas.length === 0 ? [["-", "-", "-", "-", "-", "-", "-", "-"]] : ventas.map(v => [
-      v.fecha?.slice(0, 10) || "-",
-      v.cliente_nombre || v.cliente_id?.slice(0,8) || "-",
-      "$" + Number(v.total_venta || 0).toFixed(2),
-      "$" + Number(v.pago_efectivo || 0).toFixed(2),
-      "$" + Number(v.pago_tarjeta || 0).toFixed(2),
-      "$" + Number(v.pago_transferencia || 0).toFixed(2),
-      "$" + Number(v.total_pagado || 0).toFixed(2),
-      "$" + ((Number(v.total_venta || 0) - Number(v.total_pagado || 0)).toFixed(2)),
-    ]),
+    head: [["Date", "Client", "Total", "Cash", "Card", "Transfer", "Paid", "A/R"]],
+    body: ventas.length === 0
+      ? [["-", "-", "-", "-", "-", "-", "-", "-"]]
+      : ventas.map(v => [
+          v.fecha?.slice(0, 10) || "-",
+          v.cliente_nombre || (v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
+          "$" + Number(v.total_venta || 0).toFixed(2),
+          "$" + Number(v.pago_efectivo || 0).toFixed(2),
+          "$" + Number(v.pago_tarjeta || 0).toFixed(2),
+          "$" + Number(v.pago_transferencia || 0).toFixed(2),
+          "$" + Number(v.total_pagado || 0).toFixed(2),
+          "$" + ((Number(v.total_venta || 0) - Number(v.total_pagado || 0)).toFixed(2)),
+        ]),
     theme: "grid",
-    headStyles: {
-      fillColor: azul,
-      textColor: "#fff",
-      fontStyle: "bold"
-    },
-    styles: {
-      fontSize: 9,
-      lineColor: azulSuave,
-      textColor: "#333"
-    },
+    headStyles: { fillColor: azul, textColor: "#fff", fontStyle: "bold" },
+    styles: { fontSize: 9, lineColor: azulSuave, textColor: "#333" },
     foot: [[
       "Totals",
       "",
@@ -436,14 +533,11 @@ function generarPDFCierreVan({
       "$" + ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2),
       "$" + ventas.reduce((t, v) => t + (Number(v.total_venta || 0) - Number(v.total_pagado || 0)), 0).toFixed(2)
     ]],
-    footStyles: {
-      fillColor: gris,
-      textColor: azul,
-      fontStyle: "bold"
-    },
+    footStyles: { fillColor: gris, textColor: azul, fontStyle: "bold" },
     margin: { left: 36, right: 36 }
   });
 
+  // Pagos
   let yAbonos = doc.lastAutoTable ? doc.lastAutoTable.finalY + 20 : 320;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
@@ -456,27 +550,20 @@ function generarPDFCierreVan({
     body: pagos.length === 0
       ? [["-", "-", "-", "-", "-", "-"]]
       : pagos.map(p => [
-        p.fecha_pago?.slice(0,10) || "-",
-        p.cliente_nombre || p.cliente_id?.slice(0,8) || "-",
-        "$" + Number(p.monto || 0).toFixed(2),
-        p.metodo_pago || "-",
-        p.referencia || "-",
-        p.notas || "-"
-      ]),
+          p.fecha_pago?.slice(0,10) || "-",
+          p.cliente_nombre || (p.cliente_id ? p.cliente_id.slice(0,8) : NO_CLIENTE),
+          "$" + Number(p.monto || 0).toFixed(2),
+          p.metodo_pago || "-",
+          p.referencia || "-",
+          p.notas || "-"
+        ]),
     theme: "grid",
-    headStyles: {
-      fillColor: azul,
-      textColor: "#fff",
-      fontStyle: "bold"
-    },
-    styles: {
-      fontSize: 9,
-      lineColor: gris,
-      textColor: "#333"
-    },
+    headStyles: { fillColor: azul, textColor: "#fff", fontStyle: "bold" },
+    styles: { fontSize: 9, lineColor: gris, textColor: "#333" },
     margin: { left: 36, right: 36 }
   });
 
+  // Pie
   let yPie = doc.lastAutoTable ? doc.lastAutoTable.finalY + 40 : 760;
   if (yPie > 740) yPie = 740;
   doc.setDrawColor(gris);
@@ -494,10 +581,11 @@ function generarPDFCierreVan({
     yPie + 30
   );
 
-  doc.save(`VanCloseout_${vanNombre || cierre?.van_nombre || cierre?.van_id || ""}_${fechaInicio}_${fechaFin}.pdf`);
+  const nombreArchivo = `VanCloseout_${(vanNombre || cierre?.van_nombre || cierre?.van_id || "").toString().replace(/\s+/g, "")}_${fechaInicio}_${fechaFin}.pdf`;
+  doc.save(nombreArchivo);
 }
 
-// ----------- COMPONENTE PRINCIPAL DIVIDIDO -----------
+// ----------- COMPONENTE PRINCIPAL -----------
 export default function CierreVan() {
   const { usuario } = useUsuario();
   const { van } = useVan();
@@ -519,6 +607,43 @@ export default function CierreVan() {
   const fechaFin = fechaSeleccionada;
   const { ventas, pagos, loading } = useMovimientosNoCerrados(van?.id, fechaInicio, fechaFin);
 
+  // Enriquecer con nombres de cliente: puede venir cliente_id O credito_id
+  const clienteKeys = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [...ventas, ...pagos]
+            .flatMap(x => [x?.cliente_id, x?.credito_id])
+            .filter(Boolean)
+        )
+      ),
+    [ventas, pagos]
+  );
+
+  const clientesDic = useClientesPorIds(clienteKeys);
+
+  const ventasConNombre = useMemo(
+    () => ventas.map(v => {
+      const ficha = clientesDic[v.cliente_id] || clientesDic[v.credito_id];
+      return {
+        ...v,
+        cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : (v.cliente_id ? v.cliente_id.slice(0,8) : NO_CLIENTE))
+      };
+    }),
+    [ventas, clientesDic]
+  );
+
+  const pagosConNombre = useMemo(
+    () => pagos.map(p => {
+      const ficha = clientesDic[p.cliente_id] || clientesDic[p.credito_id];
+      return {
+        ...p,
+        cliente_nombre: p.cliente_nombre || (ficha ? displayName(ficha) : (p.cliente_id ? p.cliente_id.slice(0,8) : NO_CLIENTE))
+      };
+    }),
+    [pagos, clientesDic]
+  );
+
   // Filtros para buscar cierres anteriores
   const [filtroDesde, setFiltroDesde] = useState(hoy);
   const [filtroHasta, setFiltroHasta] = useState(hoy);
@@ -528,36 +653,24 @@ export default function CierreVan() {
     filtroHasta
   );
 
-  // Para mostrar nombre usuario y van
+  // Para mostrar nombre usuario y van en la tabla
   const usuarioIds = Array.from(new Set((cierres || []).map(c => c.usuario_id).filter(Boolean)));
   const vanIds = Array.from(new Set((cierres || []).map(c => c.van_id).filter(Boolean)));
   const usuariosDic = useUsuariosPorIds(usuarioIds);
   const vansDic = useVansPorIds(vanIds);
 
-  // --- Totales y cuentas por cobrar
+  // Totales
   const totalesEsperados = {
-    pago_efectivo: Number(
-      (
-        sumBy(ventas, "pago_efectivo") + sumBy(pagos.filter(p => p.metodo_pago === "Cash"), "monto")
-      ).toFixed(2)
-    ),
-    pago_tarjeta: Number(
-      (
-        sumBy(ventas, "pago_tarjeta") + sumBy(pagos.filter(p => p.metodo_pago === "Card"), "monto")
-      ).toFixed(2)
-    ),
-    pago_transferencia: Number(
-      (
-        sumBy(ventas, "pago_transferencia") + sumBy(pagos.filter(p => p.metodo_pago === "Transfer"), "monto")
-      ).toFixed(2)
-    ),
+    pago_efectivo: Number((sumBy(ventasConNombre, "pago_efectivo") + sumBy(pagosConNombre.filter(p => p.metodo_pago === "Cash"), "monto")).toFixed(2)),
+    pago_tarjeta: Number((sumBy(ventasConNombre, "pago_tarjeta") + sumBy(pagosConNombre.filter(p => p.metodo_pago === "Card"), "monto")).toFixed(2)),
+    pago_transferencia: Number((sumBy(ventasConNombre, "pago_transferencia") + sumBy(pagosConNombre.filter(p => p.metodo_pago === "Transfer"), "monto")).toFixed(2)),
   };
 
   const cuentasCobrar = Number(
-    ventas.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0).toFixed(2)
+    ventasConNombre.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0).toFixed(2)
   );
 
-  // --- Popup desglose de efectivo
+  // Popup desglose de efectivo
   const [openDesglose, setOpenDesglose] = useState(false);
 
   const [reales, setReales] = useState({
@@ -572,14 +685,14 @@ export default function CierreVan() {
 
   async function guardarCierre(e) {
     if (e && e.preventDefault) e.preventDefault();
-    if (!van?.id || ventas.length + pagos.length === 0) {
+    if (!van?.id || ventasConNombre.length + pagosConNombre.length === 0) {
       setMensaje("No transactions to close.");
       return;
     }
     setGuardando(true);
 
-    const ventas_ids = ventas.map((v) => v.id);
-    const pagos_ids = pagos.map((p) => p.id);
+    const ventas_ids = ventasConNombre.map((v) => v.id);
+    const pagos_ids = pagosConNombre.map((p) => p.id);
 
     const payload = {
       van_id: van.id,
@@ -645,6 +758,7 @@ export default function CierreVan() {
   return (
     <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
       <h2 className="font-bold text-xl mb-6 text-blue-900">Van Closeout</h2>
+
       {/* BLOQUE 1: Selección del día a cerrar */}
       <div className="mb-4">
         <label className="font-bold text-sm mb-1 block">Select date to close:</label>
@@ -662,15 +776,17 @@ export default function CierreVan() {
           )}
         </select>
       </div>
+
       {/* BLOQUE 2: Formulario de cierre y confirmación */}
       {loading ? (
         <div className="text-blue-600">Loading transactions...</div>
       ) : (
         <>
-          <TablaMovimientosPendientes ventas={ventas} />
-          <TablaAbonosPendientes pagos={pagos} />
+          <TablaMovimientosPendientes ventas={ventasConNombre} />
+          <TablaAbonosPendientes pagos={pagosConNombre} />
         </>
       )}
+
       <form
         onSubmit={e => {
           e.preventDefault();
@@ -728,7 +844,7 @@ export default function CierreVan() {
         <button
           type="submit"
           className="bg-blue-700 text-white px-4 py-2 rounded font-bold w-full"
-          disabled={guardando || ventas.length + pagos.length === 0}
+          disabled={guardando || ventasConNombre.length + pagosConNombre.length === 0}
         >
           {guardando ? "Saving..." : "Register Closeout"}
         </button>
@@ -738,6 +854,7 @@ export default function CierreVan() {
           </div>
         )}
       </form>
+
       {/* MODAL DE CONFIRMACION */}
       <ConfirmModal
         open={showConfirmModal}
@@ -753,6 +870,7 @@ export default function CierreVan() {
         fechaInicio={fechaInicio}
         fechaFin={fechaFin}
       />
+
       {/* MODAL DESGLOSE EFECTIVO */}
       <DesgloseEfectivoModal
         open={openDesglose}
@@ -820,13 +938,42 @@ export default function CierreVan() {
                     <button
                       className="bg-blue-700 text-white px-2 py-1 rounded text-xs"
                       onClick={async () => {
+                        // 1) Cargar ventas y pagos del cierre
                         const { ventas, pagos } = await cargarDetallesCierre(cierre);
+
+                        // 2) Traer nombres de clientes soportando id y credito_id
+                        const keys = [...ventas, ...pagos]
+                          .flatMap(x => [x?.cliente_id, x?.credito_id])
+                          .filter(Boolean);
+                        const dicClientes = await fetchClientesDic(keys);
+
+                        const ventasPDF = ventas.map(v => {
+                          const ficha = dicClientes[v.cliente_id] || dicClientes[v.credito_id];
+                          return {
+                            ...v,
+                            cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : (v.cliente_id ? v.cliente_id.slice(0,8) : NO_CLIENTE))
+                          };
+                        });
+                        const pagosPDF = pagos.map(p => {
+                          const ficha = dicClientes[p.cliente_id] || dicClientes[p.credito_id];
+                          return {
+                            ...p,
+                            cliente_nombre: p.cliente_nombre || (ficha ? displayName(ficha) : (p.cliente_id ? p.cliente_id.slice(0,8) : NO_CLIENTE))
+                          };
+                        });
+
+                        // 3) Traer datos de usuario y van para la cabecera del PDF (con múltiples fallbacks)
+                        const [{ data: usuarioData }, { data: vanData }] = await Promise.all([
+                          supabase.from("usuarios").select("id, nombre, email").eq("id", cierre.usuario_id).maybeSingle(),
+                          supabase.from("vans").select("id, nombre").eq("id", cierre.van_id).maybeSingle()
+                        ]);
+
                         generarPDFCierreVan({
                           cierre,
-                          usuario: usuariosDic?.[cierre.usuario_id] || { nombre: cierre.usuario_id },
-                          vanNombre: vansDic?.[cierre.van_id]?.nombre || cierre.van_nombre,
-                          ventas,
-                          pagos,
+                          usuario: usuarioData || usuariosDic?.[cierre.usuario_id] || usuario || { nombre: cierre.usuario_id, email: "" },
+                          vanNombre: (vanData && vanData.nombre) || vansDic?.[cierre.van_id]?.nombre || van?.nombre || cierre.van_nombre || "",
+                          ventas: ventasPDF,
+                          pagos: pagosPDF,
                           resumen: {
                             efectivo_esperado: cierre.efectivo_esperado,
                             tarjeta_esperado: cierre.tarjeta_esperado,
@@ -834,7 +981,7 @@ export default function CierreVan() {
                             cxc_periodo: cierre.cuentas_por_cobrar
                           },
                           fechaInicio: cierre.fecha_inicio,
-                          fechaFin: cierre.fecha_fin,
+                          fechaFin: cierre.fecha_fin
                         });
                       }}
                     >

@@ -68,6 +68,44 @@ function getCreditNumber(c) {
   return c?.credito_id || c?.id || "—";
 }
 
+/* =========================== */
+/*   MODO "A PRUEBA DE BALAS"  */
+/* =========================== */
+function safeParseJSON(str, fallback) {
+  try {
+    const v = JSON.parse(str);
+    if (Array.isArray(v)) return v;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readPendingLS() {
+  return safeParseJSON(localStorage.getItem(STORAGE_KEY) || "[]", []);
+}
+
+function writePendingLS(arr) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr.slice(0, 10)));
+  } catch {}
+}
+
+function removePendingFromLSById(id) {
+  const cur = readPendingLS();
+  const filtered = id ? cur.filter((x) => x.id !== id) : cur;
+  writePendingLS(filtered);
+  return filtered;
+}
+
+function upsertPendingInLS(newPending) {
+  const cur = readPendingLS();
+  const filtered = cur.filter((x) => x.id !== newPending.id);
+  const next = [newPending, ...filtered].slice(0, 10);
+  writePendingLS(next);
+  return next;
+}
+
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
@@ -115,12 +153,7 @@ export default function Sales() {
 
   /* ---------- NUEVO: Cargar pendientes al entrar (sin abrir modal) ---------- */
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      setPendingSales(Array.isArray(saved) ? saved : []);
-    } catch {
-      setPendingSales([]);
-    }
+    setPendingSales(readPendingLS());
   }, []);
 
   /* ---------- CLIENTES (búsqueda + saldo real) ---------- */
@@ -309,10 +342,9 @@ export default function Sales() {
   const change = paid > totalAPagar ? paid - totalAPagar : 0;
   const mostrarAdvertencia = paid > totalAPagar;
 
-  /* ---------- Guardar venta pendiente local ---------- */
+  /* ---------- Guardar venta pendiente local (a prueba de balas) ---------- */
   useEffect(() => {
     if ((cart.length > 0 || selectedClient) && step < 4) {
-      let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       const id = window.pendingSaleId || (window.pendingSaleId = Date.now());
       const newPending = {
         id,
@@ -323,10 +355,8 @@ export default function Sales() {
         step,
         date: new Date().toISOString(),
       };
-      saved = saved.filter((v) => v.id !== id);
-      saved.unshift(newPending);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved.slice(0, 10)));
-      setPendingSales(saved.slice(0, 10));
+      const updated = upsertPendingInLS(newPending);
+      setPendingSales(updated);
     }
   }, [selectedClient, cart, payments, notes, step]);
 
@@ -364,9 +394,7 @@ export default function Sales() {
         {
           producto_id: p.producto_id,
           nombre: p.productos?.nombre,
-          // NUEVO: guarda meta
-          _pricing: meta,
-          // unitario efectivo
+          _pricing: meta, // meta pricing
           precio_unitario: unitPriceFromProduct(meta, qty),
           cantidad: qty,
         },
@@ -418,12 +446,14 @@ export default function Sales() {
     }
   }
 
-  // ===================== NUEVO: saveSale con RPC + fallback =====================
+  // ===================== NUEVO: saveSale con RPC + fallback (a prueba de balas) =====================
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
 
-    // --- Validaciones previas (igual que antes) ---
+    // Guarda el id de la venta pendiente ACTUAL antes de cualquier reset
+    const currentPendingId = window.pendingSaleId;
+
     try {
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!van?.id) throw new Error("Select a VAN first.");
@@ -488,14 +518,12 @@ export default function Sales() {
 
         if (error) throw error; // si el RPC falló, salta al catch y hacemos fallback
 
+        // Limpia la venta pendiente del almacenamiento LOCAL usando el id capturado
+        const updated = removePendingFromLSById(currentPendingId);
+        setPendingSales(updated);
+
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
         clearSale();
-
-        // limpiar pendientes locales
-        let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-        saved = saved.filter((v) => v.id !== window.pendingSaleId);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-        setPendingSales(saved);
         return; // éxito por RPC
       } catch (rpcErr) {
         console.warn("RPC ventas_guardar_v3 unavailable or failed. Falling back to legacy flow.", rpcErr?.message || rpcErr);
@@ -561,7 +589,7 @@ export default function Sales() {
             .eq("producto_id", p.producto_id)
             .single();
 
-          if (!stockError) {
+        if (!stockError) {
             const newStock = (stockData?.cantidad || 0) - p.cantidad;
             await supabase
               .from("stock_van")
@@ -572,12 +600,12 @@ export default function Sales() {
         }
 
         // 4) pago a deudas anteriores (si aplica)
-        const payOldDebt = Math.max(0, paid - Math.min(paid, saleTotal));
-        if (payOldDebt > 0 && selectedClient?.id) {
+        const payOldDebtFB = Math.max(0, paid - Math.min(paid, saleTotal));
+        if (payOldDebtFB > 0 && selectedClient?.id) {
           try {
             const { error: rpcError } = await supabase.rpc("cxc_registrar_pago", {
               p_cliente_id: selectedClient.id,
-              p_monto: payOldDebt,
+              p_monto: payOldDebtFB,
               p_metodo: "mix",
               p_van_id: van.id,
             });
@@ -585,14 +613,12 @@ export default function Sales() {
           } catch (_) {}
         }
 
+        // Limpia la venta pendiente del almacenamiento LOCAL usando el id capturado
+        const updated = removePendingFromLSById(currentPendingId);
+        setPendingSales(updated);
+
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
         clearSale();
-
-        // limpiar pendientes locales
-        let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-        saved = saved.filter((v) => v.id !== window.pendingSaleId);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-        setPendingSales(saved);
       }
 
       await fallbackOriginalFlow();
@@ -611,14 +637,17 @@ export default function Sales() {
     setPayments(sale.payments);
     setNotes(sale.notes);
     setStep(sale.step);
-    window.pendingSaleId = sale.id;
+    window.pendingSaleId = sale.id; // MUY IMPORTANTE: así podremos borrarla al guardar
     setModalPendingSales(false);
   }
 
   function handleDeletePendingSale(id) {
-    let saved = pendingSales.filter((v) => v.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-    setPendingSales(saved);
+    const updated = removePendingFromLSById(id);
+    setPendingSales(updated);
+    // si el usuario borra la misma que está retomando, limpia el puntero
+    if (window.pendingSaleId === id) {
+      window.pendingSaleId = null;
+    }
   }
 
   /* ---------- UI: Progress Bar ---------- */
