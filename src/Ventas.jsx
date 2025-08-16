@@ -38,7 +38,7 @@ function fmt(n) {
   })}`;
 }
 
-/* ---------- NUEVO: helpers de pricing ---------- */
+/* ---------- helpers de pricing ---------- */
 function r2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
 }
@@ -106,6 +106,104 @@ function upsertPendingInLS(newPending) {
   return next;
 }
 
+/* =========================== */
+/*   NUEVO: Mensajería gratis  */
+/* =========================== */
+const COMPANY_NAME =
+  (typeof import.meta !== "undefined" && import.meta?.env?.VITE_COMPANY_NAME) ||
+  "Tools4Care";
+
+
+function normalizePhoneForWhatsApp(phone) {
+  // wa.me requiere solo dígitos (incluyendo lada país)
+  return String(phone || "").replace(/[^\d]/g, "");
+}
+
+function getVanLabel(van) {
+  return van?.nombre || van?.alias || van?.placa || `Van #${van?.id ?? "N/A"}`;
+}
+
+function paymentsBreakdownString(paymentMap) {
+  const parts = [];
+  if (Number(paymentMap.efectivo || 0) > 0) parts.push(`Cash: ${fmt(paymentMap.efectivo)}`);
+  if (Number(paymentMap.tarjeta || 0) > 0) parts.push(`Card: ${fmt(paymentMap.tarjeta)}`);
+  if (Number(paymentMap.transferencia || 0) > 0) parts.push(`Transfer: ${fmt(paymentMap.transferencia)}`);
+  if (Number(paymentMap.otro || 0) > 0) parts.push(`Other: ${fmt(paymentMap.otro)}`);
+  return parts.length ? parts.join(" · ") : "—";
+}
+
+/**
+ * Recibo en inglés con énfasis compatible con WhatsApp (*bold*)
+ */
+function composeReceiptMessage({
+  cliente,
+  cart,
+  saleTotal,
+  paidForSale,
+  payOldDebt,
+  amountToCredit,
+  deudaAntes,
+  creditLimit,
+  availableBefore,
+  availableAfter,
+  vanLabel,
+  userName,
+  notes,
+  saleId,
+}) {
+  const afterDebt = Math.max(0, Number(deudaAntes || 0) - Number(payOldDebt || 0) + Number(amountToCredit || 0));
+  const dt = new Date();
+  const header = `🧾 *${COMPANY_NAME} – Receipt*\n${dt.toLocaleDateString()} ${dt.toLocaleTimeString()}`;
+  const hello = `Hello ${cliente?.nombre ?? ""}${cliente?.apellido ? " " + cliente.apellido : ""}, thanks for your purchase!`;
+  const items = cart.slice(0, 10).map((p) => `• ${p.cantidad} × ${p.nombre} = ${fmt(p.cantidad * p.precio_unitario)}`);
+  if (cart.length > 10) items.push(`… and ${cart.length - 10} more item(s)`);
+
+  const lines = [
+    header, "",
+    hello, "",
+    "*Order details:*",
+    ...items,
+    "",
+    `Subtotal: ${fmt(saleTotal)}`,
+    `Paid today (order): ${fmt(paidForSale)}`,
+    payOldDebt > 0 ? `Payment to previous balance: ${fmt(payOldDebt)}` : null,
+    amountToCredit > 0 ? `New credit from this order: ${fmt(amountToCredit)}` : null,
+    "",
+    `*Outstanding balance (before):* ${fmt(deudaAntes)}`,
+    `*Outstanding balance (now):* ${fmt(afterDebt)}`,
+    "",
+    `Credit limit: ${fmt(creditLimit || 0)}`,
+    `Available before: ${fmt(availableBefore || 0)}`,
+    `*Available after:* ${fmt(availableAfter || 0)}`,
+    "",
+    `Point of service: ${vanLabel}`,
+    userName ? `Attended by: ${userName}` : null,
+    saleId ? `Sale ID: ${saleId}` : null,
+    notes ? `Notes: ${notes}` : null,
+    "",
+    "If you have any questions, just reply to this message. Thank you!"
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
+function sendWhatsAppMessage(phone, text) {
+  const num = normalizePhoneForWhatsApp(phone);
+  const url = num
+    ? `https://wa.me/${num}?text=${encodeURIComponent(text)}`
+    : `https://wa.me/?text=${encodeURIComponent(text)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function sendEmailMessage(email, subject, body) {
+  if (!email) {
+    alert("No client email found.");
+    return;
+  }
+  const url = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  try { window.open(url, "_blank"); } catch { window.location.href = url; }
+}
+
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
@@ -151,7 +249,7 @@ export default function Sales() {
   const [adjustAmount, setAdjustAmount] = useState("");
   const [adjustNote, setAdjustNote] = useState("Saldo viejo importado");
 
-  /* ---------- NUEVO: Cargar pendientes al entrar (sin abrir modal) ---------- */
+  /* ---------- Cargar pendientes al entrar ---------- */
   useEffect(() => {
     setPendingSales(readPendingLS());
   }, []);
@@ -178,7 +276,7 @@ export default function Sales() {
         return;
       }
 
-      // Enriquecemos con saldo real desde la vista CxC (para que el “pill” rojo sea correcto)
+      // Enriquecemos con saldo real desde la vista CxC
       const ids = data.map((c) => c.id).filter(Boolean);
       if (ids.length === 0) {
         setClients(data.map((c) => ({ ...c, _saldo_real: Number(c.balance || 0) })));
@@ -342,7 +440,7 @@ export default function Sales() {
   const change = paid > totalAPagar ? paid - totalAPagar : 0;
   const mostrarAdvertencia = paid > totalAPagar;
 
-  /* ---------- Guardar venta pendiente local (a prueba de balas) ---------- */
+  /* ---------- Guardar venta pendiente local ---------- */
   useEffect(() => {
     if ((cart.length > 0 || selectedClient) && step < 4) {
       const id = window.pendingSaleId || (window.pendingSaleId = Date.now());
@@ -446,7 +544,54 @@ export default function Sales() {
     }
   }
 
-  // ===================== NUEVO: saveSale con RPC + fallback (a prueba de balas) =====================
+  /* ======= helper para enviar recibo tras guardar ======= */
+  function maybeSendReceipt({ saleId, paidForSale, payOldDebt, paymentMap }) {
+    if (!selectedClient) return;
+
+    const msg = composeReceiptMessage({
+      cliente: selectedClient,
+      cart,
+      saleTotal,
+      paidForSale,
+      payOldDebt,
+      amountToCredit,
+      deudaAntes: deudaCliente,
+      creditLimit,
+      availableBefore: creditAvailable,
+      availableAfter: creditAvailableAfter,
+      vanLabel: getVanLabel(van),
+      userName: usuario?.nombre || usuario?.email || "",
+      notes,
+      saleId,
+    });
+
+    const canWA = !!selectedClient?.telefono;
+    const canEmail = !!selectedClient?.email;
+
+    // Ofrece canales disponibles
+    if (canWA && window.confirm("Send receipt via WhatsApp?")) {
+      sendWhatsAppMessage(selectedClient.telefono, msg);
+    }
+    if (canEmail && window.confirm("Send receipt via Email?")) {
+      sendEmailMessage(
+        selectedClient.email,
+        `${COMPANY_NAME} – Purchase receipt`,
+        msg
+      );
+    }
+
+    // Si no hay ningún canal, ofrece copiar al portapapeles
+    if (!canWA && !canEmail) {
+      try {
+        navigator.clipboard.writeText(msg);
+        alert("The receipt was copied to your clipboard.");
+      } catch {
+        // no-op
+      }
+    }
+  }
+
+  // ===================== saveSale con RPC + fallback =====================
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
@@ -523,6 +668,10 @@ export default function Sales() {
         setPendingSales(updated);
 
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
+
+        // Enviar comprobante (WhatsApp/Email)
+        maybeSendReceipt({ saleId: data?.venta_id, paidForSale, payOldDebt, paymentMap });
+
         clearSale();
         return; // éxito por RPC
       } catch (rpcErr) {
@@ -530,7 +679,7 @@ export default function Sales() {
         // sigue abajo al fallback
       }
 
-      // -------- SEGUNDA OPCIÓN (fallback): flujo legacy que ya tenías --------
+      // -------- SEGUNDA OPCIÓN (fallback): flujo legacy --------
       async function fallbackOriginalFlow() {
         // 1) Crear la venta
         const venta_a_guardar = {
@@ -589,7 +738,7 @@ export default function Sales() {
             .eq("producto_id", p.producto_id)
             .single();
 
-        if (!stockError) {
+          if (!stockError) {
             const newStock = (stockData?.cantidad || 0) - p.cantidad;
             await supabase
               .from("stock_van")
@@ -618,6 +767,10 @@ export default function Sales() {
         setPendingSales(updated);
 
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
+
+        // Enviar comprobante (WhatsApp/Email)
+        maybeSendReceipt({ saleId: saleData?.id, paidForSale: Math.min(paid, saleTotal), payOldDebt: payOldDebtFB, paymentMap });
+
         clearSale();
       }
 
