@@ -18,6 +18,16 @@ const STORAGE_KEY = "pending_sales";
 // Código secreto para activar/desactivar el modo migración
 const SECRET_CODE = "#ajuste2025";
 
+/* --------- Branding / Config --------- */
+const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4Care";
+const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "no-reply@example.com";
+/**
+ * EMAIL_MODE:
+ *  - "mailto" (por defecto): abre cliente de correo del dispositivo (gratis).
+ *  - "edge": llama a supabase.functions.invoke("send-receipt") y envía HTML.
+ */
+const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
+
 /* --------- Política de límite (alineada con CxC) --------- */
 function policyLimit(score) {
   const s = Number(score ?? 600);
@@ -60,7 +70,6 @@ function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
 
 function getClientBalance(c) {
   if (!c) return 0;
-  // Primero el saldo real enriquecido, luego los campos locales
   return Number(c._saldo_real ?? c.balance ?? c.saldo_total ?? c.saldo ?? 0);
 }
 
@@ -106,103 +115,275 @@ function upsertPendingInLS(newPending) {
   return next;
 }
 
-/* =========================== */
-/*   NUEVO: Mensajería gratis  */
-/* =========================== */
-const COMPANY_NAME =
-  (typeof import.meta !== "undefined" && import.meta?.env?.VITE_COMPANY_NAME) ||
-  "Tools4Care";
+/* ===================================================== */
+/* ========== NUEVO: Mensajería (SMS + Email) ========== */
+/* ===================================================== */
 
-
-function normalizePhoneForWhatsApp(phone) {
-  // wa.me requiere solo dígitos (incluyendo lada país)
-  return String(phone || "").replace(/[^\d]/g, "");
+/** Normaliza teléfono a solo dígitos, añade lada país si vienen 10 dígitos.
+ * Ajusta "defaultCountry" a tu realidad (RD/US=1). */
+function normalizePhoneE164ish(raw, defaultCountry = "1") {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length === 10) return defaultCountry + digits;
+  return digits; // si ya trae lada, se queda
 }
 
-function getVanLabel(van) {
-  return van?.nombre || van?.alias || van?.placa || `Van #${van?.id ?? "N/A"}`;
+/** SMS: enlace estándar (iOS/Android). No usar + en el body. */
+function buildSmsUrl(phone, message) {
+  const digits = normalizePhoneE164ish(phone, "1");
+  if (!digits) return null;
+  // iOS: sms:+1809...?&body=...  | Android acepta 'sms:1809...'
+  const target = /^\+/.test(digits) ? digits : `+${digits}`;
+  return `sms:${encodeURIComponent(target)}&body=${encodeURIComponent(message)}`;
 }
 
-function paymentsBreakdownString(paymentMap) {
-  const parts = [];
-  if (Number(paymentMap.efectivo || 0) > 0) parts.push(`Cash: ${fmt(paymentMap.efectivo)}`);
-  if (Number(paymentMap.tarjeta || 0) > 0) parts.push(`Card: ${fmt(paymentMap.tarjeta)}`);
-  if (Number(paymentMap.transferencia || 0) > 0) parts.push(`Transfer: ${fmt(paymentMap.transferencia)}`);
-  if (Number(paymentMap.otro || 0) > 0) parts.push(`Other: ${fmt(paymentMap.otro)}`);
-  return parts.length ? parts.join(" · ") : "—";
+/** Email (mailto fallback): sin HTML, pero gratis y universal */
+function buildMailtoUrl(to, subject, body) {
+  if (!to) return null;
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-/**
- * Recibo en inglés con énfasis compatible con WhatsApp (*bold*)
- */
-function composeReceiptMessage({
-  cliente,
-  cart,
-  saleTotal,
-  paidForSale,
-  payOldDebt,
-  amountToCredit,
-  deudaAntes,
-  creditLimit,
-  availableBefore,
-  availableAfter,
-  vanLabel,
-  userName,
-  notes,
-  saleId,
-}) {
-  const afterDebt = Math.max(0, Number(deudaAntes || 0) - Number(payOldDebt || 0) + Number(amountToCredit || 0));
-  const dt = new Date();
-  const header = `🧾 *${COMPANY_NAME} – Receipt*\n${dt.toLocaleDateString()} ${dt.toLocaleTimeString()}`;
-  const hello = `Hello ${cliente?.nombre ?? ""}${cliente?.apellido ? " " + cliente.apellido : ""}, thanks for your purchase!`;
-  const items = cart.slice(0, 10).map((p) => `• ${p.cantidad} × ${p.nombre} = ${fmt(p.cantidad * p.precio_unitario)}`);
-  if (cart.length > 10) items.push(`… and ${cart.length - 10} more item(s)`);
+/** Composición del recibo en INGLÉS (plain text) */
+function composeReceiptMessageEN(payload) {
+  const {
+    clientName,
+    creditNumber,
+    dateStr,
+    pointOfSaleName,
+    items, // [{name, qty, unit, subtotal}]
+    saleTotal,
+    paid,
+    change,
+    prevBalance,
+    toCredit, // new debt from this sale
+    creditLimit,
+    availableBefore,
+    availableAfter,
+  } = payload;
 
-  const lines = [
-    header, "",
-    hello, "",
-    "*Order details:*",
-    ...items,
-    "",
-    `Subtotal: ${fmt(saleTotal)}`,
-    `Paid today (order): ${fmt(paidForSale)}`,
-    payOldDebt > 0 ? `Payment to previous balance: ${fmt(payOldDebt)}` : null,
-    amountToCredit > 0 ? `New credit from this order: ${fmt(amountToCredit)}` : null,
-    "",
-    `*Outstanding balance (before):* ${fmt(deudaAntes)}`,
-    `*Outstanding balance (now):* ${fmt(afterDebt)}`,
-    "",
-    `Credit limit: ${fmt(creditLimit || 0)}`,
-    `Available before: ${fmt(availableBefore || 0)}`,
-    `*Available after:* ${fmt(availableAfter || 0)}`,
-    "",
-    `Point of service: ${vanLabel}`,
-    userName ? `Attended by: ${userName}` : null,
-    saleId ? `Sale ID: ${saleId}` : null,
-    notes ? `Notes: ${notes}` : null,
-    "",
-    "If you have any questions, just reply to this message. Thank you!"
-  ].filter(Boolean);
-
+  const lines = [];
+  lines.push(`${COMPANY_NAME} — Receipt`);
+  lines.push(`Date: ${dateStr}`);
+  if (pointOfSaleName) lines.push(`Point of sale: ${pointOfSaleName}`);
+  if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
+  lines.push(``);
+  lines.push(`Items:`);
+  for (const it of items) {
+    lines.push(`• ${it.name} — ${it.qty} x ${fmt(it.unit)} = ${fmt(it.subtotal)}`);
+  }
+  lines.push(``);
+  lines.push(`Sale total: ${fmt(saleTotal)}`);
+  lines.push(`Paid now:   ${fmt(paid)}`);
+  if (change > 0) lines.push(`Change:      ${fmt(change)}`);
+  lines.push(`Previous balance: ${fmt(prevBalance)}`);
+  if (toCredit > 0) lines.push(`*** Balance due (new): ${fmt(toCredit)} ***`);
+  lines.push(``);
+  if (creditLimit > 0) {
+    lines.push(`Credit limit:       ${fmt(creditLimit)}`);
+    lines.push(`Available before:   ${fmt(availableBefore)}`);
+    lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
+  }
+  lines.push(``);
+  lines.push(`Thank you for your business!`);
+  lines.push(`${COMPANY_NAME}${COMPANY_EMAIL ? ` • ${COMPANY_EMAIL}` : ""}`);
   return lines.join("\n");
 }
 
-function sendWhatsAppMessage(phone, text) {
-  const num = normalizePhoneForWhatsApp(phone);
-  const url = num
-    ? `https://wa.me/${num}?text=${encodeURIComponent(text)}`
-    : `https://wa.me/?text=${encodeURIComponent(text)}`;
-  window.open(url, "_blank", "noopener,noreferrer");
+/** Composición del recibo en HTML (para email bonito) */
+function composeReceiptHtmlEN(payload) {
+  const {
+    clientName,
+    creditNumber,
+    dateStr,
+    pointOfSaleName,
+    items,
+    saleTotal,
+    paid,
+    change,
+    prevBalance,
+    toCredit,
+    creditLimit,
+    availableBefore,
+    availableAfter,
+  } = payload;
+
+  const itemsRows = items.map(
+    it => `
+      <tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;">${it.name}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">${it.qty}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;">${fmt(it.unit)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600;">${fmt(it.subtotal)}</td>
+      </tr>`
+  ).join("");
+
+  const balanceBadge = toCredit > 0
+    ? `<span style="background:#fee2e2;color:#b91c1c;padding:4px 8px;border-radius:999px;font-weight:700;">Balance due: ${fmt(toCredit)}</span>`
+    : `<span style="background:#dcfce7;color:#166534;padding:4px 8px;border-radius:999px;font-weight:700;">No balance due</span>`;
+
+  const availableBadge = creditLimit > 0
+    ? `<span style="background:#dcfce7;color:#166534;padding:4px 8px;border-radius:999px;font-weight:700;">Available now: ${fmt(availableAfter)}</span>`
+    : ``;
+
+  return `<!doctype html>
+  <html>
+    <body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#f6f7fb;padding:24px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;background:linear-gradient(90deg,#2563eb,#1d4ed8);color:#fff;">
+            <div style="font-size:18px;font-weight:800;letter-spacing:.2px;">${COMPANY_NAME}</div>
+            <div style="opacity:.9;margin-top:4px;">Receipt</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 24px;color:#111827;font-size:14px;">
+            <div style="margin-bottom:8px;"><b>Date:</b> ${dateStr}</div>
+            ${pointOfSaleName ? `<div style="margin-bottom:8px;"><b>Point of sale:</b> ${pointOfSaleName}</div>` : ""}
+            ${clientName ? `<div style="margin-bottom:8px;"><b>Customer:</b> ${clientName} <span style="color:#6b7280">(Credit #${creditNumber || "—"})</span></div>` : ""}
+            <div style="margin:12px 0;">${balanceBadge} ${availableBadge}</div>
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #eee;border-radius:8px;overflow:hidden;margin-top:12px;">
+              <thead>
+                <tr style="background:#f9fafb;color:#111827;">
+                  <th style="text-align:left;padding:10px 12px;">Item</th>
+                  <th style="text-align:center;padding:10px 12px;">Qty</th>
+                  <th style="text-align:right;padding:10px 12px;">Unit</th>
+                  <th style="text-align:right;padding:10px 12px;">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>${itemsRows}</tbody>
+            </table>
+
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:16px;">
+              <tr>
+                <td style="padding:6px 0;color:#374151;">Sale total</td>
+                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(saleTotal)}</td>
+              </tr>
+              <tr>
+                <td style="padding:6px 0;color:#374151;">Paid now</td>
+                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(paid)}</td>
+              </tr>
+              ${change > 0 ? `
+              <tr>
+                <td style="padding:6px 0;color:#374151;">Change</td>
+                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(change)}</td>
+              </tr>` : ""}
+              <tr>
+                <td style="padding:6px 0;color:#374151;">Previous balance</td>
+                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(prevBalance)}</td>
+              </tr>
+              ${toCredit > 0 ? `
+              <tr>
+                <td style="padding:6px 0;color:#b91c1c;font-weight:800;">Balance due (new)</td>
+                <td style="padding:6px 0;text-align:right;color:#b91c1c;font-weight:800;">${fmt(toCredit)}</td>
+              </tr>` : ""}
+              ${creditLimit > 0 ? `
+              <tr>
+                <td style="padding:6px 0;color:#374151;">Credit limit</td>
+                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(creditLimit)}</td>
+              </tr>
+              <tr>
+                <td style="padding:6px 0;color:#374151;">Available before</td>
+                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(availableBefore)}</td>
+              </tr>
+              <tr>
+                <td style="padding:6px 0;color:#166534;font-weight:800;">Available now</td>
+                <td style="padding:6px 0;text-align:right;color:#166534;font-weight:800;">${fmt(availableAfter)}</td>
+              </tr>` : ""}
+            </table>
+
+            <div style="margin-top:20px;color:#374151;">
+              Thank you for your business!<br/>
+              <span style="color:#6b7280;">${COMPANY_NAME}${COMPANY_EMAIL ? ` • ${COMPANY_EMAIL}` : ""}</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </body>
+  </html>`;
 }
 
-function sendEmailMessage(email, subject, body) {
-  if (!email) {
-    alert("No client email found.");
-    return;
+/** Envío por SMS (abre app de mensajes; fallback: copia) */
+async function sendSmsIfPossible({ phone, text }) {
+  if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
+  const url = buildSmsUrl(phone, text);
+  if (!url) return { ok: false, reason: "invalid_sms_url" };
+  const w = window.open(url, "_blank");
+  if (!w) {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("SMS text copied. Paste it in your Messages app.");
+      return { ok: true, copied: true };
+    } catch {
+      return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
+    }
   }
-  const url = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  try { window.open(url, "_blank"); } catch { window.location.href = url; }
+  return { ok: true, opened: true };
 }
+
+/** Email:
+ *  - edge: invoca supabase function "send-receipt" (HTML)
+ *  - mailto: abre cliente local (plain text)
+ */
+async function sendEmailSmart({ to, subject, html, text }) {
+  if (!to) return { ok: false, reason: "missing_email" };
+
+  if (EMAIL_MODE === "edge") {
+    try {
+      const { data, error } = await supabase.functions.invoke("send-receipt", {
+        body: { to, subject, html, text, from: COMPANY_EMAIL, company: COMPANY_NAME },
+      });
+      if (error) throw error;
+      return { ok: true, via: "edge", data };
+    } catch (e) {
+      console.warn("Edge email failed, falling back to mailto:", e?.message || e);
+      // fallthrough to mailto
+    }
+  }
+
+  const mailto = buildMailtoUrl(to, subject, text);
+  const w = mailto ? window.open(mailto, "_blank") : null;
+  if (!w && text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("Email body copied. Paste it in your email client.");
+      return { ok: true, via: "mailto-copy" };
+    } catch {
+      return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
+    }
+  }
+  return { ok: true, via: "mailto" };
+}
+
+/** Orquesta el envío tras guardar la venta */
+async function requestAndSendNotifications({ client, payload }) {
+  const hasPhone = !!client?.telefono;
+  const hasEmail = !!client?.email;
+
+  if (!hasPhone && !hasEmail) return;
+
+  const channels = [
+    hasPhone ? "SMS" : null,
+    hasEmail ? "Email" : null
+  ].filter(Boolean).join(" & ");
+
+  const wants = window.confirm(
+    `Send receipt to ${client?.nombre || "customer"} via ${channels}?`
+  );
+  if (!wants) return;
+
+  const text = composeReceiptMessageEN(payload);
+  const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
+  const html = composeReceiptHtmlEN(payload);
+
+  if (hasPhone) {
+    await sendSmsIfPossible({ phone: client.telefono, text });
+  }
+  if (hasEmail) {
+    await sendEmailSmart({ to: client.email, subject, html, text });
+  }
+}
+
+/* ===================================================== */
 
 export default function Sales() {
   const { van } = useVan();
@@ -249,7 +430,7 @@ export default function Sales() {
   const [adjustAmount, setAdjustAmount] = useState("");
   const [adjustNote, setAdjustNote] = useState("Saldo viejo importado");
 
-  /* ---------- Cargar pendientes al entrar ---------- */
+  /* ---------- Cargar pendientes ---------- */
   useEffect(() => {
     setPendingSales(readPendingLS());
   }, []);
@@ -265,7 +446,6 @@ export default function Sales() {
       const fields = ["nombre", "negocio", "telefono", "email"];
       const filters = fields.map((f) => `${f}.ilike.%${clientSearch}%`).join(",");
 
-      // Traemos los clientes
       const { data, error } = await supabase
         .from("clientes_balance")
         .select("*")
@@ -276,7 +456,6 @@ export default function Sales() {
         return;
       }
 
-      // Enriquecemos con saldo real desde la vista CxC
       const ids = data.map((c) => c.id).filter(Boolean);
       if (ids.length === 0) {
         setClients(data.map((c) => ({ ...c, _saldo_real: Number(c.balance || 0) })));
@@ -299,7 +478,7 @@ export default function Sales() {
     loadClients();
   }, [clientSearch]);
 
-  /* ---------- Cargar historial al seleccionar cliente ---------- */
+  /* ---------- Historial al seleccionar cliente ---------- */
   useEffect(() => {
     async function fetchHistory() {
       const id = selectedClient?.id;
@@ -318,7 +497,7 @@ export default function Sales() {
     fetchHistory();
   }, [selectedClient?.id]);
 
-  /* ---------- Traer límite/disponible/saldo desde CxC ---------- */
+  /* ---------- Traer límite/disponible/saldo ---------- */
   useEffect(() => {
     async function fetchCxC() {
       setCxcLimit(null);
@@ -401,7 +580,6 @@ export default function Sales() {
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
 
   const clientBalanceLocal = getClientBalance(selectedClient);
-  // Prioriza el saldo REAL de CxC; si no existe, usa local
   const clientBalance = Number(
     cxcBalance != null && !Number.isNaN(Number(cxcBalance))
       ? cxcBalance
@@ -415,14 +593,11 @@ export default function Sales() {
 
   const clientScore = Number(selectedClient?.score_credito ?? 600);
 
-  // Mostrar panel de crédito si hay historial o saldo actual > 0
   const showCreditPanel = !!selectedClient && (clientHistory.has || clientBalance > 0);
 
-  // Límite y disponible: primero lo que venga de CxC; si no, política local
   const computedLimit = policyLimit(clientScore);
   const creditLimit = showCreditPanel ? Number(cxcLimit ?? computedLimit) : 0;
 
-  // Disponible: prioridad al valor exacto de CxC
   const calculatedAvailable = Math.max(0, creditLimit - clientBalance);
   const creditAvailable = showCreditPanel
     ? Number(
@@ -478,7 +653,6 @@ export default function Sales() {
 
   function handleAddProduct(p) {
     const exists = cart.find((x) => x.producto_id === p.producto_id);
-    // meta para poder recalcular precio al cambiar qty
     const meta = {
       base: Number(p.productos?.precio) || 0,
       pct: Number(p.productos?.descuento_pct) || 0,
@@ -492,7 +666,7 @@ export default function Sales() {
         {
           producto_id: p.producto_id,
           nombre: p.productos?.nombre,
-          _pricing: meta, // meta pricing
+          _pricing: meta,
           precio_unitario: unitPriceFromProduct(meta, qty),
           cantidad: qty,
         },
@@ -544,59 +718,11 @@ export default function Sales() {
     }
   }
 
-  /* ======= helper para enviar recibo tras guardar ======= */
-  function maybeSendReceipt({ saleId, paidForSale, payOldDebt, paymentMap }) {
-    if (!selectedClient) return;
-
-    const msg = composeReceiptMessage({
-      cliente: selectedClient,
-      cart,
-      saleTotal,
-      paidForSale,
-      payOldDebt,
-      amountToCredit,
-      deudaAntes: deudaCliente,
-      creditLimit,
-      availableBefore: creditAvailable,
-      availableAfter: creditAvailableAfter,
-      vanLabel: getVanLabel(van),
-      userName: usuario?.nombre || usuario?.email || "",
-      notes,
-      saleId,
-    });
-
-    const canWA = !!selectedClient?.telefono;
-    const canEmail = !!selectedClient?.email;
-
-    // Ofrece canales disponibles
-    if (canWA && window.confirm("Send receipt via WhatsApp?")) {
-      sendWhatsAppMessage(selectedClient.telefono, msg);
-    }
-    if (canEmail && window.confirm("Send receipt via Email?")) {
-      sendEmailMessage(
-        selectedClient.email,
-        `${COMPANY_NAME} – Purchase receipt`,
-        msg
-      );
-    }
-
-    // Si no hay ningún canal, ofrece copiar al portapapeles
-    if (!canWA && !canEmail) {
-      try {
-        navigator.clipboard.writeText(msg);
-        alert("The receipt was copied to your clipboard.");
-      } catch {
-        // no-op
-      }
-    }
-  }
-
   // ===================== saveSale con RPC + fallback =====================
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
 
-    // Guarda el id de la venta pendiente ACTUAL antes de cualquier reset
     const currentPendingId = window.pendingSaleId;
 
     try {
@@ -643,7 +769,7 @@ export default function Sales() {
         precio_unitario: Number(p.precio_unitario),
       }));
 
-      // -------- PRIMERA OPCIÓN: RPC transaccional ultra-rápido --------
+      // -------- PRIMERA OPCIÓN: RPC --------
       try {
         const { data, error } = await supabase.rpc("ventas_guardar_v3", {
           p_van_id: van.id,
@@ -661,27 +787,47 @@ export default function Sales() {
           p_notas: notes || null,
         });
 
-        if (error) throw error; // si el RPC falló, salta al catch y hacemos fallback
+        if (error) throw error;
 
-        // Limpia la venta pendiente del almacenamiento LOCAL usando el id capturado
+        // Compose payload for notifications (no sale id required)
+        const payload = {
+          clientName: selectedClient?.nombre || "",
+          creditNumber: getCreditNumber(selectedClient),
+          dateStr: new Date().toLocaleString(),
+          pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+          items: cart.map(p => ({
+            name: p.nombre,
+            qty: p.cantidad,
+            unit: p.precio_unitario,
+            subtotal: p.cantidad * p.precio_unitario,
+          })),
+          saleTotal,
+          paid: paidForSale,
+          change,
+          prevBalance: deudaCliente,
+          toCredit: amountToCredit,
+          creditLimit,
+          availableBefore: creditAvailable,
+          availableAfter: creditAvailableAfter,
+        };
+
+        // Limpia pendientes
         const updated = removePendingFromLSById(currentPendingId);
         setPendingSales(updated);
 
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
 
-        // Enviar comprobante (WhatsApp/Email)
-        maybeSendReceipt({ saleId: data?.venta_id, paidForSale, payOldDebt, paymentMap });
+        // Pregunta y envía recibos (SMS/Email)
+        await requestAndSendNotifications({ client: selectedClient, payload });
 
         clearSale();
-        return; // éxito por RPC
+        return;
       } catch (rpcErr) {
         console.warn("RPC ventas_guardar_v3 unavailable or failed. Falling back to legacy flow.", rpcErr?.message || rpcErr);
-        // sigue abajo al fallback
       }
 
       // -------- SEGUNDA OPCIÓN (fallback): flujo legacy --------
       async function fallbackOriginalFlow() {
-        // 1) Crear la venta
         const venta_a_guardar = {
           van_id: van.id,
           usuario_id: usuario.id,
@@ -716,7 +862,6 @@ export default function Sales() {
           .maybeSingle();
         if (saleError) throw saleError;
 
-        // 2) detalle_ventas
         for (let p of cart) {
           await supabase.from("detalle_ventas").insert([
             {
@@ -729,7 +874,6 @@ export default function Sales() {
           ]);
         }
 
-        // 3) actualizar stock
         for (let p of cart) {
           const { data: stockData, error: stockError } = await supabase
             .from("stock_van")
@@ -748,7 +892,6 @@ export default function Sales() {
           }
         }
 
-        // 4) pago a deudas anteriores (si aplica)
         const payOldDebtFB = Math.max(0, paid - Math.min(paid, saleTotal));
         if (payOldDebtFB > 0 && selectedClient?.id) {
           try {
@@ -762,14 +905,34 @@ export default function Sales() {
           } catch (_) {}
         }
 
-        // Limpia la venta pendiente del almacenamiento LOCAL usando el id capturado
+        // Compose payload (idem)
+        const payload = {
+          clientName: selectedClient?.nombre || "",
+          creditNumber: getCreditNumber(selectedClient),
+          dateStr: new Date().toLocaleString(),
+          pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+          items: cart.map(p => ({
+            name: p.nombre,
+            qty: p.cantidad,
+            unit: p.precio_unitario,
+            subtotal: p.cantidad * p.precio_unitario,
+          })),
+          saleTotal,
+          paid: Math.min(paid, saleTotal),
+          change,
+          prevBalance: deudaCliente,
+          toCredit: amountToCredit,
+          creditLimit,
+          availableBefore: creditAvailable,
+          availableAfter: creditAvailableAfter,
+        };
+
         const updated = removePendingFromLSById(currentPendingId);
         setPendingSales(updated);
 
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
 
-        // Enviar comprobante (WhatsApp/Email)
-        maybeSendReceipt({ saleId: saleData?.id, paidForSale: Math.min(paid, saleTotal), payOldDebt: payOldDebtFB, paymentMap });
+        await requestAndSendNotifications({ client: selectedClient, payload });
 
         clearSale();
       }
@@ -790,14 +953,13 @@ export default function Sales() {
     setPayments(sale.payments);
     setNotes(sale.notes);
     setStep(sale.step);
-    window.pendingSaleId = sale.id; // MUY IMPORTANTE: así podremos borrarla al guardar
+    window.pendingSaleId = sale.id;
     setModalPendingSales(false);
   }
 
   function handleDeletePendingSale(id) {
     const updated = removePendingFromLSById(id);
     setPendingSales(updated);
-    // si el usuario borra la misma que está retomando, limpia el puntero
     if (window.pendingSaleId === id) {
       window.pendingSaleId = null;
     }
@@ -887,6 +1049,10 @@ export default function Sales() {
                     <span className="font-mono">{selectedClient.telefono}</span>
                   </div>
                   <div className="flex items-center gap-2">
+                    <span>📧</span>
+                    <span className="font-mono">{selectedClient.email || "—"}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <span>💳</span>
                     <span className="text-xs">Credit #: <span className="font-mono font-semibold">{creditNum}</span></span>
                   </div>
@@ -900,7 +1066,6 @@ export default function Sales() {
                   </div>
                 )}
 
-                {/* Botón oculto para modo migración */}
                 {migrationMode && selectedClient?.id && (
                   <div className="mt-3">
                     <button
@@ -1170,7 +1335,6 @@ export default function Sales() {
                         nombre: p.nombre,
                         precio: p.precio,
                         codigo: p.codigo,
-                        // por si la vista no trae campos nuevos
                         descuento_pct: p.descuento_pct ?? null,
                         bulk_min_qty: p.bulk_min_qty ?? null,
                         bulk_unit_price: p.bulk_unit_price ?? null,
@@ -1651,7 +1815,6 @@ export default function Sales() {
                       alert("Error: " + error.message);
                       return;
                     }
-                    // refresca el panel de crédito con la vista oficial
                     try {
                       const { data } = await supabase
                         .from("v_cxc_cliente_detalle")
