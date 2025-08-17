@@ -1,11 +1,11 @@
 // src/Sales.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
-import BarcodeScanner from "./BarcodeScanner";
 import { useNavigate } from "react-router-dom";
 
+/* ========================= Config & Constantes ========================= */
 const PAYMENT_METHODS = [
   { key: "efectivo", label: "💵 Cash", icon: "💵" },
   { key: "tarjeta", label: "💳 Card", icon: "💳" },
@@ -16,7 +16,6 @@ const PAYMENT_METHODS = [
 const STORAGE_KEY = "pending_sales";
 const SECRET_CODE = "#ajuste2025";
 
-/* --------- Branding / Config --------- */
 const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4Care";
 const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "no-reply@example.com";
 /**
@@ -26,7 +25,7 @@ const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "no-reply@example.
  */
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
-/* --------- Política de límite (alineada con CxC) --------- */
+/* ========================= Helpers de negocio ========================= */
 function policyLimit(score) {
   const s = Number(score ?? 600);
   if (s < 500) return 0;
@@ -46,17 +45,11 @@ function fmt(n) {
   })}`;
 }
 
-/* ---------- helpers de pricing ---------- */
 function r2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
 }
 
-/**
- * Prioridad:
- *  1) bulk override si qty >= bulkMin y hay bulkPrice
- *  2) % descuento (si existe)
- *  3) precio base
- */
+/** Pricing: 1) bulk si qty>=bulkMin; 2) % descuento; 3) base */
 function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
   const q = Number(qty || 0);
   const hasBulk = bulkMin != null && bulkPrice != null && q >= Number(bulkMin);
@@ -70,14 +63,11 @@ function getClientBalance(c) {
   if (!c) return 0;
   return Number(c._saldo_real ?? c.balance ?? c.saldo_total ?? c.saldo ?? 0);
 }
-
 function getCreditNumber(c) {
   return c?.credito_id || c?.id || "—";
 }
 
-/* =========================== */
-/*   MODO "A PRUEBA DE BALAS"  */
-/* =========================== */
+/* =================== Helpers robustos (localStorage/SMS/Email) =================== */
 function safeParseJSON(str, fallback) {
   try {
     const v = JSON.parse(str);
@@ -87,24 +77,20 @@ function safeParseJSON(str, fallback) {
     return fallback;
   }
 }
-
 function readPendingLS() {
   return safeParseJSON(localStorage.getItem(STORAGE_KEY) || "[]", []);
 }
-
 function writePendingLS(arr) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(arr.slice(0, 10)));
   } catch {}
 }
-
 function removePendingFromLSById(id) {
   const cur = readPendingLS();
   const filtered = id ? cur.filter((x) => x.id !== id) : cur;
   writePendingLS(filtered);
   return filtered;
 }
-
 function upsertPendingInLS(newPending) {
   const cur = readPendingLS();
   const filtered = cur.filter((x) => x.id !== newPending.id);
@@ -113,40 +99,28 @@ function upsertPendingInLS(newPending) {
   return next;
 }
 
-/* ===================================================== */
-/* ========== NUEVO: Mensajería (SMS + Email) ========== */
-/* ===================================================== */
-
-/* --- Plataforma --- */
+/* --- Plataforma / SMS / Email --- */
 function isIOS() {
   const ua = navigator.userAgent || navigator.vendor || "";
   return /iPad|iPhone|iPod|Macintosh/.test(ua);
 }
-
-/** Normaliza teléfono a E.164-ish y garantiza el + al inicio. */
 function normalizePhoneE164ish(raw, defaultCountry = "1") {
   const digits = String(raw || "").replace(/\D/g, "");
   if (!digits) return "";
   const withCc = digits.length === 10 ? defaultCountry + digits : digits;
   return withCc.startsWith("+") ? withCc : `+${withCc}`;
 }
-
-/** SMS: iOS usa &body= ; Android usa ?body=  */
 function buildSmsUrl(phone, message) {
   const target = normalizePhoneE164ish(phone, "1");
   if (!target) return null;
   const body = encodeURIComponent(String(message || ""));
-  // iOS (Safari/Messages) tolera &body; Android requiere ?body
   const sep = isIOS() ? "&" : "?";
   return `sms:${target}${sep}body=${body}`;
 }
-
-/** Disparo fiable del intent de SMS (menos bloqueos que window.open). */
 async function sendSmsIfPossible({ phone, text }) {
   if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
   const href = buildSmsUrl(phone, text);
   if (!href) return { ok: false, reason: "invalid_sms_url" };
-
   try {
     const a = document.createElement("a");
     a.href = href;
@@ -166,13 +140,10 @@ async function sendSmsIfPossible({ phone, text }) {
     }
   }
 }
-
-/** Email (mailto o Edge Function) */
 function buildMailtoUrl(to, subject, body) {
   if (!to) return null;
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
-
 async function sendEmailSmart({ to, subject, html, text }) {
   if (!to) return { ok: false, reason: "missing_email" };
 
@@ -184,8 +155,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
       if (error) throw error;
       return { ok: true, via: "edge", data };
     } catch (e) {
-      console.warn("Edge email failed, falling back to mailto:", e?.message || e);
-      // fallthrough → mailto
+      console.warn("Edge email failed, fallback a mailto:", e?.message || e);
     }
   }
 
@@ -210,12 +180,12 @@ function composeReceiptMessageEN(payload) {
     creditNumber,
     dateStr,
     pointOfSaleName,
-    items, // [{name, qty, unit, subtotal}]
+    items,
     saleTotal,
     paid,
     change,
     prevBalance,
-    toCredit, // new debt from this sale
+    toCredit,
     creditLimit,
     availableBefore,
     availableAfter,
@@ -226,29 +196,27 @@ function composeReceiptMessageEN(payload) {
   lines.push(`Date: ${dateStr}`);
   if (pointOfSaleName) lines.push(`Point of sale: ${pointOfSaleName}`);
   if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
-  lines.push(``);
-  lines.push(`Items:`);
+  lines.push("");
+  lines.push("Items:");
   for (const it of items) {
     lines.push(`• ${it.name} — ${it.qty} x ${fmt(it.unit)} = ${fmt(it.subtotal)}`);
   }
-  lines.push(``);
+  lines.push("");
   lines.push(`Sale total: ${fmt(saleTotal)}`);
   lines.push(`Paid now:   ${fmt(paid)}`);
   if (change > 0) lines.push(`Change:      ${fmt(change)}`);
   lines.push(`Previous balance: ${fmt(prevBalance)}`);
   if (toCredit > 0) lines.push(`*** Balance due (new): ${fmt(toCredit)} ***`);
-  lines.push(``);
+  lines.push("");
   if (creditLimit > 0) {
     lines.push(`Credit limit:       ${fmt(creditLimit)}`);
     lines.push(`Available before:   ${fmt(availableBefore)}`);
     lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
   }
-  lines.push(``);
+  lines.push("");
   lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
   return lines.join("\n");
 }
-
-/** Pregunta canal (SMS o Email) y devuelve 'sms' | 'email' | null */
 async function askChannel({ hasPhone, hasEmail }) {
   if (!hasPhone && !hasEmail) return null;
   if (hasPhone && !hasEmail) {
@@ -264,8 +232,6 @@ async function askChannel({ hasPhone, hasEmail }) {
   if (ans === "email" && hasEmail) return "email";
   return null;
 }
-
-/** Orquesta el envío tras guardar la venta (solo 2 opciones: SMS o Email) */
 async function requestAndSendNotifications({ client, payload }) {
   const hasPhone = !!client?.telefono;
   const hasEmail = !!client?.email;
@@ -276,7 +242,7 @@ async function requestAndSendNotifications({ client, payload }) {
 
   const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
   const text = composeReceiptMessageEN(payload);
-  const html = text; // si usas EMAIL_MODE="edge", podrías usar un HTML más bonito
+  const html = text;
 
   if (wants === "sms") {
     await sendSmsIfPossible({ phone: client.telefono, text });
@@ -285,13 +251,13 @@ async function requestAndSendNotifications({ client, payload }) {
   }
 }
 
-/* ===================================================== */
-
+/* ========================= Componente ========================= */
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
 
+  /* ---- Estado base ---- */
   const [clientSearch, setClientSearch] = useState("");
   const [debouncedClientSearch, setDebouncedClientSearch] = useState("");
   const [clientLoading, setClientLoading] = useState(false);
@@ -299,11 +265,10 @@ export default function Sales() {
   const [selectedClient, setSelectedClient] = useState(null);
 
   const [productSearch, setProductSearch] = useState("");
-  const [products, setProducts] = useState([]);
-  const [cart, setCart] = useState([]);
-  const [topProducts, setTopProducts] = useState([]);
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [scanMessage, setScanMessage] = useState("");
+  const [products, setProducts] = useState([]); // top10 filtrados por buscador
+  const [topProducts, setTopProducts] = useState([]); // lista original top10
+  const [productError, setProductError] = useState("");
+  const [cart, setCart] = useState([]); // carrito
   const [notes, setNotes] = useState("");
   const [noProductFound, setNoProductFound] = useState("");
 
@@ -329,13 +294,13 @@ export default function Sales() {
   const [cxcBalance, setCxcBalance] = useState(null);
 
   // ---- Modo Migración (secreto)
+  thet: null;
   const [migrationMode, setMigrationMode] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState("");
-
   const [adjustNote, setAdjustNote] = useState("Saldo viejo importado");
 
-  /* ---------- Debounce del buscador ---------- */
+  /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedClientSearch(clientSearch.trim());
@@ -356,11 +321,8 @@ export default function Sales() {
         setClients([]);
         return;
       }
-
       setClientLoading(true);
-
       try {
-        // OR básico sobre varios campos
         const orParts = [
           `nombre.ilike.%${term}%`,
           `apellido.ilike.%${term}%`,
@@ -376,7 +338,6 @@ export default function Sales() {
           .or(orParts);
 
         if (e1) {
-          // Fallback sin 'apellido' o 'direccion' por si no existen
           const fallbackOr = [
             `nombre.ilike.%${term}%`,
             `negocio.ilike.%${term}%`,
@@ -387,7 +348,6 @@ export default function Sales() {
           baseData = r2.data || [];
         }
 
-        // Si escribió "nombre apellido", intentamos AND
         const tokens = term.split(/\s+/).filter(Boolean);
         let andData = [];
         if (tokens.length >= 2) {
@@ -401,14 +361,12 @@ export default function Sales() {
           andData = dAnd || [];
         }
 
-        // Merge por id
         const byId = new Map();
         for (const x of [...(baseData || []), ...andData]) {
           byId.set(x.id, x);
         }
         const merged = Array.from(byId.values());
 
-        // Enriquecer con saldo real
         const ids = merged.map((c) => c.id).filter(Boolean);
         let enriched = merged;
         if (ids.length > 0) {
@@ -481,103 +439,208 @@ export default function Sales() {
     fetchCxC();
   }, [selectedClient?.id]);
 
-  /* ---------- PRODUCTOS (van) ---------- */
-  useEffect(() => {
-    async function loadProducts() {
-      setNoProductFound("");
-      if (!van) return;
-      const { data, error } = await supabase
-        .from("stock_van")
-        .select(`
-          id, producto_id, cantidad,
-          productos ( nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price )
-        `)
-        .eq("van_id", van.id);
-
-      if (error) {
-        setProducts([]);
-        return;
-      }
-      const filter = productSearch.trim().toLowerCase();
-      const filtered = (data || []).filter(
-        (row) =>
-          row.cantidad > 0 &&
-          (((row.productos?.nombre || "").toLowerCase().includes(filter) ||
-            (row.productos?.codigo || "").toLowerCase().includes(filter) ||
-            (row.productos?.marca || "").toLowerCase().includes(filter)))
-      );
-      setProducts(filtered);
-      if (productSearch.trim() && filtered.length === 0) {
-        setNoProductFound(productSearch.trim());
-      }
-    }
-    loadProducts();
-  }, [van, productSearch]);
-
-  /* ---------- TOP productos ---------- */
+  /* ---------- TOP productos: triple fallback (RPC → join → 2 pasos) ---------- */
   useEffect(() => {
     async function loadTopProducts() {
-      if (!van) return;
+      setProductError("");
+      setTopProducts([]);
+      if (!van?.id) return;
+
+      // 1) RPC original
       try {
         const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
-          van_id_param: van.id,
+          van_id_param: van.id, // asegúrate que el nombre del parámetro coincide con tu RPC
         });
-        setTopProducts(error ? [] : data || []);
-      } catch {
+        if (error) throw error;
+
+        if (Array.isArray(data) && data.length > 0) {
+          const top10 = data.slice(0, 10).map((p) => ({
+            producto_id: p.producto_id,
+            cantidad: p.cantidad_disponible ?? p.cantidad ?? 0,
+            productos: {
+              nombre: p.nombre,
+              precio: p.precio,
+              codigo: p.codigo,
+              descuento_pct: p.descuento_pct ?? null,
+              bulk_min_qty: p.bulk_min_qty ?? null,
+              bulk_unit_price: p.bulk_unit_price ?? null,
+              marca: p.marca ?? "",
+            },
+          }));
+          setTopProducts(top10);
+          return;
+        }
+        console.warn("RPC productos_mas_vendidos_por_van devolvió vacío.");
+      } catch (err) {
+        console.warn(
+          "RPC productos_mas_vendidos_por_van falló. Fallback a join.",
+          err?.message || err
+        );
+      }
+
+      // 2) Fallback: join directo stock_van -> productos (requiere relación)
+      try {
+        const { data, error } = await supabase
+          .from("stock_van")
+          .select(
+            "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca)"
+          )
+          .eq("van_id", van.id)
+          .gt("cantidad", 0)
+          .order("cantidad", { ascending: false })
+          .limit(10);
+
+        if (error) throw error;
+
+        if (Array.isArray(data) && data.length > 0) {
+          const rows = data.map((row) => ({
+            producto_id: row.producto_id,
+            cantidad: row.cantidad ?? 0,
+            productos: {
+              nombre: row.productos?.nombre,
+              precio: row.productos?.precio,
+              codigo: row.productos?.codigo,
+              descuento_pct: row.productos?.descuento_pct ?? null,
+              bulk_min_qty: row.productos?.bulk_min_qty ?? null,
+              bulk_unit_price: row.productos?.bulk_unit_price ?? null,
+              marca: row.productos?.marca ?? "",
+            },
+          }));
+          setTopProducts(rows);
+          return;
+        }
+        console.warn("Join stock_van→productos devolvió vacío. Fallback a 2 pasos.");
+      } catch (err) {
+        console.warn("Join stock_van→productos falló. Fallback a 2 pasos.", err?.message || err);
+      }
+
+      // 3) Fallback: 2 pasos (stock luego productos .in())
+      try {
+        const { data: stock, error: e1 } = await supabase
+          .from("stock_van")
+          .select("producto_id,cantidad")
+          .eq("van_id", van.id)
+          .gt("cantidad", 0)
+          .order("cantidad", { ascending: false })
+          .limit(10);
+        if (e1) throw e1;
+
+        const ids = (stock || []).map((r) => r.producto_id);
+        if (ids.length === 0) {
+          setTopProducts([]);
+          setProductError("No hay stock para esta van.");
+          return;
+        }
+
+        const { data: prods, error: e2 } = await supabase
+          .from("productos")
+          .select("id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca")
+          .in("id", ids);
+        if (e2) throw e2;
+
+        const map = new Map((prods || []).map((p) => [p.id, p]));
+        const rows = (stock || []).map((s) => {
+          const p = map.get(s.producto_id) || {};
+          return {
+            producto_id: s.producto_id,
+            cantidad: s.cantidad ?? 0,
+            productos: {
+              nombre: p.nombre,
+              precio: p.precio,
+              codigo: p.codigo,
+              descuento_pct: p.descuento_pct ?? null,
+              bulk_min_qty: p.bulk_min_qty ?? null,
+              bulk_unit_price: p.bulk_unit_price ?? null,
+              marca: p.marca ?? "",
+            },
+          };
+        });
+
+        setTopProducts(rows);
+      } catch (err) {
+        console.error("Todos los fallbacks fallaron:", err?.message || err);
         setTopProducts([]);
+        setProductError("No se pudieron cargar los productos (revisa permisos/RPC/relaciones).");
       }
     }
-    loadTopProducts();
-  }, [van]);
 
-  /* ---------- Totales & crédito ---------- */
-  const saleTotal = cart.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
+    loadTopProducts();
+  }, [van?.id]);
+
+  /* ---------- Filtro de buscador sobre los top 10 ---------- */
+  useEffect(() => {
+    const filter = productSearch.trim().toLowerCase();
+    const base = topProducts;
+    const filtered = !filter
+      ? base
+      : base.filter((row) => {
+          const n = (row.productos?.nombre || "").toLowerCase();
+          const c = (row.productos?.codigo || "").toLowerCase();
+          const m = (row.productos?.marca || "").toLowerCase();
+          return n.includes(filter) || c.includes(filter) || m.includes(filter);
+        });
+    setProducts(filtered);
+    setNoProductFound(productSearch.trim() && filtered.length === 0 ? productSearch.trim() : "");
+  }, [productSearch, topProducts]);
+
+  /* ---------- Totales & crédito (SIN crear créditos nuevos) ---------- */
+  const cartSafe = Array.isArray(cart) ? cart : [];
+
+  const saleTotal = cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
 
-  const clientBalanceLocal = getClientBalance(selectedClient);
-  const clientBalance = Number(
+  // Saldo previo (positivo = debe; negativo = crédito a favor existente)
+  const balanceBeforeRaw =
     cxcBalance != null && !Number.isNaN(Number(cxcBalance))
-      ? cxcBalance
-      : clientBalanceLocal
-  );
-  const deudaCliente = Math.max(0, clientBalance);
+      ? Number(cxcBalance)
+      : Number(getClientBalance(selectedClient));
+  const balanceBefore = Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0;
 
-  const totalAPagar = saleTotal + deudaCliente;
-  const totalPagadoReal = Math.min(paid, totalAPagar);
-  const amountToCredit = Math.max(0, totalAPagar - totalPagadoReal);
+  const existingCredit = Math.max(0, -balanceBefore);
+  const oldDebt = Math.max(0, balanceBefore);
 
+  const saleAfterApplyingCredit = Math.max(0, saleTotal - existingCredit);
+  const totalAPagar = oldDebt + saleAfterApplyingCredit;
+
+  // Descomposición del pago: primero venta, luego deuda; exceso = change
+  const paidForSale = Math.min(paid, saleAfterApplyingCredit);
+  const paidToOldDebt = Math.min(oldDebt, Math.max(0, paid - paidForSale));
+  const paidApplied = paidForSale + paidToOldDebt;
+
+  const change = Math.max(0, paid - totalAPagar); // devolución
+  const mostrarAdvertencia = paid > totalAPagar;
+
+  // Saldo posterior
+  const balanceAfter = balanceBefore + saleTotal - paidApplied;
+
+  // Nueva deuda de ESTA venta
+  const amountToCredit = Math.max(0, balanceAfter) - Math.max(0, balanceBefore);
+
+  // Panel crédito
   const clientScore = Number(selectedClient?.score_credito ?? 600);
-
-  const showCreditPanel = !!selectedClient && (clientHistory.has || clientBalance > 0);
+  const showCreditPanel = !!selectedClient && (clientHistory.has || balanceBefore !== 0);
 
   const computedLimit = policyLimit(clientScore);
   const creditLimit = showCreditPanel ? Number(cxcLimit ?? computedLimit) : 0;
 
-  const calculatedAvailable = Math.max(0, creditLimit - clientBalance);
   const creditAvailable = showCreditPanel
     ? Number(
         cxcAvailable != null && !Number.isNaN(Number(cxcAvailable))
           ? cxcAvailable
-          : calculatedAvailable
+          : Math.max(0, creditLimit - Math.max(0, balanceBefore))
       )
     : 0;
 
-  const creditAvailableAfter = Math.max(
-    0,
-    creditLimit - (clientBalance + amountToCredit)
-  );
-
-  const change = paid > totalAPagar ? paid - totalAPagar : 0;
-  const mostrarAdvertencia = paid > totalAPagar;
+  const creditAvailableAfter = Math.max(0, creditLimit - Math.max(0, balanceAfter));
 
   /* ---------- Guardar venta pendiente local ---------- */
   useEffect(() => {
-    if ((cart.length > 0 || selectedClient) && step < 4) {
+    if ((cartSafe.length > 0 || selectedClient) && step < 4) {
       const id = window.pendingSaleId || (window.pendingSaleId = Date.now());
       const newPending = {
         id,
         client: selectedClient,
-        cart,
+        cart: cartSafe,
         payments,
         notes,
         step,
@@ -586,7 +649,7 @@ export default function Sales() {
       const updated = upsertPendingInLS(newPending);
       setPendingSales(updated);
     }
-  }, [selectedClient, cart, payments, notes, step]);
+  }, [selectedClient, cartSafe, payments, notes, step]);
 
   function clearSale() {
     setClientSearch("");
@@ -596,8 +659,6 @@ export default function Sales() {
     setProducts([]);
     setCart([]);
     setTopProducts([]);
-    setScannerOpen(false);
-    setScanMessage("");
     setNotes("");
     setPayments([{ forma: "efectivo", monto: 0 }]);
     setPaymentError("");
@@ -606,8 +667,9 @@ export default function Sales() {
     window.pendingSaleId = null;
   }
 
+  /* ======================== Handlers de productos ======================== */
   function handleAddProduct(p) {
-    const exists = cart.find((x) => x.producto_id === p.producto_id);
+    const exists = cartSafe.find((x) => x.producto_id === p.producto_id);
     const meta = {
       base: Number(p.productos?.precio) || 0,
       pct: Number(p.productos?.descuento_pct) || 0,
@@ -616,8 +678,8 @@ export default function Sales() {
     };
     if (!exists) {
       const qty = 1;
-      setCart([
-        ...cart,
+      setCart((prev) => [
+        ...prev,
         {
           producto_id: p.producto_id,
           nombre: p.productos?.nombre,
@@ -629,7 +691,6 @@ export default function Sales() {
     }
     setProductSearch("");
   }
-
   function handleEditQuantity(producto_id, cantidad) {
     setCart((cart) =>
       cart.map((item) => {
@@ -644,36 +705,11 @@ export default function Sales() {
       })
     );
   }
-
   function handleRemoveProduct(producto_id) {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
 
-  async function handleBarcodeScanned(code) {
-    setScannerOpen(false);
-    if (!code) {
-      setScanMessage("⚠️ Could not read the code or the camera is not available.");
-      return;
-    }
-    setScanMessage("");
-    let found = products.find((p) => p.productos?.codigo?.toString().trim() === code.trim());
-    if (!found && van) {
-      const { data } = await supabase
-        .from("stock_van")
-        .select("id, producto_id, cantidad, productos(nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price)")
-        .eq("van_id", van.id)
-        .eq("productos.codigo", code);
-      if (data && data.length > 0) found = data[0];
-    }
-    if (found && found.cantidad > 0) {
-      handleAddProduct(found);
-      setScanMessage(`✅ Product "${found.productos?.nombre}" added!`);
-    } else {
-      setScanMessage("❌ Product not found or out of stock in this van.");
-    }
-  }
-
-  // ===================== saveSale con RPC + fallback =====================
+  /* ===================== Guardar venta (RPC + fallback) ===================== */
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
@@ -684,7 +720,7 @@ export default function Sales() {
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!van?.id) throw new Error("Select a VAN first.");
       if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
-      if (cart.length === 0) throw new Error("Add at least one product.");
+      if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
       if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
         setPaymentError(
@@ -704,10 +740,24 @@ export default function Sales() {
               : `\n(No credit history yet)\n\n`) +
             `Do you want to continue?`
         );
-        if (!ok) { setSaving(false); return; }
+        if (!ok) {
+          setSaving(false);
+          return;
+        }
       }
 
-      // Mapa de pagos y montos
+      // Recalcular con la misma lógica anti-créditos
+      const existingCreditNow = Math.max(0, -balanceBefore);
+      const oldDebtNow = Math.max(0, balanceBefore);
+      const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
+      const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+
+      const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
+      const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
+      const paidAppliedNow = paidForSaleNow + payOldDebtNow;
+      const changeNow = Math.max(0, paid - totalAPagarNow);
+
+      // Mapa de pagos declarado como ingresado (la RPC suele aceptar el bruto y prorratear)
       const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
       payments.forEach((p) => {
         if (paymentMap[p.forma] !== undefined) {
@@ -715,10 +765,7 @@ export default function Sales() {
         }
       });
 
-      const paidForSale = Math.min(paid, saleTotal);
-      const payOldDebt = Math.max(0, paid - paidForSale);
-
-      const items = cart.map((p) => ({
+      const items = cartSafe.map((p) => ({
         producto_id: p.producto_id,
         cantidad: Number(p.cantidad),
         precio_unitario: Number(p.precio_unitario),
@@ -731,57 +778,57 @@ export default function Sales() {
           p_usuario_id: usuario.id,
           p_cliente_id: selectedClient?.id || null,
           p_productos: items,
-          p_pago_total: Number(paidForSale),
+          p_pago_total: Number(paidForSaleNow), // solo venta
           p_pago_map: {
             efectivo: Number(paymentMap.efectivo || 0),
             tarjeta: Number(paymentMap.tarjeta || 0),
             transferencia: Number(paymentMap.transferencia || 0),
             otro: Number(paymentMap.otro || 0),
           },
-          p_pago_deuda: Number(payOldDebt || 0),
+          p_pago_deuda: Number(payOldDebtNow), // solo hasta la deuda
           p_notas: notes || null,
         });
 
         if (error) throw error;
 
-        // Compose payload para notificaciones
         const payload = {
           clientName: selectedClient?.nombre || "",
           creditNumber: getCreditNumber(selectedClient),
           dateStr: new Date().toLocaleString(),
           pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-          items: cart.map(p => ({
+          items: cartSafe.map((p) => ({
             name: p.nombre,
             qty: p.cantidad,
             unit: p.precio_unitario,
             subtotal: p.cantidad * p.precio_unitario,
           })),
           saleTotal,
-          paid: paidForSale,
-          change,
-          prevBalance: deudaCliente,
+          paid: paidAppliedNow, // lo realmente aplicado (venta+deuda)
+          change: changeNow,
+          prevBalance: Math.max(0, balanceBefore),
           toCredit: amountToCredit,
           creditLimit,
           availableBefore: creditAvailable,
           availableAfter: creditAvailableAfter,
         };
 
-        // Limpia pendientes
         const updated = removePendingFromLSById(currentPendingId);
         setPendingSales(updated);
 
-        alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
+        alert("✅ Sale saved successfully" + (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : ""));
 
-        // Enviar recibo (solo SMS o Email, a elección)
         await requestAndSendNotifications({ client: selectedClient, payload });
 
         clearSale();
         return;
       } catch (rpcErr) {
-        console.warn("RPC ventas_guardar_v3 unavailable or failed. Falling back to legacy flow.", rpcErr?.message || rpcErr);
+        console.warn(
+          "RPC ventas_guardar_v3 unavailable or failed. Falling back to legacy flow.",
+          rpcErr?.message || rpcErr
+        );
       }
 
-      // -------- SEGUNDA OPCIÓN (fallback): flujo legacy --------
+      // -------- SEGUNDA OPCIÓN: flujo legacy --------
       async function fallbackOriginalFlow() {
         const venta_a_guardar = {
           van_id: van.id,
@@ -789,13 +836,12 @@ export default function Sales() {
           cliente_id: selectedClient?.id || null,
           total: saleTotal,
           total_venta: saleTotal,
-          total_pagado: Math.min(paid, saleTotal),
+          total_pagado: paidForSaleNow, // solo lo aplicado a la venta
           estado_pago:
-            Math.min(paid, saleTotal) >= saleTotal ? "pagado" :
-            Math.min(paid, saleTotal) > 0 ? "parcial" : "pendiente",
+            paidForSaleNow >= saleTotal ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente",
           forma_pago: payments.map((p) => p.forma).join(","),
           metodo_pago: payments.map((p) => `${p.forma}:${p.monto}`).join(","),
-          productos: cart.map((p) => ({
+          productos: cartSafe.map((p) => ({
             producto_id: p.producto_id,
             nombre: p.nombre,
             cantidad: p.cantidad,
@@ -803,11 +849,11 @@ export default function Sales() {
             subtotal: p.cantidad * p.precio_unitario,
           })),
           notas: notes,
-          pago: Math.min(paid, saleTotal),
-          pago_efectivo: Math.min(paymentMap.efectivo, Math.min(paid, saleTotal)),
-          pago_tarjeta: Math.min(paymentMap.tarjeta, Math.min(paid, saleTotal)),
-          pago_transferencia: Math.min(paymentMap.transferencia, Math.min(paid, saleTotal)),
-          pago_otro: Math.min(paymentMap.otro, Math.min(paid, saleTotal)),
+          pago: paidForSaleNow,
+          pago_efectivo: Math.min(paymentMap.efectivo, paidForSaleNow),
+          pago_tarjeta: Math.min(paymentMap.tarjeta, paidForSaleNow),
+          pago_transferencia: Math.min(paymentMap.transferencia, paidForSaleNow),
+          pago_otro: Math.min(paymentMap.otro, paidForSaleNow),
         };
 
         const { data: saleData, error: saleError } = await supabase
@@ -817,7 +863,7 @@ export default function Sales() {
           .maybeSingle();
         if (saleError) throw saleError;
 
-        for (let p of cart) {
+        for (let p of cartSafe) {
           await supabase.from("detalle_ventas").insert([
             {
               venta_id: saleData.id,
@@ -829,7 +875,7 @@ export default function Sales() {
           ]);
         }
 
-        for (let p of cart) {
+        for (let p of cartSafe) {
           const { data: stockData, error: stockError } = await supabase
             .from("stock_van")
             .select("cantidad")
@@ -847,12 +893,12 @@ export default function Sales() {
           }
         }
 
-        const payOldDebtFB = Math.max(0, paid - Math.min(paid, saleTotal));
-        if (payOldDebtFB > 0 && selectedClient?.id) {
+        // Aplica pago a deuda solo hasta su monto
+        if (payOldDebtNow > 0 && selectedClient?.id) {
           try {
             const { error: rpcError } = await supabase.rpc("cxc_registrar_pago", {
               p_cliente_id: selectedClient.id,
-              p_monto: payOldDebtFB,
+              p_monto: payOldDebtNow,
               p_metodo: "mix",
               p_van_id: van.id,
             });
@@ -865,16 +911,16 @@ export default function Sales() {
           creditNumber: getCreditNumber(selectedClient),
           dateStr: new Date().toLocaleString(),
           pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-          items: cart.map(p => ({
+          items: cartSafe.map((p) => ({
             name: p.nombre,
             qty: p.cantidad,
             unit: p.precio_unitario,
             subtotal: p.cantidad * p.precio_unitario,
           })),
           saleTotal,
-          paid: Math.min(paid, saleTotal),
-          change,
-          prevBalance: deudaCliente,
+          paid: paidAppliedNow,
+          change: changeNow,
+          prevBalance: Math.max(0, balanceBefore),
           toCredit: amountToCredit,
           creditLimit,
           availableBefore: creditAvailable,
@@ -884,7 +930,7 @@ export default function Sales() {
         const updated = removePendingFromLSById(currentPendingId);
         setPendingSales(updated);
 
-        alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
+        alert("✅ Sale saved successfully" + (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : ""));
 
         await requestAndSendNotifications({ client: selectedClient, payload });
 
@@ -899,8 +945,8 @@ export default function Sales() {
       setSaving(false);
     }
   }
-  // ===================== fin saveSale =====================
 
+  /* ======================== Pendientes (modal) ======================== */
   function handleSelectPendingSale(sale) {
     setSelectedClient(sale.client);
     setCart(sale.cart);
@@ -910,7 +956,6 @@ export default function Sales() {
     window.pendingSaleId = sale.id;
     setModalPendingSales(false);
   }
-
   function handleDeletePendingSale(id) {
     const updated = removePendingFromLSById(id);
     setPendingSales(updated);
@@ -919,23 +964,23 @@ export default function Sales() {
     }
   }
 
-  /* ---------- UI: Paso 1 Cliente ---------- */
+  /* ======================== UI Helpers ======================== */
   function renderAddress(address) {
     if (!address) return "No address";
     if (typeof address === "string") {
-      try { address = JSON.parse(address); } catch {}
+      try {
+        address = JSON.parse(address);
+      } catch {}
     }
     if (typeof address === "object") {
-      return [
-        address.calle,
-        address.ciudad,
-        address.estado,
-        address.zip
-      ].filter(Boolean).join(", ");
+      return [address.calle, address.ciudad, address.estado, address.zip]
+        .filter(Boolean)
+        .join(", ");
     }
     return address;
   }
 
+  /* ======================== Paso 1: Cliente ======================== */
   function renderStepClient() {
     const creditNum = getCreditNumber(selectedClient);
 
@@ -983,7 +1028,7 @@ export default function Sales() {
                     </span>
                   )}
                 </div>
-                
+
                 <div className="space-y-2 text-sm text-gray-700">
                   {selectedClient.direccion && (
                     <div className="flex items-start gap-2">
@@ -1001,7 +1046,9 @@ export default function Sales() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span>💳</span>
-                    <span className="text-xs">Credit #: <span className="font-mono font-semibold">{creditNum}</span></span>
+                    <span className="text-xs">
+                      Credit #: <span className="font-mono font-semibold">{creditNum}</span>
+                    </span>
                   </div>
                 </div>
 
@@ -1017,7 +1064,10 @@ export default function Sales() {
                   <div className="mt-3">
                     <button
                       type="button"
-                      onClick={() => { setAdjustAmount(""); setShowAdjustModal(true); }}
+                      onClick={() => {
+                        setAdjustAmount("");
+                        setShowAdjustModal(true);
+                      }}
                       className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded"
                     >
                       🛠️ Set Opening Balance
@@ -1030,26 +1080,66 @@ export default function Sales() {
                 <div className="bg-white rounded-lg border shadow-sm p-4 min-w-0 lg:min-w-[280px]">
                   <div className="grid grid-cols-1 gap-3">
                     <div>
-                      <div className="text-xs text-gray-500 uppercase font-semibold">Credit Limit</div>
-                      <div className="text-xl font-bold text-gray-900">{fmt(creditLimit)}</div>
+                      <div className="text-xs text-gray-500 uppercase font-semibold">
+                        Credit Limit
+                      </div>
+                      <div className="text-xl font-bold text-gray-900">
+                        {fmt(creditLimit)}
+                      </div>
                     </div>
 
                     <div>
-                      <div className="text-xs text-gray-500 uppercase font-semibold">Available</div>
-                      <div className="text-xl font-bold text-emerald-600">{fmt(creditAvailable)}</div>
+                      <div className="text-xs text-gray-500 uppercase font-semibold">
+                        Available
+                      </div>
+                      <div className="text-xl font-bold text-emerald-600">
+                        {fmt(creditAvailable)}
+                      </div>
                     </div>
 
                     <div>
-                      <div className="text-xs text-gray-500 uppercase font-semibold">After Sale</div>
-                      <div className={`text-xl font-bold ${creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      <div className="text-xs text-gray-500 uppercase font-semibold">
+                        After Sale
+                      </div>
+                      <div
+                        className={`text-xl font-bold ${
+                          creditAvailableAfter >= 0
+                            ? "text-emerald-600"
+                            : "text-red-600"
+                        }`}
+                      >
                         {fmt(creditAvailableAfter)}
                       </div>
                     </div>
 
-                    {clientBalance > 0 && (
-                      <div className="bg-red-50 rounded-lg p-2 border border-red-200">
-                        <div className="text-xs text-red-700 font-semibold">Outstanding Balance</div>
-                        <div className="text-lg font-bold text-red-700">{fmt(clientBalance)}</div>
+                    {balanceBefore !== 0 && (
+                      <div
+                        className={`rounded-lg p-2 border ${
+                          balanceBefore > 0
+                            ? "bg-red-50 border-red-200"
+                            : "bg-green-50 border-green-200"
+                        }`}
+                      >
+                        <div
+                          className={`text-xs font-semibold ${
+                            balanceBefore > 0
+                              ? "text-red-700"
+                              : "text-green-700"
+                          }`}
+                        >
+                          {balanceBefore > 0
+                            ? "Outstanding Balance"
+                            : "Credit in Favor"}
+                        </div>
+                        <div
+                          className={`text-lg font-bold ${
+                            balanceBefore > 0
+                              ? "text-red-700"
+                              : "text-green-700"
+                          }`}
+                        >
+                          {fmt(Math.abs(balanceBefore))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1093,13 +1183,15 @@ export default function Sales() {
                 </div>
               )}
             </div>
-            
+
             <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2">
-              {clients.length === 0 && debouncedClientSearch.length > 2 && !clientLoading && (
-                <div className="text-gray-400 text-center py-8">
-                  🔍 No results found
-                </div>
-              )}
+              {clients.length === 0 &&
+                debouncedClientSearch.length > 2 &&
+                !clientLoading && (
+                  <div className="text-gray-400 text-center py-8">
+                    🔍 No results found
+                  </div>
+                )}
               {clients.map((c) => (
                 <div
                   key={c.id}
@@ -1132,16 +1224,12 @@ export default function Sales() {
                 </div>
               ))}
             </div>
-            
+
             <div className="space-y-3">
               <button
-                onClick={() => navigate("/clientes/nuevo", { replace: false })}
-                className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg py-4 font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-              >
-                ✨ Quick Create Client
-              </button>
-              <button
-                onClick={() => setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })}
+                onClick={() =>
+                  setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })
+                }
                 className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg py-4 font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
               >
                 ⚡ Quick Sale (No Client)
@@ -1163,70 +1251,66 @@ export default function Sales() {
     );
   }
 
-  /* ---------- UI: Paso 2 Productos ---------- */
+  /* ======================== Paso 2: Productos ======================== */
   function renderStepProducts() {
     return (
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
           🛒 Add Products
         </h2>
-        
-        <div className="flex gap-2">
+
+        <div className="flex">
           <input
             type="text"
-            placeholder="🔍 Search product by name or code..."
+            placeholder="🔍 Search within top 10 best sellers..."
             className="flex-1 border-2 border-gray-300 rounded-lg p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
             value={productSearch}
             onChange={(e) => setProductSearch(e.target.value)}
           />
-          <button
-            className="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-3 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
-            type="button"
-            onClick={() => setScannerOpen(true)}
-          >
-            📷 Scan
-          </button>
         </div>
 
         {noProductFound && (
-          <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex items-start justify-between gap-3">
             <span className="text-yellow-800">
-              ❌ No product found for "<b>{noProductFound}</b>"
+              ❌ No product found for "<b>{noProductFound}</b>" in top sellers
             </span>
             <button
               className="bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200 whitespace-nowrap"
-              onClick={() => navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)}
+              onClick={() =>
+                navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)
+              }
             >
               ✨ Create Product
             </button>
           </div>
         )}
 
-        {scanMessage && (
-          <div className="text-center font-semibold text-blue-700 bg-blue-50 py-3 px-4 rounded-lg border border-blue-200">
-            {scanMessage}
-          </div>
-        )}
-
+        {/* Lista: SOLO top 10 más vendidos */}
         <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2">
-          {products.length === 0 && !noProductFound && (
-            <div className="text-gray-400 text-center py-8">
-              📦 No products available for this van or search
+          {productError && (
+            <div className="text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+              🚫 {productError}
             </div>
           )}
+
+          {products.length === 0 && !productError && !noProductFound && (
+            <div className="text-gray-400 text-center py-8">
+              📦 No top sellers available for this van
+            </div>
+          )}
+
           {products.map((p) => {
-            const inCart = cart.find((x) => x.producto_id === p.producto_id);
+            const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
             return (
-              <div 
-                key={p.producto_id} 
+              <div
+                key={p.producto_id}
                 className={`bg-white p-4 rounded-lg border-2 transition-all duration-200 shadow-sm ${
-                  inCart ? 'border-green-300 bg-green-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+                  inCart
+                    ? "border-green-300 bg-green-50"
+                    : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"
                 }`}
               >
-                <div 
-                  onClick={() => handleAddProduct(p)} 
-                  className="flex-1 cursor-pointer"
-                >
+                <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
                   <div className="font-semibold text-gray-900 flex items-center gap-2">
                     📦 {p.productos?.nombre}
                     {inCart && <span className="text-green-600">✅</span>}
@@ -1234,15 +1318,19 @@ export default function Sales() {
                   <div className="text-sm text-gray-600 mt-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <span>🔢 Code: {p.productos?.codigo || "N/A"}</span>
                     <span>📊 Stock: {p.cantidad}</span>
-                    <span className="font-semibold text-blue-600">💰 {fmt(p.productos?.precio)}</span>
+                    <span className="font-semibold text-blue-600">
+                      💰 {fmt(p.productos?.precio)}
+                    </span>
                   </div>
                 </div>
-                
+
                 {inCart && (
                   <div className="flex items-center justify-center gap-3 mt-3 pt-3 border-t border-green-200">
                     <button
                       className="bg-red-500 text-white w-10 h-10 rounded-full font-bold hover:bg-red-600 transition-colors shadow-md"
-                      onClick={() => handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))}
+                      onClick={() =>
+                        handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))
+                      }
                     >
                       −
                     </button>
@@ -1251,16 +1339,26 @@ export default function Sales() {
                       min={1}
                       max={p.cantidad}
                       value={inCart.cantidad}
-                      onChange={(e) => handleEditQuantity(p.producto_id, Math.max(1, Math.min(Number(e.target.value), p.cantidad)))}
+                      onChange={(e) =>
+                        handleEditQuantity(
+                          p.producto_id,
+                          Math.max(1, Math.min(Number(e.target.value), p.cantidad))
+                        )
+                      }
                       className="w-16 h-10 border-2 border-gray-300 rounded-lg text-center font-bold text-lg focus:border-blue-500 outline-none"
                     />
                     <button
                       className="bg-green-500 text-white w-10 h-10 rounded-full font-bold hover:bg-green-600 transition-colors shadow-md"
-                      onClick={() => handleEditQuantity(p.producto_id, Math.min(p.cantidad, inCart.cantidad + 1))}
+                      onClick={() =>
+                        handleEditQuantity(
+                          p.producto_id,
+                          Math.min(p.cantidad, inCart.cantidad + 1)
+                        )
+                      }
                     >
                       +
                     </button>
-                    <button 
+                    <button
                       className="bg-gray-500 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-gray-600 transition-colors shadow-md"
                       onClick={() => handleRemoveProduct(p.producto_id)}
                     >
@@ -1273,71 +1371,37 @@ export default function Sales() {
           })}
         </div>
 
-        {topProducts.length > 0 && (
-          <div className="bg-gradient-to-r from-yellow-50 to-amber-50 rounded-lg border-2 border-yellow-300 p-4 shadow-sm">
-            <div className="font-bold text-yellow-800 mb-3 flex items-center gap-2">
-              🔥 Top Selling Products
-            </div>
-            <div className="space-y-2">
-              {topProducts.map((p) => (
-                <div
-                  key={p.producto_id}
-                  className="bg-white p-3 rounded-lg cursor-pointer hover:bg-yellow-100 border border-yellow-200 transition-all duration-200 shadow-sm"
-                  onClick={() =>
-                    handleAddProduct({
-                      producto_id: p.producto_id,
-                      productos: {
-                        nombre: p.nombre,
-                        precio: p.precio,
-                        codigo: p.codigo,
-                        descuento_pct: p.descuento_pct ?? null,
-                        bulk_min_qty: p.bulk_min_qty ?? null,
-                        bulk_unit_price: p.bulk_unit_price ?? null,
-                      },
-                      cantidad: p.cantidad_disponible,
-                    })
-                  }
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="font-semibold text-gray-900">📦 {p.nombre}</div>
-                    <div className="text-sm text-gray-600">
-                      📊 {p.cantidad_disponible} · 💰 {fmt(p.precio)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {cart.length > 0 && (
-          <div className="bg-white rounded-xl border-2 border-blue-200 p-4 shadow-lg">
+        {/* Carrito destacado */}
+        {cartSafe.length > 0 && (
+          <div className="rounded-xl p-4 shadow-lg ring-2 ring-blue-300 bg-white border border-blue-200">
             <div className="flex items-center justify-between mb-4">
               <div className="font-bold text-gray-900 flex items-center gap-2">
-                🛒 Shopping Cart
+                <span className="inline-flex items-center gap-2 bg-blue-50 text-blue-800 px-3 py-1 rounded-full border border-blue-200">
+                  🛒 Shopping Cart
+                </span>
                 <span className="bg-blue-100 text-blue-800 text-sm px-2 py-1 rounded-full">
-                  {cart.length} items
+                  {cartSafe.length} items
                 </span>
               </div>
-              <div className="text-2xl font-bold text-blue-800">
-                {fmt(saleTotal)}
-              </div>
+              <div className="text-2xl font-bold text-blue-800">{fmt(saleTotal)}</div>
             </div>
-            
+
             <div className="space-y-3">
-              {cart.map((p) => (
+              {cartSafe.map((p) => (
                 <div key={p.producto_id} className="bg-gray-50 p-4 rounded-lg border">
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <div className="flex-1">
                       <div className="text-sm text-gray-600">
                         {fmt(p.precio_unitario)} each
-                        {p._pricing?.bulkMin && p._pricing?.bulkPrice && p.cantidad >= p._pricing.bulkMin && (
-                          <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
-                        )}
+                        {p._pricing?.bulkMin &&
+                          p._pricing?.bulkPrice &&
+                          p.cantidad >= p._pricing.bulkMin && (
+                            <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
+                          )}
                       </div>
                       <div className="font-semibold text-gray-900">{p.nombre}</div>
                     </div>
-                    
+
                     <div className="flex items-center justify-between sm:justify-end gap-3">
                       <div className="flex items-center gap-2">
                         <button
@@ -1354,13 +1418,13 @@ export default function Sales() {
                           +
                         </button>
                       </div>
-                      
+
                       <div className="text-right">
                         <div className="font-bold text-lg text-blue-800">
                           {fmt(p.cantidad * p.precio_unitario)}
                         </div>
-                        <button 
-                          className="text-xs text-red-600 hover:text-red-800 transition-colors" 
+                        <button
+                          className="text-xs text-red-600 hover:text-red-800 transition-colors"
                           onClick={() => handleRemoveProduct(p.producto_id)}
                         >
                           🗑️ Remove
@@ -1386,55 +1450,64 @@ export default function Sales() {
 
         {selectedClient && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
-              <div className="text-xs text-red-600 uppercase font-semibold">Outstanding Balance</div>
-              <div className="text-xl font-bold text-red-700">{fmt(clientBalance)}</div>
-            </div>
+            {balanceBefore >= 0 ? (
+              <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
+                <div className="text-xs text-red-600 uppercase font-semibold">
+                  Outstanding Balance
+                </div>
+                <div className="text-xl font-bold text-red-700">{fmt(balanceBefore)}</div>
+              </div>
+            ) : (
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
+                <div className="text-xs text-green-600 uppercase font-semibold">Credit in Favor</div>
+                <div className="text-xl font-bold text-green-700">{fmt(Math.abs(balanceBefore))}</div>
+              </div>
+            )}
+
             <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border-2 border-orange-200 rounded-lg p-4 text-center">
               <div className="text-xs text-orange-600 uppercase font-semibold">Will Go to Credit</div>
-              <div className={`text-xl font-bold ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
+              <div
+                className={`text-xl font-bold ${
+                  amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"
+                }`}
+              >
                 {fmt(amountToCredit)}
               </div>
             </div>
-            {showCreditPanel ? (
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
-                <div className="text-xs text-green-600 uppercase font-semibold">Available After</div>
-                <div className={`text-xl font-bold ${creditAvailableAfter >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-                  {fmt(creditAvailableAfter)}
-                </div>
+
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
+              <div className="text-xs text-green-600 uppercase font-semibold">Available After</div>
+              <div
+                className={`text-xl font-bold ${
+                  creditAvailableAfter >= 0 ? "text-emerald-700" : "text-red-700"
+                }`}
+              >
+                {fmt(creditAvailableAfter)}
               </div>
-            ) : (
-              <div className="bg-gray-100 border-2 border-gray-200 rounded-lg p-4 flex items-center justify-center">
-                <span className="text-xs text-gray-600 text-center">
-                  ✨ New customer<br/>Credit not displayed
-                </span>
-              </div>
-            )}
+            </div>
           </div>
         )}
 
-        <div className="flex justify-between pt-4 gap-3">
-          <button 
-            className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md"
+        <div className="flex flex-col sm:flex-row gap-3 pt-4">
+          <button
+            className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
             onClick={() => setStep(1)}
           >
             ← Back
           </button>
           <button
-            className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200 flex-1 sm:flex-none"
-            disabled={cart.length === 0}
+            className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2"
+            disabled={cartSafe.length === 0}
             onClick={() => setStep(3)}
           >
             Next Step →
           </button>
         </div>
-
-        {scannerOpen && <BarcodeScanner onResult={handleBarcodeScanned} onClose={() => setScannerOpen(false)} />}
       </div>
     );
   }
 
-  /* ---------- UI: Paso 3 Pago ---------- */
+  /* ======================== Paso 3: Pago ======================== */
   function renderStepPayment() {
     function handleChangePayment(index, field, value) {
       setPayments((arr) => arr.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
@@ -1463,20 +1536,26 @@ export default function Sales() {
               #{getCreditNumber(selectedClient)}
             </div>
           </div>
-          
+
           <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
             <div className="text-xs text-green-600 uppercase font-semibold">Sale Total</div>
             <div className="text-lg font-bold text-green-700">{fmt(saleTotal)}</div>
           </div>
-          
+
           <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
             <div className="text-xs text-red-600 uppercase font-semibold">Outstanding</div>
-            <div className="text-lg font-bold text-red-700">{fmt(deudaCliente)}</div>
+            <div className="text-lg font-bold text-red-700">
+              {fmt(Math.max(0, balanceBefore))}
+            </div>
           </div>
-          
+
           <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border-2 border-orange-200 rounded-lg p-4 text-center">
             <div className="text-xs text-orange-600 uppercase font-semibold">To Credit</div>
-            <div className={`text-lg font-bold ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
+            <div
+              className={`text-lg font-bold ${
+                amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"
+              }`}
+            >
               {fmt(amountToCredit)}
             </div>
           </div>
@@ -1488,14 +1567,14 @@ export default function Sales() {
             <div className="font-bold text-gray-900 flex items-center gap-2">
               💳 Payment Methods
             </div>
-            <button 
+            <button
               className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
               onClick={handleAddPayment}
             >
               ➕ Add Method
             </button>
           </div>
-          
+
           <div className="space-y-3">
             {payments.map((p, i) => (
               <div className="bg-gray-50 rounded-lg p-4 border" key={i}>
@@ -1507,11 +1586,13 @@ export default function Sales() {
                       className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
                     >
                       {PAYMENT_METHODS.map((fp) => (
-                        <option key={fp.key} value={fp.key}>{fp.label}</option>
+                        <option key={fp.key} value={fp.key}>
+                          {fp.label}
+                        </option>
                       ))}
                     </select>
                   </div>
-                  
+
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-bold">$</span>
                     <input
@@ -1523,9 +1604,9 @@ export default function Sales() {
                       className="w-full sm:w-32 border-2 border-gray-300 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none transition-all"
                       placeholder="0.00"
                     />
-                    
+
                     {payments.length > 1 && (
-                      <button 
+                      <button
                         className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
                         onClick={() => handleRemovePayment(i)}
                       >
@@ -1551,14 +1632,14 @@ export default function Sales() {
               <div className="text-2xl font-bold text-green-700">{fmt(paid)}</div>
             </div>
           </div>
-          
+
           {change > 0 && (
             <div className="mt-4 bg-green-100 border border-green-300 rounded-lg p-3 text-center">
               <div className="text-sm text-green-700 font-semibold">💰 Change to Give</div>
               <div className="text-xl font-bold text-green-800">{fmt(change)}</div>
             </div>
           )}
-          
+
           {mostrarAdvertencia && (
             <div className="mt-4 bg-orange-100 border border-orange-300 rounded-lg p-3 text-center">
               <div className="text-orange-700 font-semibold">
@@ -1579,23 +1660,26 @@ export default function Sales() {
           </div>
         )}
 
-        <div className="flex col sm:flex-row gap-3 pt-4">
-          <button 
+        <div className="flex flex-col sm:flex-row gap-3 pt-4">
+          <button
             className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
-            onClick={() => setStep(2)} 
+            onClick={() => setStep(2)}
             disabled={saving}
           >
             ← Back
           </button>
           <button
             className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
-            disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
+            disabled={
+              saving ||
+              (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)
+            }
             onClick={saveSale}
           >
             {saving ? "💾 Saving..." : "💾 Save Sale"}
           </button>
         </div>
-        
+
         {paymentError && (
           <div className="bg-red-100 border border-red-300 rounded-lg p-4 text-red-700 font-semibold text-center">
             {paymentError}
@@ -1605,27 +1689,24 @@ export default function Sales() {
     );
   }
 
+  /* ======================== Modal: ventas pendientes ======================== */
   function renderPendingSalesModal() {
     return (
       <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden">
           <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between">
-            <h3 className="font-bold text-lg flex items-center gap-2">
-              📂 Pending Sales
-            </h3>
-            <button 
+            <h3 className="font-bold text-lg flex items-center gap-2">📂 Pending Sales</h3>
+            <button
               className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
               onClick={() => setModalPendingSales(false)}
             >
               ✖️
             </button>
           </div>
-          
+
           <div className="p-4 overflow-y-auto max-h-[60vh]">
             {pendingSales.length === 0 ? (
-              <div className="text-gray-400 text-center py-8">
-                📭 No pending sales
-              </div>
+              <div className="text-gray-400 text-center py-8">📭 No pending sales</div>
             ) : (
               <div className="space-y-3">
                 {pendingSales.map((v) => (
@@ -1636,17 +1717,18 @@ export default function Sales() {
                           👤 {v.client?.nombre || "Quick sale"}
                         </div>
                         <div className="text-sm text-gray-600 mt-1">
-                          📦 {v.cart.length} products · 📅 {new Date(v.date).toLocaleDateString()} {new Date(v.date).toLocaleTimeString()}
+                          📦 {v.cart.length} products · 📅 {new Date(v.date).toLocaleDateString()}{" "}
+                          {new Date(v.date).toLocaleTimeString()}
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button 
+                        <button
                           className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
                           onClick={() => handleSelectPendingSale(v)}
                         >
                           ▶️ Resume
                         </button>
-                        <button 
+                        <button
                           className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
                           onClick={() => handleDeletePendingSale(v.id)}
                         >
@@ -1664,10 +1746,10 @@ export default function Sales() {
     );
   }
 
+  /* ======================== Render raíz ======================== */
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-4xl mx-auto">
-        {/* Main content — SIN barra superior de progreso */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
           {modalPendingSales && renderPendingSalesModal()}
           {step === 1 && renderStepClient()}
@@ -1676,15 +1758,11 @@ export default function Sales() {
         </div>
 
         {/* Fixed bottom summary for mobile */}
-        {cart.length > 0 && step === 2 && (
+        {cartSafe.length > 0 && step === 2 && (
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 p-4 shadow-lg sm:hidden">
             <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-600">
-                🛒 {cart.length} items
-              </div>
-              <div className="text-xl font-bold text-blue-800">
-                {fmt(saleTotal)}
-              </div>
+              <div className="text-sm text-gray-600">🛒 {cartSafe.length} items</div>
+              <div className="text-xl font-bold text-blue-800">{fmt(saleTotal)}</div>
             </div>
           </div>
         )}
@@ -1696,7 +1774,12 @@ export default function Sales() {
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
             <div className="bg-purple-600 text-white px-4 py-3 flex items-center justify-between">
               <div className="font-semibold">Set Opening Balance</div>
-              <button onClick={() => setShowAdjustModal(false)} className="opacity-80 hover:opacity-100">✖️</button>
+              <button
+                onClick={() => setShowAdjustModal(false)}
+                className="opacity-80 hover:opacity-100"
+              >
+                ✖️
+              </button>
             </div>
 
             <div className="p-4 space-y-3">
@@ -1743,7 +1826,7 @@ export default function Sales() {
                       p_cliente_id: selectedClient.id,
                       p_monto: amt,
                       p_usuario_id: usuario?.id,
-                      p_nota: adjustNote || null
+                      p_nota: adjustNote || null,
                     });
                     if (error) {
                       alert("Error: " + error.message);

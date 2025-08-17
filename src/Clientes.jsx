@@ -7,9 +7,9 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  Search, Plus, Edit, Trash2, DollarSign, FileText, User, Phone, Mail,
-  MapPin, Building2, Calendar, TrendingUp, Download, X, Check, ChevronsLeft,
-  ChevronLeft, ChevronRight, ChevronsRight
+  Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
+  MapPin, Building2, Calendar, TrendingUp, X, Check, ChevronsLeft,
+  ChevronLeft, ChevronRight, ChevronsRight, BarChart3
 } from "lucide-react";
 
 /* -------------------- Utilidades -------------------- */
@@ -97,14 +97,11 @@ export default function Clientes() {
 
   /* -------------------- Totales globales (cards) -------------------- */
   async function cargarTotales() {
-    // Total de clientes
     const { count: totalClients } = await supabase.from("clientes").select("*", { count: "exact", head: true });
-    // Clientes con deuda
     const { count: withDebt } = await supabase
       .from("v_cxc_cliente_detalle")
       .select("*", { count: "exact", head: true })
       .gt("saldo", 0);
-    // Suma de saldos (simple y segura)
     const { data: saldosRows } = await supabase.from("v_cxc_cliente_detalle").select("saldo");
     const totalOutstanding = (saldosRows || []).reduce((s, r) => s + Number(r.saldo || 0), 0);
 
@@ -124,7 +121,6 @@ export default function Clientes() {
     const from = (p - 1) * ps;
     const to = from + ps - 1;
 
-    // Filtro server-side (nombre/email/negocio/telefono)
     let query = supabase
       .from("clientes_balance")
       .select("*", { count: "exact" })
@@ -172,7 +168,6 @@ export default function Clientes() {
     setIsLoading(false);
   };
 
-  // Primera carga y cada que cambia pageSize / debounced / page
   useEffect(() => {
     fetchPage({ p: 1, ps: pageSize, q: debounced });
     setPage(1);
@@ -182,13 +177,11 @@ export default function Clientes() {
     fetchPage({ p: page, ps: pageSize, q: debounced });
   }, [page]);
 
-  // Totales globales (una vez y tras pagos)
   useEffect(() => { cargarTotales(); }, []);
 
-  // Abrir modal de nuevo cliente también por ruta
   useEffect(() => {
     if (location.pathname.endsWith("/clientes/nuevo")) {
-      abrirNuevoCliente(); // abre modal inmediatamente
+      abrirNuevoCliente();
     } else {
       setMostrarEdicion(false);
     }
@@ -210,20 +203,25 @@ export default function Clientes() {
     setMensaje("");
   }
 
-  function handleEditCliente() {
+  // --- acepta cliente opcional ---
+  function handleEditCliente(cArg) {
+    const c = cArg || clienteSeleccionado;
+    if (!c) return;
+
     let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
-    const c = clienteSeleccionado;
-    if (typeof c.direccion === "string" && c.direccion) {
-      try { direccion = JSON.parse(c.direccion); } catch {}
-    }
-    if (typeof c.direccion === "object" && c.direccion !== null) {
+    const raw = c.direccion;
+
+    if (typeof raw === "string" && raw) {
+      try { direccion = JSON.parse(raw); } catch {}
+    } else if (typeof raw === "object" && raw !== null) {
       direccion = {
-        calle: c.direccion.calle || "",
-        ciudad: c.direccion.ciudad || "",
-        estado: c.direccion.estado || "",
-        zip: c.direccion.zip || "",
+        calle: raw.calle || "",
+        ciudad: raw.ciudad || "",
+        estado: raw.estado || "",
+        zip: raw.zip || "",
       };
     }
+
     setForm({
       nombre: c.nombre || "",
       telefono: c.telefono || "",
@@ -233,7 +231,9 @@ export default function Clientes() {
     });
     setEstadoInput(direccion.estado || "");
     setEstadoOpciones(estadosUSA);
+    setClienteSeleccionado(c);
     setMostrarEdicion(true);
+    setMensaje("");
   }
 
   function handleChange(e) {
@@ -277,7 +277,7 @@ export default function Clientes() {
       else {
         setMensaje("Client saved successfully");
         setMostrarEdicion(false);
-        navigate("/clientes");        // vuelve a la ruta base
+        navigate("/clientes");
         await fetchPage({ p: 1, ps: pageSize, q: debounced });
         await cargarTotales();
       }
@@ -305,7 +305,6 @@ export default function Clientes() {
       setMensaje("Client deleted");
       setMostrarStats(false);
       setClienteSeleccionado(null);
-      // recarga manteniendo página si quedan filas
       const lastPage = Math.max(1, Math.ceil((totalRows - 1) / pageSize));
       const newPage = Math.min(page, lastPage);
       setPage(newPage);
@@ -315,7 +314,6 @@ export default function Clientes() {
     setIsLoading(false);
   }
 
-  // Cargar ventas/pagos y CxC del cliente cuando abres stats/edición/abono
   useEffect(() => {
     async function cargarResumen() {
       if (!clienteSeleccionado) {
@@ -346,14 +344,7 @@ export default function Clientes() {
 
   const pageCount = useMemo(() => Math.max(1, Math.ceil(totalRows / pageSize)), [totalRows, pageSize]);
 
-  // Totales de la página actual para mostrar en cada fila (saldo real)
-  const totalBalancePage = clientes.reduce((sum, c) => {
-    const cx = cxcByClient[c.id];
-    const saldo = cx ? cx.saldo : (c.balance || 0);
-    return sum + (saldo || 0);
-  }, 0);
-
-  /* -------------------- PDF helper (igual) -------------------- */
+  /* -------------------- PDF helper -------------------- */
   const comprasPorMes = useMemo(() => {
     const m = {};
     (resumen.ventas || []).forEach(v => {
@@ -458,7 +449,7 @@ export default function Clientes() {
             </button>
           </div>
 
-          {/* Stats Cards (globales) */}
+          {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
             <div className="bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
               <div className="flex items-center justify-between">
@@ -607,6 +598,7 @@ export default function Clientes() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
+                            {/* SOLO Payment aquí. Edit fue removido de la tabla */}
                             <button
                               className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors duration-150"
                               onClick={async (e) => {
@@ -960,6 +952,15 @@ function ClienteStatsModal({
             <X size={24} />
           </button>
 
+          {/* Botón Edit SOLO dentro del modal */}
+          <button
+            className="absolute right-16 top-4 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1"
+            onClick={() => onEdit && onEdit()}
+          >
+            <Edit size={16} />
+            Edit
+          </button>
+
           <div className="flex items-start gap-4">
             <div className="bg-white/20 rounded-full p-3">
               <User size={24} />
@@ -1051,7 +1052,7 @@ function ClienteStatsModal({
           {/* Chart */}
           <div className="bg-gray-50 rounded-xl p-6 mb-6">
             <h4 className="font-bold mb-4 text-gray-800 flex items-center gap-2">
-              <BarChart size={20} />
+              <BarChart3 size={20} />
               Sales Trend (Last 12 Months)
             </h4>
             <ResponsiveContainer width="100%" height={250}>
@@ -1145,7 +1146,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
-  // Resumen (visual sin cambios)
   const comprasPorMes = {};
   let totalLifetime = 0;
   (resumen.ventas || []).forEach(v => {
@@ -1181,7 +1181,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       return;
     }
 
-    // Pago real con RPC (aplica FIFO y baja el saldo)
     const { error } = await supabase.rpc("cxc_registrar_pago", {
       p_cliente_id: cliente.id,
       p_monto: Math.min(montoNum, saldoActual),
@@ -1196,7 +1195,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       return;
     }
 
-    // Refrescar saldo en modal y lista + tarjetas
     const info = await fetchCxc(cliente.id);
     if (info && setResumen) {
       setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
@@ -1210,7 +1208,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-40 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
-        {/* Header */}
         <div className="p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white">
           <h3 className="text-xl font-bold flex items-center gap-2">
             <DollarSign size={20} />
@@ -1220,7 +1217,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
         </div>
 
         <form onSubmit={guardarAbono} className="p-6">
-          {/* Current Balance */}
           <div className="bg-gray-50 rounded-xl p-4 mb-6">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-gray-700">Current Balance:</span>
@@ -1230,7 +1226,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
           </div>
 
-          {/* Form */}
           <div className="space-y-4 mb-6">
             <div>
               <label className="font-semibold text-gray-700 mb-2 block">Payment Amount</label>
@@ -1260,7 +1255,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
           </div>
 
-          {/* Messages */}
           {mensaje && (
             <div className={`mb-4 p-4 rounded-xl ${
               mensaje.includes("Error") || mensaje.includes("invalid")
@@ -1274,7 +1268,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
           )}
 
-          {/* Summary */}
           <div className="bg-gray-50 rounded-xl p-4 mb-6">
             <h4 className="font-bold mb-3 text-gray-800 flex items-center gap-2">
               <TrendingUp size={16} />
@@ -1323,7 +1316,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
           </div>
 
-          {/* Actions */}
           <div className="flex gap-3">
             <button
               type="submit"
