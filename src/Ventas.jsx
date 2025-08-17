@@ -119,31 +119,103 @@ function upsertPendingInLS(newPending) {
 /* ========== NUEVO: Mensajería (SMS + Email) ========== */
 /* ===================================================== */
 
-/** Normaliza teléfono a solo dígitos, añade lada país si vienen 10 dígitos.
- * Ajusta "defaultCountry" a tu realidad (RD/US=1). */
+/* --- Plataforma --- */
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent);
+}
+function isAndroid() {
+  return /Android/i.test(navigator.userAgent);
+}
+
+/** Normaliza teléfono a E.164-ish y garantiza el + al inicio. */
 function normalizePhoneE164ish(raw, defaultCountry = "1") {
   const digits = String(raw || "").replace(/\D/g, "");
   if (!digits) return "";
-  if (digits.length === 10) return defaultCountry + digits;
-  return digits; // si ya trae lada, se queda
+  const withCc = digits.length === 10 ? defaultCountry + digits : digits;
+  return withCc.startsWith("+") ? withCc : `+${withCc}`;
 }
 
-/** SMS: enlace estándar (iOS/Android). No usar + en el body. */
+/** SMS: iOS usa &body= ; Android usa ?body=  */
 function buildSmsUrl(phone, message) {
-  const digits = normalizePhoneE164ish(phone, "1");
-  if (!digits) return null;
-  // iOS: sms:+1809...?&body=...  | Android acepta 'sms:1809...'
-  const target = /^\+/.test(digits) ? digits : `+${digits}`;
-  return `sms:${encodeURIComponent(target)}&body=${encodeURIComponent(message)}`;
+  const target = normalizePhoneE164ish(phone, "1");
+  if (!target) return null;
+  const body = encodeURIComponent(String(message || ""));
+
+  if (isIOS()) {
+    // iOS (Mensajes): sms:+1809...&body=...
+    return `sms:${target}&body=${body}`;
+  }
+  // Android (Mensajes/Chrome): sms:+1809...?body=...
+  return `sms:${target}?body=${body}`;
+  // Alternativa ultra-compatible en Android viejito:
+  // return `smsto:${target}?body=${body}`;
 }
 
-/** Email (mailto fallback): sin HTML, pero gratis y universal */
+/** Disparo fiable del intent de SMS (menos bloqueos que window.open). */
+async function sendSmsIfPossible({ phone, text }) {
+  if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
+  const href = buildSmsUrl(phone, text);
+  if (!href) return { ok: false, reason: "invalid_sms_url" };
+
+  try {
+    const a = document.createElement("a");
+    a.href = href;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return { ok: true, opened: true };
+  } catch {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("SMS preparado. Abre tu app de Mensajes y pega el texto.");
+      return { ok: true, copied: true };
+    } catch {
+      return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
+    }
+  }
+}
+
+/** Email (mailto o Edge Function) */
 function buildMailtoUrl(to, subject, body) {
   if (!to) return null;
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-/** Composición del recibo en INGLÉS (plain text) */
+async function sendEmailSmart({ to, subject, html, text }) {
+  if (!to) return { ok: false, reason: "missing_email" };
+
+  if (EMAIL_MODE === "edge") {
+    try {
+      const { data, error } = await supabase.functions.invoke("send-receipt", {
+        body: { to, subject, html, text, from: COMPANY_EMAIL, company: COMPANY_NAME },
+      });
+      if (error) throw error;
+      return { ok: true, via: "edge", data };
+    } catch (e) {
+      console.warn("Edge email failed, falling back to mailto:", e?.message || e);
+      // fallthrough → mailto
+    }
+  }
+
+  const mailto = buildMailtoUrl(to, subject, text);
+  const w = mailto ? window.open(mailto, "_blank") : null;
+  if (!w && text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("Email copiado. Abre tu correo y pega el contenido.");
+      return { ok: true, via: "mailto-copy" };
+    } catch {
+      return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
+    }
+  }
+  return { ok: true, via: "mailto" };
+}
+
+/* ======= Composición de recibos ======= */
+
+/** Recibo en TEXTO para SMS largo */
 function composeReceiptMessageEN(payload) {
   const {
     clientName,
@@ -184,12 +256,11 @@ function composeReceiptMessageEN(payload) {
     lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
   }
   lines.push(``);
-  lines.push(`Thank you for your business!`);
-  lines.push(`${COMPANY_NAME}${COMPANY_EMAIL ? ` • ${COMPANY_EMAIL}` : ""}`);
+  lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
   return lines.join("\n");
 }
 
-/** Composición del recibo en HTML (para email bonito) */
+/** Recibo en HTML bonito (para email / página) */
 function composeReceiptHtmlEN(payload) {
   const {
     clientName,
@@ -302,59 +373,58 @@ function composeReceiptHtmlEN(payload) {
   </html>`;
 }
 
-/** Envío por SMS (abre app de mensajes; fallback: copia) */
-async function sendSmsIfPossible({ phone, text }) {
-  if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
-  const url = buildSmsUrl(phone, text);
-  if (!url) return { ok: false, reason: "invalid_sms_url" };
-  const w = window.open(url, "_blank");
-  if (!w) {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert("SMS text copied. Paste it in your Messages app.");
-      return { ok: true, copied: true };
-    } catch {
-      return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
-    }
-  }
-  return { ok: true, opened: true };
+/** SMS corto + enlace (si se pudo subir HTML) */
+function composeShortSms(payload, url) {
+  const { clientName, saleTotal, paid, toCredit } = payload;
+  const parts = [
+    `${COMPANY_NAME}: thanks ${clientName || ""}`.trim(),
+    `Total ${fmt(saleTotal)}, Paid ${fmt(paid)}`,
+  ];
+  if (toCredit > 0) parts.push(`Due ${fmt(toCredit)}`);
+  if (url) parts.push(`Receipt: ${url}`);
+  parts.push(`Reply STOP to opt out.`);
+  return parts.join(" • ");
 }
 
-/** Email:
- *  - edge: invoca supabase function "send-receipt" (HTML)
- *  - mailto: abre cliente local (plain text)
- */
-async function sendEmailSmart({ to, subject, html, text }) {
-  if (!to) return { ok: false, reason: "missing_email" };
+/** Sube HTML del recibo a Supabase Storage y devuelve URL pública. */
+async function uploadReceiptHtmlAndGetUrl(html) {
+  try {
+    const random =
+      (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) +
+      "-" +
+      Date.now();
+    const path = `receipts/${random}.html`;
 
-  if (EMAIL_MODE === "edge") {
-    try {
-      const { data, error } = await supabase.functions.invoke("send-receipt", {
-        body: { to, subject, html, text, from: COMPANY_EMAIL, company: COMPANY_NAME },
+    // Asegúrate de tener un bucket público llamado 'receipts'
+    const { error: upErr } = await supabase.storage
+      .from("receipts")
+      .upload(path, new Blob([html], { type: "text/html;charset=utf-8" }), {
+        upsert: false,
+        contentType: "text/html",
       });
-      if (error) throw error;
-      return { ok: true, via: "edge", data };
-    } catch (e) {
-      console.warn("Edge email failed, falling back to mailto:", e?.message || e);
-      // fallthrough to mailto
-    }
-  }
 
-  const mailto = buildMailtoUrl(to, subject, text);
-  const w = mailto ? window.open(mailto, "_blank") : null;
-  if (!w && text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert("Email body copied. Paste it in your email client.");
-      return { ok: true, via: "mailto-copy" };
-    } catch {
-      return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
-    }
+    if (upErr) throw upErr;
+
+    const { data: pub } = supabase.storage.from("receipts").getPublicUrl(path);
+    return pub?.publicUrl || null;
+  } catch (e) {
+    console.warn("Upload receipt failed:", e?.message || e);
+    return null;
   }
-  return { ok: true, via: "mailto" };
 }
 
-/** Orquesta el envío tras guardar la venta */
+/** Pregunta modo de envío (2 opciones) y devuelve 'short' | 'long' */
+async function askSendMode() {
+  const msg =
+    "¿Cómo quieres enviar el recibo?\n\n" +
+    "1) SMS corto + enlace al recibo (recomendado) y Email HTML\n" +
+    "2) SMS con recibo completo en texto\n\n" +
+    "Escribe 1 o 2:";
+  const r = window.prompt(msg, "1");
+  return r === "2" ? "long" : "short";
+}
+
+/** Orquesta el envío tras guardar la venta, con 2 opciones */
 async function requestAndSendNotifications({ client, payload }) {
   const hasPhone = !!client?.telefono;
   const hasEmail = !!client?.email;
@@ -367,19 +437,43 @@ async function requestAndSendNotifications({ client, payload }) {
   ].filter(Boolean).join(" & ");
 
   const wants = window.confirm(
-    `Send receipt to ${client?.nombre || "customer"} via ${channels}?`
+    `Enviar recibo a ${client?.nombre || "cliente"} por ${channels}?`
   );
   if (!wants) return;
 
-  const text = composeReceiptMessageEN(payload);
   const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
   const html = composeReceiptHtmlEN(payload);
+  const longText = composeReceiptMessageEN(payload);
 
+  const mode = await askSendMode();
+
+  // Opción 1: SMS corto + enlace (y Email HTML)
+  if (mode === "short") {
+    let url = null;
+    if (hasPhone) {
+      // Intentamos subir HTML y compartir enlace
+      url = await uploadReceiptHtmlAndGetUrl(html);
+    }
+    const shortSms = composeShortSms(payload, url);
+
+    if (hasPhone) {
+      await sendSmsIfPossible({ phone: client.telefono, text: shortSms });
+    }
+    if (hasEmail) {
+      await sendEmailSmart({ to: client.email, subject, html, text: longText });
+    }
+    return;
+  }
+
+  // Opción 2: SMS largo (y preguntar si también email)
   if (hasPhone) {
-    await sendSmsIfPossible({ phone: client.telefono, text });
+    await sendSmsIfPossible({ phone: client.telefono, text: longText });
   }
   if (hasEmail) {
-    await sendEmailSmart({ to: client.email, subject, html, text });
+    const alsoEmail = window.confirm("¿También enviar el recibo por Email?");
+    if (alsoEmail) {
+      await sendEmailSmart({ to: client.email, subject, html, text: longText });
+    }
   }
 }
 
@@ -789,7 +883,7 @@ export default function Sales() {
 
         if (error) throw error;
 
-        // Compose payload for notifications (no sale id required)
+        // Compose payload para notificaciones
         const payload = {
           clientName: selectedClient?.nombre || "",
           creditNumber: getCreditNumber(selectedClient),
@@ -817,7 +911,7 @@ export default function Sales() {
 
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
 
-        // Pregunta y envía recibos (SMS/Email)
+        // Enviar recibos (SMS/Email) con opciones
         await requestAndSendNotifications({ client: selectedClient, payload });
 
         clearSale();
@@ -905,7 +999,6 @@ export default function Sales() {
           } catch (_) {}
         }
 
-        // Compose payload (idem)
         const payload = {
           clientName: selectedClient?.nombre || "",
           creditNumber: getCreditNumber(selectedClient),
@@ -1374,13 +1467,13 @@ export default function Sales() {
                 <div key={p.producto_id} className="bg-gray-50 p-4 rounded-lg border">
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <div className="flex-1">
-                      <div className="font-semibold text-gray-900">{p.nombre}</div>
                       <div className="text-sm text-gray-600">
                         {fmt(p.precio_unitario)} each
                         {p._pricing?.bulkMin && p._pricing?.bulkPrice && p.cantidad >= p._pricing.bulkMin && (
                           <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
                         )}
                       </div>
+                      <div className="font-semibold text-gray-900">{p.nombre}</div>
                     </div>
                     
                     <div className="flex items-center justify-between sm:justify-end gap-3">
