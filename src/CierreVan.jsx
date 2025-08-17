@@ -32,79 +32,55 @@ const NO_CLIENTE = "Quick sale / No client";
 /* ======================= HELPERS ======================= */
 function displayName(cli) {
   if (!cli) return "";
+  // Si existiera apellido en algún lado lo tomaría; si no, ignora
   const nombre = [cli.nombre, cli.apellido].filter(Boolean).join(" ").trim();
   return cli.negocio ? `${nombre || cli.id} (${cli.negocio})` : (nombre || cli.id);
 }
 
 /**
- * Devuelve un diccionario donde la MISMA ficha de cliente queda accesible por:
- *   - dic[cliente.id]
- *   - dic[cliente.credito_id]  (para cuando las ventas/pagos traen el crédito en vez del id)
+ * Diccionario de clientes accesible por id
+ * Busca en clientes y clientes_balance SOLO por id
  */
-async function fetchClientesDic(idsOrCreditIds) {
-  const keys = Array.from(new Set((idsOrCreditIds || []).filter(Boolean)));
+async function fetchClientesDic(ids) {
+  const keys = Array.from(new Set((ids || []).filter(Boolean)));
   const dic = {};
   if (!keys.length) return dic;
 
-  // 1) Buscar por id en "clientes"
+  // 1) clientes
   try {
     const { data } = await supabase
       .from("clientes")
-      .select("id, nombre, apellido, negocio, credito_id")
+      .select("id, nombre, negocio")
       .in("id", keys);
-    for (const c of data || []) {
-      dic[c.id] = c;
-      if (c.credito_id) dic[c.credito_id] = c;
-    }
+    for (const c of data || []) dic[c.id] = c;
   } catch {}
 
-  // Faltantes tras #1
-  const missingAfter1 = keys.filter(k => !dic[k]);
+  // ¿quiénes faltan?
+  const missing = keys.filter(k => !dic[k]);
 
-  // 2) Buscar por id en "clientes_balance"
-  if (missingAfter1.length) {
+  // 2) clientes_balance (fallback)
+  if (missing.length) {
     try {
       const { data } = await supabase
         .from("clientes_balance")
-        .select("id, nombre, apellido, negocio, credito_id")
-        .in("id", missingAfter1);
-      for (const c of data || []) {
-        dic[c.id] = c;
-        if (c.credito_id) dic[c.credito_id] = c;
-      }
-    } catch {}
-  }
-
-  // Faltantes tras #2
-  const missingAfter2 = keys.filter(k => !dic[k]);
-
-  // 3) Buscar por credito_id en "clientes_balance" (clave: el array venía con credito_id)
-  if (missingAfter2.length) {
-    try {
-      const { data } = await supabase
-        .from("clientes_balance")
-        .select("id, nombre, apellido, negocio, credito_id")
-        .in("credito_id", missingAfter2);
-      for (const c of data || []) {
-        // guardamos por ambos
-        dic[c.id] = c;
-        if (c.credito_id) dic[c.credito_id] = c;
-      }
+        .select("id, nombre, negocio")
+        .in("id", missing);
+      for (const c of data || []) dic[c.id] = c;
     } catch {}
   }
 
   return dic;
 }
 
-function useClientesPorIds(idsOrCreditIds) {
+function useClientesPorIds(ids) {
   const [dic, setDic] = useState({});
   const key = useMemo(
-    () => (idsOrCreditIds || []).filter(Boolean).sort().join(","),
-    [idsOrCreditIds]
+    () => (ids || []).filter(Boolean).sort().join(","),
+    [ids]
   );
   useEffect(() => {
     if (!key) { setDic({}); return; }
-    (async () => setDic(await fetchClientesDic(idsOrCreditIds)))();
+    (async () => setDic(await fetchClientesDic(ids)))();
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   return dic;
 }
@@ -134,11 +110,11 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
     setLoading(true);
     (async () => {
       const { data: ventasPend } = await supabase.rpc(
-        "ventas_no_cerradas_por_van",
+        "ventas_no_cerradas_por_van_by_id",
         { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
       );
       const { data: pagosPend } = await supabase.rpc(
-        "pagos_no_cerrados_por_van",
+        "pagos_no_cerrados_por_van_by_id",
         { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
       );
       setVentas(ventasPend || []);
@@ -465,7 +441,8 @@ function generarPDFCierreVan({
 
   // Cabecera (dos columnas, con wrapping)
   const vanId = cierre?.van_id || "-";
-  const vanLabel = [vanNombre || cierre?.van_nombre || "-", `ID: ${vanId}`]
+  const vanIdShort = (vanId || "").toString().slice(0, 8);
+  const vanLabel = [vanNombre || cierre?.van_nombre || "-", `ID: ${vanIdShort}`]
     .filter(Boolean)
     .join(" — ");
   const userLine = `${usuario?.nombre || usuario?.email || cierre?.usuario_id || "-"}${usuario?.email ? " | " + usuario.email : ""}${cierre?.usuario_id ? " (ID: " + cierre.usuario_id + ")" : ""}`;
@@ -479,7 +456,7 @@ function generarPDFCierreVan({
   // Izquierda
   doc.text(`Period: ${fechaInicio} to ${fechaFin}`, 36, 130);
   doc.text(doc.splitTextToSize(`Responsible: ${userLine}`, 240), 36, 146);
-  // Derecha
+  // Derecha (con wrapping)
   doc.text(doc.splitTextToSize(`Van: ${vanLabel}`, 220), 316, 130);
   doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 316, 146);
 
@@ -581,7 +558,7 @@ function generarPDFCierreVan({
     yPie + 30
   );
 
-  const nombreArchivo = `VanCloseout_${(vanNombre || cierre?.van_nombre || cierre?.van_id || "").toString().replace(/\s+/g, "")}_${fechaInicio}_${fechaFin}.pdf`;
+  const nombreArchivo = `VanCloseout_${(vanNombre || vanIdShort || "").toString().replace(/\s+/g, "")}_${fechaInicio}_${fechaFin}.pdf`;
   doc.save(nombreArchivo);
 }
 
@@ -607,13 +584,13 @@ export default function CierreVan() {
   const fechaFin = fechaSeleccionada;
   const { ventas, pagos, loading } = useMovimientosNoCerrados(van?.id, fechaInicio, fechaFin);
 
-  // Enriquecer con nombres de cliente: puede venir cliente_id O credito_id
+  // Enriquecer con nombres de cliente: ahora SOLO por cliente_id
   const clienteKeys = useMemo(
     () =>
       Array.from(
         new Set(
           [...ventas, ...pagos]
-            .flatMap(x => [x?.cliente_id, x?.credito_id])
+            .map(x => x?.cliente_id)
             .filter(Boolean)
         )
       ),
@@ -624,7 +601,7 @@ export default function CierreVan() {
 
   const ventasConNombre = useMemo(
     () => ventas.map(v => {
-      const ficha = clientesDic[v.cliente_id] || clientesDic[v.credito_id];
+      const ficha = clientesDic[v.cliente_id];
       return {
         ...v,
         cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : (v.cliente_id ? v.cliente_id.slice(0,8) : NO_CLIENTE))
@@ -635,7 +612,7 @@ export default function CierreVan() {
 
   const pagosConNombre = useMemo(
     () => pagos.map(p => {
-      const ficha = clientesDic[p.cliente_id] || clientesDic[p.credito_id];
+      const ficha = clientesDic[p.cliente_id];
       return {
         ...p,
         cliente_nombre: p.cliente_nombre || (ficha ? displayName(ficha) : (p.cliente_id ? p.cliente_id.slice(0,8) : NO_CLIENTE))
@@ -941,28 +918,28 @@ export default function CierreVan() {
                         // 1) Cargar ventas y pagos del cierre
                         const { ventas, pagos } = await cargarDetallesCierre(cierre);
 
-                        // 2) Traer nombres de clientes soportando id y credito_id
+                        // 2) Traer nombres de clientes solo por id
                         const keys = [...ventas, ...pagos]
-                          .flatMap(x => [x?.cliente_id, x?.credito_id])
+                          .map(x => x?.cliente_id)
                           .filter(Boolean);
                         const dicClientes = await fetchClientesDic(keys);
 
                         const ventasPDF = ventas.map(v => {
-                          const ficha = dicClientes[v.cliente_id] || dicClientes[v.credito_id];
+                          const ficha = dicClientes[v.cliente_id];
                           return {
                             ...v,
                             cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : (v.cliente_id ? v.cliente_id.slice(0,8) : NO_CLIENTE))
                           };
                         });
                         const pagosPDF = pagos.map(p => {
-                          const ficha = dicClientes[p.cliente_id] || dicClientes[p.credito_id];
+                          const ficha = dicClientes[p.cliente_id];
                           return {
                             ...p,
                             cliente_nombre: p.cliente_nombre || (ficha ? displayName(ficha) : (p.cliente_id ? p.cliente_id.slice(0,8) : NO_CLIENTE))
                           };
                         });
 
-                        // 3) Traer datos de usuario y van para la cabecera del PDF (con múltiples fallbacks)
+                        // 3) Traer datos de usuario y van para cabecera del PDF
                         const [{ data: usuarioData }, { data: vanData }] = await Promise.all([
                           supabase.from("usuarios").select("id, nombre, email").eq("id", cierre.usuario_id).maybeSingle(),
                           supabase.from("vans").select("id, nombre").eq("id", cierre.van_id).maybeSingle()
