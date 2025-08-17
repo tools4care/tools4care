@@ -1,5 +1,5 @@
 // src/Sales.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
@@ -14,8 +14,6 @@ const PAYMENT_METHODS = [
 ];
 
 const STORAGE_KEY = "pending_sales";
-
-// Código secreto para activar/desactivar el modo migración
 const SECRET_CODE = "#ajuste2025";
 
 /* --------- Branding / Config --------- */
@@ -121,10 +119,8 @@ function upsertPendingInLS(newPending) {
 
 /* --- Plataforma --- */
 function isIOS() {
-  return /iPad|iPhone|iPod/.test(navigator.userAgent);
-}
-function isAndroid() {
-  return /Android/i.test(navigator.userAgent);
+  const ua = navigator.userAgent || navigator.vendor || "";
+  return /iPad|iPhone|iPod|Macintosh/.test(ua);
 }
 
 /** Normaliza teléfono a E.164-ish y garantiza el + al inicio. */
@@ -140,15 +136,9 @@ function buildSmsUrl(phone, message) {
   const target = normalizePhoneE164ish(phone, "1");
   if (!target) return null;
   const body = encodeURIComponent(String(message || ""));
-
-  if (isIOS()) {
-    // iOS (Mensajes): sms:+1809...&body=...
-    return `sms:${target}&body=${body}`;
-  }
-  // Android (Mensajes/Chrome): sms:+1809...?body=...
-  return `sms:${target}?body=${body}`;
-  // Alternativa ultra-compatible en Android viejito:
-  // return `smsto:${target}?body=${body}`;
+  // iOS (Safari/Messages) tolera &body; Android requiere ?body
+  const sep = isIOS() ? "&" : "?";
+  return `sms:${target}${sep}body=${body}`;
 }
 
 /** Disparo fiable del intent de SMS (menos bloqueos que window.open). */
@@ -214,8 +204,6 @@ async function sendEmailSmart({ to, subject, html, text }) {
 }
 
 /* ======= Composición de recibos ======= */
-
-/** Recibo en TEXTO para SMS largo */
 function composeReceiptMessageEN(payload) {
   const {
     clientName,
@@ -260,220 +248,40 @@ function composeReceiptMessageEN(payload) {
   return lines.join("\n");
 }
 
-/** Recibo en HTML bonito (para email / página) */
-function composeReceiptHtmlEN(payload) {
-  const {
-    clientName,
-    creditNumber,
-    dateStr,
-    pointOfSaleName,
-    items,
-    saleTotal,
-    paid,
-    change,
-    prevBalance,
-    toCredit,
-    creditLimit,
-    availableBefore,
-    availableAfter,
-  } = payload;
-
-  const itemsRows = items.map(
-    it => `
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;">${it.name}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">${it.qty}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;">${fmt(it.unit)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600;">${fmt(it.subtotal)}</td>
-      </tr>`
-  ).join("");
-
-  const balanceBadge = toCredit > 0
-    ? `<span style="background:#fee2e2;color:#b91c1c;padding:4px 8px;border-radius:999px;font-weight:700;">Balance due: ${fmt(toCredit)}</span>`
-    : `<span style="background:#dcfce7;color:#166534;padding:4px 8px;border-radius:999px;font-weight:700;">No balance due</span>`;
-
-  const availableBadge = creditLimit > 0
-    ? `<span style="background:#dcfce7;color:#166534;padding:4px 8px;border-radius:999px;font-weight:700;">Available now: ${fmt(availableAfter)}</span>`
-    : ``;
-
-  return `<!doctype html>
-  <html>
-    <body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#f6f7fb;padding:24px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-        <tr>
-          <td style="padding:20px 24px;background:linear-gradient(90deg,#2563eb,#1d4ed8);color:#fff;">
-            <div style="font-size:18px;font-weight:800;letter-spacing:.2px;">${COMPANY_NAME}</div>
-            <div style="opacity:.9;margin-top:4px;">Receipt</div>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:20px 24px;color:#111827;font-size:14px;">
-            <div style="margin-bottom:8px;"><b>Date:</b> ${dateStr}</div>
-            ${pointOfSaleName ? `<div style="margin-bottom:8px;"><b>Point of sale:</b> ${pointOfSaleName}</div>` : ""}
-            ${clientName ? `<div style="margin-bottom:8px;"><b>Customer:</b> ${clientName} <span style="color:#6b7280">(Credit #${creditNumber || "—"})</span></div>` : ""}
-            <div style="margin:12px 0;">${balanceBadge} ${availableBadge}</div>
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #eee;border-radius:8px;overflow:hidden;margin-top:12px;">
-              <thead>
-                <tr style="background:#f9fafb;color:#111827;">
-                  <th style="text-align:left;padding:10px 12px;">Item</th>
-                  <th style="text-align:center;padding:10px 12px;">Qty</th>
-                  <th style="text-align:right;padding:10px 12px;">Unit</th>
-                  <th style="text-align:right;padding:10px 12px;">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody>${itemsRows}</tbody>
-            </table>
-
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:16px;">
-              <tr>
-                <td style="padding:6px 0;color:#374151;">Sale total</td>
-                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(saleTotal)}</td>
-              </tr>
-              <tr>
-                <td style="padding:6px 0;color:#374151;">Paid now</td>
-                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(paid)}</td>
-              </tr>
-              ${change > 0 ? `
-              <tr>
-                <td style="padding:6px 0;color:#374151;">Change</td>
-                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(change)}</td>
-              </tr>` : ""}
-              <tr>
-                <td style="padding:6px 0;color:#374151;">Previous balance</td>
-                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(prevBalance)}</td>
-              </tr>
-              ${toCredit > 0 ? `
-              <tr>
-                <td style="padding:6px 0;color:#b91c1c;font-weight:800;">Balance due (new)</td>
-                <td style="padding:6px 0;text-align:right;color:#b91c1c;font-weight:800;">${fmt(toCredit)}</td>
-              </tr>` : ""}
-              ${creditLimit > 0 ? `
-              <tr>
-                <td style="padding:6px 0;color:#374151;">Credit limit</td>
-                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(creditLimit)}</td>
-              </tr>
-              <tr>
-                <td style="padding:6px 0;color:#374151;">Available before</td>
-                <td style="padding:6px 0;text-align:right;font-weight:700;">${fmt(availableBefore)}</td>
-              </tr>
-              <tr>
-                <td style="padding:6px 0;color:#166534;font-weight:800;">Available now</td>
-                <td style="padding:6px 0;text-align:right;color:#166534;font-weight:800;">${fmt(availableAfter)}</td>
-              </tr>` : ""}
-            </table>
-
-            <div style="margin-top:20px;color:#374151;">
-              Thank you for your business!<br/>
-              <span style="color:#6b7280;">${COMPANY_NAME}${COMPANY_EMAIL ? ` • ${COMPANY_EMAIL}` : ""}</span>
-            </div>
-          </td>
-        </tr>
-      </table>
-    </body>
-  </html>`;
-}
-
-/** SMS corto + enlace (si se pudo subir HTML) */
-function composeShortSms(payload, url) {
-  const { clientName, saleTotal, paid, toCredit } = payload;
-  const parts = [
-    `${COMPANY_NAME}: thanks ${clientName || ""}`.trim(),
-    `Total ${fmt(saleTotal)}, Paid ${fmt(paid)}`,
-  ];
-  if (toCredit > 0) parts.push(`Due ${fmt(toCredit)}`);
-  if (url) parts.push(`Receipt: ${url}`);
-  parts.push(`Reply STOP to opt out.`);
-  return parts.join(" • ");
-}
-
-/** Sube HTML del recibo a Supabase Storage y devuelve URL pública. */
-async function uploadReceiptHtmlAndGetUrl(html) {
-  try {
-    const random =
-      (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) +
-      "-" +
-      Date.now();
-    const path = `receipts/${random}.html`;
-
-    // Asegúrate de tener un bucket público llamado 'receipts'
-    const { error: upErr } = await supabase.storage
-      .from("receipts")
-      .upload(path, new Blob([html], { type: "text/html;charset=utf-8" }), {
-        upsert: false,
-        contentType: "text/html",
-      });
-
-    if (upErr) throw upErr;
-
-    const { data: pub } = supabase.storage.from("receipts").getPublicUrl(path);
-    return pub?.publicUrl || null;
-  } catch (e) {
-    console.warn("Upload receipt failed:", e?.message || e);
-    return null;
+/** Pregunta canal (SMS o Email) y devuelve 'sms' | 'email' | null */
+async function askChannel({ hasPhone, hasEmail }) {
+  if (!hasPhone && !hasEmail) return null;
+  if (hasPhone && !hasEmail) {
+    return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
   }
+  if (!hasPhone && hasEmail) {
+    return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
+  }
+  const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "")
+    .trim()
+    .toLowerCase();
+  if (ans === "sms" && hasPhone) return "sms";
+  if (ans === "email" && hasEmail) return "email";
+  return null;
 }
 
-/** Pregunta modo de envío (2 opciones) y devuelve 'short' | 'long' */
-async function askSendMode() {
-  const msg =
-    "¿Cómo quieres enviar el recibo?\n\n" +
-    "1) SMS corto + enlace al recibo (recomendado) y Email HTML\n" +
-    "2) SMS con recibo completo en texto\n\n" +
-    "Escribe 1 o 2:";
-  const r = window.prompt(msg, "1");
-  return r === "2" ? "long" : "short";
-}
-
-/** Orquesta el envío tras guardar la venta, con 2 opciones */
+/** Orquesta el envío tras guardar la venta (solo 2 opciones: SMS o Email) */
 async function requestAndSendNotifications({ client, payload }) {
   const hasPhone = !!client?.telefono;
   const hasEmail = !!client?.email;
-
   if (!hasPhone && !hasEmail) return;
 
-  const channels = [
-    hasPhone ? "SMS" : null,
-    hasEmail ? "Email" : null
-  ].filter(Boolean).join(" & ");
-
-  const wants = window.confirm(
-    `Enviar recibo a ${client?.nombre || "cliente"} por ${channels}?`
-  );
+  const wants = await askChannel({ hasPhone, hasEmail });
   if (!wants) return;
 
   const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
-  const html = composeReceiptHtmlEN(payload);
-  const longText = composeReceiptMessageEN(payload);
+  const text = composeReceiptMessageEN(payload);
+  const html = text; // si usas EMAIL_MODE="edge", podrías usar un HTML más bonito
 
-  const mode = await askSendMode();
-
-  // Opción 1: SMS corto + enlace (y Email HTML)
-  if (mode === "short") {
-    let url = null;
-    if (hasPhone) {
-      // Intentamos subir HTML y compartir enlace
-      url = await uploadReceiptHtmlAndGetUrl(html);
-    }
-    const shortSms = composeShortSms(payload, url);
-
-    if (hasPhone) {
-      await sendSmsIfPossible({ phone: client.telefono, text: shortSms });
-    }
-    if (hasEmail) {
-      await sendEmailSmart({ to: client.email, subject, html, text: longText });
-    }
-    return;
-  }
-
-  // Opción 2: SMS largo (y preguntar si también email)
-  if (hasPhone) {
-    await sendSmsIfPossible({ phone: client.telefono, text: longText });
-  }
-  if (hasEmail) {
-    const alsoEmail = window.confirm("¿También enviar el recibo por Email?");
-    if (alsoEmail) {
-      await sendEmailSmart({ to: client.email, subject, html, text: longText });
-    }
+  if (wants === "sms") {
+    await sendSmsIfPossible({ phone: client.telefono, text });
+  } else if (wants === "email") {
+    await sendEmailSmart({ to: client.email, subject, html, text });
   }
 }
 
@@ -485,6 +293,8 @@ export default function Sales() {
   const navigate = useNavigate();
 
   const [clientSearch, setClientSearch] = useState("");
+  const [debouncedClientSearch, setDebouncedClientSearch] = useState("");
+  const [clientLoading, setClientLoading] = useState(false);
   const [clients, setClients] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
 
@@ -514,15 +324,24 @@ export default function Sales() {
   });
 
   // ---- CxC de cliente actual (vista oficial)
-  const [cxcLimit, setCxcLimit] = useState(null);        // limite_politica
-  const [cxcAvailable, setCxcAvailable] = useState(null); // credito_disponible
-  const [cxcBalance, setCxcBalance] = useState(null);     // saldo (real)
+  const [cxcLimit, setCxcLimit] = useState(null);
+  const [cxcAvailable, setCxcAvailable] = useState(null);
+  const [cxcBalance, setCxcBalance] = useState(null);
 
   // ---- Modo Migración (secreto)
   const [migrationMode, setMigrationMode] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState("");
+
   const [adjustNote, setAdjustNote] = useState("Saldo viejo importado");
+
+  /* ---------- Debounce del buscador ---------- */
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedClientSearch(clientSearch.trim());
+    }, 250);
+    return () => clearTimeout(t);
+  }, [clientSearch]);
 
   /* ---------- Cargar pendientes ---------- */
   useEffect(() => {
@@ -532,45 +351,87 @@ export default function Sales() {
   /* ---------- CLIENTES (búsqueda + saldo real) ---------- */
   useEffect(() => {
     async function loadClients() {
-      if (clientSearch.trim().length === 0) {
+      const term = debouncedClientSearch;
+      if (term.length === 0) {
         setClients([]);
         return;
       }
 
-      const fields = ["nombre", "negocio", "telefono", "email"];
-      const filters = fields.map((f) => `${f}.ilike.%${clientSearch}%`).join(",");
+      setClientLoading(true);
 
-      const { data, error } = await supabase
-        .from("clientes_balance")
-        .select("*")
-        .or(filters);
+      try {
+        // OR básico sobre varios campos
+        const orParts = [
+          `nombre.ilike.%${term}%`,
+          `apellido.ilike.%${term}%`,
+          `negocio.ilike.%${term}%`,
+          `telefono.ilike.%${term}%`,
+          `email.ilike.%${term}%`,
+          `direccion.ilike.%${term}%`,
+        ].join(",");
 
-      if (error || !data) {
+        let { data: baseData, error: e1 } = await supabase
+          .from("clientes_balance")
+          .select("*")
+          .or(orParts);
+
+        if (e1) {
+          // Fallback sin 'apellido' o 'direccion' por si no existen
+          const fallbackOr = [
+            `nombre.ilike.%${term}%`,
+            `negocio.ilike.%${term}%`,
+            `telefono.ilike.%${term}%`,
+            `email.ilike.%${term}%`,
+          ].join(",");
+          const r2 = await supabase.from("clientes_balance").select("*").or(fallbackOr);
+          baseData = r2.data || [];
+        }
+
+        // Si escribió "nombre apellido", intentamos AND
+        const tokens = term.split(/\s+/).filter(Boolean);
+        let andData = [];
+        if (tokens.length >= 2) {
+          const first = tokens[0];
+          const rest = tokens.slice(1).join(" ");
+          const { data: dAnd } = await supabase
+            .from("clientes_balance")
+            .select("*")
+            .ilike("nombre", `%${first}%`)
+            .ilike("apellido", `%${rest}%`);
+          andData = dAnd || [];
+        }
+
+        // Merge por id
+        const byId = new Map();
+        for (const x of [...(baseData || []), ...andData]) {
+          byId.set(x.id, x);
+        }
+        const merged = Array.from(byId.values());
+
+        // Enriquecer con saldo real
+        const ids = merged.map((c) => c.id).filter(Boolean);
+        let enriched = merged;
+        if (ids.length > 0) {
+          const { data: cxcRows } = await supabase
+            .from("v_cxc_cliente_detalle")
+            .select("cliente_id, saldo")
+            .in("cliente_id", ids);
+          const map = new Map((cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)]));
+          enriched = merged.map((c) => ({
+            ...c,
+            _saldo_real: map.has(c.id) ? map.get(c.id) : Number(c.balance || 0),
+          }));
+        }
+
+        setClients(enriched);
+      } catch {
         setClients([]);
-        return;
+      } finally {
+        setClientLoading(false);
       }
-
-      const ids = data.map((c) => c.id).filter(Boolean);
-      if (ids.length === 0) {
-        setClients(data.map((c) => ({ ...c, _saldo_real: Number(c.balance || 0) })));
-        return;
-      }
-
-      const { data: cxcRows } = await supabase
-        .from("v_cxc_cliente_detalle")
-        .select("cliente_id, saldo")
-        .in("cliente_id", ids);
-
-      const map = new Map((cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)]));
-      const enriched = data.map((c) => ({
-        ...c,
-        _saldo_real: map.has(c.id) ? map.get(c.id) : Number(c.balance || 0),
-      }));
-
-      setClients(enriched);
     }
     loadClients();
-  }, [clientSearch]);
+  }, [debouncedClientSearch]);
 
   /* ---------- Historial al seleccionar cliente ---------- */
   useEffect(() => {
@@ -911,7 +772,7 @@ export default function Sales() {
 
         alert("✅ Sale saved successfully" + (change > 0 ? `\n💰 Change to give: ${fmt(change)}` : ""));
 
-        // Enviar recibos (SMS/Email) con opciones
+        // Enviar recibo (solo SMS o Email, a elección)
         await requestAndSendNotifications({ client: selectedClient, payload });
 
         clearSale();
@@ -976,7 +837,7 @@ export default function Sales() {
             .eq("producto_id", p.producto_id)
             .single();
 
-          if (!stockError) {
+        if (!stockError) {
             const newStock = (stockData?.cantidad || 0) - p.cantidad;
             await supabase
               .from("stock_van")
@@ -1058,30 +919,23 @@ export default function Sales() {
     }
   }
 
-  /* ---------- UI: Progress Bar ---------- */
-  function renderProgressBar() {
-    return (
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl font-bold text-gray-800">📋 Sales</h1>
-          <div className="text-sm text-gray-500">Step {step} of 3</div>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2">
-          <div 
-            className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all duration-300"
-            style={{ width: `${((step) / 3) * 100}%` }}
-          />
-        </div>
-        <div className="flex justify-between mt-2 text-xs text-gray-600">
-          <span className={step >= 1 ? "text-blue-600 font-semibold" : ""}>👤 Client</span>
-          <span className={step >= 2 ? "text-blue-600 font-semibold" : ""}>🛒 Products</span>
-          <span className={step >= 3 ? "text-blue-600 font-semibold" : ""}>💳 Payment</span>
-        </div>
-      </div>
-    );
+  /* ---------- UI: Paso 1 Cliente ---------- */
+  function renderAddress(address) {
+    if (!address) return "No address";
+    if (typeof address === "string") {
+      try { address = JSON.parse(address); } catch {}
+    }
+    if (typeof address === "object") {
+      return [
+        address.calle,
+        address.ciudad,
+        address.estado,
+        address.zip
+      ].filter(Boolean).join(", ");
+    }
+    return address;
   }
 
-  /* ---------- UI: Paso 1 Cliente ---------- */
   function renderStepClient() {
     const creditNum = getCreditNumber(selectedClient);
 
@@ -1217,7 +1071,7 @@ export default function Sales() {
             <div className="relative">
               <input
                 type="text"
-                placeholder="🔍 Search by name, business, phone, email..."
+                placeholder="🔍 Search by name, last name, business, phone, email or address..."
                 className="w-full border-2 border-gray-300 rounded-lg p-4 text-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
                 value={clientSearch}
                 onChange={(e) => setClientSearch(e.target.value)}
@@ -1227,13 +1081,21 @@ export default function Sales() {
                     setClientSearch("");
                     alert(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
                   }
+                  if (e.key === "Enter" && clients.length > 0) {
+                    setSelectedClient(clients[0]);
+                  }
                 }}
                 autoFocus
               />
+              {clientLoading && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+                  Buscando…
+                </div>
+              )}
             </div>
             
             <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2">
-              {clients.length === 0 && clientSearch.length > 2 && (
+              {clients.length === 0 && debouncedClientSearch.length > 2 && !clientLoading && (
                 <div className="text-gray-400 text-center py-8">
                   🔍 No results found
                 </div>
@@ -1258,7 +1120,7 @@ export default function Sales() {
                         📍 {renderAddress(c.direccion)}
                       </div>
                       <div className="text-sm text-gray-600 flex items-center gap-1 mt-1">
-                        📞 {c.telefono}
+                        📞 {c.telefono} {c.email ? ` · ✉️ ${c.email}` : ""}
                       </div>
                     </div>
                     {Number(getClientBalance(c)) > 0 && (
@@ -1743,22 +1605,6 @@ export default function Sales() {
     );
   }
 
-  function renderAddress(address) {
-    if (!address) return "No address";
-    if (typeof address === "string") {
-      try { address = JSON.parse(address); } catch {}
-    }
-    if (typeof address === "object") {
-      return [
-        address.calle,
-        address.ciudad,
-        address.estado,
-        address.zip
-      ].filter(Boolean).join(", ");
-    }
-    return address;
-  }
-
   function renderPendingSalesModal() {
     return (
       <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
@@ -1821,12 +1667,7 @@ export default function Sales() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-4xl mx-auto">
-        {/* Header with progress */}
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          {renderProgressBar()}
-        </div>
-
-        {/* Main content */}
+        {/* Main content — SIN barra superior de progreso */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
           {modalPendingSales && renderPendingSalesModal()}
           {step === 1 && renderStepClient()}
