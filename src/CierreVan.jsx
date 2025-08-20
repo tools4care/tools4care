@@ -32,7 +32,6 @@ const NO_CLIENTE = "Quick sale / No client";
 /* ======================= HELPERS ======================= */
 function displayName(cli) {
   if (!cli) return "";
-  // Si existiera apellido en algún lado lo tomaría; si no, ignora
   const nombre = [cli.nombre, cli.apellido].filter(Boolean).join(" ").trim();
   return cli.negocio ? `${nombre || cli.id} (${cli.negocio})` : (nombre || cli.id);
 }
@@ -86,16 +85,68 @@ function useClientesPorIds(ids) {
 }
 /* ======================================================= */
 
-// HOOK para buscar días con movimientos pendientes de cierre
+/* ===== Fallback robusto para días pendientes de cierre ===== */
+// Intenta usar la RPC fechas_pendientes_cierre_van; si no existe,
+// sondea los últimos 21 días usando las RPC de ventas/pagos no cerrados.
 function useFechasPendientes(van_id) {
   const [fechas, setFechas] = useState([]);
   useEffect(() => {
-    if (!van_id) return;
+    if (!van_id) { setFechas([]); return; }
+
     (async () => {
-      const { data } = await supabase.rpc("fechas_pendientes_cierre_van", { van_id_param: van_id });
-      setFechas(data || []);
+      let list = [];
+
+      // 1) Intento directo con RPC
+      try {
+        const { data, error } = await supabase.rpc(
+          "fechas_pendientes_cierre_van",
+          { van_id_param: van_id }
+        );
+        if (!error && Array.isArray(data)) {
+          list = (data || []).map(d => String(d).slice(0,10));
+        }
+      } catch {
+        // seguimos al fallback
+      }
+
+      // 2) Fallback: últimos 21 días
+      if (list.length === 0) {
+        const pad = (n) => String(n).padStart(2,"0");
+        const hoy = new Date();
+        const dias = [];
+        for (let i = 0; i < 21; i++) {
+          const d = new Date(hoy);
+          d.setDate(d.getDate() - i);
+          dias.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`);
+        }
+
+        const encontrados = [];
+        for (const dia of dias) {
+          try {
+            const [{ data: v }, { data: p }] = await Promise.all([
+              supabase.rpc("ventas_no_cerradas_por_van_by_id", {
+                van_id_param: van_id, fecha_inicio: dia, fecha_fin: dia
+              }),
+              supabase.rpc("pagos_no_cerrados_por_van_by_id", {
+                van_id_param: van_id, fecha_inicio: dia, fecha_fin: dia
+              }),
+            ]);
+            if ((v?.length || 0) > 0 || (p?.length || 0) > 0) encontrados.push(dia);
+          } catch { /* noop */ }
+        }
+        list = encontrados;
+      }
+
+      // 3) Traer preferencia si existe y anteponerla
+      try {
+        const pref = localStorage.getItem("pre_cierre_fecha");
+        if (pref && !list.includes(pref)) list.unshift(pref);
+      } catch {}
+
+      setFechas(Array.from(new Set(list)));
     })();
   }, [van_id]);
+
   return fechas;
 }
 
@@ -439,7 +490,7 @@ function generarPDFCierreVan({
   doc.setDrawColor(azul);
   doc.line(36, 86, 560, 86);
 
-  // Cabecera (dos columnas, con wrapping)
+  // Cabecera
   const vanId = cierre?.van_id || "-";
   const vanIdShort = (vanId || "").toString().slice(0, 8);
   const vanLabel = [vanNombre || cierre?.van_nombre || "-", `ID: ${vanIdShort}`]
@@ -456,7 +507,7 @@ function generarPDFCierreVan({
   // Izquierda
   doc.text(`Period: ${fechaInicio} to ${fechaFin}`, 36, 130);
   doc.text(doc.splitTextToSize(`Responsible: ${userLine}`, 240), 36, 146);
-  // Derecha (con wrapping)
+  // Derecha
   doc.text(doc.splitTextToSize(`Van: ${vanLabel}`, 220), 316, 130);
   doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 316, 146);
 
@@ -572,12 +623,22 @@ export default function CierreVan() {
   const hoy = new Date().toISOString().slice(0, 10);
   const [fechaSeleccionada, setFechaSeleccionada] = useState(hoy);
 
+  // Respeta preferencia guardada y decide fecha por defecto
   useEffect(() => {
-    if (fechasPendientes.length > 0) {
-      if (fechasPendientes.includes(hoy)) setFechaSeleccionada(hoy);
-      else setFechaSeleccionada(fechasPendientes[0]);
+    if (fechasPendientes.length === 0) {
+      setFechaSeleccionada("");
+      return;
     }
-  }, [fechasPendientes]);
+    let pref = "";
+    try { pref = localStorage.getItem("pre_cierre_fecha") || ""; } catch {}
+    if (pref && fechasPendientes.includes(pref)) {
+      setFechaSeleccionada(pref);
+    } else if (fechasPendientes.includes(hoy)) {
+      setFechaSeleccionada(hoy);
+    } else {
+      setFechaSeleccionada(fechasPendientes[0]);
+    }
+  }, [fechasPendientes, hoy]);
 
   // -------- BLOQUE 2: Formulario y confirmación visual del cierre --------
   const fechaInicio = fechaSeleccionada;
@@ -721,6 +782,10 @@ export default function CierreVan() {
     setMensaje("Closeout registered successfully!");
     setReales({ pago_efectivo: "", pago_tarjeta: "", pago_transferencia: "" });
     setComentario("");
+
+    // Limpia la preferencia guardada de fecha para el próximo cierre
+    try { localStorage.removeItem("pre_cierre_fecha"); } catch {}
+
     setTimeout(() => setMensaje(""), 2000);
   }
 
@@ -742,7 +807,11 @@ export default function CierreVan() {
         <select
           className="border p-2 rounded w-full max-w-xs"
           value={fechaSeleccionada}
-          onChange={e => setFechaSeleccionada(e.target.value)}
+          onChange={e => {
+            const v = e.target.value;
+            setFechaSeleccionada(v);
+            try { localStorage.setItem("pre_cierre_fecha", v); } catch {}
+          }}
         >
           {fechasPendientes.length === 0 ? (
             <option value="">No pending days</option>

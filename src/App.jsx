@@ -10,6 +10,7 @@ import Productos from "./Productos";
 import Inventario from "./Inventario";
 import Ventas from "./Ventas";
 import CierreVan from "./CierreVan";
+import PreCierreVan from "./PreCierreVan"; // <-- NUEVO
 import Facturas from "./Facturas";
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
@@ -77,7 +78,7 @@ export default function App() {
 
             {/* Clientes */}
             <Route path="clientes" element={<Clientes />} />
-            <Route path="clientes/nuevo" element={<Clientes />} /> {/* <-- AÑADIDO */}
+            <Route path="clientes/nuevo" element={<Clientes />} />
 
             {/* Productos */}
             <Route path="productos/nuevo" element={<Productos />} />
@@ -85,7 +86,12 @@ export default function App() {
 
             <Route path="inventario" element={<Inventario />} />
             <Route path="ventas" element={<Ventas />} />
-            <Route path="cierres" element={<CierreVan />} />
+
+            {/* Pre-cierre primero */}
+            <Route path="cierres" element={<PreCierreVan />} />
+            {/* Cierre real */}
+            <Route path="cierres/van" element={<CierreVan />} />
+
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
 
