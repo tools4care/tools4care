@@ -265,8 +265,10 @@ export default function Sales() {
   const [selectedClient, setSelectedClient] = useState(null);
 
   const [productSearch, setProductSearch] = useState("");
-  const [products, setProducts] = useState([]); // top10 filtrados por buscador
-  const [topProducts, setTopProducts] = useState([]); // lista original top10
+  const [products, setProducts] = useState([]); // lista que se muestra bajo el buscador
+  const [topProducts, setTopProducts] = useState([]); // top 10 más vendidos
+  const [allProducts, setAllProducts] = useState([]); // << NUEVO: inventario completo de la van
+  const [allProductsLoading, setAllProductsLoading] = useState(false); // << NUEVO
   const [productError, setProductError] = useState("");
   const [cart, setCart] = useState([]); // carrito
   const [notes, setNotes] = useState("");
@@ -449,7 +451,7 @@ export default function Sales() {
       // 1) RPC original
       try {
         const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
-          van_id_param: van.id, // asegúrate que el nombre del parámetro coincide con tu RPC
+          van_id_param: van.id,
         });
         if (error) throw error;
 
@@ -472,10 +474,7 @@ export default function Sales() {
         }
         console.warn("RPC productos_mas_vendidos_por_van devolvió vacío.");
       } catch (err) {
-        console.warn(
-          "RPC productos_mas_vendidos_por_van falló. Fallback a join.",
-          err?.message || err
-        );
+        console.warn("RPC productos_mas_vendidos_por_van falló. Fallback a join.", err?.message || err);
       }
 
       // 2) Fallback: join directo stock_van -> productos (requiere relación)
@@ -558,20 +557,121 @@ export default function Sales() {
 
         setTopProducts(rows);
       } catch (err) {
-        console.error("Todos los fallbacks fallaron:", err?.message || err);
+        console.error("Todos los fallbacks de TOP fallaron:", err?.message || err);
         setTopProducts([]);
-        setProductError("No se pudieron cargar los productos (revisa permisos/RPC/relaciones).");
+        setProductError("No se pudieron cargar los productos (TOP).");
       }
     }
 
     loadTopProducts();
   }, [van?.id]);
 
-  /* ---------- Filtro de buscador sobre los top 10 ---------- */
+  /* ---------- INVENTARIO COMPLETO para búsqueda (join → 2 pasos) ---------- */
+  useEffect(() => {
+    async function loadAllProducts() {
+      setAllProducts([]);
+      setAllProductsLoading(true);
+      if (!van?.id) return setAllProductsLoading(false);
+
+      // A) Join directo
+      try {
+        const { data, error } = await supabase
+          .from("stock_van")
+          .select(
+            "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca)"
+          )
+          .eq("van_id", van.id)
+          .gt("cantidad", 0)
+          .order("productos.nombre", { ascending: true });
+
+        if (error) throw error;
+
+        const rows = (data || []).map((row) => ({
+          producto_id: row.producto_id,
+          cantidad: row.cantidad ?? 0,
+          productos: {
+            nombre: row.productos?.nombre,
+            precio: row.productos?.precio,
+            codigo: row.productos?.codigo,
+            descuento_pct: row.productos?.descuento_pct ?? null,
+            bulk_min_qty: row.productos?.bulk_min_qty ?? null,
+            bulk_unit_price: row.productos?.bulk_unit_price ?? null,
+            marca: row.productos?.marca ?? "",
+          },
+        }));
+        setAllProducts(rows);
+        setAllProductsLoading(false);
+        return;
+      } catch (err) {
+        console.warn("Inventario completo (join) falló. Fallback a 2 pasos.", err?.message || err);
+      }
+
+      // B) Fallback 2 pasos
+      try {
+        const { data: stock, error: e1 } = await supabase
+          .from("stock_van")
+          .select("producto_id,cantidad")
+          .eq("van_id", van.id)
+          .gt("cantidad", 0);
+        if (e1) throw e1;
+
+        const ids = (stock || []).map((r) => r.producto_id);
+        if (ids.length === 0) {
+          setAllProducts([]);
+          setAllProductsLoading(false);
+          return;
+        }
+
+        const { data: prods, error: e2 } = await supabase
+          .from("productos")
+          .select("id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca")
+          .in("id", ids);
+        if (e2) throw e2;
+
+        const map = new Map((prods || []).map((p) => [p.id, p]));
+        const rows = (stock || []).map((s) => {
+          const p = map.get(s.producto_id) || {};
+          return {
+            producto_id: s.producto_id,
+            cantidad: s.cantidad ?? 0,
+            productos: {
+              nombre: p.nombre,
+              precio: p.precio,
+              codigo: p.codigo,
+              descuento_pct: p.descuento_pct ?? null,
+              bulk_min_qty: p.bulk_min_qty ?? null,
+              bulk_unit_price: p.bulk_unit_price ?? null,
+              marca: p.marca ?? "",
+            },
+          };
+        });
+
+        // ordenamos por nombre para UX
+        rows.sort((a, b) =>
+          String(a.productos?.nombre || "").localeCompare(String(b.productos?.nombre || ""))
+        );
+
+        setAllProducts(rows);
+      } catch (err2) {
+        console.error("Inventario completo (2 pasos) falló:", err2?.message || err2);
+        setAllProducts([]);
+      } finally {
+        setAllProductsLoading(false);
+      }
+    }
+
+    loadAllProducts();
+  }, [van?.id]);
+
+  /* ---------- Filtro del buscador ---------- */
   useEffect(() => {
     const filter = productSearch.trim().toLowerCase();
-    const base = topProducts;
-    const filtered = !filter
+    const searchActive = filter.length > 0;
+
+    // Si hay búsqueda → filtra TODO el inventario; si no, muestra el TOP10
+    const base = searchActive ? allProducts : topProducts;
+
+    const filtered = !searchActive
       ? base
       : base.filter((row) => {
           const n = (row.productos?.nombre || "").toLowerCase();
@@ -579,9 +679,10 @@ export default function Sales() {
           const m = (row.productos?.marca || "").toLowerCase();
           return n.includes(filter) || c.includes(filter) || m.includes(filter);
         });
+
     setProducts(filtered);
-    setNoProductFound(productSearch.trim() && filtered.length === 0 ? productSearch.trim() : "");
-  }, [productSearch, topProducts]);
+    setNoProductFound(searchActive && filtered.length === 0 ? productSearch.trim() : "");
+  }, [productSearch, topProducts, allProducts]);
 
   /* ---------- Totales & crédito (SIN crear créditos nuevos) ---------- */
   const cartSafe = Array.isArray(cart) ? cart : [];
@@ -657,8 +758,8 @@ export default function Sales() {
     setSelectedClient(null);
     setProductSearch("");
     setProducts([]);
-    setCart([]);
     setTopProducts([]);
+    setAllProducts([]); // << mantener limpio
     setNotes("");
     setPayments([{ forma: "efectivo", monto: 0 }]);
     setPaymentError("");
@@ -1253,6 +1354,8 @@ export default function Sales() {
 
   /* ======================== Paso 2: Productos ======================== */
   function renderStepProducts() {
+    const searchActive = productSearch.trim().length > 0;
+
     return (
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
@@ -1262,7 +1365,7 @@ export default function Sales() {
         <div className="flex">
           <input
             type="text"
-            placeholder="🔍 Search within top 10 best sellers..."
+            placeholder="🔍 Search in the van inventory…"
             className="flex-1 border-2 border-gray-300 rounded-lg p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
             value={productSearch}
             onChange={(e) => setProductSearch(e.target.value)}
@@ -1272,7 +1375,7 @@ export default function Sales() {
         {noProductFound && (
           <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex items-start justify-between gap-3">
             <span className="text-yellow-800">
-              ❌ No product found for "<b>{noProductFound}</b>" in top sellers
+              ❌ No product found for "<b>{noProductFound}</b>" in van inventory
             </span>
             <button
               className="bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200 whitespace-nowrap"
@@ -1285,17 +1388,21 @@ export default function Sales() {
           </div>
         )}
 
-        {/* Lista: SOLO top 10 más vendidos */}
+        {/* Lista: si hay búsqueda → resultados (inventario completo); si no → TOP10 */}
         <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2">
-          {productError && (
+          {productError && !searchActive && (
             <div className="text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
               🚫 {productError}
             </div>
           )}
 
-          {products.length === 0 && !productError && !noProductFound && (
+          {products.length === 0 && !noProductFound && (
             <div className="text-gray-400 text-center py-8">
-              📦 No top sellers available for this van
+              {searchActive
+                ? allProductsLoading
+                  ? "⏳ Searching…"
+                  : "🔍 No products match your search"
+                : "📦 No top sellers available for this van"}
             </div>
           )}
 
@@ -1771,7 +1878,7 @@ export default function Sales() {
       {/* Modal: Ajuste inicial (modo migración) */}
       {showAdjustModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+          <div className="bg-white rounded-xl shadow-2xl w/full max-w-sm overflow-hidden">
             <div className="bg-purple-600 text-white px-4 py-3 flex items-center justify-between">
               <div className="font-semibold">Set Opening Balance</div>
               <button
