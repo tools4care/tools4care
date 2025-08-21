@@ -1,4 +1,4 @@
-// CierreVan.jsx
+// src/CierreVan.jsx
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useUsuario } from "./UsuarioContext";
@@ -28,6 +28,17 @@ const DENOMINACIONES = [
 ];
 
 const NO_CLIENTE = "Quick sale / No client";
+const isIsoDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const normalizeFecha = (x) => {
+  if (!x) return "";
+  if (typeof x === "string") return x.slice(0, 10);
+  if (x instanceof Date) return x.toISOString().slice(0, 10);
+  if (typeof x === "object") {
+    const cand = x.fecha ?? x.date ?? x.day ?? Object.values(x)[0];
+    return cand ? String(cand).slice(0, 10) : "";
+  }
+  return String(x).slice(0, 10);
+};
 
 /* ======================= HELPERS ======================= */
 function displayName(cli) {
@@ -45,7 +56,6 @@ async function fetchClientesDic(ids) {
   const dic = {};
   if (!keys.length) return dic;
 
-  // 1) clientes
   try {
     const { data } = await supabase
       .from("clientes")
@@ -54,10 +64,8 @@ async function fetchClientesDic(ids) {
     for (const c of data || []) dic[c.id] = c;
   } catch {}
 
-  // ¿quiénes faltan?
   const missing = keys.filter(k => !dic[k]);
 
-  // 2) clientes_balance (fallback)
   if (missing.length) {
     try {
       const { data } = await supabase
@@ -83,11 +91,8 @@ function useClientesPorIds(ids) {
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   return dic;
 }
-/* ======================================================= */
 
-/* ===== Fallback robusto para días pendientes de cierre ===== */
-// Intenta usar la RPC fechas_pendientes_cierre_van; si no existe,
-// sondea los últimos 21 días usando las RPC de ventas/pagos no cerrados.
+/* ===== Fechas pendientes de cierre ===== */
 function useFechasPendientes(van_id) {
   const [fechas, setFechas] = useState([]);
   useEffect(() => {
@@ -96,20 +101,16 @@ function useFechasPendientes(van_id) {
     (async () => {
       let list = [];
 
-      // 1) Intento directo con RPC
       try {
         const { data, error } = await supabase.rpc(
           "fechas_pendientes_cierre_van",
           { van_id_param: van_id }
         );
         if (!error && Array.isArray(data)) {
-          list = (data || []).map(d => String(d).slice(0,10));
+          list = (data || []).map(normalizeFecha).filter(isIsoDate);
         }
-      } catch {
-        // seguimos al fallback
-      }
+      } catch { /* noop */ }
 
-      // 2) Fallback: últimos 21 días
       if (list.length === 0) {
         const pad = (n) => String(n).padStart(2,"0");
         const hoy = new Date();
@@ -137,52 +138,56 @@ function useFechasPendientes(van_id) {
         list = encontrados;
       }
 
-      // 3) Traer preferencia si existe y anteponerla
       try {
         const pref = localStorage.getItem("pre_cierre_fecha");
-        if (pref && !list.includes(pref)) list.unshift(pref);
+        if (isIsoDate(pref) && !list.includes(pref)) list.unshift(pref);
       } catch {}
 
-      setFechas(Array.from(new Set(list)));
+      setFechas(Array.from(new Set(list)).filter(isIsoDate));
     })();
   }, [van_id]);
 
   return fechas;
 }
 
-// HOOK para buscar movimientos no cerrados
+// Movimientos no cerrados
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!van_id || !fechaInicio || !fechaFin) return;
+    if (!van_id || !isIsoDate(fechaInicio) || !isIsoDate(fechaFin)) {
+      setVentas([]); setPagos([]); return;
+    }
     setLoading(true);
     (async () => {
-      const { data: ventasPend } = await supabase.rpc(
-        "ventas_no_cerradas_por_van_by_id",
-        { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
-      );
-      const { data: pagosPend } = await supabase.rpc(
-        "pagos_no_cerrados_por_van_by_id",
-        { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
-      );
-      setVentas(ventasPend || []);
-      setPagos(pagosPend || []);
-      setLoading(false);
+      try {
+        const { data: ventasPend } = await supabase.rpc(
+          "ventas_no_cerradas_por_van_by_id",
+          { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
+        );
+        const { data: pagosPend } = await supabase.rpc(
+          "pagos_no_cerrados_por_van_by_id",
+          { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin }
+        );
+        setVentas(ventasPend || []);
+        setPagos(pagosPend || []);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [van_id, fechaInicio, fechaFin]);
 
   return { ventas, pagos, loading };
 }
 
-// HOOK para buscar cierres históricos
+// Cierres históricos
 function useCierresVan(van_id, fechaDesde, fechaHasta) {
   const [cierres, setCierres] = useState([]);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
-    if (!van_id || !fechaDesde || !fechaHasta) return;
+    if (!van_id || !isIsoDate(fechaDesde) || !isIsoDate(fechaHasta)) return;
     setLoading(true);
     (async () => {
       const { data } = await supabase
@@ -199,7 +204,7 @@ function useCierresVan(van_id, fechaDesde, fechaHasta) {
   return { cierres, loading };
 }
 
-// HOOK para traer usuarios por IDs (tabla de cierres)
+// Usuarios por IDs
 function useUsuariosPorIds(usuarioIds) {
   const [usuarios, setUsuarios] = useState({});
   useEffect(() => {
@@ -217,7 +222,7 @@ function useUsuariosPorIds(usuarioIds) {
   return usuarios;
 }
 
-// HOOK para traer vans por IDs (tabla de cierres)
+// Vans por IDs (tabla tiene nombre_van)
 function useVansPorIds(vanIds) {
   const [vans, setVans] = useState({});
   useEffect(() => {
@@ -225,10 +230,10 @@ function useVansPorIds(vanIds) {
     (async () => {
       const { data } = await supabase
         .from("vans")
-        .select("id, nombre")
+        .select("id, nombre_van")
         .in("id", vanIds);
       const dic = {};
-      for (const v of data || []) dic[v.id] = v;
+      for (const v of data || []) dic[v.id] = { ...v, nombre: v.nombre_van || v.nombre };
       setVans(dic);
     })();
   }, [vanIds?.join(",")]);
@@ -351,14 +356,10 @@ function DesgloseEfectivoModal({ open, onClose, onSave }) {
     DENOMINACIONES.map(d => ({ ...d, cantidad: "" }))
   );
   useEffect(() => {
-    if (open) {
-      setBilletes(DENOMINACIONES.map(d => ({ ...d, cantidad: "" })));
-    }
+    if (open) setBilletes(DENOMINACIONES.map(d => ({ ...d, cantidad: "" })));
   }, [open]);
 
-  const total = billetes.reduce(
-    (t, b) => t + Number(b.cantidad || 0) * b.valor, 0
-  );
+  const total = billetes.reduce((t, b) => t + Number(b.cantidad || 0) * b.valor, 0);
   return !open ? null : (
     <div className="fixed inset-0 bg-black bg-opacity-30 z-50 flex items-center justify-center">
       <div className="bg-white rounded-xl p-6 shadow-xl w-[360px] max-w-full">
@@ -381,7 +382,9 @@ function DesgloseEfectivoModal({ open, onClose, onSave }) {
                     }}
                   />
                 </td>
-                <td className="text-xs pl-2 text-gray-400">${(b.valor * Number(b.cantidad || 0)).toFixed(2)}</td>
+                <td className="text-xs pl-2 text-gray-400">
+                  ${(b.valor * Number(b.cantidad || 0)).toFixed(2)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -391,10 +394,9 @@ function DesgloseEfectivoModal({ open, onClose, onSave }) {
         </div>
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-          <button
-            onClick={() => onSave(total)}
-            className="px-3 py-1 bg-blue-700 text-white rounded"
-          >Use Total</button>
+          <button onClick={() => onSave(total)} className="px-3 py-1 bg-blue-700 text-white rounded">
+            Use Total
+          </button>
         </div>
       </div>
     </div>
@@ -423,17 +425,16 @@ function ConfirmModal({ open, onCancel, onConfirm, totalesEsperados, reales, cue
         </div>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="bg-gray-200 px-3 py-1 rounded">Cancel</button>
-          <button
-            onClick={onConfirm}
-            className="bg-blue-700 text-white px-4 py-1 rounded font-bold"
-          >Confirm</button>
+          <button onClick={onConfirm} className="bg-blue-700 text-white px-4 py-1 rounded font-bold">
+            Confirm
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-// FUNCION PARA CARGAR DETALLES (ventas y pagos) de un cierre por id
+// Cargar detalles (ventas y pagos) de un cierre por id
 async function cargarDetallesCierre(cierre) {
   const ventas_ids = cierre.ventas_ids || [];
   const pagos_ids = cierre.pagos_ids || [];
@@ -450,14 +451,14 @@ async function cargarDetallesCierre(cierre) {
 }
 
 /* =========================
-   GENERADOR DE PDF MEJORADO
+   GENERADOR DE PDF
    ========================= */
 function generarPDFCierreVan({
   empresa = {
     nombre: "TOOLS4CARE",
     direccion: "108 Lafayette St, Salem, MA 01970",
     telefono: "(978) 594-1624",
-    email: "soporte@tools4care.com"
+    email: "tools4care@gmail.com"
   },
   cierre,
   usuario,
@@ -504,10 +505,8 @@ function generarPDFCierreVan({
 
   doc.setFontSize(10);
   doc.setTextColor(negro);
-  // Izquierda
   doc.text(`Period: ${fechaInicio} to ${fechaFin}`, 36, 130);
   doc.text(doc.splitTextToSize(`Responsible: ${userLine}`, 240), 36, 146);
-  // Derecha
   doc.text(doc.splitTextToSize(`Van: ${vanLabel}`, 220), 316, 130);
   doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 316, 146);
 
@@ -621,9 +620,8 @@ export default function CierreVan() {
   // -------- BLOQUE 1: Selección de día pendiente a cerrar --------
   const fechasPendientes = useFechasPendientes(van?.id);
   const hoy = new Date().toISOString().slice(0, 10);
-  const [fechaSeleccionada, setFechaSeleccionada] = useState(hoy);
+  const [fechaSeleccionada, setFechaSeleccionada] = useState("");
 
-  // Respeta preferencia guardada y decide fecha por defecto
   useEffect(() => {
     if (fechasPendientes.length === 0) {
       setFechaSeleccionada("");
@@ -631,7 +629,7 @@ export default function CierreVan() {
     }
     let pref = "";
     try { pref = localStorage.getItem("pre_cierre_fecha") || ""; } catch {}
-    if (pref && fechasPendientes.includes(pref)) {
+    if (isIsoDate(pref) && fechasPendientes.includes(pref)) {
       setFechaSeleccionada(pref);
     } else if (fechasPendientes.includes(hoy)) {
       setFechaSeleccionada(hoy);
@@ -645,16 +643,9 @@ export default function CierreVan() {
   const fechaFin = fechaSeleccionada;
   const { ventas, pagos, loading } = useMovimientosNoCerrados(van?.id, fechaInicio, fechaFin);
 
-  // Enriquecer con nombres de cliente: ahora SOLO por cliente_id
+  // Enriquecer con nombres de cliente
   const clienteKeys = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          [...ventas, ...pagos]
-            .map(x => x?.cliente_id)
-            .filter(Boolean)
-        )
-      ),
+    () => Array.from(new Set([...ventas, ...pagos].map(x => x?.cliente_id).filter(Boolean))),
     [ventas, pagos]
   );
 
@@ -682,16 +673,12 @@ export default function CierreVan() {
     [pagos, clientesDic]
   );
 
-  // Filtros para buscar cierres anteriores
+  // Cierres anteriores
   const [filtroDesde, setFiltroDesde] = useState(hoy);
   const [filtroHasta, setFiltroHasta] = useState(hoy);
-  const { cierres, loading: loadingCierres } = useCierresVan(
-    van?.id,
-    filtroDesde,
-    filtroHasta
-  );
+  const { cierres, loading: loadingCierres } = useCierresVan(van?.id, filtroDesde, filtroHasta);
 
-  // Para mostrar nombre usuario y van en la tabla
+  // Diccionarios
   const usuarioIds = Array.from(new Set((cierres || []).map(c => c.usuario_id).filter(Boolean)));
   const vanIds = Array.from(new Set((cierres || []).map(c => c.van_id).filter(Boolean)));
   const usuariosDic = useUsuariosPorIds(usuarioIds);
@@ -708,14 +695,9 @@ export default function CierreVan() {
     ventasConNombre.reduce((t, v) => t + ((Number(v.total_venta) || 0) - (Number(v.total_pagado) || 0)), 0).toFixed(2)
   );
 
-  // Popup desglose de efectivo
+  // UI state
   const [openDesglose, setOpenDesglose] = useState(false);
-
-  const [reales, setReales] = useState({
-    pago_efectivo: "",
-    pago_tarjeta: "",
-    pago_transferencia: ""
-  });
+  const [reales, setReales] = useState({ pago_efectivo: "", pago_tarjeta: "", pago_transferencia: "" });
   const [comentario, setComentario] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
@@ -768,24 +750,26 @@ export default function CierreVan() {
         cierre_id_param: cierre_id,
         van_id_param: van.id,
         fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin
+        fecha_fin: fechaFin,
       });
       await supabase.rpc("cerrar_pagos_por_van", {
         cierre_id_param: cierre_id,
         van_id_param: van.id,
         fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin
+        fecha_fin: fechaFin,
       });
+
+      try {
+        localStorage.removeItem("pre_cierre_fecha");
+        localStorage.setItem("pre_cierre_last_closed", fechaInicio);
+      } catch {}
     }
 
     setGuardando(false);
     setMensaje("Closeout registered successfully!");
     setReales({ pago_efectivo: "", pago_tarjeta: "", pago_transferencia: "" });
     setComentario("");
-
-    // Limpia la preferencia guardada de fecha para el próximo cierre
     try { localStorage.removeItem("pre_cierre_fecha"); } catch {}
-
     setTimeout(() => setMensaje(""), 2000);
   }
 
@@ -796,7 +780,6 @@ export default function CierreVan() {
     cxc_periodo: cuentasCobrar
   };
 
-  // UI
   return (
     <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
       <h2 className="font-bold text-xl mb-6 text-blue-900">Van Closeout</h2>
@@ -823,7 +806,7 @@ export default function CierreVan() {
         </select>
       </div>
 
-      {/* BLOQUE 2: Formulario de cierre y confirmación */}
+      {/* BLOQUE 2 */}
       {loading ? (
         <div className="text-blue-600">Loading transactions...</div>
       ) : (
@@ -842,20 +825,14 @@ export default function CierreVan() {
         {METODOS_PAGO.map(({ campo, label }) => (
           <div key={campo} className="mb-2">
             <label className="block font-bold">{label} expected:</label>
-            <input
-              className="border bg-gray-100 p-2 w-full mb-1"
-              value={totalesEsperados[campo] || 0}
-              disabled
-            />
+            <input className="border bg-gray-100 p-2 w-full mb-1" value={totalesEsperados[campo] || 0} disabled />
             <label className="block">Counted:</label>
             <div className="flex gap-2">
               <input
                 className="border p-2 w-full"
                 type="number"
                 value={reales[campo] || ""}
-                onChange={e =>
-                  setReales(r => ({ ...r, [campo]: e.target.value }))
-                }
+                onChange={e => setReales(r => ({ ...r, [campo]: e.target.value }))}
                 required
               />
               {campo === "pago_efectivo" && (
@@ -873,19 +850,11 @@ export default function CierreVan() {
         ))}
         <div className="mb-2">
           <label className="block font-bold">Accounts Receivable for the Period:</label>
-          <input
-            className="border p-2 w-full mb-1 bg-gray-100"
-            value={cuentasCobrar}
-            disabled
-          />
+          <input className="border p-2 w-full mb-1 bg-gray-100" value={cuentasCobrar} disabled />
         </div>
         <div className="mb-3">
           <label className="block font-bold">Comment:</label>
-          <textarea
-            className="border p-2 w-full"
-            value={comentario}
-            onChange={e => setComentario(e.target.value)}
-          />
+          <textarea className="border p-2 w-full" value={comentario} onChange={e => setComentario(e.target.value)} />
         </div>
         <button
           type="submit"
@@ -901,14 +870,11 @@ export default function CierreVan() {
         )}
       </form>
 
-      {/* MODAL DE CONFIRMACION */}
+      {/* MODALES */}
       <ConfirmModal
         open={showConfirmModal}
         onCancel={() => setShowConfirmModal(false)}
-        onConfirm={async () => {
-          setShowConfirmModal(false);
-          await guardarCierre({ preventDefault: () => {} });
-        }}
+        onConfirm={async () => { setShowConfirmModal(false); await guardarCierre({ preventDefault: () => {} }); }}
         totalesEsperados={totalesEsperados}
         reales={reales}
         cuentasCobrar={cuentasCobrar}
@@ -917,17 +883,13 @@ export default function CierreVan() {
         fechaFin={fechaFin}
       />
 
-      {/* MODAL DESGLOSE EFECTIVO */}
       <DesgloseEfectivoModal
         open={openDesglose}
         onClose={() => setOpenDesglose(false)}
-        onSave={(total) => {
-          setReales((r) => ({ ...r, pago_efectivo: total }));
-          setOpenDesglose(false);
-        }}
+        onSave={(total) => { setReales((r) => ({ ...r, pago_efectivo: total })); setOpenDesglose(false); }}
       />
 
-      {/* ---------- SECCION: BUSCAR Y DESCARGAR CIERRES PASADOS ---------- */}
+      {/* Cierres pasados */}
       <div className="mb-10 mt-12 p-4 border-t pt-8">
         <h3 className="font-bold text-lg mb-2 text-blue-800">Past Closeouts</h3>
         <div className="flex gap-3 mb-4">
@@ -984,13 +946,8 @@ export default function CierreVan() {
                     <button
                       className="bg-blue-700 text-white px-2 py-1 rounded text-xs"
                       onClick={async () => {
-                        // 1) Cargar ventas y pagos del cierre
                         const { ventas, pagos } = await cargarDetallesCierre(cierre);
-
-                        // 2) Traer nombres de clientes solo por id
-                        const keys = [...ventas, ...pagos]
-                          .map(x => x?.cliente_id)
-                          .filter(Boolean);
+                        const keys = [...ventas, ...pagos].map(x => x?.cliente_id).filter(Boolean);
                         const dicClientes = await fetchClientesDic(keys);
 
                         const ventasPDF = ventas.map(v => {
@@ -1008,16 +965,15 @@ export default function CierreVan() {
                           };
                         });
 
-                        // 3) Traer datos de usuario y van para cabecera del PDF
                         const [{ data: usuarioData }, { data: vanData }] = await Promise.all([
                           supabase.from("usuarios").select("id, nombre, email").eq("id", cierre.usuario_id).maybeSingle(),
-                          supabase.from("vans").select("id, nombre").eq("id", cierre.van_id).maybeSingle()
+                          supabase.from("vans").select("id, nombre_van").eq("id", cierre.van_id).maybeSingle()
                         ]);
 
                         generarPDFCierreVan({
                           cierre,
                           usuario: usuarioData || usuariosDic?.[cierre.usuario_id] || usuario || { nombre: cierre.usuario_id, email: "" },
-                          vanNombre: (vanData && vanData.nombre) || vansDic?.[cierre.van_id]?.nombre || van?.nombre || cierre.van_nombre || "",
+                          vanNombre: (vanData && (vanData.nombre_van || vanData.nombre)) || vansDic?.[cierre.van_id]?.nombre || "",
                           ventas: ventasPDF,
                           pagos: pagosPDF,
                           resumen: {
