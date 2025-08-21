@@ -14,6 +14,15 @@ function dayBounds(dia) {
   };
 }
 
+/** Formato visual MM-DD-YYYY para fechas tipo 'YYYY-MM-DD' (o con tiempo). */
+function formatUS(d) {
+  if (!d) return "—";
+  const s = String(d).slice(0, 10);
+  const [y, m, day] = s.split("-");
+  if (!y || !m || !day) return d;
+  return `${m}-${day}-${y}`;
+}
+
 /** Cuenta ventas del día por van usando solo tablas (sin RPC).
  *  Intenta primero cierre_id IS NULL; si falla, usa cerrado = false.
  */
@@ -319,7 +328,7 @@ export default function PreCierreVan() {
                       }}
                     >
                       <td className="p-2">
-                        {f}
+                        {formatUS(f)}
                         {f === hoy ? " (Today)" : ""}
                       </td>
                       <td className="p-2 text-right">
@@ -335,7 +344,7 @@ export default function PreCierreVan() {
           {/* Panel lateral */}
           <div className="border rounded-lg p-3 bg-white">
             <div className="text-sm mb-2">
-              <b>Selected:</b> {seleccion || "—"}
+              <b>Selected:</b> {seleccion ? formatUS(seleccion) : "—"}
             </div>
             <div className="text-sm space-y-1 mb-3">
               <div>
