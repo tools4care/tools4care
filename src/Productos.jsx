@@ -46,6 +46,16 @@ function BuscadorSuplidor({ value, onChange }) {
   const [suplidores, setSuplidores] = useState([]);
   const [showCrear, setShowCrear] = useState(false);
 
+  // 👇 navegación con teclado para suplidores
+  const [hl, setHl] = useState(-1);
+  useEffect(() => setHl(-1), [busqueda, suplidores.length]);
+  useEffect(() => {
+    if (hl >= 0) {
+      const el = document.getElementById(`sup-opt-${hl}`);
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [hl]);
+
   useEffect(() => {
     if (!busqueda.trim()) {
       setSuplidores([]);
@@ -61,6 +71,13 @@ function BuscadorSuplidor({ value, onChange }) {
     buscar();
   }, [busqueda]);
 
+  function pickSupplier(idx) {
+    const s = suplidores[idx];
+    if (!s) return;
+    onChange(s.id, s.nombre);
+    setBusqueda(s.nombre);
+  }
+
   return (
     <div>
       <input
@@ -68,16 +85,28 @@ function BuscadorSuplidor({ value, onChange }) {
         value={busqueda}
         placeholder="Search supplier..."
         onChange={e => setBusqueda(e.target.value)}
+        onKeyDown={(e) => {
+          const list = suplidores || [];
+          if (e.key === "ArrowDown") { e.preventDefault(); setHl(i => Math.min((i < 0 ? 0 : i + 1), list.length - 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); setHl(i => Math.max(i - 1, 0)); }
+          else if (e.key === "Enter") {
+            if (hl >= 0 && list[hl]) { pickSupplier(hl); }
+            else if (list.length > 0) { pickSupplier(0); }
+          } else if (e.key === "Escape") {
+            setHl(-1);
+          }
+        }}
       />
       <div className="max-h-32 overflow-auto mt-1 border rounded bg-white">
-        {suplidores.map(s => (
+        {suplidores.map((s, idx) => (
           <div
+            id={`sup-opt-${idx}`}
             key={s.id}
-            className={`p-2 hover:bg-blue-100 cursor-pointer ${value === s.id ? "bg-blue-50" : ""}`}
-            onClick={() => {
-              onChange(s.id, s.nombre);
-              setBusqueda(s.nombre);
-            }}
+            className={`p-2 cursor-pointer ${
+              value === s.id ? "bg-blue-50" : ""
+            } ${idx === hl ? "bg-blue-100 ring-1 ring-blue-300" : "hover:bg-blue-100"}`}
+            onMouseEnter={() => setHl(idx)}
+            onClick={() => pickSupplier(idx)}
           >
             {s.nombre} <span className="text-xs text-gray-500">{s.contacto}</span>
           </div>
@@ -472,6 +501,16 @@ export default function Productos() {
   const navigate = useNavigate();
   const modalAutoOpenRef = useRef(false);
 
+  // 👇 navegación con teclado para la lista de productos
+  const [hl, setHl] = useState(-1); // índice resaltado
+  useEffect(() => setHl(-1), [productos.length, pagina, busqueda]);
+  useEffect(() => {
+    if (hl >= 0) {
+      const el = document.getElementById(`prod-row-${hl}`);
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [hl]);
+
   useEffect(() => {
     cargarUbicaciones();
   }, []);
@@ -559,6 +598,7 @@ export default function Productos() {
     setPagina(1);
     // Limpia espacios “fantasma” que a veces agregan los escáneres
     setBusqueda((e.target.value || "").replace(/\s+/g, ""));
+    setHl(-1);
   }
 
   function handleSiguiente() {
@@ -1001,6 +1041,27 @@ function imprimirEtiqueta(prod, opts = {}) {
           placeholder="Search by code, name, brand, category..."
           value={busqueda}
           onChange={handleBuscar}
+          onKeyDown={(e) => {
+            const list = productos || [];
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setHl(i => Math.min((i < 0 ? 0 : i + 1), list.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setHl(i => Math.max(i - 1, 0));
+            } else if (e.key === "PageDown") {
+              e.preventDefault();
+              if (pagina * 50 < total) setPagina(pagina + 1);
+            } else if (e.key === "PageUp") {
+              e.preventDefault();
+              if (pagina > 1) setPagina(pagina - 1);
+            } else if (e.key === "Enter") {
+              if (hl >= 0 && list[hl]) abrirModal(list[hl]);
+              else if (list.length > 0) abrirModal(list[0]);
+            } else if (e.key === "Escape") {
+              setHl(-1);
+            }
+          }}
           className="border rounded p-2 w-full"
         />
         <button
@@ -1037,10 +1098,16 @@ function imprimirEtiqueta(prod, opts = {}) {
                     </td>
                   </tr>
                 ) : (
-                  productos.map((p) => (
+                  productos.map((p, idx) => (
                     <tr
+                      id={`prod-row-${idx}`}
                       key={p.id}
-                      className="hover:bg-blue-50 cursor-pointer border-t"
+                      className={`cursor-pointer border-t ${
+                        idx === hl
+                          ? "bg-blue-50 ring-2 ring-blue-200"
+                          : "hover:bg-blue-50"
+                      }`}
+                      onMouseEnter={() => setHl(idx)}
                       onClick={() => abrirModal(p)}
                     >
                       <td className="p-2 font-mono truncate max-w-[140px]">{p.codigo}</td>
