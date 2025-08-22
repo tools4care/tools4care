@@ -511,6 +511,14 @@ export default function Productos() {
     }
   }, [hl]);
 
+  // 🔹 NUEVO: debounce + antirace para la búsqueda
+  const [debounced, setDebounced] = useState("");
+  const searchSeq = useRef(0);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(busqueda), 120);
+    return () => clearTimeout(t);
+  }, [busqueda]);
+
   useEffect(() => {
     cargarUbicaciones();
   }, []);
@@ -525,51 +533,56 @@ export default function Productos() {
     setUbicaciones([{ key: "almacen", nombre: "Central warehouse" }, ...vans]);
   }
 
-  useEffect(() => { cargarProductos(); }, [busqueda, pagina]);
+  useEffect(() => { cargarProductos(); }, [debounced, pagina]);
 
-  // ✅ MEJORADO: búsqueda por código exacto cuando el término es puro dígito (escáner)
+  // ✅ MEJORADO: búsqueda por código exacto con antirace y fallback difuso
   async function cargarProductos() {
     setLoading(true);
+    const mySeq = ++searchSeq.current;
 
-    const term = busqueda.trim();
+    const termRaw = debounced ?? "";
+    const term = termRaw.trim();
     const termNoSpaces = term.replace(/\s+/g, "");
-    const isPureDigits = /^\d+$/.test(termNoSpaces);
-    const isLikelyBarcode = isPureDigits && termNoSpaces.length >= 6; // 6+ para ser flexible (UPC/EAN suelen ser 8/12/13)
+    const digitsOnly = term.replace(/\D/g, "");
+    const isBarcode = digitsOnly.length >= 8; // flexible para UPC/EAN
 
     const baseSelect = "*, suplidor:suplidor_id(nombre)";
     const desde = (pagina - 1) * PAGE_SIZE;
     const hasta = desde + PAGE_SIZE - 1;
 
     try {
-      // 1) Si parece código de barras → búsqueda EXACTA por 'codigo'
-      if (isLikelyBarcode) {
-        const { data: exactData, count: exactCount, error: exactErr } = await supabase
-          .from("productos")
-          .select(baseSelect, { count: "exact" })
-          .eq("codigo", termNoSpaces) // coincidencia exacta
-          .range(desde, hasta);
+      // 1) EXACTA robusta cuando parece escáner
+      if (isBarcode) {
+        const needles = Array.from(new Set([digitsOnly, termNoSpaces].filter(Boolean)));
+        if (needles.length > 0) {
+          const { data: exactData, count: exactCount, error: exactErr } = await supabase
+            .from("productos")
+            .select(baseSelect, { count: "exact" })
+            .in("codigo", needles)
+            .limit(1);
 
-        if (exactErr) throw exactErr;
+          if (exactErr) throw exactErr;
+          if (mySeq !== searchSeq.current) return;
 
-        // Si hay resultados exactos, los usamos y salimos (evita listados largos al escanear)
-        if ((exactData?.length || 0) > 0) {
-          setProductos(exactData || []);
-          setTotal(exactCount || exactData.length || 0);
-          setLoading(false);
-          return;
+          if ((exactData?.length || 0) > 0) {
+            setProductos(exactData || []);
+            setTotal(exactCount || exactData.length || 0);
+            setLoading(false);
+            return; // mostramos SOLO el producto escaneado
+          }
         }
-        // Si no encontró exacto, caemos al fallback difuso (debajo)
       }
 
-      // 2) Búsqueda difusa (anterior) para nombres, marcas, categorías y código parcial
+      // 2) Difusa (acotada si venimos de escáner)
       let query = supabase
         .from("productos")
         .select(baseSelect, { count: "exact" })
         .order("nombre", { ascending: true });
 
       if (term) {
-        // Afinado: demos prioridad a codigo que EMPIECE por el término si es numérico
-        if (isPureDigits) {
+        if (isBarcode) {
+          query = query.ilike("codigo", `${digitsOnly || termNoSpaces}%`);
+        } else if (/^\d+$/.test(termNoSpaces)) {
           query = query.or(
             `codigo.ilike.${termNoSpaces}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`
           );
@@ -583,14 +596,17 @@ export default function Productos() {
       const { data, count, error } = await query.range(desde, hasta);
       if (error) throw error;
 
+      if (mySeq !== searchSeq.current) return;
+
       setProductos(data || []);
       setTotal(count || 0);
     } catch (err) {
+      if (mySeq !== searchSeq.current) return;
       setProductos([]);
       setTotal(0);
       setMensaje("Error loading products: " + (err?.message || err));
     } finally {
-      setLoading(false);
+      if (mySeq === searchSeq.current) setLoading(false);
     }
   }
 
