@@ -1,4 +1,4 @@
-// src/Sales.jsx
+// src/Ventas.jsx  (puedes llamarlo Sales.jsx si prefieres)
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
@@ -7,10 +7,10 @@ import { useNavigate } from "react-router-dom";
 
 /* ========================= Config & Constantes ========================= */
 const PAYMENT_METHODS = [
-  { key: "efectivo", label: "💵 Cash", icon: "💵" },
-  { key: "tarjeta", label: "💳 Card", icon: "💳" },
-  { key: "transferencia", label: "🏦 Transfer", icon: "🏦" },
-  { key: "otro", label: "💰 Other", icon: "💰" },
+  { key: "efectivo", label: "💵 Cash" },
+  { key: "tarjeta", label: "💳 Card" },
+  { key: "transferencia", label: "🏦 Transfer" },
+  { key: "otro", label: "💰 Other" },
 ];
 
 const STORAGE_KEY = "pending_sales";
@@ -18,11 +18,7 @@ const SECRET_CODE = "#ajuste2025";
 
 const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4Care";
 const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "no-reply@example.com";
-/**
- * EMAIL_MODE:
- *  - "mailto" (por defecto): abre cliente de correo del dispositivo (gratis).
- *  - "edge": llama a supabase.functions.invoke("send-receipt") y envía HTML.
- */
+/** "mailto" = abre cliente del usuario; "edge" = usa Supabase Edge Function "send-receipt" */
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
 /* ========================= Helpers de negocio ========================= */
@@ -37,19 +33,16 @@ function policyLimit(score) {
   if (s < 800) return 750;
   return 1000;
 }
-
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 }
-
 function r2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
 }
-
-/** Pricing: 1) bulk si qty>=bulkMin; 2) % descuento; 3) base */
+/** 1) bulk si qty>=bulkMin; 2) % descuento; 3) base */
 function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
   const q = Number(qty || 0);
   const hasBulk = bulkMin != null && bulkPrice != null && q >= Number(bulkMin);
@@ -58,7 +51,6 @@ function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
   if (pctNum > 0) return r2(base * (1 - pctNum / 100));
   return r2(base);
 }
-
 function getClientBalance(c) {
   if (!c) return 0;
   return Number(c._saldo_real ?? c.balance ?? c.saldo_total ?? c.saldo ?? 0);
@@ -67,12 +59,11 @@ function getCreditNumber(c) {
   return c?.credito_id || c?.id || "—";
 }
 
-/* =================== Helpers robustos (localStorage/SMS/Email) =================== */
+/* =================== localStorage / SMS / Email =================== */
 function safeParseJSON(str, fallback) {
   try {
     const v = JSON.parse(str);
-    if (Array.isArray(v)) return v;
-    return fallback;
+    return Array.isArray(v) ? v : fallback;
   } catch {
     return fallback;
   }
@@ -99,7 +90,6 @@ function upsertPendingInLS(newPending) {
   return next;
 }
 
-/* --- Plataforma / SMS / Email --- */
 function isIOS() {
   const ua = navigator.userAgent || navigator.vendor || "";
   return /iPad|iPhone|iPod|Macintosh/.test(ua);
@@ -219,12 +209,8 @@ function composeReceiptMessageEN(payload) {
 }
 async function askChannel({ hasPhone, hasEmail }) {
   if (!hasPhone && !hasEmail) return null;
-  if (hasPhone && !hasEmail) {
-    return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
-  }
-  if (!hasPhone && hasEmail) {
-    return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
-  }
+  if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
+  if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
   const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "")
     .trim()
     .toLowerCase();
@@ -265,12 +251,12 @@ export default function Sales() {
   const [selectedClient, setSelectedClient] = useState(null);
 
   const [productSearch, setProductSearch] = useState("");
-  const [products, setProducts] = useState([]); // lista que se muestra bajo el buscador
-  const [topProducts, setTopProducts] = useState([]); // top 10 más vendidos
-  const [allProducts, setAllProducts] = useState([]); // << NUEVO: inventario completo de la van
-  const [allProductsLoading, setAllProductsLoading] = useState(false); // << NUEVO
+  const [products, setProducts] = useState([]); // lista para buscador
+  const [topProducts, setTopProducts] = useState([]); // top 10
+  const [allProducts, setAllProducts] = useState([]); // inventario completo
+  const [allProductsLoading, setAllProductsLoading] = useState(false);
   const [productError, setProductError] = useState("");
-  const [cart, setCart] = useState([]); // carrito
+  const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState("");
   const [noProductFound, setNoProductFound] = useState("");
 
@@ -296,7 +282,6 @@ export default function Sales() {
   const [cxcBalance, setCxcBalance] = useState(null);
 
   // ---- Modo Migración (secreto)
-  thet: null;
   const [migrationMode, setMigrationMode] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState("");
@@ -304,9 +289,7 @@ export default function Sales() {
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedClientSearch(clientSearch.trim());
-    }, 250);
+    const t = setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 250);
     return () => clearTimeout(t);
   }, [clientSearch]);
 
@@ -319,7 +302,7 @@ export default function Sales() {
   useEffect(() => {
     async function loadClients() {
       const term = debouncedClientSearch;
-      if (term.length === 0) {
+      if (!term) {
         setClients([]);
         return;
       }
@@ -364,9 +347,7 @@ export default function Sales() {
         }
 
         const byId = new Map();
-        for (const x of [...(baseData || []), ...andData]) {
-          byId.set(x.id, x);
-        }
+        for (const x of [...(baseData || []), ...andData]) byId.set(x.id, x);
         const merged = Array.from(byId.values());
 
         const ids = merged.map((c) => c.id).filter(Boolean);
@@ -434,14 +415,13 @@ export default function Sales() {
           if (!Number.isNaN(lim)) setCxcLimit(lim);
           if (!Number.isNaN(disp)) setCxcAvailable(disp);
           if (!Number.isNaN(sal)) setCxcBalance(sal);
-          return;
         }
-      } catch (_) {}
+      } catch {}
     }
     fetchCxC();
   }, [selectedClient?.id]);
 
-  /* ---------- TOP productos: triple fallback (RPC → join → 2 pasos) ---------- */
+  /* ---------- TOP productos ---------- */
   useEffect(() => {
     async function loadTopProducts() {
       setProductError("");
@@ -477,7 +457,7 @@ export default function Sales() {
         console.warn("RPC productos_mas_vendidos_por_van falló. Fallback a join.", err?.message || err);
       }
 
-      // 2) Fallback: join directo stock_van -> productos (requiere relación)
+      // 2) Join directo stock_van -> productos
       try {
         const { data, error } = await supabase
           .from("stock_van")
@@ -513,7 +493,7 @@ export default function Sales() {
         console.warn("Join stock_van→productos falló. Fallback a 2 pasos.", err?.message || err);
       }
 
-      // 3) Fallback: 2 pasos (stock luego productos .in())
+      // 3) 2 pasos (stock luego productos .in())
       try {
         const { data: stock, error: e1 } = await supabase
           .from("stock_van")
@@ -566,7 +546,7 @@ export default function Sales() {
     loadTopProducts();
   }, [van?.id]);
 
-  /* ---------- INVENTARIO COMPLETO para búsqueda (join → 2 pasos) ---------- */
+  /* ---------- INVENTARIO COMPLETO para búsqueda ---------- */
   useEffect(() => {
     async function loadAllProducts() {
       setAllProducts([]);
@@ -606,7 +586,7 @@ export default function Sales() {
         console.warn("Inventario completo (join) falló. Fallback a 2 pasos.", err?.message || err);
       }
 
-      // B) Fallback 2 pasos
+      // B) 2 pasos
       try {
         const { data: stock, error: e1 } = await supabase
           .from("stock_van")
@@ -646,7 +626,6 @@ export default function Sales() {
           };
         });
 
-        // ordenamos por nombre para UX
         rows.sort((a, b) =>
           String(a.productos?.nombre || "").localeCompare(String(b.productos?.nombre || ""))
         );
@@ -667,8 +646,6 @@ export default function Sales() {
   useEffect(() => {
     const filter = productSearch.trim().toLowerCase();
     const searchActive = filter.length > 0;
-
-    // Si hay búsqueda → filtra TODO el inventario; si no, muestra el TOP10
     const base = searchActive ? allProducts : topProducts;
 
     const filtered = !searchActive
@@ -684,13 +661,13 @@ export default function Sales() {
     setNoProductFound(searchActive && filtered.length === 0 ? productSearch.trim() : "");
   }, [productSearch, topProducts, allProducts]);
 
-  /* ---------- Totales & crédito (SIN crear créditos nuevos) ---------- */
+  /* ---------- Totales & crédito ---------- */
   const cartSafe = Array.isArray(cart) ? cart : [];
 
   const saleTotal = cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
 
-  // Saldo previo (positivo = debe; negativo = crédito a favor existente)
+  // Saldo previo (positivo = debe; negativo = crédito a favor)
   const balanceBeforeRaw =
     cxcBalance != null && !Number.isNaN(Number(cxcBalance))
       ? Number(cxcBalance)
@@ -703,18 +680,14 @@ export default function Sales() {
   const saleAfterApplyingCredit = Math.max(0, saleTotal - existingCredit);
   const totalAPagar = oldDebt + saleAfterApplyingCredit;
 
-  // Descomposición del pago: primero venta, luego deuda; exceso = change
   const paidForSale = Math.min(paid, saleAfterApplyingCredit);
   const paidToOldDebt = Math.min(oldDebt, Math.max(0, paid - paidForSale));
   const paidApplied = paidForSale + paidToOldDebt;
 
-  const change = Math.max(0, paid - totalAPagar); // devolución
+  const change = Math.max(0, paid - totalAPagar);
   const mostrarAdvertencia = paid > totalAPagar;
 
-  // Saldo posterior
   const balanceAfter = balanceBefore + saleTotal - paidApplied;
-
-  // Nueva deuda de ESTA venta
   const amountToCredit = Math.max(0, balanceAfter) - Math.max(0, balanceBefore);
 
   // Panel crédito
@@ -759,7 +732,7 @@ export default function Sales() {
     setProductSearch("");
     setProducts([]);
     setTopProducts([]);
-    setAllProducts([]); // << mantener limpio
+    setAllProducts([]);
     setNotes("");
     setPayments([{ forma: "efectivo", monto: 0 }]);
     setPaymentError("");
@@ -810,7 +783,7 @@ export default function Sales() {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
 
-  /* ===================== Guardar venta (RPC + fallback) ===================== */
+  /* ===================== Guardar venta (RPC única) ===================== */
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
@@ -847,7 +820,7 @@ export default function Sales() {
         }
       }
 
-      // Recalcular con la misma lógica anti-créditos
+      // Recalcular en el momento de guardar
       const existingCreditNow = Math.max(0, -balanceBefore);
       const oldDebtNow = Math.max(0, balanceBefore);
       const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
@@ -855,10 +828,9 @@ export default function Sales() {
 
       const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
       const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
-      const paidAppliedNow = paidForSaleNow + payOldDebtNow;
       const changeNow = Math.max(0, paid - totalAPagarNow);
 
-      // Mapa de pagos declarado como ingresado (la RPC suele aceptar el bruto y prorratear)
+      // Desglose de pagos
       const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
       payments.forEach((p) => {
         if (paymentMap[p.forma] !== undefined) {
@@ -866,179 +838,105 @@ export default function Sales() {
         }
       });
 
-      const items = cartSafe.map((p) => ({
-        producto_id: p.producto_id,
-        cantidad: Number(p.cantidad),
-        precio_unitario: Number(p.precio_unitario),
-      }));
+      // Items para la RPC
+      const itemsForRpc = cartSafe.map((p) => {
+        const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
+        const qty = Number(p.cantidad);
+        let base = Number(meta.base || p.precio_unitario) || 0;
+        let descuento_pct = 0;
 
-      // -------- PRIMERA OPCIÓN: RPC --------
-      try {
-        const { data, error } = await supabase.rpc("ventas_guardar_v3", {
-          p_van_id: van.id,
-          p_usuario_id: usuario.id,
-          p_cliente_id: selectedClient?.id || null,
-          p_productos: items,
-          p_pago_total: Number(paidForSaleNow), // solo venta
-          p_pago_map: {
-            efectivo: Number(paymentMap.efectivo || 0),
-            tarjeta: Number(paymentMap.tarjeta || 0),
-            transferencia: Number(paymentMap.transferencia || 0),
-            otro: Number(paymentMap.otro || 0),
-          },
-          p_pago_deuda: Number(payOldDebtNow), // solo hasta la deuda
-          p_notas: notes || null,
-        });
-
-        if (error) throw error;
-
-        const payload = {
-          clientName: selectedClient?.nombre || "",
-          creditNumber: getCreditNumber(selectedClient),
-          dateStr: new Date().toLocaleString(),
-          pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-          items: cartSafe.map((p) => ({
-            name: p.nombre,
-            qty: p.cantidad,
-            unit: p.precio_unitario,
-            subtotal: p.cantidad * p.precio_unitario,
-          })),
-          saleTotal,
-          paid: paidAppliedNow, // lo realmente aplicado (venta+deuda)
-          change: changeNow,
-          prevBalance: Math.max(0, balanceBefore),
-          toCredit: amountToCredit,
-          creditLimit,
-          availableBefore: creditAvailable,
-          availableAfter: creditAvailableAfter,
-        };
-
-        const updated = removePendingFromLSById(currentPendingId);
-        setPendingSales(updated);
-
-        alert("✅ Sale saved successfully" + (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : ""));
-
-        await requestAndSendNotifications({ client: selectedClient, payload });
-
-        clearSale();
-        return;
-      } catch (rpcErr) {
-        console.warn(
-          "RPC ventas_guardar_v3 unavailable or failed. Falling back to legacy flow.",
-          rpcErr?.message || rpcErr
-        );
-      }
-
-      // -------- SEGUNDA OPCIÓN: flujo legacy --------
-      async function fallbackOriginalFlow() {
-        const venta_a_guardar = {
-          van_id: van.id,
-          usuario_id: usuario.id,
-          cliente_id: selectedClient?.id || null,
-          total: saleTotal,
-          total_venta: saleTotal,
-          total_pagado: paidForSaleNow, // solo lo aplicado a la venta
-          estado_pago:
-            paidForSaleNow >= saleTotal ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente",
-          forma_pago: payments.map((p) => p.forma).join(","),
-          metodo_pago: payments.map((p) => `${p.forma}:${p.monto}`).join(","),
-          productos: cartSafe.map((p) => ({
-            producto_id: p.producto_id,
-            nombre: p.nombre,
-            cantidad: p.cantidad,
-            precio_unitario: p.precio_unitario,
-            subtotal: p.cantidad * p.precio_unitario,
-          })),
-          notas: notes,
-          pago: paidForSaleNow,
-          pago_efectivo: Math.min(paymentMap.efectivo, paidForSaleNow),
-          pago_tarjeta: Math.min(paymentMap.tarjeta, paidForSaleNow),
-          pago_transferencia: Math.min(paymentMap.transferencia, paidForSaleNow),
-          pago_otro: Math.min(paymentMap.otro, paidForSaleNow),
-        };
-
-        const { data: saleData, error: saleError } = await supabase
-          .from("ventas")
-          .insert([venta_a_guardar])
-          .select()
-          .maybeSingle();
-        if (saleError) throw saleError;
-
-        for (let p of cartSafe) {
-          await supabase.from("detalle_ventas").insert([
-            {
-              venta_id: saleData.id,
-              producto_id: p.producto_id,
-              cantidad: p.cantidad,
-              precio_unitario: p.precio_unitario,
-              subtotal: p.cantidad * p.precio_unitario,
-            },
-          ]);
+        const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
+        if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
+          descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
+        } else if (Number(meta.pct) > 0) {
+          descuento_pct = Number(meta.pct);
         }
 
-        for (let p of cartSafe) {
-          const { data: stockData, error: stockError } = await supabase
-            .from("stock_van")
-            .select("cantidad")
-            .eq("van_id", van.id)
-            .eq("producto_id", p.producto_id)
-            .single();
-
-        if (!stockError) {
-            const newStock = (stockData?.cantidad || 0) - p.cantidad;
-            await supabase
-              .from("stock_van")
-              .update({ cantidad: newStock })
-              .eq("van_id", van.id)
-              .eq("producto_id", p.producto_id);
-          }
+        if (!base || !Number.isFinite(base)) {
+          base = Number(p.precio_unitario) || 0;
+          descuento_pct = 0;
         }
 
-        // Aplica pago a deuda solo hasta su monto
-        if (payOldDebtNow > 0 && selectedClient?.id) {
-          try {
-            const { error: rpcError } = await supabase.rpc("cxc_registrar_pago", {
+        return {
+          producto_id: p.producto_id,
+          cantidad: qty,
+          precio_unit: base,
+          descuento_pct,
+        };
+      });
+
+      // JSON de pago para guardar en ventas.pago
+      const pagoJson = {
+        metodos: payments,
+        map: paymentMap,
+        total_ingresado: paid,
+        aplicado_venta: paidForSaleNow,
+        aplicado_deuda: payOldDebtNow,
+        cambio: changeNow,
+      };
+
+      // Llamada principal (transacción en DB)
+      const t0 = performance.now();
+      const { data, error } = await supabase.rpc("create_venta", {
+        p_cliente_id: selectedClient?.id || null,
+        p_van_id: van.id || null,
+        p_usuario: usuario.id,
+        p_items: itemsForRpc,
+        p_pago: pagoJson,
+        p_notas: notes || null,
+      });
+      if (error) throw error;
+      const elapsedMs = Math.round(performance.now() - t0);
+
+      // Pago a deuda previa (si aplica), en paralelo con notificación
+      const applyDebtPromise =
+        payOldDebtNow > 0 && selectedClient?.id
+          ? supabase.rpc("cxc_registrar_pago", {
               p_cliente_id: selectedClient.id,
-              p_monto: payOldDebtNow,
+              p_monto: Number(payOldDebtNow),
               p_metodo: "mix",
               p_van_id: van.id,
-            });
-            if (rpcError) console.warn("RPC apply old debt failed:", rpcError?.message);
-          } catch (_) {}
-        }
+            })
+          : Promise.resolve({});
 
-        const payload = {
-          clientName: selectedClient?.nombre || "",
-          creditNumber: getCreditNumber(selectedClient),
-          dateStr: new Date().toLocaleString(),
-          pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-          items: cartSafe.map((p) => ({
-            name: p.nombre,
-            qty: p.cantidad,
-            unit: p.precio_unitario,
-            subtotal: p.cantidad * p.precio_unitario,
-          })),
-          saleTotal,
-          paid: paidAppliedNow,
-          change: changeNow,
-          prevBalance: Math.max(0, balanceBefore),
-          toCredit: amountToCredit,
-          creditLimit,
-          availableBefore: creditAvailable,
-          availableAfter: creditAvailableAfter,
-        };
+      // Payload para recibo
+      const payload = {
+        clientName: selectedClient?.nombre || "",
+        creditNumber: getCreditNumber(selectedClient),
+        dateStr: new Date().toLocaleString(),
+        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+        items: cartSafe.map((p) => ({
+          name: p.nombre,
+          qty: p.cantidad,
+          unit: p.precio_unitario,
+          subtotal: p.cantidad * p.precio_unitario,
+        })),
+        saleTotal,
+        paid: paidForSaleNow + payOldDebtNow,
+        change: changeNow,
+        prevBalance: Math.max(0, balanceBefore),
+        toCredit: amountToCredit,
+        creditLimit,
+        availableBefore: creditAvailable,
+        availableAfter: creditAvailableAfter,
+      };
 
-        const updated = removePendingFromLSById(currentPendingId);
-        setPendingSales(updated);
+      // Limpiar pendientes y notificar
+      const updated = removePendingFromLSById(currentPendingId);
+      setPendingSales(updated);
 
-        alert("✅ Sale saved successfully" + (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : ""));
+      alert(
+        `✅ Sale saved successfully` +
+          (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "") +
+          `\n⏱️ ${elapsedMs} ms`
+      );
 
-        await requestAndSendNotifications({ client: selectedClient, payload });
+      await Promise.all([
+        applyDebtPromise,
+        requestAndSendNotifications({ client: selectedClient, payload }),
+      ]);
 
-        clearSale();
-      }
-
-      await fallbackOriginalFlow();
+      clearSale();
     } catch (err) {
       setPaymentError("❌ Error saving sale: " + (err?.message || ""));
       console.error(err);
@@ -1047,7 +945,7 @@ export default function Sales() {
     }
   }
 
-  /* ======================== Pendientes (modal) ======================== */
+  /* ======================== Modal: ventas pendientes ======================== */
   function handleSelectPendingSale(sale) {
     setSelectedClient(sale.client);
     setCart(sale.cart);
@@ -1060,25 +958,62 @@ export default function Sales() {
   function handleDeletePendingSale(id) {
     const updated = removePendingFromLSById(id);
     setPendingSales(updated);
-    if (window.pendingSaleId === id) {
-      window.pendingSaleId = null;
-    }
+    if (window.pendingSaleId === id) window.pendingSaleId = null;
   }
+  function renderPendingSalesModal() {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden">
+          <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between">
+            <h3 className="font-bold text-lg flex items-center gap-2">📂 Pending Sales</h3>
+            <button
+              className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
+              onClick={() => setModalPendingSales(false)}
+            >
+              ✖️
+            </button>
+          </div>
 
-  /* ======================== UI Helpers ======================== */
-  function renderAddress(address) {
-    if (!address) return "No address";
-    if (typeof address === "string") {
-      try {
-        address = JSON.parse(address);
-      } catch {}
-    }
-    if (typeof address === "object") {
-      return [address.calle, address.ciudad, address.estado, address.zip]
-        .filter(Boolean)
-        .join(", ");
-    }
-    return address;
+          <div className="p-4 overflow-y-auto max-h-[60vh]">
+            {pendingSales.length === 0 ? (
+              <div className="text-gray-400 text-center py-8">📭 No pending sales</div>
+            ) : (
+              <div className="space-y-3">
+                {pendingSales.map((v) => (
+                  <div key={v.id} className="bg-gray-50 rounded-lg p-4 border">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex-1">
+                        <div className="font-bold text-gray-900">
+                          👤 {v.client?.nombre || "Quick sale"}
+                        </div>
+                        <div className="text-sm text-gray-600 mt-1">
+                          📦 {v.cart.length} products · 📅 {new Date(v.date).toLocaleDateString()}{" "}
+                          {new Date(v.date).toLocaleTimeString()}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                          onClick={() => handleSelectPendingSale(v)}
+                        >
+                          ▶️ Resume
+                        </button>
+                        <button
+                          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                          onClick={() => handleDeletePendingSale(v.id)}
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   /* ======================== Paso 1: Cliente ======================== */
@@ -1204,9 +1139,7 @@ export default function Sales() {
                       </div>
                       <div
                         className={`text-xl font-bold ${
-                          creditAvailableAfter >= 0
-                            ? "text-emerald-600"
-                            : "text-red-600"
+                          creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"
                         }`}
                       >
                         {fmt(creditAvailableAfter)}
@@ -1216,27 +1149,19 @@ export default function Sales() {
                     {balanceBefore !== 0 && (
                       <div
                         className={`rounded-lg p-2 border ${
-                          balanceBefore > 0
-                            ? "bg-red-50 border-red-200"
-                            : "bg-green-50 border-green-200"
+                          balanceBefore > 0 ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
                         }`}
                       >
                         <div
                           className={`text-xs font-semibold ${
-                            balanceBefore > 0
-                              ? "text-red-700"
-                              : "text-green-700"
+                            balanceBefore > 0 ? "text-red-700" : "text-green-700"
                           }`}
                         >
-                          {balanceBefore > 0
-                            ? "Outstanding Balance"
-                            : "Credit in Favor"}
+                          {balanceBefore > 0 ? "Outstanding Balance" : "Credit in Favor"}
                         </div>
                         <div
                           className={`text-lg font-bold ${
-                            balanceBefore > 0
-                              ? "text-red-700"
-                              : "text-green-700"
+                            balanceBefore > 0 ? "text-red-700" : "text-green-700"
                           }`}
                         >
                           {fmt(Math.abs(balanceBefore))}
@@ -1272,9 +1197,7 @@ export default function Sales() {
                     setClientSearch("");
                     alert(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
                   }
-                  if (e.key === "Enter" && clients.length > 0) {
-                    setSelectedClient(clients[0]);
-                  }
+                  if (e.key === "Enter" && clients.length > 0) setSelectedClient(clients[0]);
                 }}
                 autoFocus
               />
@@ -1286,13 +1209,9 @@ export default function Sales() {
             </div>
 
             <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2">
-              {clients.length === 0 &&
-                debouncedClientSearch.length > 2 &&
-                !clientLoading && (
-                  <div className="text-gray-400 text-center py-8">
-                    🔍 No results found
-                  </div>
-                )}
+              {clients.length === 0 && debouncedClientSearch.length > 2 && !clientLoading && (
+                <div className="text-gray-400 text-center py-8">🔍 No results found</div>
+              )}
               {clients.map((c) => (
                 <div
                   key={c.id}
@@ -1309,9 +1228,7 @@ export default function Sales() {
                           </span>
                         )}
                       </div>
-                      <div className="text-sm text-gray-600 mt-1">
-                        📍 {renderAddress(c.direccion)}
-                      </div>
+                      <div className="text-sm text-gray-600 mt-1">📍 {renderAddress(c.direccion)}</div>
                       <div className="text-sm text-gray-600 flex items-center gap-1 mt-1">
                         📞 {c.telefono} {c.email ? ` · ✉️ ${c.email}` : ""}
                       </div>
@@ -1328,9 +1245,7 @@ export default function Sales() {
 
             <div className="space-y-3">
               <button
-                onClick={() =>
-                  setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })
-                }
+                onClick={() => setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })}
                 className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg py-4 font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
               >
                 ⚡ Quick Sale (No Client)
@@ -1358,9 +1273,7 @@ export default function Sales() {
 
     return (
       <div className="space-y-4">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          🛒 Add Products
-        </h2>
+        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
 
         <div className="flex">
           <input
@@ -1379,30 +1292,21 @@ export default function Sales() {
             </span>
             <button
               className="bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200 whitespace-nowrap"
-              onClick={() =>
-                navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)
-              }
+              onClick={() => navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)}
             >
               ✨ Create Product
             </button>
           </div>
         )}
 
-        {/* Lista: si hay búsqueda → resultados (inventario completo); si no → TOP10 */}
         <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2">
           {productError && !searchActive && (
-            <div className="text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
-              🚫 {productError}
-            </div>
+            <div className="text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">🚫 {productError}</div>
           )}
 
           {products.length === 0 && !noProductFound && (
             <div className="text-gray-400 text-center py-8">
-              {searchActive
-                ? allProductsLoading
-                  ? "⏳ Searching…"
-                  : "🔍 No products match your search"
-                : "📦 No top sellers available for this van"}
+              {searchActive ? (allProductsLoading ? "⏳ Searching…" : "🔍 No products match your search") : "📦 No top sellers available for this van"}
             </div>
           )}
 
@@ -1412,9 +1316,7 @@ export default function Sales() {
               <div
                 key={p.producto_id}
                 className={`bg-white p-4 rounded-lg border-2 transition-all duration-200 shadow-sm ${
-                  inCart
-                    ? "border-green-300 bg-green-50"
-                    : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"
+                  inCart ? "border-green-300 bg-green-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"
                 }`}
               >
                 <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
@@ -1425,9 +1327,7 @@ export default function Sales() {
                   <div className="text-sm text-gray-600 mt-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <span>🔢 Code: {p.productos?.codigo || "N/A"}</span>
                     <span>📊 Stock: {p.cantidad}</span>
-                    <span className="font-semibold text-blue-600">
-                      💰 {fmt(p.productos?.precio)}
-                    </span>
+                    <span className="font-semibold text-blue-600">💰 {fmt(p.productos?.precio)}</span>
                   </div>
                 </div>
 
@@ -1435,9 +1335,7 @@ export default function Sales() {
                   <div className="flex items-center justify-center gap-3 mt-3 pt-3 border-t border-green-200">
                     <button
                       className="bg-red-500 text-white w-10 h-10 rounded-full font-bold hover:bg-red-600 transition-colors shadow-md"
-                      onClick={() =>
-                        handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))
-                      }
+                      onClick={() => handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))}
                     >
                       −
                     </button>
@@ -1447,21 +1345,13 @@ export default function Sales() {
                       max={p.cantidad}
                       value={inCart.cantidad}
                       onChange={(e) =>
-                        handleEditQuantity(
-                          p.producto_id,
-                          Math.max(1, Math.min(Number(e.target.value), p.cantidad))
-                        )
+                        handleEditQuantity(p.producto_id, Math.max(1, Math.min(Number(e.target.value), p.cantidad)))
                       }
                       className="w-16 h-10 border-2 border-gray-300 rounded-lg text-center font-bold text-lg focus:border-blue-500 outline-none"
                     />
                     <button
                       className="bg-green-500 text-white w-10 h-10 rounded-full font-bold hover:bg-green-600 transition-colors shadow-md"
-                      onClick={() =>
-                        handleEditQuantity(
-                          p.producto_id,
-                          Math.min(p.cantidad, inCart.cantidad + 1)
-                        )
-                      }
+                      onClick={() => handleEditQuantity(p.producto_id, Math.min(p.cantidad, inCart.cantidad + 1))}
                     >
                       +
                     </button>
@@ -1478,7 +1368,7 @@ export default function Sales() {
           })}
         </div>
 
-        {/* Carrito destacado */}
+        {/* Carrito */}
         {cartSafe.length > 0 && (
           <div className="rounded-xl p-4 shadow-lg ring-2 ring-blue-300 bg-white border border-blue-200">
             <div className="flex items-center justify-between mb-4">
@@ -1500,11 +1390,9 @@ export default function Sales() {
                     <div className="flex-1">
                       <div className="text-sm text-gray-600">
                         {fmt(p.precio_unitario)} each
-                        {p._pricing?.bulkMin &&
-                          p._pricing?.bulkPrice &&
-                          p.cantidad >= p._pricing.bulkMin && (
-                            <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
-                          )}
+                        {p._pricing?.bulkMin && p._pricing?.bulkPrice && p.cantidad >= p._pricing.bulkMin && (
+                          <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
+                        )}
                       </div>
                       <div className="font-semibold text-gray-900">{p.nombre}</div>
                     </div>
@@ -1527,9 +1415,7 @@ export default function Sales() {
                       </div>
 
                       <div className="text-right">
-                        <div className="font-bold text-lg text-blue-800">
-                          {fmt(p.cantidad * p.precio_unitario)}
-                        </div>
+                        <div className="font-bold text-lg text-blue-800">{fmt(p.cantidad * p.precio_unitario)}</div>
                         <button
                           className="text-xs text-red-600 hover:text-red-800 transition-colors"
                           onClick={() => handleRemoveProduct(p.producto_id)}
@@ -1559,9 +1445,7 @@ export default function Sales() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {balanceBefore >= 0 ? (
               <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
-                <div className="text-xs text-red-600 uppercase font-semibold">
-                  Outstanding Balance
-                </div>
+                <div className="text-xs text-red-600 uppercase font-semibold">Outstanding Balance</div>
                 <div className="text-xl font-bold text-red-700">{fmt(balanceBefore)}</div>
               </div>
             ) : (
@@ -1573,22 +1457,14 @@ export default function Sales() {
 
             <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border-2 border-orange-200 rounded-lg p-4 text-center">
               <div className="text-xs text-orange-600 uppercase font-semibold">Will Go to Credit</div>
-              <div
-                className={`text-xl font-bold ${
-                  amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"
-                }`}
-              >
+              <div className={`text-xl font-bold ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
                 {fmt(amountToCredit)}
               </div>
             </div>
 
             <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
               <div className="text-xs text-green-600 uppercase font-semibold">Available After</div>
-              <div
-                className={`text-xl font-bold ${
-                  creditAvailableAfter >= 0 ? "text-emerald-700" : "text-red-700"
-                }`}
-              >
+              <div className={`text-xl font-bold ${creditAvailableAfter >= 0 ? "text-emerald-700" : "text-red-700"}`}>
                 {fmt(creditAvailableAfter)}
               </div>
             </div>
@@ -1596,10 +1472,7 @@ export default function Sales() {
         )}
 
         <div className="flex flex-col sm:flex-row gap-3 pt-4">
-          <button
-            className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
-            onClick={() => setStep(1)}
-          >
+          <button className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1" onClick={() => setStep(1)}>
             ← Back
           </button>
           <button
@@ -1628,20 +1501,14 @@ export default function Sales() {
 
     return (
       <div className="space-y-6">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          💳 Payment
-        </h2>
+        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 text-center">
             <div className="text-xs text-blue-600 uppercase font-semibold">Client</div>
-            <div className="font-bold text-gray-900 text-sm mt-1">
-              {selectedClient?.nombre || "Quick sale"}
-            </div>
-            <div className="text-xs text-gray-500 mt-1 font-mono">
-              #{getCreditNumber(selectedClient)}
-            </div>
+            <div className="font-bold text-gray-900 text-sm mt-1">{selectedClient?.nombre || "Quick sale"}</div>
+            <div className="text-xs text-gray-500 mt-1 font-mono">#{getCreditNumber(selectedClient)}</div>
           </div>
 
           <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
@@ -1651,18 +1518,12 @@ export default function Sales() {
 
           <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
             <div className="text-xs text-red-600 uppercase font-semibold">Outstanding</div>
-            <div className="text-lg font-bold text-red-700">
-              {fmt(Math.max(0, balanceBefore))}
-            </div>
+            <div className="text-lg font-bold text-red-700">{fmt(Math.max(0, balanceBefore))}</div>
           </div>
 
           <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border-2 border-orange-200 rounded-lg p-4 text-center">
             <div className="text-xs text-orange-600 uppercase font-semibold">To Credit</div>
-            <div
-              className={`text-lg font-bold ${
-                amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"
-              }`}
-            >
+            <div className={`text-lg font-bold ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
               {fmt(amountToCredit)}
             </div>
           </div>
@@ -1671,9 +1532,7 @@ export default function Sales() {
         {/* Payment Methods */}
         <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <div className="font-bold text-gray-900 flex items-center gap-2">
-              💳 Payment Methods
-            </div>
+            <div className="font-bold text-gray-900 flex items-center gap-2">💳 Payment Methods</div>
             <button
               className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
               onClick={handleAddPayment}
@@ -1758,9 +1617,7 @@ export default function Sales() {
 
         {showCreditPanel && amountToCredit > creditAvailable && (
           <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300 rounded-lg p-4">
-            <div className="text-red-700 font-semibold text-center">
-              ❌ Credit Limit Exceeded
-            </div>
+            <div className="text-red-700 font-semibold text-center">❌ Credit Limit Exceeded</div>
             <div className="text-red-600 text-sm mt-2 text-center">
               Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b>
             </div>
@@ -1777,10 +1634,7 @@ export default function Sales() {
           </button>
           <button
             className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
-            disabled={
-              saving ||
-              (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)
-            }
+            disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
             onClick={saveSale}
           >
             {saving ? "💾 Saving..." : "💾 Save Sale"}
@@ -1796,64 +1650,20 @@ export default function Sales() {
     );
   }
 
-  /* ======================== Modal: ventas pendientes ======================== */
-  function renderPendingSalesModal() {
-    return (
-      <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden">
-          <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between">
-            <h3 className="font-bold text-lg flex items-center gap-2">📂 Pending Sales</h3>
-            <button
-              className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
-              onClick={() => setModalPendingSales(false)}
-            >
-              ✖️
-            </button>
-          </div>
-
-          <div className="p-4 overflow-y-auto max-h-[60vh]">
-            {pendingSales.length === 0 ? (
-              <div className="text-gray-400 text-center py-8">📭 No pending sales</div>
-            ) : (
-              <div className="space-y-3">
-                {pendingSales.map((v) => (
-                  <div key={v.id} className="bg-gray-50 rounded-lg p-4 border">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                      <div className="flex-1">
-                        <div className="font-bold text-gray-900">
-                          👤 {v.client?.nombre || "Quick sale"}
-                        </div>
-                        <div className="text-sm text-gray-600 mt-1">
-                          📦 {v.cart.length} products · 📅 {new Date(v.date).toLocaleDateString()}{" "}
-                          {new Date(v.date).toLocaleTimeString()}
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-                          onClick={() => handleSelectPendingSale(v)}
-                        >
-                          ▶️ Resume
-                        </button>
-                        <button
-                          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-                          onClick={() => handleDeletePendingSale(v.id)}
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
+  /* ======================== Render raíz ======================== */
+  function renderAddress(address) {
+    if (!address) return "No address";
+    if (typeof address === "string") {
+      try {
+        address = JSON.parse(address);
+      } catch {}
+    }
+    if (typeof address === "object") {
+      return [address.calle, address.ciudad, address.estado, address.zip].filter(Boolean).join(", ");
+    }
+    return address;
   }
 
-  /* ======================== Render raíz ======================== */
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-4xl mx-auto">
@@ -1878,13 +1688,10 @@ export default function Sales() {
       {/* Modal: Ajuste inicial (modo migración) */}
       {showAdjustModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w/full max-w-sm overflow-hidden">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
             <div className="bg-purple-600 text-white px-4 py-3 flex items-center justify-between">
               <div className="font-semibold">Set Opening Balance</div>
-              <button
-                onClick={() => setShowAdjustModal(false)}
-                className="opacity-80 hover:opacity-100"
-              >
+              <button onClick={() => setShowAdjustModal(false)} className="opacity-80 hover:opacity-100">
                 ✖️
               </button>
             </div>
@@ -1914,10 +1721,7 @@ export default function Sales() {
               />
 
               <div className="flex gap-2 pt-2">
-                <button
-                  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white rounded-lg px-4 py-2"
-                  onClick={() => setShowAdjustModal(false)}
-                >
+                <button className="flex-1 bg-gray-500 hover:bg-gray-600 text-white rounded-lg px-4 py-2" onClick={() => setShowAdjustModal(false)}>
                   Cancel
                 </button>
                 <button
