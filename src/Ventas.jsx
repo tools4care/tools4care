@@ -16,8 +16,8 @@ const PAYMENT_METHODS = [
 const STORAGE_KEY = "pending_sales";
 const SECRET_CODE = "#ajuste2025";
 
-const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4Care";
-const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "no-reply@example.com";
+const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4CareMovil";
+const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
 /** "mailto" = abre cliente del usuario; "edge" = usa Supabase Edge Function "send-receipt" */
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
@@ -25,11 +25,11 @@ const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase()
 function policyLimit(score) {
   const s = Number(score ?? 600);
   if (s < 500) return 0;
-  if (s < 550) return 50;
-  if (s < 600) return 100;
+  if (s < 550) return 30;
+  if (s < 600) return 80;
   if (s < 650) return 150;
-  if (s < 700) return 300;
-  if (s < 750) return 550;
+  if (s < 700) return 200;
+  if (s < 750) return 350;
   if (s < 800) return 750;
   return 1000;
 }
