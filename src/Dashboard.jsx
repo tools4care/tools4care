@@ -30,85 +30,140 @@ export default function Dashboard() {
   const [detalleProductos, setDetalleProductos] = useState([]);
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
 
+  // Cargar clientes (no depende de VAN)
   useEffect(() => {
-    cargarDatos();
     cargarClientes();
     // eslint-disable-next-line
   }, []);
 
+  // Cargar métricas dependientes de VAN (ventas + top productos)
   useEffect(() => {
-    if (van && van.id) {
+    if (van?.id) {
+      cargarDatos(van.id);
+    } else {
+      // Si no hay VAN seleccionada, vaciamos vistas dependientes
+      setVentas([]);
+      setVentasPorDia([]);
+      setProductosTop([]);
+      setLoading(false);
+    }
+    // eslint-disable-next-line
+  }, [van?.id]);
+
+  // Cargar low-stock de la VAN
+  useEffect(() => {
+    if (van?.id) {
       cargarStockVan(van.id);
     } else {
       setStockVan([]);
     }
     // eslint-disable-next-line
-  }, [van, usuario]);
+  }, [van?.id, usuario]);
 
-  // Load sales and top products
-  async function cargarDatos() {
+  // ----------------------- Load sales + top products (filtrado por VAN) -----------------------
+  async function cargarDatos(vanId) {
     setLoading(true);
 
-    // Last 14 days sales
-    const { data: ventasData } = await supabase
+    const desde = dayjs().subtract(14, "day").startOf("day").format("YYYY-MM-DD");
+
+    // 1) Ventas últimos 14 días (sólo VAN actual)
+    const { data: ventasData, error: errVentas } = await supabase
       .from("ventas")
       .select("*")
-      .gte("fecha", dayjs().subtract(14, "day").format("YYYY-MM-DD"))
+      .eq("van_id", vanId)
+      .gte("fecha", desde)
       .order("fecha", { ascending: false });
 
-    setVentas(ventasData || []);
+    if (errVentas) {
+      console.warn("ventas (dashboard) error:", errVentas.message);
+      setVentas([]);
+      setVentasPorDia([]);
+    } else {
+      setVentas(ventasData || []);
 
-    // Sales per day chart
-    const ventasPorDiaMap = {};
-    (ventasData || []).forEach(v => {
-      const fecha = dayjs(v.fecha).format("YYYY-MM-DD");
-      ventasPorDiaMap[fecha] = (ventasPorDiaMap[fecha] || 0) + (v.total_venta || 0);
-    });
-    const ventasPorDiaArr = Object.entries(ventasPorDiaMap)
-      .map(([fecha, total]) => ({ fecha, total }))
-      .sort((a, b) => (a.fecha > b.fecha ? 1 : -1));
-    setVentasPorDia(ventasPorDiaArr);
+      // Build serie por día
+      const map = {};
+      (ventasData || []).forEach((v) => {
+        const f = dayjs(v.fecha).format("YYYY-MM-DD");
+        map[f] = (map[f] || 0) + (Number(v.total_venta) || 0);
+      });
 
-    // Top sold products
-    const { data: detalle } = await supabase
-      .from("detalle_ventas")
-      .select("producto_id, cantidad, productos(nombre)")
-      .order("cantidad", { ascending: false });
+      // Opcional: aseguramos todos los 14 días para el gráfico
+      const serie = [];
+      for (let i = 13; i >= 0; i--) {
+        const f = dayjs().subtract(i, "day").format("YYYY-MM-DD");
+        serie.push({ fecha: f, total: map[f] || 0 });
+      }
+      setVentasPorDia(serie);
+    }
 
-    // Group by producto_id
-    const productosVendidos = {};
-    (detalle || []).forEach(item => {
-      if (!item.producto_id) return;
-      if (!productosVendidos[item.producto_id]) {
-        productosVendidos[item.producto_id] = {
+    // 2) Top productos vendidos (filtrado por VAN)
+    // Intento A: join directo detalle_ventas -> ventas (inner) para filtrar por van_id y por fecha
+    const desde30 = dayjs().subtract(30, "day").startOf("day").format("YYYY-MM-DD");
+    let detalle = [];
+    try {
+      const { data: detJoin, error: eJoin } = await supabase
+        .from("detalle_ventas")
+        .select("producto_id,cantidad,ventas!inner(van_id,fecha),productos(nombre)")
+        .eq("ventas.van_id", vanId)
+        .gte("ventas.fecha", desde30);
+
+      if (eJoin) throw eJoin;
+      detalle = detJoin || [];
+    } catch (e) {
+      // Intento B (fallback 2 pasos): ids de ventas de la VAN -> detalle_ventas.in(venta_id)
+      console.warn("detalle_ventas join fallback:", e?.message || e);
+      const { data: ventasIds } = await supabase
+        .from("ventas")
+        .select("id")
+        .eq("van_id", vanId)
+        .gte("fecha", desde30);
+      const ids = (ventasIds || []).map((x) => x.id);
+      if (ids.length > 0) {
+        const { data: det2 } = await supabase
+          .from("detalle_ventas")
+          .select("producto_id,cantidad,productos(nombre)")
+          .in("venta_id", ids);
+        detalle = det2 || [];
+      } else {
+        detalle = [];
+      }
+    }
+
+    // Agrupar por producto
+    const vendidos = {};
+    (detalle || []).forEach((it) => {
+      if (!it.producto_id) return;
+      if (!vendidos[it.producto_id]) {
+        vendidos[it.producto_id] = {
           cantidad: 0,
-          nombre: item.productos?.nombre || item.producto_id,
+          nombre: it.productos?.nombre || it.producto_id,
         };
       }
-      productosVendidos[item.producto_id].cantidad += (item.cantidad || 0);
+      vendidos[it.producto_id].cantidad += Number(it.cantidad || 0);
     });
 
-    // Only top 5
-    const top = Object.entries(productosVendidos)
+    const top = Object.entries(vendidos)
       .map(([producto_id, v]) => ({ producto_id, ...v }))
       .sort((a, b) => b.cantidad - a.cantidad)
       .slice(0, 5);
-    setProductosTop(top);
 
+    setProductosTop(top);
     setLoading(false);
   }
 
+  // ----------------------- Clientes (para mostrar nombres en la tabla) -----------------------
   async function cargarClientes() {
     const { data } = await supabase.from("clientes").select("id, nombre");
     setClientes(data || []);
   }
 
   function getNombreCliente(id) {
-    const cliente = clientes.find(c => c.id === id);
+    const cliente = clientes.find((c) => c.id === id);
     return cliente ? cliente.nombre : (id ? id.slice(0, 8) + "…" : "");
   }
 
-  // Get low stock (<5) for selected VAN with real product name
+  // ----------------------- Low stock (<5) en la VAN -----------------------
   async function cargarStockVan(van_id) {
     const { data } = await supabase
       .from("stock_van")
@@ -117,14 +172,16 @@ export default function Dashboard() {
       .lt("cantidad", 5)
       .order("cantidad", { ascending: true });
 
-    setStockVan((data || []).map(item => ({
-      nombre: item.productos?.nombre || item.producto_id,
-      codigo: item.productos?.codigo || item.producto_id,
-      cantidad: item.cantidad,
-    })));
+    setStockVan(
+      (data || []).map((item) => ({
+        nombre: item.productos?.nombre || item.producto_id,
+        codigo: item.productos?.codigo || item.producto_id,
+        cantidad: item.cantidad,
+      }))
+    );
   }
 
-  // Load sale details for modal
+  // ----------------------- Detalle de venta (modal) -----------------------
   async function abrirDetalleVenta(venta) {
     setVentaSeleccionada(venta);
     setCargandoDetalle(true);
@@ -142,6 +199,7 @@ export default function Dashboard() {
     setCargandoDetalle(false);
   }
 
+  // ----------------------- Render -----------------------
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-6xl mx-auto">
@@ -152,7 +210,7 @@ export default function Dashboard() {
               📊 Dashboard
             </h1>
             <div className="text-sm text-gray-500">
-              Last 14 days · {van?.nombre_van ? `VAN: ${van.nombre_van}` : "All VANs"}
+              Last 14 days · {van?.nombre || van?.nombre_van ? `VAN: ${van.nombre || van.nombre_van}` : "Select a VAN"}
             </div>
           </div>
         </div>
@@ -245,7 +303,7 @@ export default function Dashboard() {
                       <td className="p-3 text-gray-800">{getNombreCliente(v.cliente_id)}</td>
                       <td className="p-3 text-gray-900 font-semibold">
                         {v.total_venta
-                          ? "$" + v.total_venta.toLocaleString("en-US", { minimumFractionDigits: 2 })
+                          ? "$" + Number(v.total_venta).toLocaleString("en-US", { minimumFractionDigits: 2 })
                           : "--"}
                       </td>
                       <td className={`p-3 ${v.estado_pago === "pendiente" ? "text-red-600" : "text-green-600"}`}>
@@ -303,7 +361,7 @@ export default function Dashboard() {
                 <div>
                   <b>Total:</b>{" "}
                   {ventaSeleccionada.total_venta != null
-                    ? `$${ventaSeleccionada.total_venta.toFixed(2)}`
+                    ? `$${Number(ventaSeleccionada.total_venta).toFixed(2)}`
                     : "--"}
                 </div>
                 <div>
@@ -327,7 +385,7 @@ export default function Dashboard() {
                               <span className="ml-2">{p.productos?.nombre || p.producto_id}</span>
                               <span className="ml-2">x <b>{p.cantidad}</b></span>
                               <span className="ml-2 text-gray-500">
-                                ${p.precio_unitario != null ? p.precio_unitario.toFixed(2) : "--"}
+                                ${p.precio_unitario != null ? Number(p.precio_unitario).toFixed(2) : "--"}
                               </span>
                             </li>
                           ))}
