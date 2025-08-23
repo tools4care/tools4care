@@ -1311,61 +1311,83 @@ export default function Sales() {
           )}
 
           {products.map((p) => {
-            const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
-            return (
-              <div
-                key={p.producto_id}
-                className={`bg-white p-4 rounded-lg border-2 transition-all duration-200 shadow-sm ${
-                  inCart ? "border-green-300 bg-green-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"
-                }`}
-              >
-                <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
-                  <div className="font-semibold text-gray-900 flex items-center gap-2">
-                    📦 {p.productos?.nombre}
-                    {inCart && <span className="text-green-600">✅</span>}
-                  </div>
-                  <div className="text-sm text-gray-600 mt-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <span>🔢 Code: {p.productos?.codigo || "N/A"}</span>
-                    <span>📊 Stock: {p.cantidad}</span>
-                    <span className="font-semibold text-blue-600">💰 {fmt(p.productos?.precio)}</span>
-                  </div>
-                </div>
+  const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
 
-                {inCart && (
-                  <div className="flex items-center justify-center gap-3 mt-3 pt-3 border-t border-green-200">
-                    <button
-                      className="bg-red-500 text-white w-10 h-10 rounded-full font-bold hover:bg-red-600 transition-colors shadow-md"
-                      onClick={() => handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))}
-                    >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      min={1}
-                      max={p.cantidad}
-                      value={inCart.cantidad}
-                      onChange={(e) =>
-                        handleEditQuantity(p.producto_id, Math.max(1, Math.min(Number(e.target.value), p.cantidad)))
-                      }
-                      className="w-16 h-10 border-2 border-gray-300 rounded-lg text-center font-bold text-lg focus:border-blue-500 outline-none"
-                    />
-                    <button
-                      className="bg-green-500 text-white w-10 h-10 rounded-full font-bold hover:bg-green-600 transition-colors shadow-md"
-                      onClick={() => handleEditQuantity(p.producto_id, Math.min(p.cantidad, inCart.cantidad + 1))}
-                    >
-                      +
-                    </button>
-                    <button
-                      className="bg-gray-500 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-gray-600 transition-colors shadow-md"
-                      onClick={() => handleRemoveProduct(p.producto_id)}
-                    >
-                      🗑️ Remove
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+  // Fallbacks por si alguna consulta trae el dato plano y no en "productos"
+  const name  = p.productos?.nombre ?? p.nombre ?? "—";
+  const code  = p.productos?.codigo ?? p.codigo ?? "N/A";
+  const brand = p.productos?.marca ?? p.marca ?? "—";
+  const price = p.productos?.precio ?? p.precio ?? 0;
+  const stock = p.cantidad ?? p.stock ?? 0;
+
+  return (
+    <div
+      key={p.producto_id ?? p.id}
+      className={`bg-white p-4 rounded-lg border-2 transition-all duration-200 shadow-sm ${
+        inCart ? "border-green-300 bg-green-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"
+      }`}
+    >
+      <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
+        {/* ======= LÍNEA PRINCIPAL: NOMBRE (siempre visible) ======= */}
+        <div className="font-semibold text-gray-900 flex items-center gap-2">
+          📦 <span className="truncate" title={name}>{name}</span>
+          {/* Chip opcional con la marca */}
+          {brand && brand !== "—" && (
+            <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
+              {brand}
+            </span>
+          )}
+          {inCart && <span className="text-green-600">✅</span>}
+        </div>
+
+        {/* ======= Línea secundaria: código / stock / marca / precio ======= */}
+        <div className="text-sm text-gray-600 mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <span>🔢 Code: {code}</span>
+          <span>📊 Stock: {stock}</span>
+          <span>🏷️ Brand: {brand}</span>
+          <span className="font-semibold text-blue-600 sm:text-right">💰 {fmt(price)}</span>
+        </div>
+      </div>
+
+      {inCart && (
+        <div className="flex items-center justify-center gap-3 mt-3 pt-3 border-t border-green-200">
+          <button
+            className="bg-red-500 text-white w-10 h-10 rounded-full font-bold hover:bg-red-600 transition-colors shadow-md"
+            onClick={() => handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))}
+          >
+            −
+          </button>
+          <input
+            type="number"
+            min={1}
+            max={stock}
+            value={inCart.cantidad}
+            onChange={(e) =>
+              handleEditQuantity(
+                p.producto_id,
+                Math.max(1, Math.min(Number(e.target.value), stock))
+              )
+            }
+            className="w-16 h-10 border-2 border-gray-300 rounded-lg text-center font-bold text-lg focus:border-blue-500 outline-none"
+          />
+          <button
+            className="bg-green-500 text-white w-10 h-10 rounded-full font-bold hover:bg-green-600 transition-colors shadow-md"
+            onClick={() => handleEditQuantity(p.producto_id, Math.min(stock, inCart.cantidad + 1))}
+          >
+            +
+          </button>
+          <button
+            className="bg-gray-500 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-gray-600 transition-colors shadow-md"
+            onClick={() => handleRemoveProduct(p.producto_id)}
+          >
+            🗑️ Remove
+          </button>
+        </div>
+      )}
+    </div>
+  );
+})}
+
         </div>
 
         {/* Carrito */}
