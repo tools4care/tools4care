@@ -1,17 +1,31 @@
 // src/supabaseClient.js
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = "https://gvloygqbavibmpakzdma.supabase.co";
-const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o";
+// ⚠️ Puedes moverlos a variables de entorno Vite si quieres:
+// import.meta.env.VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+const supabaseUrl =
+  import.meta?.env?.VITE_SUPABASE_URL || "https://gvloygqbavibmpakzdma.supabase.co";
+const supabaseAnonKey =
+  import.meta?.env?.VITE_SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o";
 
-/* ========= anon-id persistente (para carritos de invitados con RLS) ========= */
-const ANON_KEY = "anon-id";
-function getAnonId() {
+/* ============================================================================
+   anon-id persistente (para carritos de invitados con RLS)
+   - Exportamos la FUNCIÓN para usarla también desde Storefront/Checkout
+   - Se guarda en localStorage y se reutiliza siempre
+============================================================================ */
+const ANON_KEY = "t4c_anon_id";
+
+export function getAnonId() {
   if (typeof window === "undefined") return null;
   try {
     let id = localStorage.getItem(ANON_KEY);
     if (!id) {
-      id = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
+      const rnd =
+        (globalThis?.crypto && typeof crypto.randomUUID === "function")
+          ? crypto.randomUUID()
+          : Math.random().toString(36).slice(2);
+      id = `${rnd}-guest`;
       localStorage.setItem(ANON_KEY, id);
     }
     return id;
@@ -19,37 +33,58 @@ function getAnonId() {
     return null;
   }
 }
+
+// Conveniencia: algunos sitios lo importan como constante
 export const anonId = getAnonId();
 
-/* ========= Cliente Supabase con header global x-anon-id ===================== */
+/* ============================================================================
+   Cliente Supabase con header global x-anon-id (para tus políticas RLS)
+============================================================================ */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
     headers: anonId ? { "x-anon-id": anonId } : {},
   },
 });
 
-/* Opcional: refrescar header si alguna vez borras el storage */
+/* ============================================================================
+   (Opcional) Refrescar header si borras el storage. Nota: la librería no
+   expone un setter público estable para headers globales; lo más seguro si
+   necesitas regenerarlo es recargar la página. Dejamos un helper benigno.
+============================================================================ */
 export function refreshAnonHeader() {
   const id = getAnonId();
   if (!id) return;
-  // @ts-ignore: set/merge global headers en runtime
-  supabase.headers = { ...(supabase.headers || {}), "x-anon-id": id };
+  try {
+    // No todas las versiones exponen esta propiedad; si no existe, ignora.
+    // @ts-ignore
+    if (supabase && supabase.headers) {
+      // @ts-ignore
+      supabase.headers = { ...(supabase.headers || {}), "x-anon-id": id };
+    }
+  } catch {
+    // silencio: es opcional
+  }
 }
 
-/* ========= Parche único: envolver supabase.rpc con caché "no existe" =========
-   - Evita llamadas repetidas a RPC inexistentes (y sus 404 en Network/Consola)
-   - Devuelve { error: { code: "RPC_NOT_AVAILABLE" } } para activar tus fallbacks
-   - Para limpiar la caché: localStorage.removeItem("rpc-availability-v1")
-============================================================================= */
+/* ============================================================================
+   Parche: envolver supabase.rpc con caché "no existe"
+   - Evita spam de 404 cuando llamas a RPC que aún no están creadas
+   - Devuelve { error: { code: "RPC_NOT_AVAILABLE" } } y deja al caller decidir
+============================================================================ */
 (function patchRpc(client) {
   const LS_KEY = "rpc-availability-v1";
 
   function loadCache() {
-    try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); }
-    catch { return {}; }
+    try {
+      return JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+    } catch {
+      return {};
+    }
   }
   function saveCache(cache) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(cache)); } catch {}
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(cache));
+    } catch {}
   }
 
   const cache = loadCache();

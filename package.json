@@ -12,11 +12,13 @@
     "dist": "electron-builder"
   },
   "dependencies": {
+    "@stripe/react-stripe-js": "^3.9.1",
+    "@stripe/stripe-js": "^7.8.0",
     "@supabase/supabase-js": "^2.50.2",
     "@zxing/browser": "^0.1.5",
     "dayjs": "^1.11.13",
     "downshift": "^9.0.9",
-    "framer-motion": "^12.23.0",
+    "framer-motion": "^12.23.12",
     "html2canvas": "^1.4.1",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
