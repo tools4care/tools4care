@@ -1,8 +1,61 @@
 // src/storefront/Storefront.jsx
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase, anonId } from "../supabaseClient";
 
+/* ----------------------- Pequeños componentes UI ----------------------- */
+function Spinner({ className = "" }) {
+  return (
+    <span
+      className={
+        "inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent align-[-0.125em]" +
+        (className ? " " + className : "")
+      }
+      aria-label="loading"
+    />
+  );
+}
+
+function Toast({ show, title = "Agregado al carrito", onClose }) {
+  if (!show) return null;
+  return (
+    <div
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] bg-gray-900 text-white shadow-2xl rounded-xl px-4 py-3 text-sm
+                 animate-[toastin_160ms_ease-out] will-change-transform"
+      role="status"
+      aria-live="polite"
+      onAnimationEnd={() => {
+        // auto-close tras 2.2s
+        setTimeout(onClose, 2200);
+      }}
+      style={{
+        // keyframes inline para evitar config extra de Tailwind
+        animationName:
+          "@keyframes toastin{from{transform:translate(-50%,12px);opacity:.0}to{transform:translate(-50%,0);opacity:1}} toastin",
+      }}
+    >
+      <b className="font-semibold">✓</b> <span className="opacity-90">{title}</span>
+    </div>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm p-4">
+      <div className="aspect-[4/3] w-full mb-3 rounded-xl bg-gray-200 animate-pulse" />
+      <div className="h-3 w-24 bg-gray-200 rounded mb-2 animate-pulse" />
+      <div className="h-4 w-40 bg-gray-200 rounded mb-1.5 animate-pulse" />
+      <div className="h-3 w-20 bg-gray-200 rounded mb-3 animate-pulse" />
+      <div className="h-6 w-24 bg-gray-200 rounded mb-1.5 animate-pulse" />
+      <div className="h-8 w-full bg-gray-200 rounded-xl animate-pulse" />
+    </div>
+  );
+}
+
+/* =============================== Storefront =============================== */
 export default function Storefront() {
+  const navigate = useNavigate();
+
   const [loading, setLoading] = useState(true);
   const [catalogo, setCatalogo] = useState([]);
   const [cartId, setCartId] = useState(null);
@@ -17,6 +70,11 @@ export default function Storefront() {
   const [updating, setUpdating] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
 
+  // Animaciones / feedback
+  const [pulseCart, setPulseCart] = useState(false);
+  const [toastOpen, setToastOpen] = useState(false);
+  const [addingId, setAddingId] = useState(null);
+
   /* ================= PWA: botón Instalar ================= */
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [canInstall, setCanInstall] = useState(false);
@@ -30,7 +88,6 @@ export default function Storefront() {
 
   useEffect(() => {
     const onBIP = (e) => {
-      // Chrome/Android: guardamos el evento para lanzar el prompt cuando el usuario quiera
       e.preventDefault();
       setDeferredPrompt(e);
       setCanInstall(true);
@@ -53,7 +110,6 @@ export default function Storefront() {
   }, [isStandalone]);
 
   const handleInstall = async () => {
-    // Android/Chrome (hay prompt)
     if (deferredPrompt) {
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
@@ -62,7 +118,6 @@ export default function Storefront() {
       setCanInstall(false);
       return;
     }
-    // iOS (sin prompt del navegador)
     if (isiOS && !installed) {
       alert(
         "Para instalar en iPhone/iPad:\n\n1) Toca el botón Compartir (cuadrado con flecha hacia arriba)\n2) Elige “Añadir a pantalla de inicio”."
@@ -75,11 +130,13 @@ export default function Storefront() {
     const { data: session } = await supabase.auth.getSession();
     const userId = session?.session?.user?.id ?? null;
 
-    let { data: c } = await supabase
+    let { data: c, error: eSel } = await supabase
       .from("carts")
       .select("id")
       .eq(userId ? "user_id" : "anon_id", userId ?? anonId)
       .maybeSingle();
+
+    if (eSel) console.warn(eSel);
 
     if (!c?.id) {
       const { data: nuevo, error: e2 } = await supabase
@@ -106,6 +163,7 @@ export default function Storefront() {
 
   async function addToCart(producto_id) {
     try {
+      setAddingId(producto_id);
       const cid = cartId ?? (await ensureCart());
       setCartId(cid);
 
@@ -130,9 +188,16 @@ export default function Storefront() {
 
       await refreshCartCount(cid);
       if (cartOpen) await loadCart(cid);
+
+      // Animaciones: pulso del badge + toast
+      setPulseCart(true);
+      setToastOpen(true);
+      setTimeout(() => setPulseCart(false), 500);
     } catch (e) {
       console.error(e);
       setError(e.message || "Error al agregar al carrito");
+    } finally {
+      setTimeout(() => setAddingId(null), 400);
     }
   }
 
@@ -161,7 +226,7 @@ export default function Storefront() {
       }
       const { data: productos, error: e2 } = await supabase
         .from("productos")
-        .select("id, codigo, nombre, precio")
+        .select("id, codigo, nombre, precio, marca")
         .in("id", ids);
       if (e2) {
         console.warn(e2);
@@ -227,31 +292,16 @@ export default function Storefront() {
     }
   };
 
-  /* ============================== Checkout ================================ */
+  /* ============================== Checkout (LEGACY) ========================= */
   const checkout = async () => {
     if (!cartId || checkingOut) return;
     setCheckingOut(true);
     setError("");
     try {
-      const { data, error } = await supabase.rpc("crear_orden_desde_carrito", {
-        p_cart_id: cartId,
-        p_cliente_id: null,
-      });
-      if (error) throw error;
-      const order = Array.isArray(data) ? data[0] : data;
-
-      await loadCart(cartId);
-      await refreshCartCount(cartId);
       setCartOpen(false);
-
-      alert(
-        `✅ Pedido creado: #${String(order?.venta_id || "").slice(0, 8)} · Total $${money(
-          order?.total
-        )}\nLo verás en tu módulo de Ventas (VAN Online).`
-      );
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "No se pudo completar el checkout");
+      navigate("/storefront/checkout");
+      // Si prefieres pasar el cartId al checkout:
+      // navigate("/storefront/checkout", { state: { cid: cartId } });
     } finally {
       setCheckingOut(false);
     }
@@ -264,7 +314,9 @@ export default function Storefront() {
       setLoading(true);
       setError("");
       try {
-        const { data: items, error: e1 } = await supabase.rpc("get_catalogo_online");
+        const { data: items, error: e1 } = await supabase.rpc(
+          "get_catalogo_online"
+        );
         if (e1) throw e1;
         if (!cancel) setCatalogo(items || []);
         const cid = await ensureCart();
@@ -302,7 +354,7 @@ export default function Storefront() {
 
   /* ================================== UI =================================== */
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100">
       {/* Topbar */}
       <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b px-4 py-3">
         <div className="max-w-6xl mx-auto flex items-center gap-3">
@@ -337,12 +389,21 @@ export default function Storefront() {
               await loadCart(cid);
               setCartOpen(true);
             }}
-            className="relative rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-semibold"
+            className="relative rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-semibold shadow-sm hover:shadow-md transition-shadow"
           >
-            Carrito
-            <span className="absolute -top-2 -right-2 min-w-5 rounded-full bg-black/80 text-white text-xs px-1 text-center">
+            <span className="pr-5">Carrito</span>
+            <span
+              className={
+                "absolute -top-2 -right-2 min-w-5 rounded-full bg-black/90 text-white text-xs px-1 text-center transition-transform " +
+                (pulseCart ? "scale-110" : "scale-100")
+              }
+            >
               {cartCount}
             </span>
+            {/* halo animado cuando agrega */}
+            {pulseCart && (
+              <span className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-black/40 animate-ping" />
+            )}
           </button>
 
           {/* Botón Instalar app */}
@@ -375,47 +436,92 @@ export default function Storefront() {
 
       {/* Contenido */}
       <main className="max-w-6xl mx-auto p-4">
-        {loading && <div className="text-blue-700">Cargando catálogo…</div>}
-        {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
-        {!loading && listFiltrada.length === 0 && (
-          <div className="text-gray-500">No hay productos que coincidan.</div>
+        {error && (
+          <div className="mb-3 p-3 bg-red-50 text-red-700 rounded border border-red-200">
+            {error}
+          </div>
         )}
 
-        <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          {listFiltrada.map((p) => (
-            <article
-              key={p.producto_id}
-              className="bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow p-4 flex flex-col"
-            >
-              <div className="aspect-[4/3] w-full mb-3 rounded-xl bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-gray-400 text-xs">
-                sin imagen
-              </div>
-
-              <div className="text-[11px] text-gray-500 font-mono">{p.codigo}</div>
-              <h3 className="mt-0.5 font-semibold text-gray-900 line-clamp-2">{p.nombre}</h3>
-              <div className="text-xs text-gray-500">{p.marca || "—"}</div>
-
-              <div className="mt-auto pt-2">
-                <div className="text-lg font-bold">${money(p.precio)}</div>
-                <div className="text-[11px] text-gray-500">Disponible: {Number(p.disponible)}</div>
-
-                <button
-                  onClick={() => addToCart(p.producto_id)}
-                  className="mt-3 w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white py-2 text-sm font-semibold"
+        {/* Grid de productos */}
+        {loading ? (
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        ) : listFiltrada.length === 0 ? (
+          <div className="text-gray-500">No hay productos que coincidan.</div>
+        ) : (
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {listFiltrada.map((p) => {
+              const adding = addingId === p.producto_id;
+              return (
+                <article
+                  key={p.producto_id}
+                  className="group bg-white rounded-2xl shadow-sm hover:shadow-md transition-all p-4 flex flex-col border border-transparent hover:border-gray-200"
                 >
-                  Agregar
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
+                  {/* imagen / placeholder */}
+                  <div className="relative aspect-[4/3] w-full mb-3 rounded-xl bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-gray-400 text-xs overflow-hidden">
+                    {/* etiqueta de stock */}
+                    <div className="absolute left-2 top-2 text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      Stock: {Number(p.disponible)}
+                    </div>
+                    <div className="opacity-70 group-hover:opacity-100 transition">sin imagen</div>
+                  </div>
+
+                  <div className="text-[11px] text-gray-500 font-mono">{p.codigo}</div>
+                  <h3 className="mt-0.5 font-semibold text-gray-900 line-clamp-2 leading-snug">
+                    {p.nombre}
+                  </h3>
+                  <div className="text-xs text-gray-500">{p.marca || "—"}</div>
+
+                  <div className="mt-auto pt-2">
+                    <div className="flex items-baseline gap-2">
+                      <div className="text-lg font-bold">${money(p.precio)}</div>
+                      <div className="text-[11px] text-gray-500">c/u</div>
+                    </div>
+
+                    <button
+                      onClick={() => addToCart(p.producto_id)}
+                      disabled={adding}
+                      className={
+                        "mt-3 w-full rounded-xl py-2 text-sm font-semibold shadow-sm transition-all " +
+                        (adding
+                          ? "bg-emerald-600 text-white"
+                          : "bg-blue-600 hover:bg-blue-700 text-white")
+                      }
+                      title="Agregar al carrito"
+                    >
+                      {adding ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="inline-block h-4 w-4 rounded-full bg-white/30" />
+                          Añadido ✓
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="inline-block size-2 rounded-full bg-white animate-ping" />
+                          Agregar
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </main>
 
       {/* Drawer Carrito */}
       {cartOpen && (
         <div className="fixed inset-0 z-30">
           <div className="absolute inset-0 bg-black/40" onClick={() => setCartOpen(false)} />
-          <aside className="absolute right-0 top-0 h-full w-full sm:w-[420px] bg-white shadow-2xl flex flex-col">
+          <aside className="absolute right-0 top-0 h-full w-full sm:w-[420px] bg-white shadow-2xl flex flex-col animate-[slidein_.18s_ease-out] will-change-transform"
+            style={{
+              animationName:
+                "@keyframes slidein{from{transform:translateX(12px);opacity:.0}to{transform:translateX(0);opacity:1}} slidein",
+            }}
+          >
             <div className="px-4 py-3 border-b flex items-center justify-between">
               <h2 className="font-bold">Tu carrito</h2>
               <button className="rounded-full w-8 h-8 hover:bg-gray-100" onClick={() => setCartOpen(false)} title="Cerrar">
@@ -478,22 +584,31 @@ export default function Storefront() {
             <div className="border-t p-4">
               <Resumen cartItems={cartItems} money={money} />
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <button onClick={() => setCartOpen(false)} className="rounded-xl bg-gray-200 hover:bg-gray-300 py-2 font-medium">
+                <button
+                  onClick={() => setCartOpen(false)}
+                  className="rounded-xl bg-gray-200 hover:bg-gray-300 py-2 font-medium"
+                >
                   Seguir comprando
                 </button>
                 <button
-                  onClick={checkout}
-                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-semibold disabled:opacity-60"
-                  disabled={cartItems.length === 0 || checkingOut}
-                  title={checkingOut ? "Procesando..." : "Ir al checkout"}
+                  onClick={() => {
+                    setCartOpen(false);
+                    navigate("/storefront/checkout"); // o: navigate("/storefront/checkout", { state: { cid: cartId } })
+                  }}
+                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-semibold"
+                  title="Ir al checkout"
+                  disabled={cartItems.length === 0}
                 >
-                  {checkingOut ? "Procesando…" : "Checkout ➜"}
+                  Checkout ➜
                 </button>
               </div>
             </div>
           </aside>
         </div>
       )}
+
+      {/* Toast de agregado */}
+      <Toast show={toastOpen} onClose={() => setToastOpen(false)} />
     </div>
   );
 }
@@ -509,7 +624,9 @@ function Resumen({ cartItems, money }) {
         <span>Subtotal</span>
         <b>${money(subtotal)}</b>
       </div>
-      <div className="text-xs text-gray-500">Impuestos y envío se calculan en el checkout.</div>
+      <div className="text-xs text-gray-500">
+        Impuestos y envío se calculan en el checkout.
+      </div>
     </div>
   );
 }
