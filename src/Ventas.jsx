@@ -1,4 +1,4 @@
-// src/Ventas.jsx  (puedes llamarlo Sales.jsx si prefieres)
+// src/Ventas.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
@@ -30,8 +30,8 @@ function policyLimit(score) {
   if (s < 650) return 150;
   if (s < 700) return 200;
   if (s < 750) return 350;
-  if (s < 800) return 750;
-  return 1000;
+  if (s < 800) return 500;
+  return 800; // >= 800
 }
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString(undefined, {
@@ -51,6 +51,62 @@ function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
   if (pctNum > 0) return r2(base * (1 - pctNum / 100));
   return r2(base);
 }
+
+/** ================== PRICING HELPERS (NUEVOS) ================== **/
+const firstNumber = (arr, def = 0, acceptZero = false) => {
+  for (const v of arr) {
+    const n = Number(v);
+    if (Number.isFinite(n) && (acceptZero ? n >= 0 : n > 0)) return n;
+  }
+  return def;
+};
+
+/** Extrae metadatos de precio desde la fila (venga del join, RPC o fallback) */
+function extractPricingFromRow(row) {
+  const p = row?.productos ?? row ?? {};
+  const base = firstNumber(
+    [
+      p.precio, row?.precio,
+      p.precio_unit, row?.precio_unit,
+      p.price, row?.price,
+      // último recurso: si solo hay bulk válido, lo usamos como base
+      p.bulk_unit_price, row?.bulk_unit_price,
+    ],
+    0,
+    false
+  );
+
+  const pct = firstNumber([p.descuento_pct, row?.descuento_pct], 0, true);
+
+  const bulkMin =
+    p?.bulk_min_qty != null
+      ? Number(p.bulk_min_qty)
+      : row?.bulk_min_qty != null
+      ? Number(row.bulk_min_qty)
+      : null;
+
+  const bulkPrice = firstNumber([p.bulk_unit_price, row?.bulk_unit_price], null, false) ?? null;
+
+  return { base, pct, bulkMin, bulkPrice };
+}
+
+/** Calcula el precio unitario final para una fila dada y qty */
+function computeUnitPriceFromRow(row, qty = 1) {
+  const pr = extractPricingFromRow(row);
+  let base = Number(pr.base || 0);
+
+  // Si no hay base pero sí hay precio por mayoreo válido, úsalo como base
+  if ((!base || base <= 0) && pr.bulkPrice && (!pr.bulkMin || qty >= Number(pr.bulkMin))) {
+    base = Number(pr.bulkPrice);
+  }
+  if (!base || !Number.isFinite(base)) return 0;
+
+  return unitPriceFromProduct(
+    { base, pct: pr.pct, bulkMin: pr.bulkMin, bulkPrice: pr.bulkPrice },
+    qty
+  );
+}
+
 function getClientBalance(c) {
   if (!c) return 0;
   return Number(c._saldo_real ?? c.balance ?? c.saldo_total ?? c.saldo ?? 0);
@@ -58,6 +114,16 @@ function getClientBalance(c) {
 function getCreditNumber(c) {
   return c?.credito_id || c?.id || "—";
 }
+
+/* ── Helpers de normalización ────────────────────────────────────────── */
+const num = (v, d = 0) => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : d;
+};
+const numOrNull = (v) => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+};
 
 /* =================== localStorage / SMS / Email =================== */
 function safeParseJSON(str, fallback) {
@@ -163,7 +229,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
   return { ok: true, via: "mailto" };
 }
 
-/* ======= Composición de recibos ======= */
+/* ======= Recibo ======= */
 function composeReceiptMessageEN(payload) {
   const {
     clientName,
@@ -188,17 +254,15 @@ function composeReceiptMessageEN(payload) {
   if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
   lines.push("");
   lines.push("Items:");
-  for (const it of items) {
-    lines.push(`• ${it.name} — ${it.qty} x ${fmt(it.unit)} = ${fmt(it.subtotal)}`);
-  }
+  for (const it of items) lines.push(`• ${it.name} — ${it.qty} x ${fmt(it.unit)} = ${fmt(it.subtotal)}`);
   lines.push("");
   lines.push(`Sale total: ${fmt(saleTotal)}`);
   lines.push(`Paid now:   ${fmt(paid)}`);
   if (change > 0) lines.push(`Change:      ${fmt(change)}`);
   lines.push(`Previous balance: ${fmt(prevBalance)}`);
   if (toCredit > 0) lines.push(`*** Balance due (new): ${fmt(toCredit)} ***`);
-  lines.push("");
   if (creditLimit > 0) {
+    lines.push("");
     lines.push(`Credit limit:       ${fmt(creditLimit)}`);
     lines.push(`Available before:   ${fmt(availableBefore)}`);
     lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
@@ -210,6 +274,7 @@ function composeReceiptMessageEN(payload) {
 async function askChannel({ hasPhone, hasEmail }) {
   if (!hasPhone && !hasEmail) return null;
   if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
+  if (!hasEmail && hasPhone === false) return null;
   if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
   const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "")
     .trim()
@@ -230,11 +295,8 @@ async function requestAndSendNotifications({ client, payload }) {
   const text = composeReceiptMessageEN(payload);
   const html = text;
 
-  if (wants === "sms") {
-    await sendSmsIfPossible({ phone: client.telefono, text });
-  } else if (wants === "email") {
-    await sendEmailSmart({ to: client.email, subject, html, text });
-  }
+  if (wants === "sms") await sendSmsIfPossible({ phone: client.telefono, text });
+  else if (wants === "email") await sendEmailSmart({ to: client.email, subject, html, text });
 }
 
 /* ========================= Componente ========================= */
@@ -421,7 +483,85 @@ export default function Sales() {
     fetchCxC();
   }, [selectedClient?.id]);
 
-  /* ---------- TOP productos ---------- */
+  /* ========== TOP productos (si falta code/brand/price los enriquezco desde catálogo) ========== */
+
+  // Helper para uniformar la forma del RPC
+  function normalizeFromRpc(arr = []) {
+    return arr.slice(0, 10).map((p) => {
+      const producto_id = p.producto_id ?? p.id ?? p.prod_id ?? null;
+      const nombre =
+        p.nombre ?? p.producto_nombre ?? p.nombre_producto ?? p.producto ?? "";
+      const precio = num(p.precio ?? p.precio_unit ?? p.price ?? p.unit_price);
+      const codigo = p.codigo ?? p.sku ?? p.codigobarra ?? p.barcode ?? null;
+      const marca = p.marca ?? p.brand ?? null;
+      const cantidad = num(p.cantidad_disponible ?? p.cantidad ?? p.stock);
+      return {
+        producto_id,
+        cantidad,
+        productos: {
+          id: producto_id,
+          nombre,
+          precio,
+          codigo,
+          marca,
+          descuento_pct: numOrNull(p.descuento_pct ?? p.discount_pct),
+          bulk_min_qty: numOrNull(p.bulk_min_qty ?? p.bulk_min),
+          bulk_unit_price: numOrNull(p.bulk_unit_price ?? p.bulk_price),
+        },
+        // copias planas por compatibilidad
+        nombre,
+        precio,
+        codigo,
+        marca,
+      };
+    });
+  }
+
+  // Enriquecer filas con datos de la tabla productos
+  async function enrichTopWithCatalog(rows) {
+    const ids = rows.map((r) => r.producto_id).filter(Boolean);
+    if (ids.length === 0) return rows;
+
+    const { data: prods, error } = await supabase
+      .from("productos")
+      .select("id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price")
+      .in("id", ids);
+    if (error || !prods) return rows;
+
+    const map = new Map(prods.map((p) => [p.id, p]));
+
+    return rows.map((row) => {
+      const p = map.get(row.producto_id);
+      if (!p) return row;
+
+      const merged = {
+        producto_id: row.producto_id,
+        cantidad: row.cantidad,
+        productos: {
+          id: row.producto_id,
+          nombre: row.productos?.nombre ?? p.nombre,
+          precio:
+            Number.isFinite(Number(row.productos?.precio)) && Number(row.productos?.precio) > 0
+              ? num(row.productos?.precio)
+              : num(p.precio),
+          codigo: row.productos?.codigo ?? p.codigo ?? null,
+          marca: row.productos?.marca ?? p.marca ?? null,
+          descuento_pct: row.productos?.descuento_pct ?? numOrNull(p.descuento_pct),
+          bulk_min_qty: row.productos?.bulk_min_qty ?? numOrNull(p.bulk_min_qty),
+          bulk_unit_price: row.productos?.bulk_unit_price ?? numOrNull(p.bulk_unit_price),
+        },
+      };
+
+      // Copias planas para UI/filtros
+      merged.nombre = merged.productos.nombre;
+      merged.precio = merged.productos.precio;
+      merged.codigo = merged.productos.codigo;
+      merged.marca = merged.productos.marca;
+
+      return merged;
+    });
+  }
+
   useEffect(() => {
     async function loadTopProducts() {
       setProductError("");
@@ -436,20 +576,10 @@ export default function Sales() {
         if (error) throw error;
 
         if (Array.isArray(data) && data.length > 0) {
-          const top10 = data.slice(0, 10).map((p) => ({
-            producto_id: p.producto_id,
-            cantidad: p.cantidad_disponible ?? p.cantidad ?? 0,
-            productos: {
-              nombre: p.nombre,
-              precio: p.precio,
-              codigo: p.codigo,
-              descuento_pct: p.descuento_pct ?? null,
-              bulk_min_qty: p.bulk_min_qty ?? null,
-              bulk_unit_price: p.bulk_unit_price ?? null,
-              marca: p.marca ?? "",
-            },
-          }));
-          setTopProducts(top10);
+          let rows = normalizeFromRpc(data);
+          // si el RPC no trae code/brand/price, los completo con catálogo
+          rows = await enrichTopWithCatalog(rows);
+          setTopProducts(rows);
           return;
         }
         console.warn("RPC productos_mas_vendidos_por_van devolvió vacío.");
@@ -462,7 +592,7 @@ export default function Sales() {
         const { data, error } = await supabase
           .from("stock_van")
           .select(
-            "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca)"
+            "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)"
           )
           .eq("van_id", van.id)
           .gt("cantidad", 0)
@@ -472,19 +602,29 @@ export default function Sales() {
         if (error) throw error;
 
         if (Array.isArray(data) && data.length > 0) {
-          const rows = data.map((row) => ({
-            producto_id: row.producto_id,
-            cantidad: row.cantidad ?? 0,
-            productos: {
-              nombre: row.productos?.nombre,
-              precio: row.productos?.precio,
-              codigo: row.productos?.codigo,
-              descuento_pct: row.productos?.descuento_pct ?? null,
-              bulk_min_qty: row.productos?.bulk_min_qty ?? null,
-              bulk_unit_price: row.productos?.bulk_unit_price ?? null,
-              marca: row.productos?.marca ?? "",
-            },
-          }));
+          const rows = data.map((row) => {
+            const p = row.productos || {};
+            const producto_id = row.producto_id ?? p.id ?? null;
+            const nombre = p.nombre ?? "";
+            const precio = num(p.precio);
+            const codigo = p.codigo ?? null;
+            const marca  = p.marca ?? null;
+            return {
+              producto_id,
+              cantidad: num(row.cantidad),
+              productos: {
+                id: producto_id,
+                nombre,
+                precio,
+                codigo,
+                marca,
+                descuento_pct: numOrNull(p.descuento_pct),
+                bulk_min_qty: numOrNull(p.bulk_min_qty),
+                bulk_unit_price: numOrNull(p.bulk_unit_price),
+              },
+              nombre, precio, codigo, marca,
+            };
+          });
           setTopProducts(rows);
           return;
         }
@@ -513,25 +653,32 @@ export default function Sales() {
 
         const { data: prods, error: e2 } = await supabase
           .from("productos")
-          .select("id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca")
+          .select("id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price")
           .in("id", ids);
         if (e2) throw e2;
 
-        const map = new Map((prods || []).map((p) => [p.id, p]));
+        const m = new Map((prods || []).map((p) => [p.id, p]));
         const rows = (stock || []).map((s) => {
-          const p = map.get(s.producto_id) || {};
+          const p = m.get(s.producto_id) || {};
+          const producto_id = s.producto_id ?? p.id ?? null;
+          const nombre = p.nombre ?? "";
+          const precio = num(p.precio);
+          const codigo = p.codigo ?? null;
+          const marca  = p.marca ?? null;
           return {
-            producto_id: s.producto_id,
-            cantidad: s.cantidad ?? 0,
+            producto_id,
+            cantidad: num(s.cantidad),
             productos: {
-              nombre: p.nombre,
-              precio: p.precio,
-              codigo: p.codigo,
-              descuento_pct: p.descuento_pct ?? null,
-              bulk_min_qty: p.bulk_min_qty ?? null,
-              bulk_unit_price: p.bulk_unit_price ?? null,
-              marca: p.marca ?? "",
+              id: producto_id,
+              nombre,
+              precio,
+              codigo,
+              marca,
+              descuento_pct: numOrNull(p.descuento_pct),
+              bulk_min_qty: numOrNull(p.bulk_min_qty),
+              bulk_unit_price: numOrNull(p.bulk_unit_price),
             },
+            nombre, precio, codigo, marca,
           };
         });
 
@@ -553,7 +700,7 @@ export default function Sales() {
       setAllProductsLoading(true);
       if (!van?.id) return setAllProductsLoading(false);
 
-      // A) Join directo
+      // A) Join directo (orden correcto usando foreignTable para evitar 400)
       try {
         const { data, error } = await supabase
           .from("stock_van")
@@ -562,20 +709,21 @@ export default function Sales() {
           )
           .eq("van_id", van.id)
           .gt("cantidad", 0)
-          .order("productos.nombre", { ascending: true });
+          .order("nombre", { ascending: true, foreignTable: "productos" });
 
         if (error) throw error;
 
         const rows = (data || []).map((row) => ({
           producto_id: row.producto_id,
-          cantidad: row.cantidad ?? 0,
+          cantidad: num(row.cantidad),
           productos: {
+            id: row.productos?.id,
             nombre: row.productos?.nombre,
-            precio: row.productos?.precio,
+            precio: num(row.productos?.precio),
             codigo: row.productos?.codigo,
-            descuento_pct: row.productos?.descuento_pct ?? null,
-            bulk_min_qty: row.productos?.bulk_min_qty ?? null,
-            bulk_unit_price: row.productos?.bulk_unit_price ?? null,
+            descuento_pct: numOrNull(row.productos?.descuento_pct),
+            bulk_min_qty: numOrNull(row.productos?.bulk_min_qty),
+            bulk_unit_price: numOrNull(row.productos?.bulk_unit_price),
             marca: row.productos?.marca ?? "",
           },
         }));
@@ -613,14 +761,15 @@ export default function Sales() {
           const p = map.get(s.producto_id) || {};
           return {
             producto_id: s.producto_id,
-            cantidad: s.cantidad ?? 0,
+            cantidad: num(s.cantidad),
             productos: {
+              id: p.id,
               nombre: p.nombre,
-              precio: p.precio,
+              precio: num(p.precio),
               codigo: p.codigo,
-              descuento_pct: p.descuento_pct ?? null,
-              bulk_min_qty: p.bulk_min_qty ?? null,
-              bulk_unit_price: p.bulk_unit_price ?? null,
+              descuento_pct: numOrNull(p.descuento_pct),
+              bulk_min_qty: numOrNull(p.bulk_min_qty),
+              bulk_unit_price: numOrNull(p.bulk_unit_price),
               marca: p.marca ?? "",
             },
           };
@@ -651,9 +800,9 @@ export default function Sales() {
     const filtered = !searchActive
       ? base
       : base.filter((row) => {
-          const n = (row.productos?.nombre || "").toLowerCase();
-          const c = (row.productos?.codigo || "").toLowerCase();
-          const m = (row.productos?.marca || "").toLowerCase();
+          const n = (row.productos?.nombre || row.nombre || "").toLowerCase();
+          const c = (row.productos?.codigo || row.codigo || "").toLowerCase();
+          const m = (row.productos?.marca || row.marca || "").toLowerCase();
           return n.includes(filter) || c.includes(filter) || m.includes(filter);
         });
 
@@ -667,7 +816,6 @@ export default function Sales() {
   const saleTotal = cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
 
-  // Saldo previo (positivo = debe; negativo = crédito a favor)
   const balanceBeforeRaw =
     cxcBalance != null && !Number.isNaN(Number(cxcBalance))
       ? Number(cxcBalance)
@@ -744,41 +892,52 @@ export default function Sales() {
   /* ======================== Handlers de productos ======================== */
   function handleAddProduct(p) {
     const exists = cartSafe.find((x) => x.producto_id === p.producto_id);
-    const meta = {
-      base: Number(p.productos?.precio) || 0,
-      pct: Number(p.productos?.descuento_pct) || 0,
-      bulkMin: p.productos?.bulk_min_qty != null ? Number(p.productos.bulk_min_qty) : null,
-      bulkPrice: p.productos?.bulk_unit_price != null ? Number(p.productos.bulk_unit_price) : null,
-    };
+    const qty = 1;
+
+    const meta = extractPricingFromRow(p);
+    const unit = computeUnitPriceFromRow(p, qty);
+
+    const safeName = p.productos?.nombre ?? p.nombre ?? "—";
+
     if (!exists) {
-      const qty = 1;
       setCart((prev) => [
         ...prev,
         {
           producto_id: p.producto_id,
-          nombre: p.productos?.nombre,
-          _pricing: meta,
-          precio_unitario: unitPriceFromProduct(meta, qty),
+          nombre: safeName,
+          _pricing: { ...meta, base: meta.base || unit || 0 }, // guarda lo que realmente se usó
+          precio_unitario: unit,
           cantidad: qty,
         },
       ]);
     }
     setProductSearch("");
   }
+
   function handleEditQuantity(producto_id, cantidad) {
     setCart((cart) =>
       cart.map((item) => {
         if (item.producto_id !== producto_id) return item;
         const qty = Math.max(1, Number(cantidad));
-        const meta = item._pricing || { base: item.precio_unitario, pct: 0 };
-        return {
-          ...item,
-          cantidad: qty,
-          precio_unitario: unitPriceFromProduct(meta, qty),
-        };
+
+        // Si el item ya trae _pricing úsalo; si no, extrae de nuevo desde el item
+        const meta = item._pricing ?? extractPricingFromRow(item);
+        const unit =
+          unitPriceFromProduct(
+            {
+              base: Number(meta.base || 0),
+              pct: Number(meta.pct || 0),
+              bulkMin: meta.bulkMin != null ? Number(meta.bulkMin) : null,
+              bulkPrice: meta.bulkPrice != null ? Number(meta.bulkPrice) : null,
+            },
+            qty
+          ) || computeUnitPriceFromRow(item, qty); // fallback extra seguro
+
+        return { ...item, cantidad: qty, precio_unitario: unit };
       })
     );
   }
+
   function handleRemoveProduct(producto_id) {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
@@ -833,9 +992,7 @@ export default function Sales() {
       // Desglose de pagos
       const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
       payments.forEach((p) => {
-        if (paymentMap[p.forma] !== undefined) {
-          paymentMap[p.forma] += Number(p.monto || 0);
-        }
+        if (paymentMap[p.forma] !== undefined) paymentMap[p.forma] += Number(p.monto || 0);
       });
 
       // Items para la RPC
@@ -865,7 +1022,6 @@ export default function Sales() {
         };
       });
 
-      // JSON de pago para guardar en ventas.pago
       const pagoJson = {
         metodos: payments,
         map: paymentMap,
@@ -931,10 +1087,7 @@ export default function Sales() {
           `\n⏱️ ${elapsedMs} ms`
       );
 
-      await Promise.all([
-        applyDebtPromise,
-        requestAndSendNotifications({ client: selectedClient, payload }),
-      ]);
+      await Promise.all([applyDebtPromise, requestAndSendNotifications({ client: selectedClient, payload })]);
 
       clearSale();
     } catch (err) {
@@ -983,9 +1136,7 @@ export default function Sales() {
                   <div key={v.id} className="bg-gray-50 rounded-lg p-4 border">
                     <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                       <div className="flex-1">
-                        <div className="font-bold text-gray-900">
-                          👤 {v.client?.nombre || "Quick sale"}
-                        </div>
+                        <div className="font-bold text-gray-900">👤 {v.client?.nombre || "Quick sale"}</div>
                         <div className="text-sm text-gray-600 mt-1">
                           📦 {v.cart.length} products · 📅 {new Date(v.date).toLocaleDateString()}{" "}
                           {new Date(v.date).toLocaleTimeString()}
@@ -1018,39 +1169,42 @@ export default function Sales() {
 
   /* ======================== Paso 1: Cliente ======================== */
   function renderStepClient() {
+    // safety
+    const clientsSafe = Array.isArray(clients) ? clients : [];
     const creditNum = getCreditNumber(selectedClient);
 
-    return (
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-gray-800 flex items-center">
-              👤 Select Client
-            </h2>
-            {migrationMode && (
-              <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
-                🔒 Migration mode
-              </span>
-            )}
+    // Ya seleccionado ⇒ ficha + panel crédito
+    if (selectedClient) {
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-gray-800 flex items-center">
+                👤 Select Client
+              </h2>
+              {migrationMode && (
+                <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
+                  🔒 Migration mode
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                onClick={() => setModalPendingSales(true)}
+                type="button"
+              >
+                📂 Pending ({pendingSales.length})
+              </button>
+              <button
+                onClick={() => navigate("/clientes/nuevo", { replace: false })}
+                className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+              >
+                ✨ Quick Create Client
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-              onClick={() => setModalPendingSales(true)}
-              type="button"
-            >
-              📂 Pending ({pendingSales.length})
-            </button>
-            <button
-              onClick={() => navigate("/clientes/nuevo", { replace: false })}
-              className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-            >
-              ✨ Quick Create Client
-            </button>
-          </div>
-        </div>
 
-        {selectedClient ? (
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-4 shadow-sm">
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="flex-1">
@@ -1182,77 +1336,130 @@ export default function Sales() {
               </button>
             </div>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="🔍 Search by name, last name, business, phone, email or address..."
-                className="w-full border-2 border-gray-300 rounded-lg p-4 text-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-                value={clientSearch}
-                onChange={(e) => setClientSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && clientSearch.trim() === SECRET_CODE) {
-                    setMigrationMode((v) => !v);
-                    setClientSearch("");
-                    alert(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
-                  }
-                  if (e.key === "Enter" && clients.length > 0) setSelectedClient(clients[0]);
-                }}
-                autoFocus
-              />
-              {clientLoading && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-                  Buscando…
-                </div>
-              )}
-            </div>
 
-            <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2">
-              {clients.length === 0 && debouncedClientSearch.length > 2 && !clientLoading && (
-                <div className="text-gray-400 text-center py-8">🔍 No results found</div>
-              )}
-              {clients.map((c) => (
-                <div
-                  key={c.id}
-                  className="bg-white p-4 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-200 border-2 border-transparent transition-all duration-200 shadow-sm"
-                  onClick={() => setSelectedClient(c)}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="font-bold text-gray-900 flex items-center gap-2">
-                        👤 {c.nombre} {c.apellido || ""}
-                        {c.negocio && (
-                          <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
-                            {c.negocio}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-600 mt-1">📍 {renderAddress(c.direccion)}</div>
-                      <div className="text-sm text-gray-600 flex items-center gap-1 mt-1">
-                        📞 {c.telefono} {c.email ? ` · ✉️ ${c.email}` : ""}
-                      </div>
-                    </div>
-                    {Number(getClientBalance(c)) > 0 && (
-                      <div className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-semibold">
-                        💰 {fmt(getClientBalance(c))}
-                      </div>
+          <div className="flex justify-end pt-4">
+            <button
+              className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200"
+              disabled={!selectedClient}
+              onClick={() => setStep(2)}
+            >
+              Next Step →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // === Sin cliente seleccionado: SIEMPRE RENDERIZA BUSCADOR ===
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-gray-800 flex items-center">
+              👤 Select Client
+            </h2>
+            {migrationMode && (
+              <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
+                🔒 Migration mode
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+              onClick={() => setModalPendingSales(true)}
+              type="button"
+            >
+              📂 Pending ({pendingSales.length})
+            </button>
+            <button
+              onClick={() => navigate("/clientes/nuevo", { replace: false })}
+              className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+            >
+              ✨ Quick Create Client
+            </button>
+          </div>
+        </div>
+
+        {/* BUSCADOR */}
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="🔍 Search by name, last name, business, phone, email or address..."
+            className="w-full border-2 border-gray-300 rounded-lg p-4 text-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+            value={clientSearch}
+            onChange={(e) => setClientSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && clientSearch.trim() === SECRET_CODE) {
+                setMigrationMode((v) => !v);
+                setClientSearch("");
+                alert(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
+              }
+              if (e.key === "Enter" && clientsSafe.length > 0) setSelectedClient(clientsSafe[0]);
+            }}
+            autoFocus
+          />
+          {clientLoading && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+              Buscando…
+            </div>
+          )}
+        </div>
+
+        {/* RESULTADOS */}
+        <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2 border border-gray-200">
+          {clientsSafe.length === 0 && debouncedClientSearch.length < 3 && (
+            <div className="text-gray-400 text-center py-8">
+              ✍️ Type at least <b>3</b> letters to search
+            </div>
+          )}
+
+          {clientsSafe.length === 0 &&
+            debouncedClientSearch.length >= 3 &&
+            !clientLoading && (
+              <div className="text-gray-400 text-center py-8">🔍 No results found</div>
+            )}
+
+          {clientsSafe.map((c) => (
+            <div
+              key={c.id}
+              className="bg-white p-4 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-200 border-2 border-transparent transition-all duration-200 shadow-sm"
+              onClick={() => setSelectedClient(c)}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="font-bold text-gray-900 flex items-center gap-2">
+                    👤 {c.nombre} {c.apellido || ""}
+                    {c.negocio && (
+                      <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
+                        {c.negocio}
+                      </span>
                     )}
                   </div>
+                  <div className="text-sm text-gray-600 mt-1">📍 {renderAddress(c.direccion)}</div>
+                  <div className="text-sm text-gray-600 flex items-center gap-1 mt-1">
+                    📞 {c.telefono} {c.email ? ` · ✉️ ${c.email}` : ""}
+                  </div>
                 </div>
-              ))}
+                {Number(getClientBalance(c)) > 0 && (
+                  <div className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-semibold">
+                    💰 {fmt(getClientBalance(c))}
+                  </div>
+                )}
+              </div>
             </div>
+          ))}
+        </div>
 
-            <div className="space-y-3">
-              <button
-                onClick={() => setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })}
-                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg py-4 font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-              >
-                ⚡ Quick Sale (No Client)
-              </button>
-            </div>
-          </div>
-        )}
+        {/* QUICK SALE */}
+        <div className="space-y-3">
+          <button
+            onClick={() => setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })}
+            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg py-4 font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
+          >
+            ⚡ Quick Sale (No Client)
+          </button>
+        </div>
 
         <div className="flex justify-end pt-4">
           <button
@@ -1311,83 +1518,78 @@ export default function Sales() {
           )}
 
           {products.map((p) => {
-  const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
+            const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
 
-  // Fallbacks por si alguna consulta trae el dato plano y no en "productos"
-  const name  = p.productos?.nombre ?? p.nombre ?? "—";
-  const code  = p.productos?.codigo ?? p.codigo ?? "N/A";
-  const brand = p.productos?.marca ?? p.marca ?? "—";
-  const price = p.productos?.precio ?? p.precio ?? 0;
-  const stock = p.cantidad ?? p.stock ?? 0;
+            const name  = p.productos?.nombre ?? p.nombre ?? "—";
+            const code  = p.productos?.codigo ?? p.codigo ?? "N/A";
+            const brand = p.productos?.marca  ?? p.marca  ?? "—";
+            const price = Number(p.productos?.precio ?? p.precio ?? 0);
+            const stock = p.cantidad ?? p.stock ?? 0;
 
-  return (
-    <div
-      key={p.producto_id ?? p.id}
-      className={`bg-white p-4 rounded-lg border-2 transition-all duration-200 shadow-sm ${
-        inCart ? "border-green-300 bg-green-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"
-      }`}
-    >
-      <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
-        {/* ======= LÍNEA PRINCIPAL: NOMBRE (siempre visible) ======= */}
-        <div className="font-semibold text-gray-900 flex items-center gap-2">
-          📦 <span className="truncate" title={name}>{name}</span>
-          {/* Chip opcional con la marca */}
-          {brand && brand !== "—" && (
-            <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
-              {brand}
-            </span>
-          )}
-          {inCart && <span className="text-green-600">✅</span>}
-        </div>
+            return (
+              <div
+                key={p.producto_id ?? p.id}
+                className={`bg-white p-4 rounded-lg border-2 transition-all duration-200 shadow-sm ${
+                  inCart ? "border-green-300 bg-green-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"
+                }`}
+              >
+                <div onClick={() => handleAddProduct(p)} className="flex-1 cursor-pointer">
+                  <div className="font-semibold text-gray-900 flex items-center gap-2">
+                    📦 <span className="truncate" title={name}>{name}</span>
+                    {brand && brand !== "—" && (
+                      <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
+                        Brand: {brand}
+                      </span>
+                    )}
+                    {inCart && <span className="text-green-600">✅</span>}
+                  </div>
 
-        {/* ======= Línea secundaria: código / stock / marca / precio ======= */}
-        <div className="text-sm text-gray-600 mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <span>🔢 Code: {code}</span>
-          <span>📊 Stock: {stock}</span>
-          <span>🏷️ Brand: {brand}</span>
-          <span className="font-semibold text-blue-600 sm:text-right">💰 {fmt(price)}</span>
-        </div>
-      </div>
+                  <div className="text-sm text-gray-600 mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <span>🔢 Code: {code}</span>
+                    <span>📊 Stock: {stock}</span>
+                    <span>🏷️ Brand: {brand}</span>
+                    <span className="font-semibold text-blue-600 sm:text-right">💰 {fmt(price)}</span>
+                  </div>
+                </div>
 
-      {inCart && (
-        <div className="flex items-center justify-center gap-3 mt-3 pt-3 border-t border-green-200">
-          <button
-            className="bg-red-500 text-white w-10 h-10 rounded-full font-bold hover:bg-red-600 transition-colors shadow-md"
-            onClick={() => handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))}
-          >
-            −
-          </button>
-          <input
-            type="number"
-            min={1}
-            max={stock}
-            value={inCart.cantidad}
-            onChange={(e) =>
-              handleEditQuantity(
-                p.producto_id,
-                Math.max(1, Math.min(Number(e.target.value), stock))
-              )
-            }
-            className="w-16 h-10 border-2 border-gray-300 rounded-lg text-center font-bold text-lg focus:border-blue-500 outline-none"
-          />
-          <button
-            className="bg-green-500 text-white w-10 h-10 rounded-full font-bold hover:bg-green-600 transition-colors shadow-md"
-            onClick={() => handleEditQuantity(p.producto_id, Math.min(stock, inCart.cantidad + 1))}
-          >
-            +
-          </button>
-          <button
-            className="bg-gray-500 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-gray-600 transition-colors shadow-md"
-            onClick={() => handleRemoveProduct(p.producto_id)}
-          >
-            🗑️ Remove
-          </button>
-        </div>
-      )}
-    </div>
-  );
-})}
-
+                {inCart && (
+                  <div className="flex items-center justify-center gap-3 mt-3 pt-3 border-t border-green-200">
+                    <button
+                      className="bg-red-500 text-white w-10 h-10 rounded-full font-bold hover:bg-red-600 transition-colors shadow-md"
+                      onClick={() => handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))}
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={stock}
+                      value={inCart.cantidad}
+                      onChange={(e) =>
+                        handleEditQuantity(
+                          p.producto_id,
+                          Math.max(1, Math.min(Number(e.target.value), stock))
+                        )
+                      }
+                      className="w-16 h-10 border-2 border-gray-300 rounded-lg text-center font-bold text-lg focus:border-blue-500 outline-none"
+                    />
+                    <button
+                      className="bg-green-500 text-white w-10 h-10 rounded-full font-bold hover:bg-green-600 transition-colors shadow-md"
+                      onClick={() => handleEditQuantity(p.producto_id, Math.min(stock, inCart.cantidad + 1))}
+                    >
+                      +
+                    </button>
+                    <button
+                      className="bg-gray-500 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-gray-600 transition-colors shadow-md"
+                      onClick={() => handleRemoveProduct(p.producto_id)}
+                    >
+                      🗑️ Remove
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Carrito */}
@@ -1406,49 +1608,62 @@ export default function Sales() {
             </div>
 
             <div className="space-y-3">
-              {cartSafe.map((p) => (
-                <div key={p.producto_id} className="bg-gray-50 p-4 rounded-lg border">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                    <div className="flex-1">
-                      <div className="text-sm text-gray-600">
-                        {fmt(p.precio_unitario)} each
-                        {p._pricing?.bulkMin && p._pricing?.bulkPrice && p.cantidad >= p._pricing.bulkMin && (
-                          <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
-                        )}
-                      </div>
-                      <div className="font-semibold text-gray-900">{p.nombre}</div>
-                    </div>
+              {cartSafe.map((p) => {
+                // Blindaje visual: si por lo que sea precio_unitario es 0, recalculamos con _pricing
+                const unitSafe =
+                  p.precio_unitario > 0
+                    ? p.precio_unitario
+                    : unitPriceFromProduct(
+                        p._pricing || { base: 0, pct: 0, bulkMin: null, bulkPrice: null },
+                        p.cantidad
+                      );
 
-                    <div className="flex items-center justify-between sm:justify-end gap-3">
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="bg-red-500 text-white w-8 h-8 rounded-full font-bold hover:bg-red-600 transition-colors"
-                          onClick={() => handleEditQuantity(p.producto_id, Math.max(1, p.cantidad - 1))}
-                        >
-                          −
-                        </button>
-                        <span className="w-8 text-center font-bold text-lg">{p.cantidad}</span>
-                        <button
-                          className="bg-green-500 text-white w-8 h-8 rounded-full font-bold hover:bg-green-600 transition-colors"
-                          onClick={() => handleEditQuantity(p.producto_id, p.cantidad + 1)}
-                        >
-                          +
-                        </button>
+                return (
+                  <div key={p.producto_id} className="bg-gray-50 p-4 rounded-lg border">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex-1">
+                        <div className="text-sm text-gray-600">
+                          {fmt(unitSafe)} each
+                          {p._pricing?.bulkMin &&
+                            p._pricing?.bulkPrice &&
+                            p.cantidad >= p._pricing.bulkMin && (
+                              <span className="ml-2 text-emerald-700 font-semibold">• bulk</span>
+                            )}
+                        </div>
+                        <div className="font-semibold text-gray-900">{p.nombre}</div>
                       </div>
 
-                      <div className="text-right">
-                        <div className="font-bold text-lg text-blue-800">{fmt(p.cantidad * p.precio_unitario)}</div>
-                        <button
-                          className="text-xs text-red-600 hover:text-red-800 transition-colors"
-                          onClick={() => handleRemoveProduct(p.producto_id)}
-                        >
-                          🗑️ Remove
-                        </button>
+                      <div className="flex items-center justify-between sm:justify-end gap-3">
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="bg-red-500 text-white w-8 h-8 rounded-full font-bold hover:bg-red-600 transition-colors"
+                            onClick={() => handleEditQuantity(p.producto_id, Math.max(1, p.cantidad - 1))}
+                          >
+                            −
+                          </button>
+                          <span className="w-8 text-center font-bold text-lg">{p.cantidad}</span>
+                          <button
+                            className="bg-green-500 text-white w-8 h-8 rounded-full font-bold hover:bg-green-600 transition-colors"
+                            onClick={() => handleEditQuantity(p.producto_id, p.cantidad + 1)}
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="font-bold text-lg text-blue-800">{fmt(p.cantidad * unitSafe)}</div>
+                          <button
+                            className="text-xs text-red-600 hover:text-red-800 transition-colors"
+                            onClick={() => handleRemoveProduct(p.producto_id)}
+                          >
+                            🗑️ Remove
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -1463,6 +1678,7 @@ export default function Sales() {
           />
         </div>
 
+        {/* Resumen crédito */}
         {selectedClient && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {balanceBefore >= 0 ? (
@@ -1750,6 +1966,7 @@ export default function Sales() {
                   className="flex-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg px-4 py-2"
                   onClick={async () => {
                     const amt = Number(adjustAmount);
+                    const { id: uid } = usuario || {};
                     if (!selectedClient?.id) return;
                     if (!amt || isNaN(amt) || amt <= 0) {
                       alert("Monto inválido");
@@ -1758,7 +1975,7 @@ export default function Sales() {
                     const { error } = await supabase.rpc("cxc_crear_ajuste_inicial", {
                       p_cliente_id: selectedClient.id,
                       p_monto: amt,
-                      p_usuario_id: usuario?.id,
+                      p_usuario_id: uid,
                       p_nota: adjustNote || null,
                     });
                     if (error) {
