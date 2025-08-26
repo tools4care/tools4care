@@ -1,16 +1,15 @@
-// src/main.jsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import App from "./App";
 import Storefront from "./storefront/Storefront.jsx";
-import Checkout from "./storefront/Checkout.jsx"; // ⬅️ NUEVO
+import Checkout from "./storefront/Checkout.jsx";
 
 import { UsuarioProvider } from "./UsuarioContext";
 import { VanProvider } from "./hooks/VanContext";
 
-import "./index.css"; // Tailwind
+import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
@@ -18,10 +17,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <UsuarioProvider>
         <VanProvider>
           <Routes>
-            {/* Nueva tienda online */}
+            {/* 🛒 público */}
             <Route path="/storefront" element={<Storefront />} />
-            <Route path="/storefront/checkout" element={<Checkout />} /> {/* ⬅️ NUEVO */}
-            {/* Todo lo demás sigue igual */}
+            <Route path="/storefront/checkout" element={<Checkout />} />
+            {/* todo lo demás */}
             <Route path="/*" element={<App />} />
           </Routes>
         </VanProvider>
@@ -30,11 +29,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   </React.StrictMode>
 );
 
-// ---- PWA: registrar Service Worker (no toca tu app) ----
+// opcional PWA
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch((e) => {
-      console.warn("SW registration failed", e);
-    });
+    navigator.serviceWorker.register("/sw.js").catch(console.warn);
   });
 }
