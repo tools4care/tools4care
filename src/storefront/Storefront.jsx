@@ -75,7 +75,7 @@ export default function Storefront() {
     })();
   }, []);
 
-  // Aplicar filtros/búsqueda localmente (rápido y sin tocar lo que ya funciona)
+  // Aplicar filtros/búsqueda localmente
   useEffect(() => {
     const nq = norm(q);
     let list = [...allRows];
@@ -91,7 +91,6 @@ export default function Storefront() {
       list = list.filter((p) => (p.marca || "").toLowerCase() === brand);
     }
 
-    // rango de precio usando el que mostramos (online > base)
     list = list.filter((p) => {
       const price = Number(p.price_online ?? p.price_base ?? 0);
       if (minPrice !== "" && price < Number(minPrice)) return false;
@@ -117,8 +116,9 @@ export default function Storefront() {
     }
   }
 
+  // Checkout público
   function goCheckout() {
-    navigate("/online/checkout");
+    navigate("/checkout");
   }
 
   // Datos derivados para secciones
@@ -203,11 +203,10 @@ export default function Storefront() {
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
             title="Inicio"
           >
-            {/* logo simple */}
             <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
               <path fill="currentColor" d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 9h6.5z" />
             </svg>
-            <span>Storefront</span>
+            <span>Tools4care Storefront</span>
           </button>
 
           {/* search */}
@@ -220,13 +219,20 @@ export default function Storefront() {
             />
           </div>
 
-          {/* login */}
+          {/* auth clientes (NO empleados) */}
           <a
-            href="/login"
+            href="/store/register"
+            className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+            title="Crear cuenta"
+          >
+            Crear cuenta
+          </a>
+          <a
+            href="/store/login"
             className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
             title="Entrar"
           >
-            Iniciar sesión
+            Entrar
           </a>
 
           {/* cart button */}
@@ -255,7 +261,7 @@ export default function Storefront() {
         <div className="max-w-7xl mx-auto px-4 py-10 grid md:grid-cols-2 gap-6 items-center">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold leading-tight">
-              Ofertas de la semana y nuevos ingresos
+              Tools4care: Ofertas de la semana y nuevos ingresos
             </h1>
             <p className="mt-2 text-white/90">
               Descubre precios especiales y productos recién agregados. ¡Aprovecha antes de que se agoten!
@@ -336,7 +342,6 @@ export default function Storefront() {
           </div>
         </div>
 
-        {/* filtros */}
         <div className="bg-white border rounded-xl p-3 mb-4">
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
             <div className="sm:col-span-2">
@@ -355,11 +360,14 @@ export default function Storefront() {
                 onChange={(e) => setBrand(e.target.value)}
                 title="Marca"
               >
-                {brands.map((b) => (
-                  <option key={b} value={b}>
-                    {b === "all" ? "Todas las marcas" : b}
-                  </option>
-                ))}
+                {["all", ...new Set(allRows.map((p) => (p.marca || "").toLowerCase()))]
+                  .filter((v, i, a) => a.indexOf(v) === i)
+                  .sort()
+                  .map((b) => (
+                    <option key={b} value={b}>
+                      {b === "all" ? "Todas las marcas" : b}
+                    </option>
+                  ))}
               </select>
             </div>
 
@@ -398,7 +406,6 @@ export default function Storefront() {
           </div>
         </div>
 
-        {/* grid principal */}
         {!rows.length && !loading && (
           <div className="text-gray-500">No hay productos con los filtros actuales.</div>
         )}
@@ -409,9 +416,8 @@ export default function Storefront() {
         </div>
       </section>
 
-      {/* FOOTER mini */}
       <footer className="mt-10 py-6 text-center text-sm text-gray-500">
-        © {new Date().getFullYear()} Storefront — hecho con 💙
+        © {new Date().getFullYear()} Tools4care — hecho con 💙
       </footer>
     </div>
   );
