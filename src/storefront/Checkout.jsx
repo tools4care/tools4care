@@ -1,38 +1,50 @@
 // src/storefront/Checkout.jsx
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, Link, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { supabase, getAnonId } from "../supabaseClient";
+import { supabase } from "../supabaseClient";
+import { getAnonId } from "../utils/anon";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
-/* ----------------- helpers carrito (idénticos a Storefront) ----------------- */
+// URL directa a Edge Functions
+const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
+
+/* ----------------- helpers: carrito ----------------- */
 async function ensureCart() {
   const { data: session } = await supabase.auth.getSession();
   const userId = session?.session?.user?.id ?? null;
-  const anon = getAnonId();
 
   const col = userId ? "user_id" : "anon_id";
-  const val = userId ?? anon;
+  const val = userId ?? getAnonId();
 
-  const { data: found } = await supabase
+  const { data: found, error: selErr } = await supabase
     .from("carts")
-    .select("id, created_at")
+    .select("id")
     .eq(col, val)
-    .order("created_at", { ascending: false })
-    .limit(1);
+    .maybeSingle();
 
-  if (found && found[0]?.id) return found[0].id;
+  if (selErr && selErr.code !== "PGRST116") throw selErr;
+  if (found?.id) return found.id;
 
-  const { data: nuevo, error: insErr } = await supabase
+  const { data: inserted, error: insErr } = await supabase
     .from("carts")
-    .insert(userId ? { user_id: userId } : { anon_id: anon })
+    .insert({ [col]: val })
     .select("id")
     .single();
 
-  if (insErr) throw new Error(insErr.message);
-  return nuevo.id;
+  if (insErr && String(insErr.code) === "23505") {
+    const { data: again } = await supabase
+      .from("carts")
+      .select("id")
+      .eq(col, val)
+      .maybeSingle();
+    if (again?.id) return again.id;
+  }
+  if (insErr) throw insErr;
+
+  return inserted.id;
 }
 
 async function fetchCartItems(cartId) {
@@ -42,11 +54,11 @@ async function fetchCartItems(cartId) {
     .eq("cart_id", cartId);
 
   const ids = (items || []).map((i) => i.producto_id);
-  if (ids.length === 0) return [];
+  if (!ids.length) return [];
 
   const { data: productos } = await supabase
     .from("productos")
-    .select("id, codigo, nombre, precio, marca") // si tienes 'taxable', añádelo aquí
+    .select("id, codigo, nombre, precio, marca")
     .in("id", ids);
 
   const idx = new Map((productos || []).map((p) => [p.id, p]));
@@ -56,7 +68,7 @@ async function fetchCartItems(cartId) {
       qty: Number(i.qty || 0),
       producto: idx.get(i.producto_id),
     }))
-    .filter(Boolean);
+  .filter(Boolean);
 }
 
 const fmt = (n) =>
@@ -69,14 +81,7 @@ const SHIPPING_METHODS = [
   { key: "express",  label: "Express (1–2 days)",  calc: () => 14.99 },
 ];
 
-// ejemplo simple de tasas por estado
-const STATE_TAX = {
-  FL: 0.06,
-  NY: 0.08875,
-  NJ: 0.06625,
-  CA: 0.0725,
-  TX: 0.0625,
-};
+const STATE_TAX = { FL: 0.06, NY: 0.08875, NJ: 0.06625, CA: 0.0725, TX: 0.0625, MA: 0.0625 };
 
 function calcShipping(methodKey, subtotal) {
   const m = SHIPPING_METHODS.find((x) => x.key === methodKey) || SHIPPING_METHODS[1];
@@ -84,11 +89,9 @@ function calcShipping(methodKey, subtotal) {
 }
 function calcTax(items, stateCode) {
   const rate = STATE_TAX[(stateCode || "").toUpperCase()] || 0;
-  // si tus productos tienen 'taxable' false, úsalo aquí:
   const taxableSubtotal = items.reduce((s, it) => {
     const line = Number(it.qty) * Number(it.producto?.precio || 0);
-    // const taxable = it.producto?.taxable !== false;
-    const taxable = true; // por defecto: todos gravan
+    const taxable = true;
     return s + (taxable ? line : 0);
   }, 0);
   return taxableSubtotal * rate;
@@ -125,7 +128,7 @@ async function createOrder({ payment, items, shipping, amounts, cartId }) {
     precio_unit: it.producto?.precio,
     marca: it.producto?.marca ?? null,
     codigo: it.producto?.codigo ?? null,
-    taxable: true, // ajusta si usas campo real
+    taxable: true,
   }));
   const { error: e2 } = await supabase.from("order_items").insert(rows);
   if (e2) throw new Error(e2.message);
@@ -137,12 +140,11 @@ async function createOrder({ payment, items, shipping, amounts, cartId }) {
 
 /* ----------------------------- Componente ------------------------------ */
 export default function Checkout() {
-  const navigate = useNavigate();
   const { state } = useLocation();
   const cidFromNav = state?.cid ?? null;
 
   const [phase, setPhase] = useState("checkout"); // checkout | success
-  const [success, setSuccess] = useState(null);    // { paymentIntent, orderId, amounts }
+  const [success, setSuccess] = useState(null);
 
   const [cartId, setCartId] = useState(null);
   const [items, setItems] = useState([]);
@@ -154,7 +156,7 @@ export default function Checkout() {
     address1: "",
     address2: "",
     city: "",
-    state: "FL",
+    state: "MA",
     zip: "",
     country: "US",
     method: "standard",
@@ -196,14 +198,13 @@ export default function Checkout() {
   const taxes = useMemo(() => calcTax(items, shipping.state), [items, shipping.state]);
   const total = useMemo(() => subtotal + shippingCost + taxes, [subtotal, shippingCost, taxes]);
 
-  // Extrae id de PI desde el client_secret
   function extractPiId(secret) {
     if (!secret) return "";
     const m = String(secret).match(/^(pi_[^_]+)/);
     return m ? m[1] : "";
   }
 
-  // CREA/ACTUALIZA PAYMENT INTENT usando supabase.functions.invoke (CORS-safe)
+  // PREPARA EL PAGO (create_payment_intent)
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -235,40 +236,43 @@ export default function Checkout() {
             },
             carrier: shipping.method,
           },
-          payment_intent_id: paymentIntentId || undefined,
         };
 
-        // 1) intenta upsert (update/create) para evitar crear múltiples PIs
-        let { data, error } = await supabase.functions.invoke("upsert_payment_intent", {
-          body: payload,
+        const res = await fetch(FN_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            amount: payload.amount,
+            currency: "usd",
+            metadata: payload.metadata,
+            shipping: payload.shipping,
+          }),
         });
 
-        // 2) fallback a tu función existente
-        if (error || !data?.clientSecret) {
-          const alt = await supabase.functions.invoke("create_payment_intent", {
-            body: {
-              amount: payload.amount,
-              metadata: payload.metadata,
-              shipping: payload.shipping,
-            },
-          });
-          data = alt.data;
-          error = alt.error;
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          throw new Error(errText || `Edge Function error (${res.status})`);
         }
-
-        if (error) throw new Error(error.message || "No se pudo preparar el pago.");
+        const data = await res.json();
 
         if (cancel) return;
+        if (!data?.clientSecret) throw new Error("No se pudo preparar el pago.");
         setClientSecret(data.clientSecret);
-        setPaymentIntentId(data.paymentIntentId || extractPiId(data.clientSecret));
+        setPaymentIntentId(extractPiId(data.clientSecret));
       } catch (e) {
-        if (!cancel) setError(e.message || "No se pudo preparar el pago.");
+        if (!cancel) setError(e.message || "Failed to send a request to the Edge Function");
       } finally {
         if (!cancel) setCreating(false);
       }
     })();
     return () => (cancel = true);
-  }, [items, subtotal, shippingCost, taxes, shipping, cartId]); // recalcular cuando cambie algo relevante
+  }, [
+    items, subtotal, shippingCost, taxes, cartId,
+    shipping.name, shipping.phone, shipping.address1, shipping.address2, shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method, total
+  ]);
 
   async function handlePaid(paymentIntent) {
     try {
@@ -314,10 +318,8 @@ export default function Checkout() {
     }
   }
 
-  /* ------------------ UI: éxito ------------------ */
   if (phase === "success") {
-    const pi = success.paymentIntent;
-    const amounts = success.amounts;
+    const { paymentIntent: pi, amounts } = success;
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white w-full max-w-2xl rounded-2xl shadow-sm p-6 space-y-3">
@@ -349,7 +351,6 @@ export default function Checkout() {
     );
   }
 
-  /* ------------------ UI: checkout ------------------ */
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b px-4 py-3">
@@ -429,7 +430,11 @@ export default function Checkout() {
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
 
           {clientSecret ? (
-            <Elements options={{ clientSecret }} stripe={stripePromise}>
+            <Elements
+              key={clientSecret}                      // 🔑 remonta correctamente
+              options={{ clientSecret, locale: "es-419" }}
+              stripe={stripePromise}
+            >
               <PaymentForm onPaid={handlePaid} />
             </Elements>
           ) : (
@@ -452,6 +457,13 @@ function PaymentForm({ onPaid }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!stripe || !elements) return;
+
+    // 🧯 Si el Payment Element no está montado (p.ej., 401 de Stripe), avisamos claro.
+    const pe = elements.getElement(PaymentElement);
+    if (!pe) {
+      setError("No se pudo cargar el formulario de pago. Verifica que tus claves de Stripe (pk/sk) pertenezcan a la misma cuenta y modo (test/live).");
+      return;
+    }
 
     setLoading(true);
     setError("");

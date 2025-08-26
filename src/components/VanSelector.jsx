@@ -1,7 +1,6 @@
 // src/components/VanSelector.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-// ⚠️ Mantengo tu import tal cual; si tu hook está en otra ruta, ajústalo.
 import { useVan } from "../hooks/VanContext";
 import { supabase } from "../supabaseClient";
 
@@ -14,12 +13,12 @@ export default function VanSelector({ onSelect }) {
 
   useEffect(() => {
     let ignore = false;
-    async function cargarVans() {
+    (async () => {
       setLoading(true);
       setErr("");
       try {
         const { data, error } = await supabase
-          .from("v_vans_app") // ← usamos la vista con columnas: id, nombre, placa, activo
+          .from("v_vans_app")
           .select("id, nombre, placa, activo")
           .eq("activo", true)
           .order("nombre", { ascending: true });
@@ -31,18 +30,25 @@ export default function VanSelector({ onSelect }) {
       } finally {
         if (!ignore) setLoading(false);
       }
-    }
-    cargarVans();
+    })();
     return () => { ignore = true; };
   }, []);
 
   function handleSeleccionar(v) {
-    // Alias para compatibilidad con código viejo que usa `nombre_van`
+    // Mantén compat con código existente
     const compatible = { ...v, nombre_van: v.nombre };
     setVan(compatible);
-    localStorage.setItem("van", JSON.stringify(compatible));
-    if (onSelect) onSelect(compatible);
-    else navigate("/");
+    try { localStorage.setItem("van", JSON.stringify(compatible)); } catch {}
+
+    // Redirección: si el nombre incluye "online", vamos al panel /online
+    const name = String(v?.nombre ?? v?.name ?? v?.label ?? "").toLowerCase();
+    const isOnline = name.includes("online"); // cubre "Online", "Online Store", "Tienda online", etc.
+
+    if (onSelect) {
+      onSelect(compatible); // si el padre maneja la navegación, respetamos eso
+    } else {
+      navigate(isOnline ? "/online" : "/");
+    }
   }
 
   return (
@@ -68,9 +74,7 @@ export default function VanSelector({ onSelect }) {
                 className="bg-blue-100 hover:bg-blue-400 hover:text-white transition rounded-lg p-3 font-semibold w-full text-left"
               >
                 <div className="text-base">{van.nombre}</div>
-                {van.placa && (
-                  <div className="text-xs opacity-70">{van.placa}</div>
-                )}
+                {van.placa && <div className="text-xs opacity-70">{van.placa}</div>}
               </button>
             ))}
           </div>

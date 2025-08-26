@@ -42,7 +42,8 @@ export const anonId = getAnonId();
 ============================================================================ */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
-    headers: anonId ? { "x-anon-id": anonId } : {},
+    headers: anonId ? { "x-ev-anon": anonId } : {},
+
   },
 });
 

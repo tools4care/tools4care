@@ -10,13 +10,23 @@ import Productos from "./Productos";
 import Inventario from "./Inventario";
 import Ventas from "./Ventas";
 import CierreVan from "./CierreVan";
-import PreCierreVan from "./PreCierreVan"; // <-- NUEVO
+import PreCierreVan from "./PreCierreVan";
 import Facturas from "./Facturas";
-import { UsuarioProvider, useUsuario } from "./UsuarioContext";
-import { VanProvider, useVan } from "./hooks/VanContext";
 import CuentasPorCobrar from "./CuentasPorCobrar.jsx";
 
-// --- Guards ---
+// === Online ===
+import OnlineLayout from "./online/OnlineLayout";
+import OnlineDashboard from "./online/OnlineDashboard";
+import Orders from "./admin/Orders";
+import OnlineCatalog from "./online/OnlineCatalog";
+import Checkout from "./storefront/Checkout";
+
+// === Storefront público ===
+import Storefront from "./storefront/Storefront";
+
+import { UsuarioProvider, useUsuario } from "./UsuarioContext";
+import { VanProvider, useVan } from "./hooks/VanContext";
+
 function PrivateRoute({ children }) {
   const { usuario } = useUsuario();
   if (!usuario) return <Navigate to="/login" />;
@@ -28,10 +38,14 @@ function PrivateRouteWithVan({ children }) {
   const { van } = useVan();
   if (!usuario) return <Navigate to="/login" />;
   if (!van) return <Navigate to="/van" />;
+
+  try {
+    const raw = JSON.stringify(van).toLowerCase();
+    if (raw.includes("online")) return <Navigate to="/online" replace />;
+  } catch {}
   return children;
 }
 
-// --- Layout ---
 function LayoutPrivado() {
   return (
     <div className="min-h-screen bg-gray-50 flex lg:flex-row flex-col">
@@ -51,10 +65,16 @@ export default function App() {
     <UsuarioProvider>
       <VanProvider>
         <Routes>
-          {/* Público */}
+          {/* --- Público: flujo tienda --- */}
+          <Route path="/storefront" element={<Storefront />} />
+          <Route path="/checkout" element={<Checkout />} />
+          {/* Si el código viejo navega a /online/checkout, redirige al checkout público */}
+          <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
+
+          {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />
 
-          {/* Selección de VAN */}
+          {/* Selección de VAN (protegido) */}
           <Route
             path="/van"
             element={
@@ -64,7 +84,22 @@ export default function App() {
             }
           />
 
-          {/* Privado */}
+          {/* ÁREA ONLINE (protegido, admin) */}
+          <Route
+            path="/online/*"
+            element={
+              <PrivateRoute>
+                <OnlineLayout />
+              </PrivateRoute>
+            }
+          >
+            <Route index element={<OnlineDashboard />} />
+            <Route path="orders" element={<Orders />} />
+            <Route path="catalog" element={<OnlineCatalog />} />
+            {/* checkout admin sigue existiendo vía redirect arriba */}
+          </Route>
+
+          {/* Área Vans (protegido) */}
           <Route
             path="/*"
             element={
@@ -73,29 +108,17 @@ export default function App() {
               </PrivateRouteWithVan>
             }
           >
-            {/* Hijos */}
-            <Route path="" element={<Dashboard />} />
-
-            {/* Clientes */}
+            <Route index element={<Dashboard />} />
             <Route path="clientes" element={<Clientes />} />
             <Route path="clientes/nuevo" element={<Clientes />} />
-
-            {/* Productos */}
             <Route path="productos/nuevo" element={<Productos />} />
             <Route path="productos" element={<Productos />} />
-
             <Route path="inventario" element={<Inventario />} />
             <Route path="ventas" element={<Ventas />} />
-
-            {/* Pre-cierre primero */}
             <Route path="cierres" element={<PreCierreVan />} />
-            {/* Cierre real */}
             <Route path="cierres/van" element={<CierreVan />} />
-
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
-
-            {/* Catch-all (dejar al final) */}
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>
