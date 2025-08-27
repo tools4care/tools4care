@@ -3,8 +3,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import { addToCart, ensureCart, cartCount } from "./cartApi";
+// 👇 nuevas funciones para el panel (ya definidas en cartApi.js)
+import { listCartItems, updateCartItemQty, removeCartItem } from "./cartApi";
+import AuthModal from "./AuthModal";
 
-/* ---------- helpers ---------- */
 function Price({ value, currency = "USD" }) {
   const n = Number(value || 0);
   return n.toLocaleString("en-US", {
@@ -20,24 +22,215 @@ const norm = (s = "") =>
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
 
-/* ---------- componente ---------- */
+// ---------- Drawer (panel) del carrito ----------
+function CartDrawer({ open, onClose }) {
+  const [lines, setLines] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const subtotal = useMemo(
+    // 👇 usamos el campo que realmente devuelve listCartItems
+    () => lines.reduce((acc, l) => acc + Number(l.subtotal || 0), 0),
+    [lines]
+  );
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const cid = await ensureCart();
+      const items = await listCartItems(cid);
+      setLines(items);
+    } catch (e) {
+      console.error(e);
+      setLines([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (open) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // 👇 importante: en todas las acciones usamos producto_id (no line_id)
+  async function handleQty(productoId, next) {
+    try {
+      await updateCartItemQty(productoId, next);
+      await refresh();
+    } catch (e) {
+      alert(e?.message || "No se pudo actualizar la cantidad.");
+    }
+  }
+
+  async function handleRemove(productoId) {
+    try {
+      await removeCartItem(productoId);
+      await refresh();
+    } catch (e) {
+      alert(e?.message || "No se pudo eliminar.");
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100]">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <aside className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl border-l flex flex-col">
+        <div className="p-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Tu carrito</h3>
+          <button
+            className="rounded-lg border px-3 py-1.5 hover:bg-gray-50"
+            onClick={onClose}
+          >
+            Cerrar
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3">
+          {loading ? (
+            <div className="text-sm text-gray-500">Cargando…</div>
+          ) : lines.length === 0 ? (
+            <div className="text-sm text-gray-500">
+              Aún no tienes productos en el carrito.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {lines.map((l) => (
+                <div
+                  key={l.producto_id} // 👈 clave única correcta
+                  className="flex gap-3 border rounded-xl p-2 bg-white"
+                >
+                  <div className="w-20">
+                    <div className="aspect-square bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
+                      {l.main_image_url ? (
+                        <img
+                          src={l.main_image_url}
+                          alt=""
+                          className="w-full h-full object-contain p-1"
+                          loading="lazy"
+                          onError={(e) => (e.currentTarget.style.display = "none")}
+                        />
+                      ) : (
+                        <span className="text-[10px] text-gray-400">
+                          sin imagen
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{l.nombre}</div>
+                    <div className="text-xs text-gray-500">
+                      {l.marca || "—"} · {l.codigo}
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        className="w-7 h-7 rounded-md border hover:bg-gray-50"
+                        onClick={() => handleQty(l.producto_id, Math.max(0, l.qty - 1))}
+                        title="Menos"
+                      >
+                        −
+                      </button>
+                      <span className="w-8 text-center text-sm">{l.qty}</span>
+                      <button
+                        className="w-7 h-7 rounded-md border hover:bg-gray-50"
+                        onClick={() => handleQty(l.producto_id, l.qty + 1)}
+                        title="Más"
+                      >
+                        +
+                      </button>
+
+                      <button
+                        className="ml-2 text-xs text-rose-600 hover:underline"
+                        onClick={() => handleRemove(l.producto_id)} // 👈 eliminación correcta
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="font-semibold">
+                      {/* 👇 usamos subtotal real */}
+                      <Price value={l.subtotal} />
+                    </div>
+                    {Number(l.qty || 0) > 1 && (
+                      <div className="text-[11px] text-gray-500">
+                        {/* 👇 precio unitario real */}
+                        <Price value={l.price} /> c/u
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t p-3">
+          <div className="flex items-center justify-between text-sm">
+            <span>Artículos: {lines.reduce((a, l) => a + Number(l.qty || 0), 0)}</span>
+            <span className="font-semibold">
+              Subtotal: <Price value={subtotal} />
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              className="rounded-lg border px-3 py-2 hover:bg-gray-50"
+              onClick={onClose}
+            >
+              Seguir comprando
+            </button>
+            <a
+              href="/checkout"
+              className="text-center rounded-lg bg-blue-600 text-white px-3 py-2 hover:bg-blue-700"
+            >
+              Ir al checkout
+            </a>
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+// ---------- fin CartDrawer ----------
+
 export default function Storefront() {
   const [q, setQ] = useState("");
-  const [allRows, setAllRows] = useState([]);   // catálogo completo (visible + stock)
-  const [rows, setRows] = useState([]);         // lista filtrada para el grid principal
+  const [allRows, setAllRows] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [count, setCount] = useState(0);
 
-  // filtros extra
   const [brand, setBrand] = useState("all");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [sort, setSort] = useState("relevance"); // relevance | price_asc | price_desc | name_asc
-  const navigate = useNavigate();
+  const [sort, setSort] = useState("relevance");
 
+  const [user, setUser] = useState(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState("signup");
+  const [cartOpen, setCartOpen] = useState(false); // 👈 panel carrito
+
+  const navigate = useNavigate();
   const offersRef = useRef(null);
 
-  // Cargar conteo inicial del carrito
+  // sesión cliente
+  useEffect(() => {
+    let sub;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      setUser(data?.session?.user || null);
+      sub = supabase.auth
+        .onAuthStateChange((_e, s) => setUser(s?.user || null))
+        .data?.subscription;
+    })();
+    return () => sub?.unsubscribe?.();
+  }, []);
+
+  // contador carrito
   useEffect(() => {
     (async () => {
       try {
@@ -46,9 +239,9 @@ export default function Storefront() {
         setCount(c);
       } catch {}
     })();
-  }, []);
+  }, [user]);
 
-  // Cargar catálogo una sola vez
+  // carga catálogo (+ portada)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -63,9 +256,25 @@ export default function Storefront() {
           .eq("in_online_inventory", true)
           .gt("stock", 0)
           .order("nombre", { ascending: true });
-
         if (error) throw error;
-        setAllRows(data || []);
+
+        const ids = (data || []).map((r) => r.id);
+        let coverMap = new Map();
+        if (ids.length) {
+          const { data: covers, error: cErr } = await supabase
+            .from("product_main_image_v")
+            .select("producto_id, main_image_url")
+            .in("producto_id", ids);
+          if (cErr) throw cErr;
+          coverMap = new Map(
+            (covers || []).map((c) => [c.producto_id, c.main_image_url])
+          );
+        }
+        const enriched = (data || []).map((p) => ({
+          ...p,
+          main_image_url: coverMap.get(p.id) || null,
+        }));
+        setAllRows(enriched);
       } catch (err) {
         alert(err?.message || "No se pudieron cargar los productos.");
         setAllRows([]);
@@ -75,21 +284,17 @@ export default function Storefront() {
     })();
   }, []);
 
-  // Aplicar filtros/búsqueda localmente
+  // filtros locales
   useEffect(() => {
     const nq = norm(q);
     let list = [...allRows];
 
-    if (nq) {
-      list = list.filter((p) => {
-        const hay = [p.nombre, p.marca, p.codigo].some((f) => norm(f).includes(nq));
-        return hay;
-      });
-    }
-
-    if (brand !== "all") {
+    if (nq)
+      list = list.filter((p) =>
+        [p.nombre, p.marca, p.codigo].some((f) => norm(f).includes(nq))
+      );
+    if (brand !== "all")
       list = list.filter((p) => (p.marca || "").toLowerCase() === brand);
-    }
 
     list = list.filter((p) => {
       const price = Number(p.price_online ?? p.price_base ?? 0);
@@ -98,9 +303,20 @@ export default function Storefront() {
       return true;
     });
 
-    if (sort === "price_asc") list.sort((a, b) => (a.price_online ?? a.price_base ?? 0) - (b.price_online ?? b.price_base ?? 0));
-    if (sort === "price_desc") list.sort((a, b) => (b.price_online ?? b.price_base ?? 0) - (a.price_online ?? a.price_base ?? 0));
-    if (sort === "name_asc") list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+    if (sort === "price_asc")
+      list.sort(
+        (a, b) =>
+          (a.price_online ?? a.price_base ?? 0) -
+          (b.price_online ?? b.price_base ?? 0)
+      );
+    if (sort === "price_desc")
+      list.sort(
+        (a, b) =>
+          (b.price_online ?? b.price_base ?? 0) -
+          (a.price_online ?? a.price_base ?? 0)
+      );
+    if (sort === "name_asc")
+      list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
 
     setRows(list);
   }, [q, brand, minPrice, maxPrice, sort, allRows]);
@@ -116,43 +332,58 @@ export default function Storefront() {
     }
   }
 
-  // Checkout público
   function goCheckout() {
     navigate("/checkout");
   }
 
-  // Datos derivados para secciones
   const offers = useMemo(
     () =>
       allRows
-        .filter((p) => p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base))
+        .filter(
+          (p) =>
+            p.price_online != null &&
+            p.price_base != null &&
+            Number(p.price_online) < Number(p.price_base)
+        )
         .slice(0, 8),
     [allRows]
   );
-
   const novedades = useMemo(
     () => [...allRows].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 12),
     [allRows]
   );
 
-  const brands = useMemo(() => {
-    const set = new Set();
-    allRows.forEach((p) => p.marca && set.add(String(p.marca).toLowerCase()));
-    return ["all", ...Array.from(set).sort()];
-  }, [allRows]);
-
-  /* ---------- UI ---------- */
-
   function ProductCard({ p }) {
     const price = p.price_online ?? p.price_base ?? 0;
-    const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
+    const hasOffer =
+      p.price_online != null &&
+      p.price_base != null &&
+      Number(p.price_online) < Number(p.price_base);
     const outOfStock = Number(p.stock || 0) <= 0;
     return (
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
         <div className="p-3">
           <div className="relative">
-            <div className="h-36 bg-gray-100 rounded-xl flex items-center justify-center text-xs text-gray-400">
-              sin imagen
+            {/* IMAGEN: cuadrado, sin recortes feos */}
+            <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
+              {p.main_image_url ? (
+                <img
+                  src={p.main_image_url}
+                  alt={p.nombre}
+                  className="w-full h-full object-contain p-2"
+                  loading="lazy"
+                  onError={(e) => {
+                    e.currentTarget.replaceWith(
+                      Object.assign(document.createElement("div"), {
+                        className: "text-xs text-gray-400",
+                        innerText: "sin imagen",
+                      })
+                    );
+                  }}
+                />
+              ) : (
+                <span className="text-xs text-gray-400">sin imagen</span>
+              )}
             </div>
             {hasOffer && (
               <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
@@ -161,9 +392,13 @@ export default function Storefront() {
             )}
           </div>
 
-          <div className="mt-3 text-xs text-green-700">Stock: {Number(p.stock || 0)}</div>
+          <div className="mt-3 text-xs text-green-700">
+            Stock: {Number(p.stock || 0)}
+          </div>
 
-          <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px]">{p.nombre}</div>
+          <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px]">
+            {p.nombre}
+          </div>
           <div className="text-xs text-gray-500">{p.marca || "—"}</div>
           <div className="text-xs text-gray-500">{p.codigo}</div>
 
@@ -198,19 +433,23 @@ export default function Storefront() {
       {/* HEADER */}
       <header className="sticky top-0 z-20 bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+          {/* Marca */}
           <button
             className="flex items-center gap-2 text-lg font-semibold"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
             title="Inicio"
           >
             <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
-              <path fill="currentColor" d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 9h6.5z" />
+              <path
+                fill="currentColor"
+                d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 9h6.5z"
+              />
             </svg>
-            <span>Tools4care Storefront</span>
+            <span>Tools4care</span>
           </button>
 
-          {/* search */}
-          <div className="flex-1 flex items-center gap-2">
+          {/* búsqueda rápida */}
+          <div className="flex-1">
             <input
               className="w-full border rounded-lg px-3 py-2"
               placeholder="Buscar por código, nombre o marca…"
@@ -219,28 +458,52 @@ export default function Storefront() {
             />
           </div>
 
-          {/* auth clientes (NO empleados) */}
-          <a
-            href="/store/register"
-            className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-            title="Crear cuenta"
-          >
-            Crear cuenta
-          </a>
-          <a
-            href="/store/login"
-            className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-            title="Entrar"
-          >
-            Entrar
-          </a>
+          {/* auth de clientes (modal) */}
+          {!user ? (
+            <>
+              <button
+                className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                onClick={() => {
+                  setAuthMode("signup");
+                  setAuthOpen(true);
+                }}
+                title="Crear cuenta"
+              >
+                Crear cuenta
+              </button>
+              <button
+                className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthOpen(true);
+                }}
+                title="Iniciar sesión"
+              >
+                Iniciar sesión
+              </button>
+            </>
+          ) : (
+            <div className="hidden sm:flex items-center gap-2">
+              <span className="text-sm text-gray-700 truncate max-w-[180px]">
+                Hola, {user.email}
+              </span>
+              <button
+                className="px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                }}
+              >
+                Salir
+              </button>
+            </div>
+          )}
 
-          {/* cart button */}
+          {/* carrito: abre panel */}
           <button
             type="button"
-            onClick={goCheckout}
+            onClick={() => setCartOpen(true)}
             className="relative ml-1 inline-flex items-center justify-center rounded-lg border px-3 py-2 hover:bg-gray-50"
-            title="Ir al checkout"
+            title="Abrir carrito"
             aria-label="Carrito"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" className="text-gray-700">
@@ -407,7 +670,9 @@ export default function Storefront() {
         </div>
 
         {!rows.length && !loading && (
-          <div className="text-gray-500">No hay productos con los filtros actuales.</div>
+          <div className="text-gray-500">
+            No hay productos con los filtros actuales.
+          </div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
@@ -419,6 +684,17 @@ export default function Storefront() {
       <footer className="mt-10 py-6 text-center text-sm text-gray-500">
         © {new Date().getFullYear()} Tools4care — hecho con 💙
       </footer>
+
+      {/* MODAL clientes */}
+      <AuthModal
+        open={authOpen}
+        mode={authMode}
+        onClose={() => setAuthOpen(false)}
+        onSignedIn={() => setAuthOpen(false)}
+      />
+
+      {/* Panel del carrito */}
+      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
     </div>
   );
 }

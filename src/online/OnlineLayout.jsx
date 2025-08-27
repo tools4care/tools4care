@@ -16,7 +16,7 @@ export default function OnlineLayout() {
           </div>
         </header>
 
-        {/* 👇 Más aire arriba: incrementamos el padding-top */}
+        {/* Contenido */}
         <main className="max-w-7xl mx-auto px-6 lg:px-10 pt-12 lg:pt-16 pb-12">
           <Outlet />
         </main>
