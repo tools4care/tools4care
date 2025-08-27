@@ -23,6 +23,8 @@ import Checkout from "./storefront/Checkout";
 
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
+// ✅ Callback público para confirmación de correo / magic link
+import AuthCallback from "./storefront/AuthCallback";
 
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
@@ -68,8 +70,11 @@ export default function App() {
           {/* --- Público: flujo tienda --- */}
           <Route path="/storefront" element={<Storefront />} />
           <Route path="/checkout" element={<Checkout />} />
-          {/* Si el código viejo navega a /online/checkout, redirige al checkout público */}
+          {/* Si algún código viejo navega a /online/checkout, redirigimos al checkout público */}
           <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
+
+          {/* ✅ Callback de autenticación (confirmación email / magic link) */}
+          <Route path="/auth/callback" element={<AuthCallback />} />
 
           {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />

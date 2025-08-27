@@ -1,6 +1,8 @@
 // src/online/OnlineCatalog.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { supabase } from "../supabaseClient";
+// Cargamos el panel en lazy para que NUNCA bloquee el catálogo si ese módulo falla
+const ProductImagesPanel = lazy(() => import("./ProductImagesPanel.jsx"));
 
 function Price({ v }) {
   const n = Number(v || 0);
@@ -13,33 +15,40 @@ function Price({ v }) {
 }
 
 export default function OnlineCatalog() {
+  console.log("[OnlineCatalog] render");
+
   const [q, setQ] = useState("");
   const [onlyVisible, setOnlyVisible] = useState(false);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
 
+
+  // Panel de imágenes
+  const [imgOpen, setImgOpen] = useState(false);
+  const [imgPid, setImgPid] = useState(null);
+
   const SELECTS =
     "id,codigo,nombre,marca,price_base,price_online,visible,visible_online,descripcion,stock";
+
+  // Constructor de consulta (evita .clone())
+  function mkBase() {
+    let base = supabase
+      .from("online_products_v")
+      .select(SELECTS)
+      .order("nombre", { ascending: true });
+    if (onlyVisible) base = base.eq("visible_online", true);
+    return base;
+  }
 
   async function fetchList() {
     setLoading(true);
     try {
-      const base = supabase
-        .from("online_products_v")
-        .select(SELECTS)
-        .order("nombre", { ascending: true });
-
-      // La vista ya garantiza stock>0 en VAN Online.
-      // Filtros adicionales de UI:
-      if (onlyVisible) base.eq("visible_online", true);
-
       if (q.trim()) {
         const term = `%${q.trim()}%`;
-        // multi-campo sin duplicados
         const [byNombre, byMarca, byCodigo] = await Promise.all([
-          base.clone().ilike("nombre", term),
-          base.clone().ilike("marca", term),
-          base.clone().ilike("codigo", term),
+          mkBase().ilike("nombre", term),
+          mkBase().ilike("marca", term),
+          mkBase().ilike("codigo", term),
         ]);
         const map = new Map();
         (byNombre.data || []).forEach((r) => map.set(r.id, r));
@@ -49,7 +58,7 @@ export default function OnlineCatalog() {
         return;
       }
 
-      const { data, error } = await base;
+      const { data, error } = await mkBase();
       if (error) throw error;
       setRows(data || []);
     } catch (err) {
@@ -67,7 +76,7 @@ export default function OnlineCatalog() {
 
   const total = useMemo(() => rows.length, [rows]);
 
-  // --- Mutaciones sobre online_product_meta (por id de producto) ---
+  // Mutaciones sobre online_product_meta
   async function updateMeta(producto_id, patch) {
     const { error } = await supabase
       .from("online_product_meta")
@@ -79,7 +88,6 @@ export default function OnlineCatalog() {
   async function onToggleVisible(producto_id, field, value) {
     try {
       await updateMeta(producto_id, { [field]: value });
-      // refrescamos SOLO esa fila desde la vista (que ya refleja flags)
       const { data, error } = await supabase
         .from("online_products_v")
         .select(SELECTS)
@@ -140,7 +148,9 @@ export default function OnlineCatalog() {
       </div>
 
       {!rows.length && !loading && (
-        <div className="text-gray-500">No hay productos (con stock en la VAN Online).</div>
+        <div className="text-gray-500">
+          No hay productos (con stock en la VAN Online).
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-3">
@@ -168,7 +178,7 @@ export default function OnlineCatalog() {
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3 items-center">
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -179,6 +189,7 @@ export default function OnlineCatalog() {
                 />
                 Visible (admin)
               </label>
+
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -194,12 +205,17 @@ export default function OnlineCatalog() {
                 className="border rounded-lg px-2 py-1 text-sm"
                 placeholder="Precio online"
                 defaultValue={r.price_online ?? ""}
-                onBlur={(e) =>
-                  onUpdateField(r.id, {
-                    precio_online:
-                      e.target.value === "" ? null : Number(e.target.value),
-                  })
-                }
+                onBlur={(e) => {
+                  const val = e.target.value.trim();
+                  if (val === "") {
+                    onUpdateField(r.id, { price_online: null });
+                  } else {
+                    const n = Number(val);
+                    onUpdateField(r.id, {
+                      price_online: Number.isFinite(n) ? n : null,
+                    });
+                  }
+                }}
               />
 
               <input
@@ -207,13 +223,43 @@ export default function OnlineCatalog() {
                 placeholder="Descripción"
                 defaultValue={r.descripcion || ""}
                 onBlur={(e) =>
-                  onUpdateField(r.id, { descripcion: e.target.value || "N/A" })
+                  onUpdateField(r.id, {
+                    descripcion: e.target.value.trim() || "N/A",
+                  })
                 }
               />
+
+              {/* Botón para abrir el panel de imágenes */}
+              <div className="text-right md:text-left">
+                <button
+                  className="px-2.5 py-1.5 rounded-lg border hover:bg-gray-50 text-sm"
+                  onClick={() => {
+                    setImgPid(r.id);
+                    setImgOpen(true);
+                  }}
+                  title="Gestionar imágenes"
+                >
+                  Imágenes
+                </button>
+              </div>
             </div>
           </div>
         ))}
       </div>
+
+      {/* Modal de imágenes (carga diferida y solo cuando se abre) */}
+      {imgOpen && (
+        <Suspense fallback={null}>
+          <ProductImagesPanel
+            open={imgOpen}
+            productoId={imgPid}
+            onClose={() => {
+              setImgOpen(false);
+              setImgPid(null);
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
