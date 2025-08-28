@@ -8,8 +8,31 @@ import { supabase } from "../supabaseClient";
 
 const PAGE_SIZE = 10;
 
-const STATUS_FILTERS = ["all", "pending", "paid", "processing", "preparing", "ready", "shipped", "delivered", "canceled", "cancelled", "refunded"];
-const STATUS_UPDATE_OPTS = ["pending", "paid", "processing", "preparing", "ready", "shipped", "delivered", "canceled", "refunded"];
+const STATUS_FILTERS = [
+  "all",
+  "pending",
+  "paid",
+  "processing",
+  "preparing",
+  "ready",
+  "shipped",
+  "delivered",
+  "canceled",
+  "cancelled",
+  "refunded",
+];
+
+const STATUS_UPDATE_OPTS = [
+  "pending",
+  "paid",
+  "processing",
+  "preparing",
+  "ready",
+  "shipped",
+  "delivered",
+  "canceled",
+  "refunded",
+];
 
 const DATE_FILTERS = [
   { key: "today", label: "Hoy" },
@@ -18,7 +41,7 @@ const DATE_FILTERS = [
   { key: "all", label: "Todo" },
 ];
 
-function fmtMoney(n, currency = "usd") {
+function fmtMoney(n, currency = "USD") {
   const val = Number(n || 0);
   return val.toLocaleString("en-US", {
     style: "currency",
@@ -37,7 +60,8 @@ function badgeClasses(status) {
   if (s === "ready") return "bg-indigo-50 text-indigo-700 border border-indigo-200";
   if (s === "shipped") return "bg-blue-50 text-blue-700 border border-blue-200";
   if (s === "delivered") return "bg-teal-50 text-teal-700 border border-teal-200";
-  if (s === "canceled" || s === "cancelled") return "bg-rose-50 text-rose-700 border border-rose-200";
+  if (s === "canceled" || s === "cancelled")
+    return "bg-rose-50 text-rose-700 border border-rose-200";
   if (s === "refunded") return "bg-slate-50 text-slate-700 border border-slate-200";
   return "bg-gray-50 text-gray-700 border border-gray-200";
 }
@@ -94,7 +118,6 @@ function Skeleton() {
 }
 
 function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
-  // 🚫 No montamos nada si está cerrado (evita panel vacío)
   if (!open || !orderId) return null;
 
   const [order, setOrder] = useState(null);
@@ -124,7 +147,9 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
 
         const { data: its } = await supabase
           .from("order_items")
-          .select("id, producto_id, nombre, marca, codigo, qty, precio_unit, taxable")
+          .select(
+            "id, producto_id, nombre, marca, codigo, qty, precio_unit, taxable"
+          )
           .eq("order_id", orderId)
           .order("id", { ascending: true });
 
@@ -166,9 +191,13 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
 
   async function changeStatus(next) {
     if (!orderId) return;
-    const prev = order?.status;
+    const prev = order?.status ?? null;
     setOrder((o) => (o ? { ...o, status: next } : o));
-    const { error } = await supabase.from("orders").update({ status: next }).eq("id", orderId);
+    const { error } = await supabase
+      .from("orders")
+      .update({ status: next })
+      .eq("id", orderId)
+      .neq("status", next); // evita no-op updates
     if (error) {
       setOrder((o) => (o ? { ...o, status: prev } : o));
       alert(error.message || "No se pudo actualizar el estado.");
@@ -188,16 +217,17 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
 
   return (
     <div className="fixed inset-0 z-50">
-      {/* backdrop */}
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      {/* panel */}
       <div className="absolute right-0 top-0 h-full w-full max-w-3xl bg-white shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b">
           <div>
             <div className="text-xs text-gray-500">Pedido</div>
             <div className="text-lg font-semibold">#{orderId}</div>
           </div>
-          <button className="rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={onClose}>
+          <button
+            className="rounded-lg border px-3 py-1.5 hover:bg-gray-50"
+            onClick={onClose}
+          >
             Cerrar
           </button>
         </div>
@@ -220,16 +250,22 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
                 <div className="bg-white rounded-xl border p-4">
                   <div className="text-sm text-gray-500 mb-1">Estado</div>
                   <div className="flex items-center gap-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs border ${badgeClasses(order.status)}`}>
-                      {order.status}
+                    <span
+                      className={`inline-block rounded-full px-2 py-0.5 text-xs border ${badgeClasses(
+                        order.status
+                      )}`}
+                    >
+                      {order.status ?? "pending"}
                     </span>
                     <select
                       className="text-xs border rounded px-2 py-1 bg-white"
-                      value={order.status || "paid"}
+                      value={order.status ?? "pending"}
                       onChange={(e) => changeStatus(e.target.value)}
                     >
                       {STATUS_UPDATE_OPTS.map((s) => (
-                        <option key={s} value={s}>{s}</option>
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -237,19 +273,27 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
                   <div className="grid grid-cols-2 gap-2 mt-4 text-sm">
                     <div>
                       <div className="text-gray-500">Subtotal</div>
-                      <div className="font-medium">{fmtMoney(order.amount_subtotal, order.currency)}</div>
+                      <div className="font-medium">
+                        {fmtMoney(order.amount_subtotal, order.currency)}
+                      </div>
                     </div>
                     <div>
                       <div className="text-gray-500">Envío</div>
-                      <div className="font-medium">{fmtMoney(order.amount_shipping, order.currency)}</div>
+                      <div className="font-medium">
+                        {fmtMoney(order.amount_shipping, order.currency)}
+                      </div>
                     </div>
                     <div>
                       <div className="text-gray-500">Impuestos</div>
-                      <div className="font-medium">{fmtMoney(order.amount_taxes, order.currency)}</div>
+                      <div className="font-medium">
+                        {fmtMoney(order.amount_taxes, order.currency)}
+                      </div>
                     </div>
                     <div>
                       <div className="text-gray-500">Total</div>
-                      <div className="font-semibold">{fmtMoney(order.amount_total, order.currency)}</div>
+                      <div className="font-semibold">
+                        {fmtMoney(order.amount_total, order.currency)}
+                      </div>
                     </div>
                   </div>
 
@@ -300,13 +344,20 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
                     <tbody className="[&>tr:nth-child(even)]:bg-gray-50/60">
                       {items.map((it) => (
                         <tr key={it.id} className="border-t">
-                          <td className="px-2 py-2">{it.nombre || it.producto_id}</td>
+                          <td className="px-2 py-2">
+                            {it.nombre || it.producto_id}
+                          </td>
                           <td className="px-2 py-2">{it.marca || "—"}</td>
                           <td className="px-2 py-2">{it.codigo || "—"}</td>
                           <td className="px-2 py-2">{it.qty}</td>
-                          <td className="px-2 py-2">{fmtMoney(it.precio_unit, order.currency)}</td>
                           <td className="px-2 py-2">
-                            {fmtMoney((it.qty || 0) * (it.precio_unit || 0), order.currency)}
+                            {fmtMoney(it.precio_unit, order.currency)}
+                          </td>
+                          <td className="px-2 py-2">
+                            {fmtMoney(
+                              (it.qty || 0) * (it.precio_unit || 0),
+                              order.currency
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -332,8 +383,14 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
                           {(h.old_status || h.new_status) && (
                             <div className="text-sm">
                               <span className="text-gray-600">Estado: </span>
-                              <span className={`inline-block rounded-full px-2 py-0.5 text-xs border ${badgeClasses(h.new_status)}`}>
-                                {h.old_status ? `${h.old_status} → ${h.new_status}` : h.new_status}
+                              <span
+                                className={`inline-block rounded-full px-2 py-0.5 text-xs border ${badgeClasses(
+                                  h.new_status
+                                )}`}
+                              >
+                                {h.old_status
+                                  ? `${h.old_status} → ${h.new_status}`
+                                  : h.new_status}
                               </span>
                             </div>
                           )}
@@ -468,13 +525,20 @@ export default function Orders() {
       .eq("order_id", orderId)
       .order("id", { ascending: true });
 
-    setExpanded((prev) => ({ ...prev, [orderId]: error ? "error" : (data || []) }));
+    setExpanded((prev) => ({ ...prev, [orderId]: error ? "error" : data || [] }));
   }
 
+  // ⚠️ Solo cambia el estado. El inventario lo maneja el trigger en la BD.
   async function updateStatus(orderId, next) {
     const before = rows;
-    setRows((list) => list.map((r) => (r.id === orderId ? { ...r, status: next } : r)));
-    const { error } = await supabase.from("orders").update({ status: next }).eq("id", orderId);
+    setRows((list) =>
+      list.map((r) => (r.id === orderId ? { ...r, status: next } : r))
+    );
+    const { error } = await supabase
+      .from("orders")
+      .update({ status: next })
+      .eq("id", orderId)
+      .neq("status", next); // evita no-op y re-disparos inútiles
     if (error) {
       setRows(before);
       alert(error.message || "No se pudo actualizar el estado.");
@@ -509,7 +573,9 @@ export default function Orders() {
         ].join(",")
       );
     });
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([lines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -518,7 +584,10 @@ export default function Orders() {
     URL.revokeObjectURL(url);
   }
 
-  const pages = useMemo(() => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)), [total]);
+  const pages = useMemo(
+    () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
+    [total]
+  );
 
   return (
     <div className="mt-6 px-3 lg:px-6 space-y-6">
@@ -557,7 +626,7 @@ export default function Orders() {
         {/* Filtros */}
         <div className="px-5 lg:px-6 py-4 border-t bg-white/60">
           <div className="grid grid-cols-12 gap-3">
-            {/* Fecha (segmented) */}
+            {/* Fecha */}
             <div className="col-span-12 md:col-span-4">
               <div className="inline-flex rounded-lg border bg-white overflow-hidden">
                 {DATE_FILTERS.map((d) => (
@@ -568,7 +637,9 @@ export default function Orders() {
                       setPage(1);
                     }}
                     className={`px-3 py-2 text-sm ${
-                      dateFilter === d.key ? "bg-gray-900 text-white" : "hover:bg-gray-50 text-gray-800"
+                      dateFilter === d.key
+                        ? "bg-gray-900 text-white"
+                        : "hover:bg-gray-50 text-gray-800"
                     }`}
                   >
                     {d.label}
@@ -649,7 +720,11 @@ export default function Orders() {
                   const isSelected = r.id === detailId && detailOpen;
                   return (
                     <Fragment key={r.id}>
-                      <tr className={`border-t hover:bg-gray-50/70 ${isSelected ? "ring-2 ring-blue-200" : ""}`}>
+                      <tr
+                        className={`border-t hover:bg-gray-50/70 ${
+                          isSelected ? "ring-2 ring-blue-200" : ""
+                        }`}
+                      >
                         <td className="px-3 py-4">{r.id}</td>
                         <td className="px-3 py-4">
                           {new Date(r.created_at).toLocaleString()}
@@ -662,7 +737,9 @@ export default function Orders() {
                           <div>{r.email || "—"}</div>
                           <div className="text-gray-600">{r.phone || "—"}</div>
                           <div className="text-xs text-gray-500 mt-1">
-                            <span className="font-mono">{r.payment_intent_id}</span>
+                            <span className="font-mono">
+                              {r.payment_intent_id}
+                            </span>
                           </div>
                         </td>
                         <td className="px-3 py-4 font-semibold">
@@ -674,17 +751,19 @@ export default function Orders() {
                               r.status
                             )}`}
                           >
-                            {r.status || "paid"}
+                            {r.status ?? "pending"}
                           </span>
                           <div className="mt-2">
                             <select
-                              value={(r.status || "paid")}
+                              value={r.status ?? "pending"}
                               onChange={(e) => updateStatus(r.id, e.target.value)}
                               className="text-xs border rounded px-2 py-1 bg-white"
                               title="Cambiar estado"
                             >
                               {STATUS_UPDATE_OPTS.map((s) => (
-                                <option key={s} value={s}>{s}</option>
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
                               ))}
                             </select>
                           </div>
@@ -731,12 +810,20 @@ export default function Orders() {
                                         <td className="px-3 py-2">
                                           {it.nombre || it.producto_id}
                                         </td>
-                                        <td className="px-3 py-2">{it.marca || "—"}</td>
-                                        <td className="px-3 py-2">{it.codigo || "—"}</td>
-                                        <td className="px-3 py-2">{it.qty}</td>
-                                        <td className="px-3 py-2">{fmtMoney(it.precio_unit)}</td>
                                         <td className="px-3 py-2">
-                                          {fmtMoney((it.qty || 0) * (it.precio_unit || 0))}
+                                          {it.marca || "—"}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          {it.codigo || "—"}
+                                        </td>
+                                        <td className="px-3 py-2">{it.qty}</td>
+                                        <td className="px-3 py-2">
+                                          {fmtMoney(it.precio_unit)}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          {fmtMoney(
+                                            (it.qty || 0) * (it.precio_unit || 0)
+                                          )}
                                         </td>
                                       </tr>
                                     ))}
@@ -747,19 +834,39 @@ export default function Orders() {
                               <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                                 <div>
                                   <span className="text-gray-600">Subtotal: </span>
-                                  <b>{fmtMoney(r.amount_subtotal, r.currency)}</b>
+                                  <b>
+                                    {fmtMoney(
+                                      r.amount_subtotal,
+                                      r.currency
+                                    )}
+                                  </b>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Envío: </span>
-                                  <b>{fmtMoney(r.amount_shipping, r.currency)}</b>
+                                  <b>
+                                    {fmtMoney(
+                                      r.amount_shipping,
+                                      r.currency
+                                    )}
+                                  </b>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Impuestos: </span>
-                                  <b>{fmtMoney(r.amount_taxes, r.currency)}</b>
+                                  <b>
+                                    {fmtMoney(
+                                      r.amount_taxes,
+                                      r.currency
+                                    )}
+                                  </b>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Total: </span>
-                                  <b>{fmtMoney(r.amount_total, r.currency)}</b>
+                                  <b>
+                                    {fmtMoney(
+                                      r.amount_total,
+                                      r.currency
+                                    )}
+                                  </b>
                                 </div>
                               </div>
                             </div>
@@ -780,7 +887,10 @@ export default function Orders() {
 
                 {!rows.length && !loading && (
                   <tr>
-                    <td className="px-3 py-12 text-center text-gray-500" colSpan={7}>
+                    <td
+                      className="px-3 py-12 text-center text-gray-500"
+                      colSpan={7}
+                    >
                       No hay órdenes.
                     </td>
                   </tr>
@@ -822,7 +932,9 @@ export default function Orders() {
         onClose={() => setDetailOpen(false)}
         orderId={detailId}
         onStatusChange={(id, next) =>
-          setRows((list) => list.map((r) => (r.id === id ? { ...r, status: next } : r)))
+          setRows((list) =>
+            list.map((r) => (r.id === id ? { ...r, status: next } : r))
+          )
         }
       />
     </div>

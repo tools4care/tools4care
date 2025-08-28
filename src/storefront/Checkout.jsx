@@ -68,7 +68,7 @@ async function fetchCartItems(cartId) {
       qty: Number(i.qty || 0),
       producto: idx.get(i.producto_id),
     }))
-  .filter(Boolean);
+    .filter(Boolean);
 }
 
 const fmt = (n) =>
@@ -112,7 +112,8 @@ async function createOrder({ payment, items, shipping, amounts, cartId }) {
       phone: shipping?.phone || null,
       name: shipping?.name || null,
       address_json: shipping?.address || null,
-      status: "paid",
+      // 👇 clave: arrancamos como pending
+      status: "pending",
     })
     .select("id")
     .single();
@@ -311,6 +312,20 @@ export default function Checkout() {
         cartId: cid,
       });
 
+      // ✅ Ahora sí actualizamos a "paid" para disparar el trigger y descontar stock
+      const { data, error } = await supabase
+        .from("orders")
+        .update({ status: "paid" })
+        .eq("id", orderId)
+        .neq("status", "paid")
+        .select();
+
+      if (error) {
+        console.error("❌ No se pudo marcar como paid:", error);
+      } else {
+        console.log("✅ Orden marcada como paid:", data);
+      }
+
       setSuccess({ paymentIntent, orderId, amounts });
       setPhase("success");
     } catch (e) {
@@ -431,7 +446,7 @@ export default function Checkout() {
 
           {clientSecret ? (
             <Elements
-              key={clientSecret}                      // 🔑 remonta correctamente
+              key={clientSecret}
               options={{ clientSecret, locale: "es-419" }}
               stripe={stripePromise}
             >
@@ -458,7 +473,6 @@ function PaymentForm({ onPaid }) {
     e.preventDefault();
     if (!stripe || !elements) return;
 
-    // 🧯 Si el Payment Element no está montado (p.ej., 401 de Stripe), avisamos claro.
     const pe = elements.getElement(PaymentElement);
     if (!pe) {
       setError("No se pudo cargar el formulario de pago. Verifica que tus claves de Stripe (pk/sk) pertenezcan a la misma cuenta y modo (test/live).");
