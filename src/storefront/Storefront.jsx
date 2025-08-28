@@ -3,9 +3,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import { addToCart, ensureCart, cartCount } from "./cartApi";
-// 👇 nuevas funciones para el panel (ya definidas en cartApi.js)
 import { listCartItems, updateCartItemQty, removeCartItem } from "./cartApi";
 import AuthModal from "./AuthModal";
+
+// Helper: obtener la VAN online para Realtime (no toca nada del flujo actual)
+async function getOnlineVanId() {
+  const { data, error } = await supabase
+    .from("vans")
+    .select("id, nombre_van")
+    .ilike("nombre_van", "%online%")
+    .maybeSingle();
+  if (error) {
+    console.error(error);
+    return null;
+  }
+  return data?.id ?? null;
+}
 
 function Price({ value, currency = "USD" }) {
   const n = Number(value || 0);
@@ -28,7 +41,6 @@ function CartDrawer({ open, onClose }) {
   const [loading, setLoading] = useState(false);
 
   const subtotal = useMemo(
-    // 👇 usamos el campo que realmente devuelve listCartItems
     () => lines.reduce((acc, l) => acc + Number(l.subtotal || 0), 0),
     [lines]
   );
@@ -52,7 +64,7 @@ function CartDrawer({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // 👇 importante: en todas las acciones usamos producto_id (no line_id)
+  // Acciones con producto_id (coinciden con cartApi)
   async function handleQty(productoId, next) {
     try {
       await updateCartItemQty(productoId, next);
@@ -98,7 +110,7 @@ function CartDrawer({ open, onClose }) {
             <div className="space-y-3">
               {lines.map((l) => (
                 <div
-                  key={l.producto_id} // 👈 clave única correcta
+                  key={l.producto_id}
                   className="flex gap-3 border rounded-xl p-2 bg-white"
                 >
                   <div className="w-20">
@@ -112,9 +124,7 @@ function CartDrawer({ open, onClose }) {
                           onError={(e) => (e.currentTarget.style.display = "none")}
                         />
                       ) : (
-                        <span className="text-[10px] text-gray-400">
-                          sin imagen
-                        </span>
+                        <span className="text-[10px] text-gray-400">sin imagen</span>
                       )}
                     </div>
                   </div>
@@ -144,7 +154,7 @@ function CartDrawer({ open, onClose }) {
 
                       <button
                         className="ml-2 text-xs text-rose-600 hover:underline"
-                        onClick={() => handleRemove(l.producto_id)} // 👈 eliminación correcta
+                        onClick={() => handleRemove(l.producto_id)}
                       >
                         Eliminar
                       </button>
@@ -153,12 +163,10 @@ function CartDrawer({ open, onClose }) {
 
                   <div className="text-right">
                     <div className="font-semibold">
-                      {/* 👇 usamos subtotal real */}
                       <Price value={l.subtotal} />
                     </div>
                     {Number(l.qty || 0) > 1 && (
                       <div className="text-[11px] text-gray-500">
-                        {/* 👇 precio unitario real */}
                         <Price value={l.price} /> c/u
                       </div>
                     )}
@@ -212,7 +220,7 @@ export default function Storefront() {
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("signup");
-  const [cartOpen, setCartOpen] = useState(false); // 👈 panel carrito
+  const [cartOpen, setCartOpen] = useState(false);
 
   const navigate = useNavigate();
   const offersRef = useRef(null);
@@ -237,51 +245,103 @@ export default function Storefront() {
         const cid = await ensureCart();
         const c = await cartCount(cid);
         setCount(c);
-      } catch {}
+      } catch {
+        // si falla por RLS/401, ignoramos el contador (se manejará al intentar agregar)
+      }
     })();
   }, [user]);
 
-  // carga catálogo (+ portada)
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const selects =
-          "id,codigo,nombre,marca,price_base,price_online,visible,visible_online,descripcion,stock,in_online_inventory";
-        const { data, error } = await supabase
-          .from("online_products_v")
-          .select(selects)
-          .eq("visible", true)
-          .eq("visible_online", true)
-          .eq("in_online_inventory", true)
-          .gt("stock", 0)
-          .order("nombre", { ascending: true });
-        if (error) throw error;
+  // util: recarga catálogo desde la VISTA nueva
+  async function reloadCatalog() {
+    setLoading(true);
+    try {
+      // 👇 Vista canónica + visibilidad + stock
+      const { data, error } = await supabase
+        .from("vw_storefront_catalog")
+        .select("id,codigo,nombre,marca,price_base,price_online,visible_online,stock")
+        .eq("visible_online", true) // solo publicar si está visible
+        .gt("stock", 0)             // y con stock
+        .order("nombre", { ascending: true });
+      if (error) throw error;
 
-        const ids = (data || []).map((r) => r.id);
-        let coverMap = new Map();
-        if (ids.length) {
-          const { data: covers, error: cErr } = await supabase
-            .from("product_main_image_v")
-            .select("producto_id, main_image_url")
-            .in("producto_id", ids);
-          if (cErr) throw cErr;
-          coverMap = new Map(
-            (covers || []).map((c) => [c.producto_id, c.main_image_url])
-          );
-        }
-        const enriched = (data || []).map((p) => ({
-          ...p,
-          main_image_url: coverMap.get(p.id) || null,
-        }));
-        setAllRows(enriched);
-      } catch (err) {
-        alert(err?.message || "No se pudieron cargar los productos.");
-        setAllRows([]);
-      } finally {
-        setLoading(false);
+      // Portadas
+      const ids = (data || []).map((r) => r.id);
+      let coverMap = new Map();
+      if (ids.length) {
+        const { data: covers, error: cErr } = await supabase
+          .from("product_main_image_v")
+          .select("producto_id, main_image_url")
+          .in("producto_id", ids);
+        if (cErr) throw cErr;
+        coverMap = new Map(
+          (covers || []).map((c) => [c.producto_id, c.main_image_url])
+        );
       }
+
+      // Normalización: respetar price_online si existe; fallback a price_base
+      const enriched = (data || []).map((p) => ({
+        id: p.id,
+        codigo: p.codigo,
+        nombre: p.nombre,
+        marca: p.marca,
+        price_base: p.price_base,
+        price_online: p.price_online, // puede ser null
+        stock: p.stock,
+        main_image_url: coverMap.get(p.id) || null,
+      }));
+
+      setAllRows(enriched);
+    } catch (err) {
+      alert(err?.message || "No se pudieron cargar los productos.");
+      setAllRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // carga catálogo inicial
+  useEffect(() => {
+    reloadCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 🔁 Realtime: refrescar si cambia stock (van Online), producto o meta online
+  useEffect(() => {
+    let channel;
+    (async () => {
+      const onlineVanId = await getOnlineVanId();
+
+      channel = supabase
+        .channel("online-catalog-watch")
+        // cambios de stock en la van Online
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "stock_van",
+            filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined,
+          },
+          () => setTimeout(() => { reloadCatalog(); }, 150)
+        )
+        // cambios básicos del producto (precio base/nombre/marca)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "productos" },
+          () => setTimeout(() => { reloadCatalog(); }, 150)
+        )
+        // cambios del online meta (visible, precio_online, descripción)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "online_product_meta" },
+          () => setTimeout(() => { reloadCatalog(); }, 150)
+        )
+        .subscribe();
     })();
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
   }, []);
 
   // filtros locales
@@ -328,7 +388,23 @@ export default function Storefront() {
       const newCount = await addToCart(p, 1);
       setCount(newCount);
     } catch (e) {
-      alert(e?.message || "No se pudo agregar al carrito.");
+      const msg = String(e?.message || "");
+      const isAuthIssue =
+        e?.status === 401 ||
+        msg.includes("row-level security") ||
+        msg.includes("RLS") ||
+        e?.code === "42501";
+
+      if (isAuthIssue) {
+        setAuthMode("login");
+        setAuthOpen(true);
+        alert(
+          "Para usar el carrito debes iniciar sesión. (También puedes habilitar carrito anónimo creando una policy en la tabla 'carts')."
+        );
+        return;
+      }
+
+      alert(msg || "No se pudo agregar al carrito.");
     }
   }
 
@@ -364,7 +440,6 @@ export default function Storefront() {
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
         <div className="p-3">
           <div className="relative">
-            {/* IMAGEN: cuadrado, sin recortes feos */}
             <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
               {p.main_image_url ? (
                 <img
@@ -670,9 +745,7 @@ export default function Storefront() {
         </div>
 
         {!rows.length && !loading && (
-          <div className="text-gray-500">
-            No hay productos con los filtros actuales.
-          </div>
+          <div className="text-gray-500">No hay productos con los filtros actuales.</div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
