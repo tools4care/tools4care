@@ -299,6 +299,20 @@ async function requestAndSendNotifications({ client, payload }) {
   else if (wants === "email") await sendEmailSmart({ to: client.email, subject, html, text });
 }
 
+/* ===== Helper agregado: stock map para TOP ===== */
+async function getStockMapForVan(vanId, ids = []) {
+  const map = new Map();
+  if (!vanId || !Array.isArray(ids) || ids.length === 0) return map;
+  const { data, error } = await supabase
+    .from("stock_van")
+    .select("producto_id,cantidad")
+    .eq("van_id", vanId)
+    .in("producto_id", ids);
+  if (error || !data) return map;
+  data.forEach(r => map.set(r.producto_id, Number(r.cantidad || 0)));
+  return map;
+}
+
 /* ========================= Componente ========================= */
 export default function Sales() {
   const { van } = useVan();
@@ -576,9 +590,15 @@ export default function Sales() {
         if (error) throw error;
 
         if (Array.isArray(data) && data.length > 0) {
+          // Normalizo y enriquezco con catálogo
           let rows = normalizeFromRpc(data);
-          // si el RPC no trae code/brand/price, los completo con catálogo
           rows = await enrichTopWithCatalog(rows);
+
+          // 🚩 AQUÍ: ignoramos cualquier "cantidad" del RPC y usamos stock real
+          const ids = rows.map(r => r.producto_id).filter(Boolean);
+          const stockMap = await getStockMapForVan(van.id, ids);
+          rows = rows.map(r => ({ ...r, cantidad: stockMap.get(r.producto_id) ?? 0 }));
+
           setTopProducts(rows);
           return;
         }
@@ -587,7 +607,7 @@ export default function Sales() {
         console.warn("RPC productos_mas_vendidos_por_van falló. Fallback a join.", err?.message || err);
       }
 
-      // 2) Join directo stock_van -> productos
+      // 2) join directo a stock_van -> productos
       try {
         const { data, error } = await supabase
           .from("stock_van")
@@ -602,27 +622,26 @@ export default function Sales() {
         if (error) throw error;
 
         if (Array.isArray(data) && data.length > 0) {
-          const rows = data.map((row) => {
+          const rows = data.map(row => {
             const p = row.productos || {};
             const producto_id = row.producto_id ?? p.id ?? null;
-            const nombre = p.nombre ?? "";
-            const precio = num(p.precio);
-            const codigo = p.codigo ?? null;
-            const marca  = p.marca ?? null;
             return {
               producto_id,
-              cantidad: num(row.cantidad),
+              cantidad: Number(row.cantidad || 0),
               productos: {
                 id: producto_id,
-                nombre,
-                precio,
-                codigo,
-                marca,
+                nombre: p.nombre ?? "",
+                precio: Number(p.precio || 0),
+                codigo: p.codigo ?? null,
+                marca: p.marca ?? null,
                 descuento_pct: numOrNull(p.descuento_pct),
                 bulk_min_qty: numOrNull(p.bulk_min_qty),
                 bulk_unit_price: numOrNull(p.bulk_unit_price),
               },
-              nombre, precio, codigo, marca,
+              nombre: p.nombre ?? "",
+              precio: Number(p.precio || 0),
+              codigo: p.codigo ?? null,
+              marca: p.marca ?? null,
             };
           });
           setTopProducts(rows);
@@ -633,7 +652,7 @@ export default function Sales() {
         console.warn("Join stock_van→productos falló. Fallback a 2 pasos.", err?.message || err);
       }
 
-      // 3) 2 pasos (stock luego productos .in())
+      // 3) Fallback 2 pasos
       try {
         const { data: stock, error: e1 } = await supabase
           .from("stock_van")
@@ -661,24 +680,23 @@ export default function Sales() {
         const rows = (stock || []).map((s) => {
           const p = m.get(s.producto_id) || {};
           const producto_id = s.producto_id ?? p.id ?? null;
-          const nombre = p.nombre ?? "";
-          const precio = num(p.precio);
-          const codigo = p.codigo ?? null;
-          const marca  = p.marca ?? null;
           return {
             producto_id,
-            cantidad: num(s.cantidad),
+            cantidad: Number(s.cantidad || 0),
             productos: {
               id: producto_id,
-              nombre,
-              precio,
-              codigo,
-              marca,
+              nombre: p.nombre ?? "",
+              precio: Number(p.precio || 0),
+              codigo: p.codigo ?? null,
+              marca: p.marca ?? null,
               descuento_pct: numOrNull(p.descuento_pct),
               bulk_min_qty: numOrNull(p.bulk_min_qty),
               bulk_unit_price: numOrNull(p.bulk_unit_price),
             },
-            nombre, precio, codigo, marca,
+            nombre: p.nombre ?? "",
+            precio: Number(p.precio || 0),
+            codigo: p.codigo ?? null,
+            marca: p.marca ?? null,
           };
         });
 
@@ -700,7 +718,7 @@ export default function Sales() {
       setAllProductsLoading(true);
       if (!van?.id) return setAllProductsLoading(false);
 
-      // A) Join directo (orden correcto usando foreignTable para evitar 400)
+      // A) Join directo
       try {
         const { data, error } = await supabase
           .from("stock_van")
@@ -942,161 +960,225 @@ export default function Sales() {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
 
-  /* ===================== Guardar venta (RPC única) ===================== */
-  async function saveSale() {
-    setSaving(true);
-    setPaymentError("");
+  /* ===================== Guardar venta (RPC con fallback INSERT) ===================== */
+ // Reemplaza tu saveSale() completo por este:
+async function saveSale() {
+  setSaving(true);
+  setPaymentError("");
 
-    const currentPendingId = window.pendingSaleId;
+  const currentPendingId = window.pendingSaleId;
 
-    try {
-      if (!usuario?.id) throw new Error("User not synced, please re-login.");
-      if (!van?.id) throw new Error("Select a VAN first.");
-      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
-      if (cartSafe.length === 0) throw new Error("Add at least one product.");
+  try {
+    if (!usuario?.id) throw new Error("User not synced, please re-login.");
+    if (!van?.id) throw new Error("Select a VAN first.");
+    if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
+    if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
-      if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
-        setPaymentError(
-          `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
-        );
+    if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
+      setPaymentError(
+        `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (amountToCredit > 0) {
+      const ok = window.confirm(
+        `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
+          (showCreditPanel
+            ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
+                creditAvailable
+              )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
+            : `\n(No credit history yet)\n\n`) +
+          `Do you want to continue?`
+      );
+      if (!ok) {
         setSaving(false);
         return;
       }
+    }
 
-      if (amountToCredit > 0) {
-        const ok = window.confirm(
-          `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
-            (showCreditPanel
-              ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
-                  creditAvailable
-                )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
-              : `\n(No credit history yet)\n\n`) +
-            `Do you want to continue?`
-        );
-        if (!ok) {
-          setSaving(false);
-          return;
-        }
+    // Recalcular al guardar
+    const existingCreditNow = Math.max(0, -balanceBefore);
+    const oldDebtNow = Math.max(0, balanceBefore);
+    const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
+    const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+
+    const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
+    const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
+    const changeNow = Math.max(0, paid - totalAPagarNow);
+
+    // Pendiente que nace de ESTA venta
+    const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
+
+    // Estado de pago (NECESARIO para la columna NOT NULL)
+    const estadoPago =
+      pendingFromThisSale === 0
+        ? "pagado"
+        : paidForSaleNow > 0
+        ? "parcial"
+        : "pendiente";
+
+    // Desglose de pagos > 0
+    const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
+    const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+    nonZeroPayments.forEach((p) => {
+      if (paymentMap[p.forma] !== undefined) paymentMap[p.forma] += Number(p.monto || 0);
+    });
+
+    // Items para DB/RPC
+    const itemsForDb = cartSafe.map((p) => {
+      const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
+      const qty = Number(p.cantidad);
+      let base = Number(meta.base || p.precio_unitario) || 0;
+      let descuento_pct = 0;
+
+      const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
+      if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
+        descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
+      } else if (Number(meta.pct) > 0) {
+        descuento_pct = Number(meta.pct);
       }
 
-      // Recalcular en el momento de guardar
-      const existingCreditNow = Math.max(0, -balanceBefore);
-      const oldDebtNow = Math.max(0, balanceBefore);
-      const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
-      const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+      if (!base || !Number.isFinite(base)) {
+        base = Number(p.precio_unitario) || 0;
+        descuento_pct = 0;
+      }
 
-      const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
-      const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
-      const changeNow = Math.max(0, paid - totalAPagarNow);
-
-      // Desglose de pagos
-      const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
-      payments.forEach((p) => {
-        if (paymentMap[p.forma] !== undefined) paymentMap[p.forma] += Number(p.monto || 0);
-      });
-
-      // Items para la RPC
-      const itemsForRpc = cartSafe.map((p) => {
-        const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
-        const qty = Number(p.cantidad);
-        let base = Number(meta.base || p.precio_unitario) || 0;
-        let descuento_pct = 0;
-
-        const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
-        if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
-          descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
-        } else if (Number(meta.pct) > 0) {
-          descuento_pct = Number(meta.pct);
-        }
-
-        if (!base || !Number.isFinite(base)) {
-          base = Number(p.precio_unitario) || 0;
-          descuento_pct = 0;
-        }
-
-        return {
-          producto_id: p.producto_id,
-          cantidad: qty,
-          precio_unit: base,
-          descuento_pct,
-        };
-      });
-
-      const pagoJson = {
-        metodos: payments,
-        map: paymentMap,
-        total_ingresado: paid,
-        aplicado_venta: paidForSaleNow,
-        aplicado_deuda: payOldDebtNow,
-        cambio: changeNow,
+      return {
+        producto_id: p.producto_id,
+        cantidad: qty,
+        precio_unit: Number(base.toFixed(2)),
+        descuento_pct: Number(descuento_pct.toFixed(4)),
       };
+    });
 
-      // Llamada principal (transacción en DB)
-      const t0 = performance.now();
+    const pagoJson = {
+      metodos: nonZeroPayments,
+      map: paymentMap,
+      total_ingresado: Number(paid.toFixed(2)),
+      aplicado_venta: Number(paidForSaleNow.toFixed(2)),
+      aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
+      cambio: Number(changeNow.toFixed(2)),
+      ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
+    };
+
+    // ---------- 1) RPC preferida (si falla, seguimos a INSERT) ----------
+    let ventaId = null;
+    let rpcError = null;
+    try {
       const { data, error } = await supabase.rpc("create_venta", {
         p_cliente_id: selectedClient?.id || null,
         p_van_id: van.id || null,
         p_usuario: usuario.id,
-        p_items: itemsForRpc,
+        p_items: itemsForDb,
         p_pago: pagoJson,
         p_notas: notes || null,
+        // Si tu RPC soporta este parámetro lo usará; si no, lo ignora:
+        p_estado_pago: estadoPago,
+        p_total: Number(saleTotal.toFixed(2)),
+        p_total_venta: Number(saleTotal.toFixed(2)),
+        p_total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
       });
       if (error) throw error;
-      const elapsedMs = Math.round(performance.now() - t0);
+      ventaId = data?.venta_id || data?.id || data?.[0]?.id || null;
+    } catch (e) {
+      rpcError = e;
+      console.warn("RPC create_venta falló, probando INSERT directo:", e?.message || e);
+    }
 
-      // Pago a deuda previa (si aplica), en paralelo con notificación
-      const applyDebtPromise =
-        payOldDebtNow > 0 && selectedClient?.id
-          ? supabase.rpc("cxc_registrar_pago", {
-              p_cliente_id: selectedClient.id,
-              p_monto: Number(payOldDebtNow),
-              p_metodo: "mix",
-              p_van_id: van.id,
-            })
-          : Promise.resolve({});
-
-      // Payload para recibo
-      const payload = {
-        clientName: selectedClient?.nombre || "",
-        creditNumber: getCreditNumber(selectedClient),
-        dateStr: new Date().toLocaleString(),
-        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-        items: cartSafe.map((p) => ({
-          name: p.nombre,
-          qty: p.cantidad,
-          unit: p.precio_unitario,
-          subtotal: p.cantidad * p.precio_unitario,
-        })),
-        saleTotal,
-        paid: paidForSaleNow + payOldDebtNow,
-        change: changeNow,
-        prevBalance: Math.max(0, balanceBefore),
-        toCredit: amountToCredit,
-        creditLimit,
-        availableBefore: creditAvailable,
-        availableAfter: creditAvailableAfter,
+    // ---------- 2) Fallback INSERT directo cumpliendo NOT NULL ----------
+    if (!ventaId) {
+      const payloadVenta = {
+        cliente_id: selectedClient?.id ?? null,
+        van_id: van.id ?? null,
+        usuario_id: usuario.id,
+        total: Number(saleTotal.toFixed(2)),
+        total_venta: Number(saleTotal.toFixed(2)),
+        total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
+        estado_pago: estadoPago, // <-- clave NOT NULL
+        pago: pagoJson,
+        productos: itemsForDb,
+        notas: notes || null,
       };
 
-      // Limpiar pendientes y notificar
-      const updated = removePendingFromLSById(currentPendingId);
-      setPendingSales(updated);
+      const { data: ins, error: insErr } = await supabase
+        .from("ventas")
+        .insert([payloadVenta])
+        .select()
+        .single();
 
-      alert(
-        `✅ Sale saved successfully` +
-          (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "") +
-          `\n⏱️ ${elapsedMs} ms`
-      );
-
-      await Promise.all([applyDebtPromise, requestAndSendNotifications({ client: selectedClient, payload })]);
-
-      clearSale();
-    } catch (err) {
-      setPaymentError("❌ Error saving sale: " + (err?.message || ""));
-      console.error(err);
-    } finally {
-      setSaving(false);
+      if (insErr) {
+        throw new Error(
+          `RPC & INSERT failed. RPC: ${rpcError?.message || "N/A"} | INSERT: ${insErr.message}`
+        );
+      }
+      ventaId = ins?.id || null;
     }
+
+    // (Opcional) registrar ajuste/pago de deuda si usas funciones aparte
+    await Promise.all([
+      pendingFromThisSale > 0 && selectedClient?.id && ventaId
+        ? supabase
+            .rpc("cxc_crear_ajuste_por_venta", {
+              p_cliente_id: selectedClient.id,
+              p_venta_id: ventaId,
+              p_monto: Number(pendingFromThisSale),
+              p_van_id: van.id,
+              p_usuario_id: usuario.id,
+              p_nota: "Saldo de venta no pagado",
+            })
+            .catch((e) => console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e))
+        : Promise.resolve(),
+      payOldDebtNow > 0 && selectedClient?.id
+        ? supabase.rpc("cxc_registrar_pago", {
+            p_cliente_id: selectedClient.id,
+            p_monto: Number(payOldDebtNow),
+            p_metodo: "mix",
+            p_van_id: van.id,
+          })
+        : Promise.resolve({}),
+    ]);
+
+    // Recibo
+    const payload = {
+      clientName: selectedClient?.nombre || "",
+      creditNumber: getCreditNumber(selectedClient),
+      dateStr: new Date().toLocaleString(),
+      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+      items: cartSafe.map((p) => ({
+        name: p.nombre,
+        qty: p.cantidad,
+        unit: p.precio_unitario,
+        subtotal: p.cantidad * p.precio_unitario,
+      })),
+      saleTotal,
+      paid: paidForSaleNow + payOldDebtNow,
+      change: changeNow,
+      prevBalance: Math.max(0, balanceBefore),
+      toCredit: pendingFromThisSale,
+      creditLimit,
+      availableBefore: creditAvailable,
+      availableAfter: Math.max(0, creditLimit - Math.max(0, balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow))),
+    };
+
+    removePendingFromLSById(currentPendingId);
+    await requestAndSendNotifications({ client: selectedClient, payload });
+
+    alert(
+      `✅ Sale saved successfully` +
+        (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
+        (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
+    );
+    clearSale();
+  } catch (err) {
+    setPaymentError("❌ Error saving sale: " + (err?.message || ""));
+    console.error(err);
+  } finally {
+    setSaving(false);
   }
+}
+
 
   /* ======================== Modal: ventas pendientes ======================== */
   function handleSelectPendingSale(sale) {
@@ -1361,7 +1443,7 @@ export default function Sales() {
             {migrationMode && (
               <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
                 🔒 Migration mode
-              </span>
+                </span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -1609,7 +1691,6 @@ export default function Sales() {
 
             <div className="space-y-3">
               {cartSafe.map((p) => {
-                // Blindaje visual: si por lo que sea precio_unitario es 0, recalculamos con _pricing
                 const unitSafe =
                   p.precio_unitario > 0
                     ? p.precio_unitario

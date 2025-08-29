@@ -97,7 +97,7 @@ function calcTax(items, stateCode) {
   return taxableSubtotal * rate;
 }
 
-/* ----------------- registrar orden ----------------- */
+/* ----------------- registrar orden (flujo legacy) ----------------- */
 async function createOrder({ payment, items, shipping, amounts, cartId }) {
   const { data: order, error: e1 } = await supabase
     .from("orders")
@@ -112,7 +112,6 @@ async function createOrder({ payment, items, shipping, amounts, cartId }) {
       phone: shipping?.phone || null,
       name: shipping?.name || null,
       address_json: shipping?.address || null,
-      // 👇 clave: arrancamos como pending
       status: "pending",
     })
     .select("id")
@@ -275,6 +274,7 @@ export default function Checkout() {
     shipping.name, shipping.phone, shipping.address1, shipping.address2, shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method, total
   ]);
 
+  // PAGO OK ⇒ crear orden y descontar stock
   async function handlePaid(paymentIntent) {
     try {
       const cid = cartId || (await ensureCart());
@@ -292,6 +292,59 @@ export default function Checkout() {
             100 || total,
       };
 
+      // --------- INTENTO 1: usar RPC sp_create_order_and_discount (todo en transacción)
+      const itemsPayload = list.map((it) => ({
+        producto_id: it.producto_id,
+        qty: Number(it.qty || 0),
+        precio_unit: Number(it.producto?.precio || 0),
+        nombre: it.producto?.nombre || "",
+        marca: it.producto?.marca || null,
+        codigo: it.producto?.codigo || null,
+      }));
+      const addressJson = {
+        line1: shipping.address1 || null,
+        line2: shipping.address2 || null,
+        city: shipping.city || null,
+        state: shipping.state || null,
+        postal_code: shipping.zip || null,
+        country: shipping.country || "US",
+      };
+
+      let orderIdFromRpc = null;
+      let rpcErrMsg = "";
+
+      try {
+        const { data: newOrderId, error: rpcErr } = await supabase.rpc(
+          "sp_create_order_and_discount",
+          {
+            p_payment_intent_id: paymentIntent.id,
+            p_currency: paymentIntent.currency || "usd",
+            p_name: shipping.name || null,
+            p_email: shipping.email || null,
+            p_phone: shipping.phone || null,
+            p_address: addressJson,
+            p_amount_subtotal: amounts.subtotal,
+            p_amount_shipping: amounts.shipping,
+            p_amount_taxes: amounts.taxes,
+            p_amount_total: amounts.total,
+            p_items: itemsPayload,
+          }
+        );
+        if (rpcErr) rpcErrMsg = rpcErr.message || "";
+        orderIdFromRpc = newOrderId || null;
+      } catch (rpcCatch) {
+        rpcErrMsg = rpcCatch?.message || String(rpcCatch);
+      }
+
+      if (orderIdFromRpc) {
+        // Vacía carrito si la RPC creó/descontó correctamente
+        await supabase.from("cart_items").delete().eq("cart_id", cid).catch(() => {});
+        setSuccess({ paymentIntent, orderId: orderIdFromRpc, amounts });
+        setPhase("success");
+        return;
+      }
+
+      // --------- INTENTO 2 (fallback): flujo legacy que ya te funciona
       const orderId = await createOrder({
         payment: paymentIntent,
         items: list,
@@ -299,31 +352,20 @@ export default function Checkout() {
           name: shipping.name || null,
           email: shipping.email || null,
           phone: shipping.phone || null,
-          address: {
-            line1: shipping.address1 || null,
-            line2: shipping.address2 || null,
-            city: shipping.city || null,
-            state: shipping.state || null,
-            postal_code: shipping.zip || null,
-            country: shipping.country || "US",
-          },
+          address: addressJson,
         },
         amounts,
         cartId: cid,
       });
 
-      // ✅ Ahora sí actualizamos a "paid" para disparar el trigger y descontar stock
-      const { data, error } = await supabase
+      const { error: updErr } = await supabase
         .from("orders")
         .update({ status: "paid" })
         .eq("id", orderId)
-        .neq("status", "paid")
-        .select();
+        .neq("status", "paid");
 
-      if (error) {
-        console.error("❌ No se pudo marcar como paid:", error);
-      } else {
-        console.log("✅ Orden marcada como paid:", data);
+      if (updErr) {
+        console.error("❌ No se pudo marcar como paid:", updErr, "(RPC err:", rpcErrMsg, ")");
       }
 
       setSuccess({ paymentIntent, orderId, amounts });
