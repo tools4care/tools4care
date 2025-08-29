@@ -35,16 +35,15 @@ async function fetchCxc(clienteId) {
   if (!clienteId) return null;
   const { data, error } = await supabase
     .from("v_cxc_cliente_detalle")
-    .select("saldo, limite_politica, credito_disponible, score_base")
-    .eq("cliente_id", clienteId);
+    .select("saldo, limite_politica, credito_disponible") // <-- columnas existentes
+    .eq("cliente_id", clienteId)
+    .maybeSingle();
 
-  if (error || !data || data.length === 0) return null;
-  const row = data[0];
+  if (error || !data) return null;
   return {
-    saldo: Number(row.saldo ?? 0),
-    limite: Number(row.limite_politica ?? 0),
-    disponible: Number(row.credito_disponible ?? 0),
-    score: Number(row.score_base ?? 600),
+    saldo: Number(data.saldo ?? 0),
+    limite: Number(data.limite_politica ?? 0),
+    disponible: Number(data.credito_disponible ?? 0),
   };
 }
 
@@ -103,7 +102,7 @@ export default function Clientes() {
       .select("*", { count: "exact", head: true })
       .gt("saldo", 0);
     const { data: saldosRows } = await supabase.from("v_cxc_cliente_detalle").select("saldo");
-    const totalOutstanding = (saldosRows || []).reduce((s, r) => s + Number(r.saldo || 0), 0);
+    const totalOutstanding = (saldosRows || []).reduce((s, r) => s + Math.max(0, Number(r.saldo || 0)), 0); // solo positivos
 
     setTotales({
       totalClients: totalClients || 0,
@@ -1043,7 +1042,7 @@ function ClienteStatsModal({
               onChange={e => setMesSeleccionado(e.target.value || null)}
             >
               <option value="">All months</option>
-              {mesesUnicos.map(mes => (
+              {Object.keys(comprasPorMes).sort().reverse().map(mes => (
                 <option key={mes} value={mes}>{mes}</option>
               ))}
             </select>
@@ -1145,6 +1144,14 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [metodo, setMetodo] = useState("Cash");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
+
+  // Refrescar saldo al abrir el modal para evitar valores stale
+  useEffect(() => {
+    (async () => {
+      const info = await fetchCxc(cliente.id);
+      if (info && setResumen) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
+    })();
+  }, [cliente.id, setResumen]);
 
   const comprasPorMes = {};
   let totalLifetime = 0;
@@ -1308,7 +1315,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
             </div>
 
-            <div className="border-top border-gray-200 pt-3">
+            <div className="border-t border-gray-200 pt-3">
               <div className="flex justify-between items-center">
                 <span className="font-bold text-gray-700">Lifetime Total:</span>
                 <span className="text-xl font-bold text-green-700">${totalLifetime.toFixed(2)}</span>

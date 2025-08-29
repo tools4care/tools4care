@@ -1,5 +1,5 @@
 // src/admin/Orders.jsx
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
 /* =========================
@@ -132,60 +132,76 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const loadDetail = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data: o } = await supabase
+        .from("orders")
+        .select(
+          "id, created_at, status, name, email, phone, address_json, amount_subtotal, amount_shipping, amount_taxes, amount_total, currency, payment_intent_id"
+        )
+        .eq("id", orderId)
+        .maybeSingle();
+
+      const { data: its } = await supabase
+        .from("order_items")
+        .select("id, producto_id, nombre, marca, codigo, qty, precio_unit, taxable")
+        .eq("order_id", orderId)
+        .order("id", { ascending: true });
+
+      const { data: hist } = await supabase
+        .from("order_status_history")
+        .select("id, old_status, new_status, note, changed_by, changed_at")
+        .eq("order_id", orderId)
+        .order("changed_at", { ascending: true });
+
+      setOrder(o || null);
+      setItems(its || []);
+      setHistory(hist || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [orderId]);
+
   useEffect(() => {
     let cancel = false;
     (async () => {
-      setLoading(true);
-      try {
-        const { data: o } = await supabase
-          .from("orders")
-          .select(
-            "id, created_at, status, name, email, phone, address_json, amount_subtotal, amount_shipping, amount_taxes, amount_total, currency, payment_intent_id"
-          )
-          .eq("id", orderId)
-          .maybeSingle();
-
-        const { data: its } = await supabase
-          .from("order_items")
-          .select(
-            "id, producto_id, nombre, marca, codigo, qty, precio_unit, taxable"
-          )
-          .eq("order_id", orderId)
-          .order("id", { ascending: true });
-
-        const { data: hist } = await supabase
-          .from("order_status_history")
-          .select("id, old_status, new_status, note, changed_by, changed_at")
-          .eq("order_id", orderId)
-          .order("changed_at", { ascending: true });
-
-        if (!cancel) {
-          setOrder(o || null);
-          setItems(its || []);
-          setHistory(hist || []);
-        }
-      } finally {
-        if (!cancel) setLoading(false);
-      }
+      if (!cancel) await loadDetail();
     })();
-    return () => (cancel = true);
-  }, [orderId]);
+    return () => {
+      cancel = true;
+    };
+  }, [loadDetail]);
 
   async function addNote() {
     if (!note.trim() || !orderId) return;
     const text = note.trim();
     setNote("");
-    await supabase.from("order_status_history").insert({
+
+    // Guardar la nota en la TABLA CORRECTA: order_status_history
+    const userRes = await supabase.auth.getUser().catch(() => null);
+    const userId = userRes?.data?.user?.id ?? null;
+
+    const entry = {
       order_id: orderId,
       old_status: null,
-      new_status: order?.status || null,
+      new_status: order?.status ?? null,
       note: text,
-    });
+      changed_by: userId,
+    };
+
+    const { error } = await supabase.from("order_status_history").insert(entry);
+    if (error) {
+      alert(error.message || "No se pudo guardar la nota.");
+      return;
+    }
+
     const { data: hist } = await supabase
       .from("order_status_history")
       .select("id, old_status, new_status, note, changed_by, changed_at")
       .eq("order_id", orderId)
       .order("changed_at", { ascending: true });
+
     setHistory(hist || []);
   }
 
@@ -193,16 +209,20 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
     if (!orderId) return;
     const prev = order?.status ?? null;
     setOrder((o) => (o ? { ...o, status: next } : o));
+
     const { error } = await supabase
       .from("orders")
       .update({ status: next })
       .eq("id", orderId)
       .neq("status", next); // evita no-op updates
+
     if (error) {
       setOrder((o) => (o ? { ...o, status: prev } : o));
       alert(error.message || "No se pudo actualizar el estado.");
       return;
     }
+
+    // Recargar historial (el trigger "trg_log_order_status_change" lo registra)
     const { data: hist } = await supabase
       .from("order_status_history")
       .select("id, old_status, new_status, note, changed_by, changed_at")
@@ -344,9 +364,7 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
                     <tbody className="[&>tr:nth-child(even)]:bg-gray-50/60">
                       {items.map((it) => (
                         <tr key={it.id} className="border-t">
-                          <td className="px-2 py-2">
-                            {it.nombre || it.producto_id}
-                          </td>
+                          <td className="px-2 py-2">{it.nombre || it.producto_id}</td>
                           <td className="px-2 py-2">{it.marca || "—"}</td>
                           <td className="px-2 py-2">{it.codigo || "—"}</td>
                           <td className="px-2 py-2">{it.qty}</td>
@@ -445,15 +463,15 @@ export default function Orders() {
     [rows]
   );
 
-  async function fetchCount() {
+  const fetchCount = useCallback(async () => {
     let qb = supabase.from("orders").select("id");
     if (statusFilter !== "all") qb = qb.eq("status", statusFilter);
     qb = applyDateFilter(qb, dateFilter);
     const { data } = await qb.limit(10000);
     setTotal((data || []).length);
-  }
+  }, [statusFilter, dateFilter]);
 
-  async function fetchPage() {
+  const fetchPage = useCallback(async () => {
     setLoading(true);
     try {
       const from = (page - 1) * PAGE_SIZE;
@@ -500,15 +518,37 @@ export default function Orders() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [page, q, statusFilter, dateFilter]);
 
   useEffect(() => {
     fetchCount();
-  }, [statusFilter, q, dateFilter]);
+  }, [statusFilter, q, dateFilter, fetchCount]);
 
   useEffect(() => {
     fetchPage();
-  }, [page, q, statusFilter, dateFilter]);
+  }, [page, q, statusFilter, dateFilter, fetchPage]);
+
+  // 🔁 Realtime: refrescar la tabla cuando cambie cualquier orden
+  useEffect(() => {
+    const channel = supabase
+      .channel("admin-orders-watch")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        () => {
+          // Pequeño debounce para agrupar cambios consecutivos
+          setTimeout(() => {
+            fetchCount();
+            fetchPage();
+          }, 150);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchCount, fetchPage]);
 
   async function toggleExpand(orderId) {
     if (expanded[orderId]) {
@@ -818,11 +858,12 @@ export default function Orders() {
                                         </td>
                                         <td className="px-3 py-2">{it.qty}</td>
                                         <td className="px-3 py-2">
-                                          {fmtMoney(it.precio_unit)}
+                                          {fmtMoney(it.precio_unit, r.currency)}
                                         </td>
                                         <td className="px-3 py-2">
                                           {fmtMoney(
-                                            (it.qty || 0) * (it.precio_unit || 0)
+                                            (it.qty || 0) * (it.precio_unit || 0),
+                                            r.currency
                                           )}
                                         </td>
                                       </tr>
@@ -834,39 +875,19 @@ export default function Orders() {
                               <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                                 <div>
                                   <span className="text-gray-600">Subtotal: </span>
-                                  <b>
-                                    {fmtMoney(
-                                      r.amount_subtotal,
-                                      r.currency
-                                    )}
-                                  </b>
+                                  <b>{fmtMoney(r.amount_subtotal, r.currency)}</b>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Envío: </span>
-                                  <b>
-                                    {fmtMoney(
-                                      r.amount_shipping,
-                                      r.currency
-                                    )}
-                                  </b>
+                                  <b>{fmtMoney(r.amount_shipping, r.currency)}</b>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Impuestos: </span>
-                                  <b>
-                                    {fmtMoney(
-                                      r.amount_taxes,
-                                      r.currency
-                                    )}
-                                  </b>
+                                  <b>{fmtMoney(r.amount_taxes, r.currency)}</b>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Total: </span>
-                                  <b>
-                                    {fmtMoney(
-                                      r.amount_total,
-                                      r.currency
-                                    )}
-                                  </b>
+                                  <b>{fmtMoney(r.amount_total, r.currency)}</b>
                                 </div>
                               </div>
                             </div>
@@ -887,10 +908,7 @@ export default function Orders() {
 
                 {!rows.length && !loading && (
                   <tr>
-                    <td
-                      className="px-3 py-12 text-center text-gray-500"
-                      colSpan={7}
-                    >
+                    <td className="px-3 py-12 text-center text-gray-500" colSpan={7}>
                       No hay órdenes.
                     </td>
                   </tr>

@@ -258,7 +258,9 @@ export default function Storefront() {
       // 👇 Vista canónica + visibilidad + stock
       const { data, error } = await supabase
         .from("vw_storefront_catalog")
-        .select("id,codigo,nombre,marca,price_base,price_online,visible_online,stock")
+        .select(
+          "id,codigo,nombre,marca,price_base,price_online,descripcion,visible_online,stock"
+        )
         .eq("visible_online", true) // solo publicar si está visible
         .gt("stock", 0)             // y con stock
         .order("nombre", { ascending: true });
@@ -278,15 +280,18 @@ export default function Storefront() {
         );
       }
 
-      // Normalización: respetar price_online si existe; fallback a price_base
+      // Normalización: respetar price_online si existe; fallback a price_base.
+      // Además incluimos `price` ya resuelto para el carrito/UI.
       const enriched = (data || []).map((p) => ({
         id: p.id,
         codigo: p.codigo,
         nombre: p.nombre,
         marca: p.marca,
-        price_base: p.price_base,
-        price_online: p.price_online, // puede ser null
-        stock: p.stock,
+        price_base: Number(p.price_base),
+        price_online: p.price_online == null ? null : Number(p.price_online),
+        price: Number(p.price_online ?? p.price_base),
+        stock: Number(p.stock ?? 0),
+        descripcion: p.descripcion ?? null,
         main_image_url: coverMap.get(p.id) || null,
       }));
 
@@ -357,7 +362,7 @@ export default function Storefront() {
       list = list.filter((p) => (p.marca || "").toLowerCase() === brand);
 
     list = list.filter((p) => {
-      const price = Number(p.price_online ?? p.price_base ?? 0);
+      const price = Number(p.price ?? p.price_online ?? p.price_base ?? 0);
       if (minPrice !== "" && price < Number(minPrice)) return false;
       if (maxPrice !== "" && price > Number(maxPrice)) return false;
       return true;
@@ -366,14 +371,14 @@ export default function Storefront() {
     if (sort === "price_asc")
       list.sort(
         (a, b) =>
-          (a.price_online ?? a.price_base ?? 0) -
-          (b.price_online ?? b.price_base ?? 0)
+          (a.price ?? a.price_online ?? a.price_base ?? 0) -
+          (b.price ?? b.price_online ?? b.price_base ?? 0)
       );
     if (sort === "price_desc")
       list.sort(
         (a, b) =>
-          (b.price_online ?? b.price_base ?? 0) -
-          (a.price_online ?? a.price_base ?? 0)
+          (b.price ?? b.price_online ?? b.price_base ?? 0) -
+          (a.price ?? a.price_online ?? a.price_base ?? 0)
       );
     if (sort === "name_asc")
       list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
@@ -430,7 +435,7 @@ export default function Storefront() {
   );
 
   function ProductCard({ p }) {
-    const price = p.price_online ?? p.price_base ?? 0;
+    const price = p.price ?? p.price_online ?? p.price_base ?? 0; // 👈 usa el precio normalizado
     const hasOffer =
       p.price_online != null &&
       p.price_base != null &&
