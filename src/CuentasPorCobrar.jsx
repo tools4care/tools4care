@@ -93,12 +93,11 @@ export default function CuentasPorCobrar() {
       setLoading(true);
       try {
         let query = supabase
-          .from("v_cxc_cliente_detalle")
-          .select(
-            // NUEVO: añadimos limite_manual para mostrar/editar override
-            "cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual",
-            { count: "exact" }
-          );
+  .from("v_cxc_cliente_detalle_ext")
+    .select(
+      "cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual",
+      { count: "exact" }
+    );
 
         if (q?.trim()) {
           query = query.ilike("cliente_nombre", `%${q.trim()}%`);
