@@ -21,6 +21,10 @@ import Orders from "./admin/Orders";
 import OnlineCatalog from "./online/OnlineCatalog";
 import Checkout from "./storefront/Checkout";
 
+// ➕ NUEVO: módulos del panel Online
+import OnlineDiscounts from "./online/Discounts";
+import OnlineInventory from "./online/Inventory";
+
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
 // ✅ Callback público para confirmación de correo / magic link
@@ -101,6 +105,9 @@ export default function App() {
             <Route index element={<OnlineDashboard />} />
             <Route path="orders" element={<Orders />} />
             <Route path="catalog" element={<OnlineCatalog />} />
+            {/* ➕ NUEVOS módulos */}
+            <Route path="discounts" element={<OnlineDiscounts />} />
+            <Route path="inventory" element={<OnlineInventory />} />
             {/* checkout admin sigue existiendo vía redirect arriba */}
           </Route>
 
