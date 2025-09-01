@@ -6,7 +6,8 @@ import { addToCart, ensureCart, cartCount } from "./cartApi";
 import { listCartItems, updateCartItemQty, removeCartItem } from "./cartApi";
 import AuthModal from "./AuthModal";
 
-// Helper: obtener la VAN online para Realtime (no toca nada del flujo actual)
+/* -------------------- Helpers -------------------- */
+// Get "Online" VAN id (for realtime stock watch)
 async function getOnlineVanId() {
   const { data, error } = await supabase
     .from("vans")
@@ -29,13 +30,14 @@ function Price({ value, currency = "USD" }) {
     maximumFractionDigits: 2,
   });
 }
+
 const norm = (s = "") =>
   String(s || "")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
 
-// ---------- Drawer (panel) del carrito ----------
+/* -------------------- Cart Drawer -------------------- */
 function CartDrawer({ open, onClose }) {
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -64,13 +66,12 @@ function CartDrawer({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Acciones con producto_id (coinciden con cartApi)
   async function handleQty(productoId, next) {
     try {
       await updateCartItemQty(productoId, next);
       await refresh();
     } catch (e) {
-      alert(e?.message || "No se pudo actualizar la cantidad.");
+      alert(e?.message || "Could not update quantity.");
     }
   }
 
@@ -79,7 +80,7 @@ function CartDrawer({ open, onClose }) {
       await removeCartItem(productoId);
       await refresh();
     } catch (e) {
-      alert(e?.message || "No se pudo eliminar.");
+      alert(e?.message || "Could not remove item.");
     }
   }
 
@@ -90,21 +91,21 @@ function CartDrawer({ open, onClose }) {
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <aside className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl border-l flex flex-col">
         <div className="p-4 border-b flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Tu carrito</h3>
+          <h3 className="text-lg font-semibold">Your cart</h3>
           <button
             className="rounded-lg border px-3 py-1.5 hover:bg-gray-50"
             onClick={onClose}
           >
-            Cerrar
+            Close
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
           {loading ? (
-            <div className="text-sm text-gray-500">Cargando…</div>
+            <div className="text-sm text-gray-500">Loading…</div>
           ) : lines.length === 0 ? (
             <div className="text-sm text-gray-500">
-              Aún no tienes productos en el carrito.
+              Your cart is empty.
             </div>
           ) : (
             <div className="space-y-3">
@@ -124,7 +125,7 @@ function CartDrawer({ open, onClose }) {
                           onError={(e) => (e.currentTarget.style.display = "none")}
                         />
                       ) : (
-                        <span className="text-[10px] text-gray-400">sin imagen</span>
+                        <span className="text-[10px] text-gray-400">no image</span>
                       )}
                     </div>
                   </div>
@@ -139,7 +140,7 @@ function CartDrawer({ open, onClose }) {
                       <button
                         className="w-7 h-7 rounded-md border hover:bg-gray-50"
                         onClick={() => handleQty(l.producto_id, Math.max(0, l.qty - 1))}
-                        title="Menos"
+                        title="Less"
                       >
                         −
                       </button>
@@ -147,7 +148,7 @@ function CartDrawer({ open, onClose }) {
                       <button
                         className="w-7 h-7 rounded-md border hover:bg-gray-50"
                         onClick={() => handleQty(l.producto_id, l.qty + 1)}
-                        title="Más"
+                        title="More"
                       >
                         +
                       </button>
@@ -156,7 +157,7 @@ function CartDrawer({ open, onClose }) {
                         className="ml-2 text-xs text-rose-600 hover:underline"
                         onClick={() => handleRemove(l.producto_id)}
                       >
-                        Eliminar
+                        Remove
                       </button>
                     </div>
                   </div>
@@ -167,7 +168,7 @@ function CartDrawer({ open, onClose }) {
                     </div>
                     {Number(l.qty || 0) > 1 && (
                       <div className="text-[11px] text-gray-500">
-                        <Price value={l.price} /> c/u
+                        <Price value={l.price} /> each
                       </div>
                     )}
                   </div>
@@ -179,7 +180,7 @@ function CartDrawer({ open, onClose }) {
 
         <div className="border-t p-3">
           <div className="flex items-center justify-between text-sm">
-            <span>Artículos: {lines.reduce((a, l) => a + Number(l.qty || 0), 0)}</span>
+            <span>Items: {lines.reduce((a, l) => a + Number(l.qty || 0), 0)}</span>
             <span className="font-semibold">
               Subtotal: <Price value={subtotal} />
             </span>
@@ -189,13 +190,13 @@ function CartDrawer({ open, onClose }) {
               className="rounded-lg border px-3 py-2 hover:bg-gray-50"
               onClick={onClose}
             >
-              Seguir comprando
+              Keep shopping
             </button>
             <a
               href="/checkout"
               className="text-center rounded-lg bg-blue-600 text-white px-3 py-2 hover:bg-blue-700"
             >
-              Ir al checkout
+              Go to checkout
             </a>
           </div>
         </div>
@@ -203,8 +204,8 @@ function CartDrawer({ open, onClose }) {
     </div>
   );
 }
-// ---------- fin CartDrawer ----------
 
+/* -------------------- Storefront -------------------- */
 export default function Storefront() {
   const [q, setQ] = useState("");
   const [allRows, setAllRows] = useState([]);
@@ -225,7 +226,16 @@ export default function Storefront() {
   const navigate = useNavigate();
   const offersRef = useRef(null);
 
-  // sesión cliente
+  // Debounce control for realtime reload (reduce flicker)
+  const reloadTimeoutRef = useRef(null);
+
+  // Simple announcement content (editable)
+  const announcements = [
+    { id: 1, text: "Free pickup at store. New arrivals every week!" },
+    { id: 2, text: "Apple Pay & Google Pay at checkout on supported devices." },
+  ];
+
+  // session
   useEffect(() => {
     let sub;
     (async () => {
@@ -238,7 +248,7 @@ export default function Storefront() {
     return () => sub?.unsubscribe?.();
   }, []);
 
-  // contador carrito
+  // cart counter
   useEffect(() => {
     (async () => {
       try {
@@ -246,27 +256,26 @@ export default function Storefront() {
         const c = await cartCount(cid);
         setCount(c);
       } catch {
-        // si falla por RLS/401, ignoramos el contador (se manejará al intentar agregar)
+        // ignore (RLS/401); will be handled on add
       }
     })();
   }, [user]);
 
-  // util: recarga catálogo desde la VISTA nueva
+  // load catalog
   async function reloadCatalog() {
     setLoading(true);
     try {
-      // 👇 Vista canónica + visibilidad + stock
       const { data, error } = await supabase
         .from("vw_storefront_catalog")
         .select(
           "id,codigo,nombre,marca,price_base,price_online,descripcion,visible_online,stock"
         )
-        .eq("visible_online", true) // solo publicar si está visible
-        .gt("stock", 0)             // y con stock
+        .eq("visible_online", true)
+        .gt("stock", 0)
         .order("nombre", { ascending: true });
       if (error) throw error;
 
-      // Portadas
+      // cover images
       const ids = (data || []).map((r) => r.id);
       let coverMap = new Map();
       if (ids.length) {
@@ -280,8 +289,6 @@ export default function Storefront() {
         );
       }
 
-      // Normalización: respetar price_online si existe; fallback a price_base.
-      // Además incluimos `price` ya resuelto para el carrito/UI.
       const enriched = (data || []).map((p) => ({
         id: p.id,
         codigo: p.codigo,
@@ -297,28 +304,35 @@ export default function Storefront() {
 
       setAllRows(enriched);
     } catch (err) {
-      alert(err?.message || "No se pudieron cargar los productos.");
+      alert(err?.message || "Could not load products.");
       setAllRows([]);
     } finally {
       setLoading(false);
     }
   }
 
-  // carga catálogo inicial
   useEffect(() => {
     reloadCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 🔁 Realtime: refrescar si cambia stock (van Online), producto o meta online
+  // Realtime with debounce to avoid flicker
   useEffect(() => {
     let channel;
     (async () => {
       const onlineVanId = await getOnlineVanId();
 
+      const scheduleReload = () => {
+        if (reloadTimeoutRef.current) {
+          clearTimeout(reloadTimeoutRef.current);
+        }
+        reloadTimeoutRef.current = setTimeout(() => {
+          reloadCatalog();
+        }, 600); // debounce 600ms
+      };
+
       channel = supabase
         .channel("online-catalog-watch")
-        // cambios de stock en la van Online
         .on(
           "postgres_changes",
           {
@@ -327,29 +341,28 @@ export default function Storefront() {
             table: "stock_van",
             filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined,
           },
-          () => setTimeout(() => { reloadCatalog(); }, 150)
+          scheduleReload
         )
-        // cambios básicos del producto (precio base/nombre/marca)
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "productos" },
-          () => setTimeout(() => { reloadCatalog(); }, 150)
+          scheduleReload
         )
-        // cambios del online meta (visible, precio_online, descripción)
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "online_product_meta" },
-          () => setTimeout(() => { reloadCatalog(); }, 150)
+          scheduleReload
         )
         .subscribe();
     })();
 
     return () => {
+      if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
       if (channel) supabase.removeChannel(channel);
     };
   }, []);
 
-  // filtros locales
+  // local filters/sort
   useEffect(() => {
     const nq = norm(q);
     let list = [...allRows];
@@ -404,38 +417,17 @@ export default function Storefront() {
         setAuthMode("login");
         setAuthOpen(true);
         alert(
-          "Para usar el carrito debes iniciar sesión. (También puedes habilitar carrito anónimo creando una policy en la tabla 'carts')."
+          "Please sign in to use the cart. (Anonymous carts are possible by adding an RLS policy on 'carts')."
         );
         return;
       }
 
-      alert(msg || "No se pudo agregar al carrito.");
+      alert(msg || "Could not add to cart.");
     }
   }
 
-  function goCheckout() {
-    navigate("/checkout");
-  }
-
-  const offers = useMemo(
-    () =>
-      allRows
-        .filter(
-          (p) =>
-            p.price_online != null &&
-            p.price_base != null &&
-            Number(p.price_online) < Number(p.price_base)
-        )
-        .slice(0, 8),
-    [allRows]
-  );
-  const novedades = useMemo(
-    () => [...allRows].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 12),
-    [allRows]
-  );
-
   function ProductCard({ p }) {
-    const price = p.price ?? p.price_online ?? p.price_base ?? 0; // 👈 usa el precio normalizado
+    const price = p.price ?? p.price_online ?? p.price_base ?? 0;
     const hasOffer =
       p.price_online != null &&
       p.price_base != null &&
@@ -453,28 +445,22 @@ export default function Storefront() {
                   className="w-full h-full object-contain p-2"
                   loading="lazy"
                   onError={(e) => {
-                    e.currentTarget.replaceWith(
-                      Object.assign(document.createElement("div"), {
-                        className: "text-xs text-gray-400",
-                        innerText: "sin imagen",
-                      })
-                    );
+                    // Hide broken image to avoid flashing
+                    e.currentTarget.style.display = "none";
                   }}
                 />
               ) : (
-                <span className="text-xs text-gray-400">sin imagen</span>
+                <span className="text-xs text-gray-400">no image</span>
               )}
             </div>
             {hasOffer && (
               <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-                Oferta
+                Sale
               </span>
             )}
           </div>
 
-          <div className="mt-3 text-xs text-green-700">
-            Stock: {Number(p.stock || 0)}
-          </div>
+          <div className="mt-3 text-xs text-green-700">Stock: {Number(p.stock || 0)}</div>
 
           <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px]">
             {p.nombre}
@@ -501,7 +487,7 @@ export default function Storefront() {
             }`}
             onClick={() => handleAdd(p)}
           >
-            {outOfStock ? "Sin stock" : "Agregar"}
+            {outOfStock ? "Out of stock" : "Add to cart"}
           </button>
         </div>
       </div>
@@ -513,11 +499,11 @@ export default function Storefront() {
       {/* HEADER */}
       <header className="sticky top-0 z-20 bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
-          {/* Marca */}
+          {/* Brand */}
           <button
             className="flex items-center gap-2 text-lg font-semibold"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            title="Inicio"
+            title="Home"
           >
             <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
               <path
@@ -528,44 +514,44 @@ export default function Storefront() {
             <span>Tools4care</span>
           </button>
 
-          {/* búsqueda rápida */}
+          {/* Quick search */}
           <div className="flex-1">
             <input
               className="w-full border rounded-lg px-3 py-2"
-              placeholder="Buscar por código, nombre o marca…"
+              placeholder="Search by code, name, or brand…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
 
-          {/* auth de clientes (modal) */}
+          {/* Auth (now visible on mobile too) */}
           {!user ? (
-            <>
+            <div className="flex items-center gap-2">
               <button
-                className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
                 onClick={() => {
                   setAuthMode("signup");
                   setAuthOpen(true);
                 }}
-                title="Crear cuenta"
+                title="Create account"
               >
-                Crear cuenta
+                Sign up
               </button>
               <button
-                className="hidden sm:inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
                 onClick={() => {
                   setAuthMode("login");
                   setAuthOpen(true);
                 }}
-                title="Iniciar sesión"
+                title="Sign in"
               >
-                Iniciar sesión
+                Sign in
               </button>
-            </>
+            </div>
           ) : (
-            <div className="hidden sm:flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <span className="text-sm text-gray-700 truncate max-w-[180px]">
-                Hola, {user.email}
+                Hi, {user.email}
               </span>
               <button
                 className="px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
@@ -573,18 +559,18 @@ export default function Storefront() {
                   await supabase.auth.signOut();
                 }}
               >
-                Salir
+                Sign out
               </button>
             </div>
           )}
 
-          {/* carrito: abre panel */}
+          {/* Cart */}
           <button
             type="button"
             onClick={() => setCartOpen(true)}
             className="relative ml-1 inline-flex items-center justify-center rounded-lg border px-3 py-2 hover:bg-gray-50"
-            title="Abrir carrito"
-            aria-label="Carrito"
+            title="Open cart"
+            aria-label="Cart"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" className="text-gray-700">
               <path
@@ -597,30 +583,57 @@ export default function Storefront() {
             </span>
           </button>
         </div>
+
+        {/* Payment methods info bar */}
+        <div className="bg-gray-50 border-t">
+          <div className="max-w-7xl mx-auto px-4 py-2 text-xs flex items-center gap-3 text-gray-700">
+            <span>Accepted at checkout (when available):</span>
+            <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1 bg-white">
+               Apple&nbsp;Pay
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1 bg-white">
+              G&nbsp;Google&nbsp;Pay
+            </span>
+            <span className="text-gray-500">
+              Requires HTTPS & verified domain in Stripe.
+            </span>
+          </div>
+        </div>
       </header>
+
+      {/* ANNOUNCEMENT BAR */}
+      <div className="bg-blue-50 border-b border-blue-100">
+        <div className="max-w-7xl mx-auto px-4 py-2 text-sm text-blue-900 flex gap-6 overflow-x-auto">
+          {announcements.map((a) => (
+            <div key={a.id} className="shrink-0">
+              • {a.text}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* HERO */}
       <section className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white">
         <div className="max-w-7xl mx-auto px-4 py-10 grid md:grid-cols-2 gap-6 items-center">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold leading-tight">
-              Tools4care: Ofertas de la semana y nuevos ingresos
+              Tools4care: Weekly deals & new arrivals
             </h1>
             <p className="mt-2 text-white/90">
-              Descubre precios especiales y productos recién agregados. ¡Aprovecha antes de que se agoten!
+              Discover special prices and freshly added products. Grab them before they’re gone!
             </p>
             <div className="mt-4 flex gap-2">
               <button
                 onClick={() => offersRef.current?.scrollIntoView({ behavior: "smooth" })}
                 className="rounded-lg bg-white text-gray-900 px-4 py-2 font-semibold hover:bg-gray-100"
               >
-                Ver ofertas
+                View deals
               </button>
               <a
-                href="#catalogo"
+                href="#catalog"
                 className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10"
               >
-                Ver catálogo
+                Browse catalog
               </a>
             </div>
           </div>
@@ -628,60 +641,87 @@ export default function Storefront() {
             <div className="grid grid-cols-3 gap-3 text-center">
               <div className="bg-white/10 rounded-lg p-3">
                 <div className="text-2xl font-bold">{allRows.length}</div>
-                <div className="text-xs">Productos</div>
+                <div className="text-xs">Products</div>
               </div>
               <div className="bg-white/10 rounded-lg p-3">
-                <div className="text-2xl font-bold">{offers.length}</div>
-                <div className="text-xs">Ofertas</div>
+                <div className="text-2xl font-bold">
+                  {
+                    allRows.filter(
+                      (p) =>
+                        p.price_online != null &&
+                        p.price_base != null &&
+                        Number(p.price_online) < Number(p.price_base)
+                    ).length
+                  }
+                </div>
+                <div className="text-xs">Deals</div>
               </div>
               <div className="bg-white/10 rounded-lg p-3">
-                <div className="text-2xl font-bold">{novedades.length}</div>
-                <div className="text-xs">Novedades</div>
+                <div className="text-2xl font-bold">
+                  {[...allRows].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 12).length}
+                </div>
+                <div className="text-xs">New</div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* OFERTAS */}
+      {/* DEALS */}
       <section ref={offersRef} className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-end justify-between">
-          <h2 className="text-xl font-bold">Ofertas destacadas</h2>
-          <a href="#catalogo" className="text-sm text-blue-600 hover:underline">
-            Ver todo el catálogo →
+          <h2 className="text-xl font-bold">Featured deals</h2>
+          <a href="#catalog" className="text-sm text-blue-600 hover:underline">
+            See full catalog →
           </a>
         </div>
-        {offers.length ? (
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {offers.map((p) => (
-              <ProductCard key={p.id} p={p} />
-            ))}
+        {allRows.filter(
+          (p) =>
+            p.price_online != null &&
+            p.price_base != null &&
+            Number(p.price_online) < Number(p.price_base)
+        ).length ? (
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {allRows
+              .filter(
+                (p) =>
+                  p.price_online != null &&
+                  p.price_base != null &&
+                  Number(p.price_online) < Number(p.price_base)
+              )
+              .slice(0, 8)
+              .map((p) => (
+                <ProductCard key={p.id} p={p} />
+              ))}
           </div>
         ) : (
-          <div className="mt-4 text-gray-500">No hay ofertas por ahora.</div>
+          <div className="mt-4 text-gray-500">No deals yet.</div>
         )}
       </section>
 
-      {/* NOVEDADES */}
+      {/* NEW ARRIVALS */}
       <section className="max-w-7xl mx-auto px-4 pb-2">
-        <h2 className="text-xl font-bold">Novedades</h2>
-        {novedades.length ? (
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {novedades.map((p) => (
-              <ProductCard key={p.id} p={p} />
-            ))}
+        <h2 className="text-xl font-bold">New arrivals</h2>
+        {[...allRows].length ? (
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {[...allRows]
+              .sort((a, b) => Number(b.id) - Number(a.id))
+              .slice(0, 12)
+              .map((p) => (
+                <ProductCard key={p.id} p={p} />
+              ))}
           </div>
         ) : (
-          <div className="mt-4 text-gray-500">Sin novedades.</div>
+          <div className="mt-4 text-gray-500">Nothing new for now.</div>
         )}
       </section>
 
-      {/* CATÁLOGO + FILTROS */}
-      <section id="catalogo" className="max-w-7xl mx-auto px-4 py-8">
+      {/* CATALOG + FILTERS */}
+      <section id="catalog" className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-center gap-2 mb-3">
-          <h2 className="text-xl font-bold">Catálogo</h2>
+          <h2 className="text-xl font-bold">Catalog</h2>
           <div className="text-sm text-gray-600">
-            {loading ? "Cargando…" : `${total} producto${total === 1 ? "" : "s"}`}
+            {loading ? "Loading…" : `${total} product${total === 1 ? "" : "s"}`}
           </div>
         </div>
 
@@ -690,7 +730,7 @@ export default function Storefront() {
             <div className="sm:col-span-2">
               <input
                 className="w-full border rounded-lg px-3 py-2"
-                placeholder="Buscar por código, nombre o marca…"
+                placeholder="Search by code, name, or brand…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
@@ -701,14 +741,14 @@ export default function Storefront() {
                 className="w-full border rounded-lg px-3 py-2 bg-white"
                 value={brand}
                 onChange={(e) => setBrand(e.target.value)}
-                title="Marca"
+                title="Brand"
               >
                 {["all", ...new Set(allRows.map((p) => (p.marca || "").toLowerCase()))]
                   .filter((v, i, a) => a.indexOf(v) === i)
                   .sort()
                   .map((b) => (
                     <option key={b} value={b}>
-                      {b === "all" ? "Todas las marcas" : b}
+                      {b === "all" ? "All brands" : b}
                     </option>
                   ))}
               </select>
@@ -738,21 +778,22 @@ export default function Storefront() {
                 className="w-full border rounded-lg px-3 py-2 bg-white"
                 value={sort}
                 onChange={(e) => setSort(e.target.value)}
-                title="Ordenar"
+                title="Sort"
               >
-                <option value="relevance">Relevancia</option>
-                <option value="price_asc">Precio: menor a mayor</option>
-                <option value="price_desc">Precio: mayor a menor</option>
-                <option value="name_asc">Nombre A → Z</option>
+                <option value="relevance">Relevance</option>
+                <option value="price_asc">Price: low to high</option>
+                <option value="price_desc">Price: high to low</option>
+                <option value="name_asc">Name A → Z</option>
               </select>
             </div>
           </div>
         </div>
 
         {!rows.length && !loading && (
-          <div className="text-gray-500">No hay productos con los filtros actuales.</div>
+          <div className="text-gray-500">No products match your filters.</div>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        {/* 👉 2 columns on mobile */}
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
             <ProductCard key={p.id} p={p} />
           ))}
@@ -760,10 +801,10 @@ export default function Storefront() {
       </section>
 
       <footer className="mt-10 py-6 text-center text-sm text-gray-500">
-        © {new Date().getFullYear()} Tools4care — hecho con 💙
+        © {new Date().getFullYear()} Tools4care — made with 💙
       </footer>
 
-      {/* MODAL clientes */}
+      {/* Auth modal */}
       <AuthModal
         open={authOpen}
         mode={authMode}
@@ -771,7 +812,7 @@ export default function Storefront() {
         onSignedIn={() => setAuthOpen(false)}
       />
 
-      {/* Panel del carrito */}
+      {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
     </div>
   );
