@@ -2,10 +2,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
-import { addToCart, ensureCart, cartCount, listCartItems, updateCartItemQty, removeCartItem } from "./cartApi";
+import {
+  addToCart,
+  ensureCart,
+  cartCount,
+  listCartItems,
+  updateCartItemQty,
+  removeCartItem,
+} from "./cartApi";
 import AuthModal from "./AuthModal";
 
 /* -------------------- Helpers -------------------- */
+// VAN Online (para escuchar cambios de stock)
 async function getOnlineVanId() {
   const { data, error } = await supabase
     .from("vans")
@@ -64,7 +72,7 @@ function CartDrawer({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // --- Optimistic updates for speed ---
+  // --- Optimistic updates para velocidad en +/- qty ---
   function optimisticSet(productoId, nextQty) {
     setLines((prev) => {
       const arr = prev.map((l) =>
@@ -85,10 +93,8 @@ function CartDrawer({ open, onClose }) {
     optimisticSet(productoId, next);
     try {
       await updateCartItemQty(productoId, next);
-      // no refresh: mantenemos estado optimista
     } catch (e) {
-      // rollback
-      setLines(prev);
+      setLines(prev); // rollback si falla
       alert(e?.message || "Could not update quantity.");
     }
   }
@@ -99,7 +105,7 @@ function CartDrawer({ open, onClose }) {
     try {
       await removeCartItem(productoId);
     } catch (e) {
-      setLines(prev);
+      setLines(prev); // rollback
       alert(e?.message || "Could not remove item.");
     }
   }
@@ -155,7 +161,12 @@ function CartDrawer({ open, onClose }) {
                     <div className="mt-2 flex items-center gap-2">
                       <button
                         className="w-7 h-7 rounded-md border hover:bg-gray-50"
-                        onClick={() => handleQty(l.producto_id, Math.max(0, Number(l.qty || 0) - 1))}
+                        onClick={() =>
+                          handleQty(
+                            l.producto_id,
+                            Math.max(0, Number(l.qty || 0) - 1)
+                          )
+                        }
                         title="Less"
                       >
                         −
@@ -163,7 +174,9 @@ function CartDrawer({ open, onClose }) {
                       <span className="w-8 text-center text-sm">{l.qty}</span>
                       <button
                         className="w-7 h-7 rounded-md border hover:bg-gray-50"
-                        onClick={() => handleQty(l.producto_id, Number(l.qty || 0) + 1)}
+                        onClick={() =>
+                          handleQty(l.producto_id, Number(l.qty || 0) + 1)
+                        }
                         title="More"
                       >
                         +
@@ -246,7 +259,9 @@ function DealCardMini({ p, onAdd }) {
       ) : null}
       <div className="mt-2 font-semibold">
         <Price value={price} />
-        {p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base) ? (
+        {p.price_online != null &&
+        p.price_base != null &&
+        Number(p.price_online) < Number(p.price_base) ? (
           <span className="ml-2 text-xs text-gray-500 line-through">
             <Price value={p.price_base} />
           </span>
@@ -284,7 +299,7 @@ export default function Storefront() {
   const offersRef = useRef(null);
   const reloadTimeoutRef = useRef(null);
 
-  // session (no bloqueamos el carrito si no hay user)
+  // sesión (pero el carrito NO requiere login)
   useEffect(() => {
     let sub;
     (async () => {
@@ -297,7 +312,7 @@ export default function Storefront() {
     return () => sub?.unsubscribe?.();
   }, []);
 
-  // cart counter
+  // contador del carrito
   useEffect(() => {
     (async () => {
       try {
@@ -305,26 +320,49 @@ export default function Storefront() {
         const c = await cartCount(cid);
         setCount(c);
       } catch {
-        // ignore
+        // ignorar (si RLS bloquea, se resuelve al agregar)
       }
     })();
   }, [user]);
 
-  // load catalog (vista ya funcional)
+  // --------- CARGA DE CATÁLOGO (PRIMERA OPCIÓN: sin vista) ----------
   async function reloadCatalog() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("vw_storefront_catalog")
-        .select(
-          "id,codigo,nombre,marca,price_base,price_online,descripcion,visible_online,stock"
-        )
-        .eq("visible_online", true)
-        .gt("stock", 0)
-        .order("nombre", { ascending: true });
-      if (error) throw error;
+      const onlineVanId = await getOnlineVanId();
+      if (!onlineVanId) throw new Error("Online VAN not found.");
 
-      const ids = (data || []).map((r) => r.id);
+      // 1) Stock del VAN Online + datos base del producto (incluye precio base)
+      const { data: stock, error: stErr } = await supabase
+        .from("stock_van")
+        .select(
+          `
+          producto_id,
+          cantidad,
+          productos (
+            id, codigo, nombre, marca, precio
+          )
+        `
+        )
+        .eq("van_id", onlineVanId)
+        .gt("cantidad", 0)
+        .order("producto_id", { ascending: true });
+      if (stErr) throw stErr;
+
+      const ids = (stock || []).map((r) => r.producto_id);
+
+      // 2) Metas online (precio_online, descripcion, visible_online)
+      let metasMap = new Map();
+      if (ids.length) {
+        const { data: metas, error: mErr } = await supabase
+          .from("online_product_meta")
+          .select("producto_id, price_online, descripcion, visible_online")
+          .in("producto_id", ids);
+        if (mErr) throw mErr;
+        metasMap = new Map((metas || []).map((m) => [m.producto_id, m]));
+      }
+
+      // 3) Imagen principal para cards
       let coverMap = new Map();
       if (ids.length) {
         const { data: covers, error: cErr } = await supabase
@@ -332,21 +370,35 @@ export default function Storefront() {
           .select("producto_id, main_image_url")
           .in("producto_id", ids);
         if (cErr) throw cErr;
-        coverMap = new Map((covers || []).map((c) => [c.producto_id, c.main_image_url]));
+        coverMap = new Map(
+          (covers || []).map((c) => [c.producto_id, c.main_image_url])
+        );
       }
 
-      const enriched = (data || []).map((p) => ({
-        id: p.id,
-        codigo: p.codigo,
-        nombre: p.nombre,
-        marca: p.marca,
-        price_base: Number(p.price_base),
-        price_online: p.price_online == null ? null : Number(p.price_online),
-        price: Number(p.price_online ?? p.price_base),
-        stock: Number(p.stock ?? 0),
-        descripcion: p.descripcion ?? "",
-        main_image_url: coverMap.get(p.id) || null,
-      }));
+      // 4) Enriquecer y filtrar por visible_online
+      const enriched = (stock || [])
+        .filter((r) => !!r.productos)
+        .map((r) => {
+          const m = metasMap.get(r.producto_id) || {};
+          const base = Number(r.productos.precio ?? 0);
+          const online =
+            m.price_online == null ? null : Number(m.price_online);
+          return {
+            id: r.productos.id,
+            codigo: r.productos.codigo,
+            nombre: r.productos.nombre,
+            marca: r.productos.marca,
+            price_base: base,
+            price_online: online,
+            price: Number(online ?? base), // mostrado en storefront
+            stock: Number(r.cantidad ?? 0),
+            descripcion: m.descripcion ?? "",
+            visible_online: !!m.visible_online,
+            main_image_url: coverMap.get(r.producto_id) || null,
+          };
+        })
+        .filter((p) => p.visible_online && p.stock > 0)
+        .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
 
       setAllRows(enriched);
     } catch (err) {
@@ -362,7 +414,7 @@ export default function Storefront() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime with debounce to avoid flicker
+  // Realtime con debounce (evita flicker)
   useEffect(() => {
     let channel;
     (async () => {
@@ -377,11 +429,24 @@ export default function Storefront() {
         .channel("online-catalog-watch")
         .on(
           "postgres_changes",
-          { event: "*", schema: "public", table: "stock_van", filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined },
+          {
+            event: "*",
+            schema: "public",
+            table: "stock_van",
+            filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined,
+          },
           scheduleReload
         )
-        .on("postgres_changes", { event: "*", schema: "public", table: "productos" }, scheduleReload)
-        .on("postgres_changes", { event: "*", schema: "public", table: "online_product_meta" }, scheduleReload)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "productos" },
+          scheduleReload
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "online_product_meta" },
+          scheduleReload
+        )
         .subscribe();
     })();
 
@@ -391,7 +456,7 @@ export default function Storefront() {
     };
   }, []);
 
-  // local filters/sort
+  // filtros/sort locales
   useEffect(() => {
     const nq = norm(q);
     let list = [...allRows];
@@ -436,7 +501,6 @@ export default function Storefront() {
       setCount(newCount);
       setCartOpen(true);
     } catch (e) {
-      // No bloqueamos por login; solo informamos
       alert(String(e?.message || "Could not add to cart."));
     }
   }
@@ -508,7 +572,7 @@ export default function Storefront() {
     );
   }
 
-  // top deals (for hero replacement)
+  // top deals para hero
   const deals = useMemo(
     () =>
       allRows
@@ -552,30 +616,44 @@ export default function Storefront() {
             />
           </div>
 
-          {/* Auth shortcuts (opcional; no se requiere para usar carrito) */}
+          {/* Auth (SI visible en mobile: botón Login) */}
           {!user ? (
-            <div className="hidden sm:flex items-center gap-2">
+            <>
+              {/* Botón visible solo en mobile */}
               <button
-                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={() => {
-                  setAuthMode("signup");
-                  setAuthOpen(true);
-                }}
-                title="Create account"
-              >
-                Sign up
-              </button>
-              <button
-                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                className="sm:hidden inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
                 onClick={() => {
                   setAuthMode("login");
                   setAuthOpen(true);
                 }}
                 title="Sign in"
               >
-                Sign in
+                Login
               </button>
-            </div>
+              {/* En desktop mostramos Sign up / Sign in */}
+              <div className="hidden sm:flex items-center gap-2">
+                <button
+                  className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                  onClick={() => {
+                    setAuthMode("signup");
+                    setAuthOpen(true);
+                  }}
+                  title="Create account"
+                >
+                  Sign up
+                </button>
+                <button
+                  className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                  onClick={() => {
+                    setAuthMode("login");
+                    setAuthOpen(true);
+                  }}
+                  title="Sign in"
+                >
+                  Sign in
+                </button>
+              </div>
+            </>
           ) : (
             <div className="hidden sm:flex items-center gap-2">
               <span className="text-sm text-gray-700 truncate max-w-[180px]">
@@ -613,7 +691,7 @@ export default function Storefront() {
         </div>
       </header>
 
-      {/* HERO (reemplaza contadores por ofertas) */}
+      {/* HERO con ofertas (sin contadores) */}
       <section className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white">
         <div className="max-w-7xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-6 items-center">
           <div>
@@ -625,7 +703,9 @@ export default function Storefront() {
             </p>
             <div className="mt-4 flex gap-2">
               <button
-                onClick={() => offersRef.current?.scrollIntoView({ behavior: "smooth" })}
+                onClick={() =>
+                  offersRef.current?.scrollIntoView({ behavior: "smooth" })
+                }
                 className="rounded-lg bg-white text-gray-900 px-4 py-2 font-semibold hover:bg-gray-100"
               >
                 View deals
@@ -639,7 +719,6 @@ export default function Storefront() {
             </div>
           </div>
 
-          {/* Ofertas en lugar de contadores */}
           <div className="bg-white/10 rounded-2xl p-3">
             {deals.length ? (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -654,7 +733,7 @@ export default function Storefront() {
         </div>
       </section>
 
-      {/* DEALS (sección principal) */}
+      {/* DEALS */}
       <section ref={offersRef} className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-end justify-between">
           <h2 className="text-xl font-bold">Featured deals</h2>
@@ -673,16 +752,14 @@ export default function Storefront() {
         )}
       </section>
 
-      {/* NEW ARRIVALS */}
+      {/* NEW ARRIVALS (simple: top 12 del set) */}
       <section className="max-w-7xl mx-auto px-4 pb-2">
         <h2 className="text-xl font-bold">New arrivals</h2>
         {[...allRows].length ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {[...allRows]
-              .slice(0, 12) // si quieres “nuevos” reales, trae un campo created_at en la vista
-              .map((p) => (
-                <ProductCard key={p.id} p={p} />
-              ))}
+            {[...allRows].slice(0, 12).map((p) => (
+              <ProductCard key={p.id} p={p} />
+            ))}
           </div>
         ) : (
           <div className="mt-4 text-gray-500">Nothing new for now.</div>
@@ -765,7 +842,7 @@ export default function Storefront() {
         {!rows.length && !loading && (
           <div className="text-gray-500">No products match your filters.</div>
         )}
-        {/* 👉 2 columns on mobile */}
+        {/* 👉 2 columnas en mobile */}
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
             <ProductCard key={p.id} p={p} />
@@ -777,7 +854,7 @@ export default function Storefront() {
         © {new Date().getFullYear()} Tools4care — made with 💙
       </footer>
 
-      {/* Auth modal (no necesario para carrito, pero lo dejamos disponible) */}
+      {/* Auth modal */}
       <AuthModal
         open={authOpen}
         mode={authMode}
@@ -788,7 +865,7 @@ export default function Storefront() {
       {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
 
-      {/* Mobile bottom bar (always visible, like Amazon) */}
+      {/* Mobile bottom bar (tipo Amazon, carrito visible siempre) */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
         <div className="flex justify-around items-center py-2">
           <button
@@ -800,6 +877,7 @@ export default function Storefront() {
             </svg>
             Home
           </button>
+
           <a href="#catalog" className="flex flex-col items-center text-xs">
             <svg width="22" height="22" viewBox="0 0 24 24">
               <path
@@ -809,6 +887,26 @@ export default function Storefront() {
             </svg>
             Search
           </a>
+
+          {/* Login visible en mobile */}
+          {!user && (
+            <button
+              className="flex flex-col items-center text-xs"
+              onClick={() => {
+                setAuthMode("login");
+                setAuthOpen(true);
+              }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M10.09 15.59L8.67 17l-5-5 5-5 1.41 1.41L6.5 11H20v2H6.5l3.59 2.59ZM20 3h-8v2h8v14h-8v2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z"
+                />
+              </svg>
+              Login
+            </button>
+          )}
+
           <button
             className="relative flex flex-col items-center text-xs"
             onClick={() => setCartOpen(true)}
