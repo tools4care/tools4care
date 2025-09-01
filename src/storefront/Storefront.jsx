@@ -237,6 +237,10 @@ function CartDrawer({ open, onClose }) {
 /* -------------------- Mini Deal Card (hero) -------------------- */
 function DealCardMini({ p, onAdd }) {
   const price = Number(p.price_online ?? p.price_base ?? 0);
+  const hasOffer =
+    p.price_online != null &&
+    p.price_base != null &&
+    Number(p.price_online) < Number(p.price_base);
   return (
     <div className="bg-white/95 rounded-xl p-3 border hover:shadow-sm transition">
       <div className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center">
@@ -259,9 +263,7 @@ function DealCardMini({ p, onAdd }) {
       ) : null}
       <div className="mt-2 font-semibold">
         <Price value={price} />
-        {p.price_online != null &&
-        p.price_base != null &&
-        Number(p.price_online) < Number(p.price_base) ? (
+        {hasOffer ? (
           <span className="ml-2 text-xs text-gray-500 line-through">
             <Price value={p.price_base} />
           </span>
@@ -299,7 +301,7 @@ export default function Storefront() {
   const offersRef = useRef(null);
   const reloadTimeoutRef = useRef(null);
 
-  // sesión (pero el carrito NO requiere login)
+  // sesión (pero el carrito y el catálogo NO requieren login)
   useEffect(() => {
     let sub;
     (async () => {
@@ -320,12 +322,12 @@ export default function Storefront() {
         const c = await cartCount(cid);
         setCount(c);
       } catch {
-        // ignorar (si RLS bloquea, se resuelve al agregar)
+        // ignorar
       }
     })();
   }, [user]);
 
-  // --------- CARGA DE CATÁLOGO (PRIMERA OPCIÓN: sin vista) ----------
+  // --------- CARGA DE CATÁLOGO DIRECTO DE BD ----------
   async function reloadCatalog() {
     setLoading(true);
     try {
@@ -339,9 +341,7 @@ export default function Storefront() {
           `
           producto_id,
           cantidad,
-          productos (
-            id, codigo, nombre, marca, precio
-          )
+          productos ( id, codigo, nombre, marca, precio )
         `
         )
         .eq("van_id", onlineVanId)
@@ -351,12 +351,14 @@ export default function Storefront() {
 
       const ids = (stock || []).map((r) => r.producto_id);
 
-      // 2) Metas online (precio_online, descripcion, visible_online)
+      // 2) Metas online (precio_online, descripcion, visible_online + DEALS)
       let metasMap = new Map();
       if (ids.length) {
         const { data: metas, error: mErr } = await supabase
           .from("online_product_meta")
-          .select("producto_id, price_online, descripcion, visible_online")
+          .select(
+            "producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority"
+          )
           .in("producto_id", ids);
         if (mErr) throw mErr;
         metasMap = new Map((metas || []).map((m) => [m.producto_id, m]));
@@ -395,6 +397,13 @@ export default function Storefront() {
             descripcion: m.descripcion ?? "",
             visible_online: !!m.visible_online,
             main_image_url: coverMap.get(r.producto_id) || null,
+
+            // Ofertas
+            is_deal: !!m.is_deal,
+            deal_starts_at: m.deal_starts_at || null,
+            deal_ends_at: m.deal_ends_at || null,
+            deal_badge: m.deal_badge || "Deal",
+            deal_priority: Number(m.deal_priority ?? 0),
           };
         })
         .filter((p) => p.visible_online && p.stock > 0)
@@ -402,6 +411,7 @@ export default function Storefront() {
 
       setAllRows(enriched);
     } catch (err) {
+      // Si ves este alert sin estar logeado, es tema de RLS (ver SQL de abajo)
       alert(err?.message || "Could not load products.");
       setAllRows([]);
     } finally {
@@ -531,9 +541,9 @@ export default function Storefront() {
                 <span className="text-xs text-gray-400">no image</span>
               )}
             </div>
-            {hasOffer && (
+            {(hasOffer || p.is_deal) && (
               <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-                Sale
+                {p.deal_badge || "Deal"}
               </span>
             )}
           </div>
@@ -572,19 +582,36 @@ export default function Storefront() {
     );
   }
 
-  // top deals para hero
-  const deals = useMemo(
-    () =>
-      allRows
-        .filter(
-          (p) =>
-            p.price_online != null &&
-            p.price_base != null &&
-            Number(p.price_online) < Number(p.price_base)
-        )
-        .slice(0, 6),
-    [allRows]
-  );
+  // Featured deals: prioriza lo marcado en inventario y respeta fechas/priority
+  const deals = useMemo(() => {
+    const now = Date.now();
+    const within = (p) => {
+      const sOk = !p.deal_starts_at || new Date(p.deal_starts_at).getTime() <= now;
+      const eOk = !p.deal_ends_at || new Date(p.deal_ends_at).getTime() >= now;
+      return sOk && eOk;
+    };
+
+    let pick = allRows.filter((p) => p.is_deal && within(p));
+    if (pick.length < 8) {
+      const fallback = allRows.filter(
+        (p) =>
+          !p.is_deal &&
+          p.price_online != null &&
+          p.price_base != null &&
+          Number(p.price_online) < Number(p.price_base)
+      );
+      pick = [...pick, ...fallback];
+    }
+
+    pick.sort((a, b) => {
+      if (b.deal_priority !== a.deal_priority) return b.deal_priority - a.deal_priority;
+      const da = a.price_base ? 1 - (a.price_online ?? a.price_base) / a.price_base : 0;
+      const db = b.price_base ? 1 - (b.price_online ?? b.price_base) / b.price_base : 0;
+      return db - da;
+    });
+
+    return pick.slice(0, 8);
+  }, [allRows]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-16 sm:pb-0">
@@ -616,10 +643,9 @@ export default function Storefront() {
             />
           </div>
 
-          {/* Auth (SI visible en mobile: botón Login) */}
+          {/* Auth (botón Login visible en mobile) */}
           {!user ? (
             <>
-              {/* Botón visible solo en mobile */}
               <button
                 className="sm:hidden inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
                 onClick={() => {
@@ -630,7 +656,6 @@ export default function Storefront() {
               >
                 Login
               </button>
-              {/* En desktop mostramos Sign up / Sign in */}
               <div className="hidden sm:flex items-center gap-2">
                 <button
                   className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
@@ -691,7 +716,7 @@ export default function Storefront() {
         </div>
       </header>
 
-      {/* HERO con ofertas (sin contadores) */}
+      {/* HERO con ofertas */}
       <section className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white">
         <div className="max-w-7xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-6 items-center">
           <div>

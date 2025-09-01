@@ -53,18 +53,22 @@ async function ensureCart() {
 }
 
 async function fetchCartItems(cartId) {
-  const { data: items } = await supabase
+  const { data: items, error: itErr } = await supabase
     .from("cart_items")
     .select("producto_id, qty")
     .eq("cart_id", cartId);
 
+  if (itErr) throw itErr;
+
   const ids = (items || []).map((i) => i.producto_id);
   if (!ids.length) return [];
 
-  const { data: productos } = await supabase
+  const { data: productos, error: pErr } = await supabase
     .from("productos")
     .select("id, codigo, nombre, precio, marca")
     .in("id", ids);
+
+  if (pErr) throw pErr;
 
   const idx = new Map((productos || []).map((p) => [p.id, p]));
   return (items || [])
@@ -105,9 +109,7 @@ function calcTax(taxableSubtotal, stateCode) {
 }
 
 /* -------------------- promo codes -------------------- */
-// Client tries Supabase table "discount_codes". If not found, falls back to local list.
 const LOCAL_CODES = [
-  // type: 'percent' (value = 10 → 10%), 'amount' (value = 5 → $5), 'free_shipping'
   { code: "SAVE10", type: "percent", value: 10, active: true },
   { code: "WELCOME5", type: "amount", value: 5, active: true },
   { code: "FREESHIP", type: "free_shipping", value: 0, active: true },
@@ -117,7 +119,6 @@ async function resolvePromo(codeInput) {
   const code = String(codeInput || "").trim().toUpperCase();
   if (!code) return null;
 
-  // Try Supabase first (optional table)
   try {
     const { data, error } = await supabase
       .from("discount_codes")
@@ -146,11 +147,10 @@ async function resolvePromo(codeInput) {
         freeShipping: data.type === "free_shipping",
       };
     }
-  } catch (_) {
-    // ignore and fallback
+  } catch {
+    // fallback abajo
   }
 
-  // Fallback to local list
   const local = LOCAL_CODES.find((c) => c.code === code && c.active);
   if (!local) throw new Error("Invalid or inactive promo code.");
   return {
@@ -355,7 +355,8 @@ export default function Checkout() {
       const amounts = {
         subtotal: Number(meta.subtotal_cents || 0) / 100 || subtotal,
         discount: Number(meta.discount_cents || 0) / 100 || discount,
-        sub_after_discount: Number(meta.subtotal_after_discount_cents || 0) / 100 || subAfterDiscount,
+        sub_after_discount:
+          Number(meta.subtotal_after_discount_cents || 0) / 100 || subAfterDiscount,
         shipping: Number(meta.shipping_cents || 0) / 100 || shippingCost,
         taxes: Number(meta.taxes_cents || 0) / 100 || taxes,
         total:
@@ -409,7 +410,16 @@ export default function Checkout() {
       }
 
       if (orderIdFromRpc) {
-        await supabase.from("cart_items").delete().eq("cart_id", cid).catch(() => {});
+        // Limpia carrito (v2: sin .catch)
+        try {
+          const { error: delErr } = await supabase
+            .from("cart_items")
+            .delete()
+            .eq("cart_id", cid);
+          if (delErr) throw delErr;
+        } catch (e) {
+          console.error("Error al limpiar carrito:", e);
+        }
         setSuccess({ paymentIntent, orderId: orderIdFromRpc, amounts });
         setPhase("success");
         return;
@@ -438,6 +448,7 @@ export default function Checkout() {
       if (e1) throw new Error(e1.message);
 
       const orderId = order.id;
+
       const rows = list.map((it) => ({
         order_id: orderId,
         producto_id: it.producto_id,
@@ -448,9 +459,28 @@ export default function Checkout() {
         codigo: it.producto?.codigo ?? null,
         taxable: true,
       }));
-      await supabase.from("order_items").insert(rows);
-      await supabase.from("cart_items").delete().eq("cart_id", cid).catch(() => {});
-      await supabase.from("orders").update({ status: "paid" }).eq("id", orderId).neq("status", "paid");
+
+      const { error: oiErr } = await supabase.from("order_items").insert(rows);
+      if (oiErr) throw oiErr;
+
+      // limpia carrito
+      try {
+        const { error: delErr } = await supabase
+          .from("cart_items")
+          .delete()
+          .eq("cart_id", cid);
+        if (delErr) throw delErr;
+      } catch (e) {
+        console.error("Error al limpiar carrito:", e);
+      }
+
+      // marca pagado
+      const { error: upErr } = await supabase
+        .from("orders")
+        .update({ status: "paid" })
+        .eq("id", orderId)
+        .neq("status", "paid");
+      if (upErr) throw upErr;
 
       setSuccess({ paymentIntent, orderId, amounts });
       setPhase("success");
@@ -650,7 +680,6 @@ export default function Checkout() {
               options={{
                 clientSecret,
                 locale: "en",
-                // You can also pass appearance if you want to theme the UI
               }}
               stripe={stripePromise}
             >
@@ -671,10 +700,7 @@ export default function Checkout() {
 function PaymentBlock({ onPaid, total }) {
   return (
     <div className="space-y-3">
-      {/* Apple Pay / Google Pay (shows only when available) */}
       <AppleGooglePayButton total={total} />
-
-      {/* Card & other methods */}
       <PaymentForm onPaid={onPaid} />
     </div>
   );
