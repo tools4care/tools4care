@@ -14,14 +14,13 @@ import { getAnonId } from "../utils/anon";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
-// URL directa a Edge Functions
+// Edge Function URL that creates a PaymentIntent
 const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
 
-/* ----------------- helpers: carrito ----------------- */
+/* ----------------- helpers: cart ----------------- */
 async function ensureCart() {
   const { data: session } = await supabase.auth.getSession();
   const userId = session?.session?.user?.id ?? null;
-
   const col = userId ? "user_id" : "anon_id";
   const val = userId ?? getAnonId();
 
@@ -83,76 +82,98 @@ const fmt = (n) =>
     maximumFractionDigits: 2,
   });
 
-/* ----------------- envío & taxes ----------------- */
+/* -------------------- shipping & taxes -------------------- */
 const SHIPPING_METHODS = [
-  { key: "pickup", label: "Pickup in store", calc: () => 0 },
-  { key: "standard", label: "Standard (3–7 days)", calc: (subtotal) => (subtotal >= 50 ? 0 : 6.99) },
-  { key: "express", label: "Express (1–2 days)", calc: () => 14.99 },
+  { key: "pickup",   label: "Pickup in store",        calc: () => 0, note: "Free" },
+  { key: "standard", label: "Standard (3–7 days)",    calc: (sub) => (sub >= 75 ? 0 : 6.99), note: "Free over $75" },
+  { key: "express",  label: "Express (1–2 days)",     calc: () => 14.99, note: null },
 ];
 
-const STATE_TAX = { FL: 0.06, NY: 0.08875, NJ: 0.06625, CA: 0.0725, TX: 0.0625, MA: 0.0625 };
+// Basic state tax map (edit as needed)
+const STATE_TAX = {
+  FL: 0.06, NY: 0.08875, NJ: 0.06625, CA: 0.0725, TX: 0.0625, MA: 0.0625,
+};
 
-function calcShipping(methodKey, subtotal) {
+function calcShipping(methodKey, subtotal, freeShippingOverride = false) {
+  if (freeShippingOverride) return 0;
   const m = SHIPPING_METHODS.find((x) => x.key === methodKey) || SHIPPING_METHODS[1];
   return Number(m.calc(subtotal) || 0);
 }
-function calcTax(items, stateCode) {
+function calcTax(taxableSubtotal, stateCode) {
   const rate = STATE_TAX[(stateCode || "").toUpperCase()] || 0;
-  const taxableSubtotal = items.reduce((s, it) => {
-    const line = Number(it.qty) * Number(it.producto?.precio || 0);
-    const taxable = true;
-    return s + (taxable ? line : 0);
-  }, 0);
   return taxableSubtotal * rate;
 }
 
-/* ----------------- registrar orden (fallback legacy) ----------------- */
-async function createOrder({ payment, items, shipping, amounts, cartId }) {
-  const { data: order, error: e1 } = await supabase
-    .from("orders")
-    .insert({
-      payment_intent_id: payment.id,
-      amount_total: amounts.total,
-      amount_subtotal: amounts.subtotal,
-      amount_shipping: amounts.shipping,
-      amount_taxes: amounts.taxes,
-      currency: payment.currency || "usd",
-      email: shipping?.email || null,
-      phone: shipping?.phone || null,
-      name: shipping?.name || null,
-      address_json: shipping?.address || null,
-      status: "pending",
-    })
-    .select("id")
-    .single();
+/* -------------------- promo codes -------------------- */
+// Client tries Supabase table "discount_codes". If not found, falls back to local list.
+const LOCAL_CODES = [
+  // type: 'percent' (value = 10 → 10%), 'amount' (value = 5 → $5), 'free_shipping'
+  { code: "SAVE10", type: "percent", value: 10, active: true },
+  { code: "WELCOME5", type: "amount", value: 5, active: true },
+  { code: "FREESHIP", type: "free_shipping", value: 0, active: true },
+];
 
-  if (e1) throw new Error(e1.message);
-  const orderId = order.id;
+async function resolvePromo(codeInput) {
+  const code = String(codeInput || "").trim().toUpperCase();
+  if (!code) return null;
 
-  const rows = items.map((it) => ({
-    order_id: orderId,
-    producto_id: it.producto_id,
-    nombre: it.producto?.nombre,
-    qty: it.qty,
-    precio_unit: it.producto?.precio,
-    marca: it.producto?.marca ?? null,
-    codigo: it.producto?.codigo ?? null,
-    taxable: true,
-  }));
-  const { error: e2 } = await supabase.from("order_items").insert(rows);
-  if (e2) throw new Error(e2.message);
+  // Try Supabase first (optional table)
+  try {
+    const { data, error } = await supabase
+      .from("discount_codes")
+      .select("code, type, value, active, expires_at, max_uses, times_used")
+      .ilike("code", code)
+      .maybeSingle();
 
-  if (cartId) await supabase.from("cart_items").delete().eq("cart_id", cartId);
+    if (!error && data) {
+      const now = new Date();
+      const expired =
+        data.expires_at ? new Date(data.expires_at).getTime() < now.getTime() : false;
+      const overUsed =
+        typeof data.max_uses === "number" &&
+        typeof data.times_used === "number" &&
+        data.max_uses > 0 &&
+        data.times_used >= data.max_uses;
 
-  return orderId;
+      if (!data.active) throw new Error("This code is not active.");
+      if (expired) throw new Error("This code is expired.");
+      if (overUsed) throw new Error("This code has reached its limit.");
+
+      return {
+        code: data.code.toUpperCase(),
+        type: data.type,
+        value: Number(data.value || 0),
+        freeShipping: data.type === "free_shipping",
+      };
+    }
+  } catch (_) {
+    // ignore and fallback
+  }
+
+  // Fallback to local list
+  const local = LOCAL_CODES.find((c) => c.code === code && c.active);
+  if (!local) throw new Error("Invalid or inactive promo code.");
+  return {
+    code: local.code,
+    type: local.type,
+    value: Number(local.value || 0),
+    freeShipping: local.type === "free_shipping",
+  };
 }
 
-/* ----------------------------- Componente ------------------------------ */
+function computeDiscount(subtotal, promo) {
+  if (!promo) return 0;
+  if (promo.type === "percent") return Math.max(0, (subtotal * promo.value) / 100);
+  if (promo.type === "amount") return Math.min(subtotal, promo.value);
+  return 0;
+}
+
+/* ----------------------------- Main Component ------------------------------ */
 export default function Checkout() {
   const { state } = useLocation();
   const cidFromNav = state?.cid ?? null;
 
-  const [phase, setPhase] = useState("checkout"); // checkout | success
+  const [phase, setPhase] = useState("checkout"); // 'checkout' | 'success'
   const [success, setSuccess] = useState(null);
 
   const [cartId, setCartId] = useState(null);
@@ -171,19 +192,23 @@ export default function Checkout() {
     method: "standard",
   });
 
+  // Promo code UI state
+  const [promoInput, setPromoInput] = useState("");
+  const [promo, setPromo] = useState(null);
+  const [promoError, setPromoError] = useState("");
+
   const [clientSecret, setClientSecret] = useState("");
   const [paymentIntentId, setPaymentIntentId] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  // CARGA CARRITO
+  // CART LOAD
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        setLoading(true);
-        setError("");
+        setLoading(true); setError("");
         const cid = cidFromNav || (await ensureCart());
         if (cancel) return;
         setCartId(cid);
@@ -191,7 +216,7 @@ export default function Checkout() {
         if (cancel) return;
         setItems(list);
       } catch (e) {
-        if (!cancel) setError(e.message || "No se pudo cargar el carrito.");
+        if (!cancel) setError(e.message || "Failed to load the cart.");
       } finally {
         if (!cancel) setLoading(false);
       }
@@ -199,17 +224,29 @@ export default function Checkout() {
     return () => (cancel = true);
   }, [cidFromNav]);
 
-  // Totales
   const subtotal = useMemo(
     () => items.reduce((s, it) => s + Number(it.qty) * Number(it.producto?.precio || 0), 0),
     [items]
   );
-  const shippingCost = useMemo(
-    () => calcShipping(shipping.method, subtotal),
-    [shipping.method, subtotal]
+  const discount = useMemo(() => computeDiscount(subtotal, promo), [subtotal, promo]);
+  const subAfterDiscount = useMemo(
+    () => Math.max(0, subtotal - discount),
+    [subtotal, discount]
   );
-  const taxes = useMemo(() => calcTax(items, shipping.state), [items, shipping.state]);
-  const total = useMemo(() => subtotal + shippingCost + taxes, [subtotal, shippingCost, taxes]);
+
+  const freeShippingOverride = promo?.freeShipping === true;
+  const shippingCost = useMemo(
+    () => calcShipping(shipping.method, subAfterDiscount, freeShippingOverride),
+    [shipping.method, subAfterDiscount, freeShippingOverride]
+  );
+  const taxes = useMemo(
+    () => calcTax(subAfterDiscount, shipping.state),
+    [subAfterDiscount, shipping.state]
+  );
+  const total = useMemo(
+    () => Math.max(0, subAfterDiscount + shippingCost + taxes),
+    [subAfterDiscount, shippingCost, taxes]
+  );
 
   function extractPiId(secret) {
     if (!secret) return "";
@@ -217,25 +254,27 @@ export default function Checkout() {
     return m ? m[1] : "";
   }
 
-  // PREPARA EL PAGO (create_payment_intent)
+  // PREPARE PAYMENT (Edge Function)
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
         if (!items.length) {
-          setClientSecret("");
-          setPaymentIntentId("");
+          setClientSecret(""); setPaymentIntentId("");
           return;
         }
-        setCreating(true);
-        setError("");
+        setCreating(true); setError("");
 
         const payload = {
           amount: Math.round(total * 100),
           metadata: {
             subtotal_cents: Math.round(subtotal * 100),
+            discount_cents: Math.round(discount * 100),
+            subtotal_after_discount_cents: Math.round(subAfterDiscount * 100),
             shipping_cents: Math.round(shippingCost * 100),
             taxes_cents: Math.round(taxes * 100),
+            free_shipping_override: freeShippingOverride ? "1" : "0",
+            promo_code: promo?.code || "",
             cart_id: cartId || "",
           },
           shipping: {
@@ -274,12 +313,11 @@ export default function Checkout() {
         const data = await res.json();
 
         if (cancel) return;
-        if (!data?.clientSecret) throw new Error("No se pudo preparar el pago.");
+        if (!data?.clientSecret) throw new Error("Could not create the payment.");
         setClientSecret(data.clientSecret);
         setPaymentIntentId(extractPiId(data.clientSecret));
       } catch (e) {
-        if (!cancel)
-          setError(e.message || "Failed to send a request to the Edge Function");
+        if (!cancel) setError(e.message || "Failed to prepare the payment.");
       } finally {
         if (!cancel) setCreating(false);
       }
@@ -288,8 +326,11 @@ export default function Checkout() {
   }, [
     items,
     subtotal,
+    discount,
+    subAfterDiscount,
     shippingCost,
     taxes,
+    total,
     cartId,
     shipping.name,
     shipping.phone,
@@ -300,10 +341,11 @@ export default function Checkout() {
     shipping.zip,
     shipping.country,
     shipping.method,
-    total,
+    freeShippingOverride,
+    promo?.code,
   ]);
 
-  // PAGO OK ⇒ crear orden y descontar stock
+  // SUCCESS: create order + clear cart
   async function handlePaid(paymentIntent) {
     try {
       const cid = cartId || (await ensureCart());
@@ -312,16 +354,18 @@ export default function Checkout() {
       const meta = paymentIntent?.metadata || {};
       const amounts = {
         subtotal: Number(meta.subtotal_cents || 0) / 100 || subtotal,
+        discount: Number(meta.discount_cents || 0) / 100 || discount,
+        sub_after_discount: Number(meta.subtotal_after_discount_cents || 0) / 100 || subAfterDiscount,
         shipping: Number(meta.shipping_cents || 0) / 100 || shippingCost,
         taxes: Number(meta.taxes_cents || 0) / 100 || taxes,
         total:
-          (Number(meta.subtotal_cents || 0) +
+          (Number(meta.subtotal_after_discount_cents || 0) +
             Number(meta.shipping_cents || 0) +
             Number(meta.taxes_cents || 0)) /
             100 || total,
       };
 
-      // --------- RPC transaccional (si la tienes en BD)
+      // Preferred: RPC that creates order + discounts stock in one transaction
       const itemsPayload = list.map((it) => ({
         producto_id: it.producto_id,
         qty: Number(it.qty || 0),
@@ -340,8 +384,6 @@ export default function Checkout() {
       };
 
       let orderIdFromRpc = null;
-      let rpcErrMsg = "";
-
       try {
         const { data: newOrderId, error: rpcErr } = await supabase.rpc(
           "sp_create_order_and_discount",
@@ -357,12 +399,13 @@ export default function Checkout() {
             p_amount_taxes: amounts.taxes,
             p_amount_total: amounts.total,
             p_items: itemsPayload,
+            p_discount_amount: amounts.discount || 0,
+            p_promo_code: promo?.code || null,
           }
         );
-        if (rpcErr) rpcErrMsg = rpcErr.message || "";
-        orderIdFromRpc = newOrderId || null;
-      } catch (rpcCatch) {
-        rpcErrMsg = rpcCatch?.message || String(rpcCatch);
+        if (!rpcErr) orderIdFromRpc = newOrderId || null;
+      } catch {
+        // ignore
       }
 
       if (orderIdFromRpc) {
@@ -372,35 +415,64 @@ export default function Checkout() {
         return;
       }
 
-      // --------- Fallback legacy
-      const orderId = await createOrder({
-        payment: paymentIntent,
-        items: list,
-        shipping: {
-          name: shipping.name || null,
-          email: shipping.email || null,
-          phone: shipping.phone || null,
-          address: addressJson,
-        },
-        amounts,
-        cartId: cid,
-      });
-
-      const { error: updErr } = await supabase
+      // Fallback: legacy flow (insert order, then mark paid)
+      const { data: order, error: e1 } = await supabase
         .from("orders")
-        .update({ status: "paid" })
-        .eq("id", orderId)
-        .neq("status", "paid");
+        .insert({
+          payment_intent_id: paymentIntent.id,
+          amount_total: amounts.total,
+          amount_subtotal: amounts.subtotal,
+          amount_shipping: amounts.shipping,
+          amount_taxes: amounts.taxes,
+          amount_discount: amounts.discount || 0,
+          currency: paymentIntent.currency || "usd",
+          email: shipping?.email || null,
+          phone: shipping?.phone || null,
+          name: shipping?.name || null,
+          address_json: addressJson,
+          status: "pending",
+          promo_code: promo?.code || null,
+        })
+        .select("id")
+        .single();
+      if (e1) throw new Error(e1.message);
 
-      if (updErr) {
-        console.error("❌ No se pudo marcar como paid:", updErr, "(RPC err:", rpcErrMsg, ")");
-      }
+      const orderId = order.id;
+      const rows = list.map((it) => ({
+        order_id: orderId,
+        producto_id: it.producto_id,
+        nombre: it.producto?.nombre,
+        qty: it.qty,
+        precio_unit: it.producto?.precio,
+        marca: it.producto?.marca ?? null,
+        codigo: it.producto?.codigo ?? null,
+        taxable: true,
+      }));
+      await supabase.from("order_items").insert(rows);
+      await supabase.from("cart_items").delete().eq("cart_id", cid).catch(() => {});
+      await supabase.from("orders").update({ status: "paid" }).eq("id", orderId).neq("status", "paid");
 
       setSuccess({ paymentIntent, orderId, amounts });
       setPhase("success");
     } catch (e) {
-      setError(e.message || "El pago fue aprobado, pero falló el registro de la orden.");
+      setError(e.message || "Payment was approved, but we couldn't finalize the order.");
     }
+  }
+
+  async function applyPromo() {
+    setPromoError("");
+    try {
+      const details = await resolvePromo(promoInput);
+      setPromo(details);
+    } catch (e) {
+      setPromo(null);
+      setPromoError(e.message || "Invalid promo code.");
+    }
+  }
+  function clearPromo() {
+    setPromo(null);
+    setPromoInput("");
+    setPromoError("");
   }
 
   if (phase === "success") {
@@ -408,43 +480,36 @@ export default function Checkout() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white w-full max-w-2xl rounded-2xl shadow-sm p-6 space-y-3">
-          <h1 className="text-2xl font-bold text-emerald-700">¡Gracias por tu compra!</h1>
+          <h1 className="text-2xl font-bold text-emerald-700">Thanks for your purchase!</h1>
           <div className="text-gray-700">
-            Hemos recibido tu pago por <b>${fmt(amounts.total)}</b>.
+            We received your payment for <b>${fmt(amounts.total)}</b>.
           </div>
           <div className="text-sm text-gray-600">
-            Nº de pago: <code className="bg-gray-100 px-2 py-0.5 rounded">{pi?.id}</code>
+            Payment ID: <code className="bg-gray-100 px-2 py-0.5 rounded">{pi?.id}</code>
           </div>
           {success.orderId && (
             <div className="text-sm text-gray-600">
-              Nº de orden:{" "}
-              <code className="bg-gray-100 px-2 py-0.5 rounded">{success.orderId}</code>
+              Order #: <code className="bg-gray-100 px-2 py-0.5 rounded">{success.orderId}</code>
             </div>
           )}
           <div className="mt-4">
-            <div className="border rounded-lg p-3 text-sm">
-              <div className="flex justify-between">
-                <span>Subtotal</span>
-                <b>${fmt(amounts.subtotal)}</b>
-              </div>
-              <div className="flex justify-between">
-                <span>Envío</span>
-                <b>${fmt(amounts.shipping)}</b>
-              </div>
-              <div className="flex justify-between">
-                <span>Impuestos</span>
-                <b>${fmt(amounts.taxes)}</b>
-              </div>
+            <div className="border rounded-lg p-3 text-sm space-y-1">
+              <div className="flex justify-between"><span>Subtotal</span><b>${fmt(amounts.subtotal)}</b></div>
+              {amounts.discount ? (
+                <div className="flex justify-between text-rose-700">
+                  <span>Discount{promo?.code ? ` (${promo.code})` : ""}</span>
+                  <b>- ${fmt(amounts.discount)}</b>
+                </div>
+              ) : null}
+              <div className="flex justify-between"><span>Shipping</span><b>${fmt(amounts.shipping)}</b></div>
+              <div className="flex justify-between"><span>Taxes</span><b>${fmt(amounts.taxes)}</b></div>
               <div className="flex justify-between border-t pt-2">
-                <span>Total</span>
-                <b>${fmt(amounts.total)}</b>
+                <span>Total</span><b>${fmt(amounts.total)}</b>
               </div>
             </div>
           </div>
           <div className="pt-2">
-            <Link to="/storefront" className="text-blue-600 hover:underline">
-              Volver a la tienda →
-            </Link>
+            <Link to="/storefront" className="text-blue-600 hover:underline">Back to store →</Link>
           </div>
         </div>
       </div>
@@ -457,126 +522,123 @@ export default function Checkout() {
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold">Checkout</h1>
           <Link to="/storefront" className="text-sm text-blue-600 hover:underline">
-            ← Seguir comprando
+            ← Keep shopping
           </Link>
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto p-4 grid lg:grid-cols-2 gap-4">
-        {/* Envío */}
+        {/* Shipping form */}
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
-          <h2 className="font-semibold">Envío</h2>
+          <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
-            <input
-              className="border rounded-lg px-3 py-2"
-              placeholder="Nombre completo"
-              value={shipping.name}
-              onChange={(e) => setShipping({ ...shipping, name: e.target.value })}
-            />
+            <input className="border rounded-lg px-3 py-2" placeholder="Full name"
+              value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })}/>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input
-                className="border rounded-lg px-3 py-2"
-                placeholder="Correo (opcional)"
-                value={shipping.email}
-                onChange={(e) => setShipping({ ...shipping, email: e.target.value })}
-              />
-              <input
-                className="border rounded-lg px-3 py-2"
-                placeholder="Teléfono (opcional)"
-                value={shipping.phone}
-                onChange={(e) => setShipping({ ...shipping, phone: e.target.value })}
-              />
+              <input className="border rounded-lg px-3 py-2" placeholder="Email (optional)"
+                value={shipping.email} onChange={(e) => setShipping({ ...shipping, email: e.target.value })}/>
+              <input className="border rounded-lg px-3 py-2" placeholder="Phone (optional)"
+                value={shipping.phone} onChange={(e) => setShipping({ ...shipping, phone: e.target.value })}/>
             </div>
-            <input
-              className="border rounded-lg px-3 py-2"
-              placeholder="Dirección (línea 1)"
-              value={shipping.address1}
-              onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}
-            />
-            <input
-              className="border rounded-lg px-3 py-2"
-              placeholder="Dirección (línea 2 — opcional)"
-              value={shipping.address2}
-              onChange={(e) => setShipping({ ...shipping, address2: e.target.value })}
-            />
+            <input className="border rounded-lg px-3 py-2" placeholder="Address line 1"
+              value={shipping.address1} onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}/>
+            <input className="border rounded-lg px-3 py-2" placeholder="Address line 2 (optional)"
+              value={shipping.address2} onChange={(e) => setShipping({ ...shipping, address2: e.target.value })}/>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <input
-                className="border rounded-lg px-3 py-2 col-span-2"
-                placeholder="Ciudad"
-                value={shipping.city}
-                onChange={(e) => setShipping({ ...shipping, city: e.target.value })}
-              />
-              <select
-                className="border rounded-lg px-3 py-2"
-                value={shipping.state}
-                onChange={(e) => setShipping({ ...shipping, state: e.target.value })}
-              >
-                {Object.keys(STATE_TAX).map((st) => (
-                  <option key={st} value={st}>
-                    {st}
-                  </option>
-                ))}
+              <input className="border rounded-lg px-3 py-2 col-span-2" placeholder="City"
+                value={shipping.city} onChange={(e) => setShipping({ ...shipping, city: e.target.value })}/>
+              <select className="border rounded-lg px-3 py-2" value={shipping.state}
+                onChange={(e) => setShipping({ ...shipping, state: e.target.value })}>
+                {Object.keys(STATE_TAX).map((st) => (<option key={st} value={st}>{st}</option>))}
                 <option value="OTHER">OTHER</option>
               </select>
-              <input
-                className="border rounded-lg px-3 py-2"
-                placeholder="ZIP"
-                value={shipping.zip}
-                onChange={(e) => setShipping({ ...shipping, zip: e.target.value })}
-              />
+              <input className="border rounded-lg px-3 py-2" placeholder="ZIP"
+                value={shipping.zip} onChange={(e) => setShipping({ ...shipping, zip: e.target.value })}/>
             </div>
 
+            {/* Shipping method */}
             <div className="space-y-2">
-              <div className="font-medium text-sm">Método de envío</div>
+              <div className="font-medium text-sm">Shipping method</div>
               <div className="grid gap-2">
                 {SHIPPING_METHODS.map((m) => (
-                  <label
-                    key={m.key}
+                  <label key={m.key}
                     className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${
-                      shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""
-                    }`}
-                  >
+                      shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""}`}>
                     <div className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="shipmethod"
+                      <input type="radio" name="shipmethod"
                         checked={shipping.method === m.key}
-                        onChange={() => setShipping({ ...shipping, method: m.key })}
-                      />
+                        onChange={() => setShipping({ ...shipping, method: m.key })}/>
                       <span>{m.label}</span>
+                      {m.note && <span className="text-xs text-emerald-700">({m.note})</span>}
                     </div>
-                    <b>${fmt(m.calc(subtotal))}</b>
+                    <b>${fmt(m.calc(subAfterDiscount))}</b>
                   </label>
                 ))}
               </div>
             </div>
+
+            {/* Promo code */}
+            <div className="mt-2">
+              <div className="font-medium text-sm mb-1">Promo code</div>
+              <div className="flex gap-2">
+                <input
+                  className="border rounded-lg px-3 py-2 flex-1"
+                  placeholder="Enter code (e.g. SAVE10)"
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value)}
+                />
+                {!promo ? (
+                  <button
+                    onClick={applyPromo}
+                    className="rounded-lg bg-gray-900 text-white px-4 py-2 hover:bg-black/80"
+                  >
+                    Apply
+                  </button>
+                ) : (
+                  <button
+                    onClick={clearPromo}
+                    className="rounded-lg border px-4 py-2 hover:bg-gray-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              {promoError && (
+                <div className="text-sm text-rose-700 mt-1">{promoError}</div>
+              )}
+              {promo && (
+                <div className="text-sm text-emerald-700 mt-1">
+                  Applied <b>{promo.code}</b>
+                  {promo.type === "percent" && ` (${promo.value}% off)`}
+                  {promo.type === "amount" && ` ($${fmt(promo.value)} off)`}
+                  {promo.type === "free_shipping" && ` (Free shipping)`}
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
-        {/* Resumen + Pago */}
+        {/* Summary + Payment */}
         <section className="space-y-4">
           <div className="bg-white rounded-2xl shadow-sm p-4">
-            <h2 className="font-semibold mb-2">Resumen</h2>
+            <h2 className="font-semibold mb-2">Order summary</h2>
             <div className="space-y-1 text-sm">
+              <div className="flex justify-between"><span>Subtotal</span><b>${fmt(subtotal)}</b></div>
+              {discount > 0 && (
+                <div className="flex justify-between text-rose-700">
+                  <span>Discount{promo?.code ? ` (${promo.code})` : ""}</span>
+                  <b>- ${fmt(discount)}</b>
+                </div>
+              )}
               <div className="flex justify-between">
-                <span>Subtotal</span>
-                <b>${fmt(subtotal)}</b>
-              </div>
-              <div className="flex justify-between">
-                <span>Envío</span>
+                <span>Shipping{freeShippingOverride ? " (overridden by promo)" : ""}</span>
                 <b>${fmt(shippingCost)}</b>
               </div>
-              <div className="flex justify-between">
-                <span>Impuestos</span>
-                <b>${fmt(taxes)}</b>
-              </div>
-              <div className="flex justify-between border-t pt-2 text-base">
-                <span>Total</span>
-                <b>${fmt(total)}</b>
-              </div>
+              <div className="flex justify-between"><span>Taxes</span><b>${fmt(taxes)}</b></div>
+              <div className="flex justify-between border-t pt-2 text-base"><span>Total</span><b>${fmt(total)}</b></div>
             </div>
             {items.length === 0 && (
-              <div className="mt-2 text-sm text-gray-500">Tu carrito está vacío.</div>
+              <div className="mt-2 text-sm text-gray-500">Your cart is empty.</div>
             )}
           </div>
 
@@ -585,26 +647,18 @@ export default function Checkout() {
           {clientSecret ? (
             <Elements
               key={clientSecret}
-              options={{ clientSecret, locale: "es-419" }}
+              options={{
+                clientSecret,
+                locale: "en",
+                // You can also pass appearance if you want to theme the UI
+              }}
               stripe={stripePromise}
             >
-              {/* 👉 Apple Pay / Google Pay */}
-              <PaymentRequestArea
-                clientSecret={clientSecret}
-                total={total}
-                onPaid={handlePaid}
-                setError={setError}
-              />
-
-              {/* separador visible solo si hay PRB */}
-              {/* El propio PaymentRequestArea muestra el separador cuando aplica */}
-
-              {/* Tarjetas / otros métodos */}
-              <PaymentForm onPaid={handlePaid} />
+              <PaymentBlock onPaid={handlePaid} total={total} />
             </Elements>
           ) : (
             <div className="bg-white rounded-2xl p-4 shadow-sm">
-              {loading || creating ? "Preparando el pago…" : "Agrega/actualiza los datos para pagar."}
+              {loading || creating ? "Preparing payment…" : "Update shipping/details to pay."}
             </div>
           )}
         </section>
@@ -613,70 +667,63 @@ export default function Checkout() {
   );
 }
 
-/* ---------------- Payment Request (Apple Pay / Google Pay) --------------- */
-function PaymentRequestArea({ clientSecret, total, onPaid, setError }) {
+/* ---------------- Payment UI (Apple Pay / Google Pay + Payment Element) ---------------- */
+function PaymentBlock({ onPaid, total }) {
+  return (
+    <div className="space-y-3">
+      {/* Apple Pay / Google Pay (shows only when available) */}
+      <AppleGooglePayButton total={total} />
+
+      {/* Card & other methods */}
+      <PaymentForm onPaid={onPaid} />
+    </div>
+  );
+}
+
+function AppleGooglePayButton({ total }) {
   const stripe = useStripe();
-  const [paymentRequest, setPaymentRequest] = useState(null);
-  const [canPay, setCanPay] = useState(false);
+  const [pr, setPr] = useState(null);
 
   useEffect(() => {
-    if (!stripe || !clientSecret || !(total > 0)) return;
+    if (!stripe || !Number.isFinite(total)) return;
 
-    const pr = stripe.paymentRequest({
+    const paymentRequest = stripe.paymentRequest({
       country: "US",
       currency: "usd",
-      total: {
-        label: "Tools4care Order",
-        amount: Math.round(Number(total) * 100), // cents
-      },
+      total: { label: "Tools4Care", amount: Math.round(Number(total) * 100) },
       requestPayerName: true,
       requestPayerEmail: true,
+      requestShipping: false,
     });
 
-    pr.canMakePayment().then((res) => {
-      setCanPay(!!res);
-      if (res) setPaymentRequest(pr);
+    paymentRequest.canMakePayment().then((result) => {
+      if (result) setPr(paymentRequest);
     });
+  }, [stripe, total]);
 
-    // Confirm using the existing Payment Intent
-    pr.on("paymentmethod", async (ev) => {
-      try {
-        const { error, paymentIntent } = await stripe.confirmPayment({
-          clientSecret,
-          // use the wallet-provided payment method
-          payment_method: ev.paymentMethod.id,
-        });
-
-        if (error) {
-          ev.complete("fail");
-          setError?.(error.message || "Wallet payment failed.");
-          return;
-        }
-
-        ev.complete("success");
-        await onPaid(paymentIntent);
-      } catch (e) {
-        ev.complete("fail");
-        setError?.(e.message || "Unexpected error with wallet payment.");
-      }
-    });
-  }, [stripe, clientSecret, total, onPaid, setError]);
-
-  if (!canPay || !paymentRequest) return null;
+  if (!pr) return null;
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
-      <PaymentRequestButtonElement options={{ paymentRequest }} />
-      <div className="flex items-center gap-2 text-xs text-gray-500">
-        <div className="h-px bg-gray-200 flex-1" />
-        <span>o paga con tarjeta</span>
-        <div className="h-px bg-gray-200 flex-1" />
+    <div className="bg-white rounded-2xl shadow-sm p-4">
+      <PaymentRequestButtonElement
+        options={{
+          paymentRequest: pr,
+          style: {
+            paymentRequestButton: {
+              type: "buy",
+              theme: "dark",
+              height: "44px",
+            },
+          },
+        }}
+      />
+      <div className="mt-2 text-xs text-gray-500">
+        Apple Pay / Google Pay will appear if supported by the device and browser.
       </div>
     </div>
   );
 }
 
-/* ------------------------- Payment Element (tarjetas) -------------------- */
 function PaymentForm({ onPaid }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -690,7 +737,7 @@ function PaymentForm({ onPaid }) {
     const pe = elements.getElement(PaymentElement);
     if (!pe) {
       setError(
-        "No se pudo cargar el formulario de pago. Verifica que tus claves de Stripe (pk/sk) pertenezcan a la misma cuenta y modo (test/live)."
+        "Payment form not available. Verify your Stripe keys (pk/sk) belong to the same account & mode."
       );
       return;
     }
@@ -703,17 +750,14 @@ function PaymentForm({ onPaid }) {
     });
 
     if (err) {
-      setError(err.message || "Error procesando el pago.");
+      setError(err.message || "Payment failed. Please try another method.");
       setLoading(false);
       return;
     }
-    if (
-      paymentIntent?.status === "succeeded" ||
-      paymentIntent?.status === "processing"
-    ) {
+    if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
       await onPaid(paymentIntent);
     } else {
-      setError("El pago no se completó. Intenta con otro método.");
+      setError("The payment did not complete. Please try again.");
     }
     setLoading(false);
   };
@@ -721,14 +765,12 @@ function PaymentForm({ onPaid }) {
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
       <PaymentElement />
-      {error && (
-        <div className="p-2 bg-red-50 text-red-700 rounded text-sm">{error}</div>
-      )}
+      {error && <div className="p-2 bg-red-50 text-red-700 rounded text-sm">{error}</div>}
       <button
         disabled={!stripe || loading}
         className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-semibold"
       >
-        {loading ? "Procesando…" : "Pagar ahora"}
+        {loading ? "Processing…" : "Pay now"}
       </button>
     </form>
   );
