@@ -2,7 +2,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { loadStripe } from "@stripe/stripe-js";
-import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  PaymentRequestButtonElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
 import { supabase } from "../supabaseClient";
 import { getAnonId } from "../utils/anon";
 
@@ -72,13 +78,16 @@ async function fetchCartItems(cartId) {
 }
 
 const fmt = (n) =>
-  (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  (Number(n) || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
 /* ----------------- envío & taxes ----------------- */
 const SHIPPING_METHODS = [
-  { key: "pickup",   label: "Pickup in store",     calc: () => 0 },
+  { key: "pickup", label: "Pickup in store", calc: () => 0 },
   { key: "standard", label: "Standard (3–7 days)", calc: (subtotal) => (subtotal >= 50 ? 0 : 6.99) },
-  { key: "express",  label: "Express (1–2 days)",  calc: () => 14.99 },
+  { key: "express", label: "Express (1–2 days)", calc: () => 14.99 },
 ];
 
 const STATE_TAX = { FL: 0.06, NY: 0.08875, NJ: 0.06625, CA: 0.0725, TX: 0.0625, MA: 0.0625 };
@@ -97,7 +106,7 @@ function calcTax(items, stateCode) {
   return taxableSubtotal * rate;
 }
 
-/* ----------------- registrar orden (flujo legacy) ----------------- */
+/* ----------------- registrar orden (fallback legacy) ----------------- */
 async function createOrder({ payment, items, shipping, amounts, cartId }) {
   const { data: order, error: e1 } = await supabase
     .from("orders")
@@ -173,7 +182,8 @@ export default function Checkout() {
     let cancel = false;
     (async () => {
       try {
-        setLoading(true); setError("");
+        setLoading(true);
+        setError("");
         const cid = cidFromNav || (await ensureCart());
         if (cancel) return;
         setCartId(cid);
@@ -194,7 +204,10 @@ export default function Checkout() {
     () => items.reduce((s, it) => s + Number(it.qty) * Number(it.producto?.precio || 0), 0),
     [items]
   );
-  const shippingCost = useMemo(() => calcShipping(shipping.method, subtotal), [shipping.method, subtotal]);
+  const shippingCost = useMemo(
+    () => calcShipping(shipping.method, subtotal),
+    [shipping.method, subtotal]
+  );
   const taxes = useMemo(() => calcTax(items, shipping.state), [items, shipping.state]);
   const total = useMemo(() => subtotal + shippingCost + taxes, [subtotal, shippingCost, taxes]);
 
@@ -210,10 +223,12 @@ export default function Checkout() {
     (async () => {
       try {
         if (!items.length) {
-          setClientSecret(""); setPaymentIntentId("");
+          setClientSecret("");
+          setPaymentIntentId("");
           return;
         }
-        setCreating(true); setError("");
+        setCreating(true);
+        setError("");
 
         const payload = {
           amount: Math.round(total * 100),
@@ -263,15 +278,29 @@ export default function Checkout() {
         setClientSecret(data.clientSecret);
         setPaymentIntentId(extractPiId(data.clientSecret));
       } catch (e) {
-        if (!cancel) setError(e.message || "Failed to send a request to the Edge Function");
+        if (!cancel)
+          setError(e.message || "Failed to send a request to the Edge Function");
       } finally {
         if (!cancel) setCreating(false);
       }
     })();
     return () => (cancel = true);
   }, [
-    items, subtotal, shippingCost, taxes, cartId,
-    shipping.name, shipping.phone, shipping.address1, shipping.address2, shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method, total
+    items,
+    subtotal,
+    shippingCost,
+    taxes,
+    cartId,
+    shipping.name,
+    shipping.phone,
+    shipping.address1,
+    shipping.address2,
+    shipping.city,
+    shipping.state,
+    shipping.zip,
+    shipping.country,
+    shipping.method,
+    total,
   ]);
 
   // PAGO OK ⇒ crear orden y descontar stock
@@ -292,7 +321,7 @@ export default function Checkout() {
             100 || total,
       };
 
-      // --------- INTENTO 1: usar RPC sp_create_order_and_discount (todo en transacción)
+      // --------- RPC transaccional (si la tienes en BD)
       const itemsPayload = list.map((it) => ({
         producto_id: it.producto_id,
         qty: Number(it.qty || 0),
@@ -337,14 +366,13 @@ export default function Checkout() {
       }
 
       if (orderIdFromRpc) {
-        // Vacía carrito si la RPC creó/descontó correctamente
         await supabase.from("cart_items").delete().eq("cart_id", cid).catch(() => {});
         setSuccess({ paymentIntent, orderId: orderIdFromRpc, amounts });
         setPhase("success");
         return;
       }
 
-      // --------- INTENTO 2 (fallback): flujo legacy que ya te funciona
+      // --------- Fallback legacy
       const orderId = await createOrder({
         payment: paymentIntent,
         items: list,
@@ -389,19 +417,34 @@ export default function Checkout() {
           </div>
           {success.orderId && (
             <div className="text-sm text-gray-600">
-              Nº de orden: <code className="bg-gray-100 px-2 py-0.5 rounded">{success.orderId}</code>
+              Nº de orden:{" "}
+              <code className="bg-gray-100 px-2 py-0.5 rounded">{success.orderId}</code>
             </div>
           )}
           <div className="mt-4">
             <div className="border rounded-lg p-3 text-sm">
-              <div className="flex justify-between"><span>Subtotal</span><b>${fmt(amounts.subtotal)}</b></div>
-              <div className="flex justify-between"><span>Envío</span><b>${fmt(amounts.shipping)}</b></div>
-              <div className="flex justify-between"><span>Impuestos</span><b>${fmt(amounts.taxes)}</b></div>
-              <div className="flex justify-between border-t pt-2"><span>Total</span><b>${fmt(amounts.total)}</b></div>
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <b>${fmt(amounts.subtotal)}</b>
+              </div>
+              <div className="flex justify-between">
+                <span>Envío</span>
+                <b>${fmt(amounts.shipping)}</b>
+              </div>
+              <div className="flex justify-between">
+                <span>Impuestos</span>
+                <b>${fmt(amounts.taxes)}</b>
+              </div>
+              <div className="flex justify-between border-t pt-2">
+                <span>Total</span>
+                <b>${fmt(amounts.total)}</b>
+              </div>
             </div>
           </div>
           <div className="pt-2">
-            <Link to="/storefront" className="text-blue-600 hover:underline">Volver a la tienda →</Link>
+            <Link to="/storefront" className="text-blue-600 hover:underline">
+              Volver a la tienda →
+            </Link>
           </div>
         </div>
       </div>
@@ -424,41 +467,82 @@ export default function Checkout() {
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Envío</h2>
           <div className="grid grid-cols-1 gap-3">
-            <input className="border rounded-lg px-3 py-2" placeholder="Nombre completo"
-              value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })}/>
+            <input
+              className="border rounded-lg px-3 py-2"
+              placeholder="Nombre completo"
+              value={shipping.name}
+              onChange={(e) => setShipping({ ...shipping, name: e.target.value })}
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input className="border rounded-lg px-3 py-2" placeholder="Correo (opcional)"
-                value={shipping.email} onChange={(e) => setShipping({ ...shipping, email: e.target.value })}/>
-              <input className="border rounded-lg px-3 py-2" placeholder="Teléfono (opcional)"
-                value={shipping.phone} onChange={(e) => setShipping({ ...shipping, phone: e.target.value })}/>
+              <input
+                className="border rounded-lg px-3 py-2"
+                placeholder="Correo (opcional)"
+                value={shipping.email}
+                onChange={(e) => setShipping({ ...shipping, email: e.target.value })}
+              />
+              <input
+                className="border rounded-lg px-3 py-2"
+                placeholder="Teléfono (opcional)"
+                value={shipping.phone}
+                onChange={(e) => setShipping({ ...shipping, phone: e.target.value })}
+              />
             </div>
-            <input className="border rounded-lg px-3 py-2" placeholder="Dirección (línea 1)"
-              value={shipping.address1} onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}/>
-            <input className="border rounded-lg px-3 py-2" placeholder="Dirección (línea 2 — opcional)"
-              value={shipping.address2} onChange={(e) => setShipping({ ...shipping, address2: e.target.value })}/>
+            <input
+              className="border rounded-lg px-3 py-2"
+              placeholder="Dirección (línea 1)"
+              value={shipping.address1}
+              onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}
+            />
+            <input
+              className="border rounded-lg px-3 py-2"
+              placeholder="Dirección (línea 2 — opcional)"
+              value={shipping.address2}
+              onChange={(e) => setShipping({ ...shipping, address2: e.target.value })}
+            />
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <input className="border rounded-lg px-3 py-2 col-span-2" placeholder="Ciudad"
-                value={shipping.city} onChange={(e) => setShipping({ ...shipping, city: e.target.value })}/>
-              <select className="border rounded-lg px-3 py-2" value={shipping.state}
-                onChange={(e) => setShipping({ ...shipping, state: e.target.value })}>
-                {Object.keys(STATE_TAX).map((st) => (<option key={st} value={st}>{st}</option>))}
+              <input
+                className="border rounded-lg px-3 py-2 col-span-2"
+                placeholder="Ciudad"
+                value={shipping.city}
+                onChange={(e) => setShipping({ ...shipping, city: e.target.value })}
+              />
+              <select
+                className="border rounded-lg px-3 py-2"
+                value={shipping.state}
+                onChange={(e) => setShipping({ ...shipping, state: e.target.value })}
+              >
+                {Object.keys(STATE_TAX).map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
                 <option value="OTHER">OTHER</option>
               </select>
-              <input className="border rounded-lg px-3 py-2" placeholder="ZIP"
-                value={shipping.zip} onChange={(e) => setShipping({ ...shipping, zip: e.target.value })}/>
+              <input
+                className="border rounded-lg px-3 py-2"
+                placeholder="ZIP"
+                value={shipping.zip}
+                onChange={(e) => setShipping({ ...shipping, zip: e.target.value })}
+              />
             </div>
 
             <div className="space-y-2">
               <div className="font-medium text-sm">Método de envío</div>
               <div className="grid gap-2">
                 {SHIPPING_METHODS.map((m) => (
-                  <label key={m.key}
+                  <label
+                    key={m.key}
                     className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${
-                      shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""}`}>
+                      shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""
+                    }`}
+                  >
                     <div className="flex items-center gap-2">
-                      <input type="radio" name="shipmethod"
+                      <input
+                        type="radio"
+                        name="shipmethod"
                         checked={shipping.method === m.key}
-                        onChange={() => setShipping({ ...shipping, method: m.key })}/>
+                        onChange={() => setShipping({ ...shipping, method: m.key })}
+                      />
                       <span>{m.label}</span>
                     </div>
                     <b>${fmt(m.calc(subtotal))}</b>
@@ -474,10 +558,22 @@ export default function Checkout() {
           <div className="bg-white rounded-2xl shadow-sm p-4">
             <h2 className="font-semibold mb-2">Resumen</h2>
             <div className="space-y-1 text-sm">
-              <div className="flex justify-between"><span>Subtotal</span><b>${fmt(subtotal)}</b></div>
-              <div className="flex justify-between"><span>Envío</span><b>${fmt(shippingCost)}</b></div>
-              <div className="flex justify-between"><span>Impuestos</span><b>${fmt(taxes)}</b></div>
-              <div className="flex justify-between border-t pt-2 text-base"><span>Total</span><b>${fmt(total)}</b></div>
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <b>${fmt(subtotal)}</b>
+              </div>
+              <div className="flex justify-between">
+                <span>Envío</span>
+                <b>${fmt(shippingCost)}</b>
+              </div>
+              <div className="flex justify-between">
+                <span>Impuestos</span>
+                <b>${fmt(taxes)}</b>
+              </div>
+              <div className="flex justify-between border-t pt-2 text-base">
+                <span>Total</span>
+                <b>${fmt(total)}</b>
+              </div>
             </div>
             {items.length === 0 && (
               <div className="mt-2 text-sm text-gray-500">Tu carrito está vacío.</div>
@@ -492,6 +588,18 @@ export default function Checkout() {
               options={{ clientSecret, locale: "es-419" }}
               stripe={stripePromise}
             >
+              {/* 👉 Apple Pay / Google Pay */}
+              <PaymentRequestArea
+                clientSecret={clientSecret}
+                total={total}
+                onPaid={handlePaid}
+                setError={setError}
+              />
+
+              {/* separador visible solo si hay PRB */}
+              {/* El propio PaymentRequestArea muestra el separador cuando aplica */}
+
+              {/* Tarjetas / otros métodos */}
               <PaymentForm onPaid={handlePaid} />
             </Elements>
           ) : (
@@ -505,6 +613,70 @@ export default function Checkout() {
   );
 }
 
+/* ---------------- Payment Request (Apple Pay / Google Pay) --------------- */
+function PaymentRequestArea({ clientSecret, total, onPaid, setError }) {
+  const stripe = useStripe();
+  const [paymentRequest, setPaymentRequest] = useState(null);
+  const [canPay, setCanPay] = useState(false);
+
+  useEffect(() => {
+    if (!stripe || !clientSecret || !(total > 0)) return;
+
+    const pr = stripe.paymentRequest({
+      country: "US",
+      currency: "usd",
+      total: {
+        label: "Tools4care Order",
+        amount: Math.round(Number(total) * 100), // cents
+      },
+      requestPayerName: true,
+      requestPayerEmail: true,
+    });
+
+    pr.canMakePayment().then((res) => {
+      setCanPay(!!res);
+      if (res) setPaymentRequest(pr);
+    });
+
+    // Confirm using the existing Payment Intent
+    pr.on("paymentmethod", async (ev) => {
+      try {
+        const { error, paymentIntent } = await stripe.confirmPayment({
+          clientSecret,
+          // use the wallet-provided payment method
+          payment_method: ev.paymentMethod.id,
+        });
+
+        if (error) {
+          ev.complete("fail");
+          setError?.(error.message || "Wallet payment failed.");
+          return;
+        }
+
+        ev.complete("success");
+        await onPaid(paymentIntent);
+      } catch (e) {
+        ev.complete("fail");
+        setError?.(e.message || "Unexpected error with wallet payment.");
+      }
+    });
+  }, [stripe, clientSecret, total, onPaid, setError]);
+
+  if (!canPay || !paymentRequest) return null;
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+      <PaymentRequestButtonElement options={{ paymentRequest }} />
+      <div className="flex items-center gap-2 text-xs text-gray-500">
+        <div className="h-px bg-gray-200 flex-1" />
+        <span>o paga con tarjeta</span>
+        <div className="h-px bg-gray-200 flex-1" />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------- Payment Element (tarjetas) -------------------- */
 function PaymentForm({ onPaid }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -517,7 +689,9 @@ function PaymentForm({ onPaid }) {
 
     const pe = elements.getElement(PaymentElement);
     if (!pe) {
-      setError("No se pudo cargar el formulario de pago. Verifica que tus claves de Stripe (pk/sk) pertenezcan a la misma cuenta y modo (test/live).");
+      setError(
+        "No se pudo cargar el formulario de pago. Verifica que tus claves de Stripe (pk/sk) pertenezcan a la misma cuenta y modo (test/live)."
+      );
       return;
     }
 
@@ -533,7 +707,10 @@ function PaymentForm({ onPaid }) {
       setLoading(false);
       return;
     }
-    if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
+    if (
+      paymentIntent?.status === "succeeded" ||
+      paymentIntent?.status === "processing"
+    ) {
       await onPaid(paymentIntent);
     } else {
       setError("El pago no se completó. Intenta con otro método.");
@@ -544,7 +721,9 @@ function PaymentForm({ onPaid }) {
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
       <PaymentElement />
-      {error && <div className="p-2 bg-red-50 text-red-700 rounded text-sm">{error}</div>}
+      {error && (
+        <div className="p-2 bg-red-50 text-red-700 rounded text-sm">{error}</div>
+      )}
       <button
         disabled={!stripe || loading}
         className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-semibold"
