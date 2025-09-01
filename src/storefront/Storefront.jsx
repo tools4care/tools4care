@@ -2,12 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
-import { addToCart, ensureCart, cartCount } from "./cartApi";
-import { listCartItems, updateCartItemQty, removeCartItem } from "./cartApi";
+import { addToCart, ensureCart, cartCount, listCartItems, updateCartItemQty, removeCartItem } from "./cartApi";
 import AuthModal from "./AuthModal";
 
 /* -------------------- Helpers -------------------- */
-// Get "Online" VAN id (for realtime stock watch)
 async function getOnlineVanId() {
   const { data, error } = await supabase
     .from("vans")
@@ -66,20 +64,42 @@ function CartDrawer({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // --- Optimistic updates for speed ---
+  function optimisticSet(productoId, nextQty) {
+    setLines((prev) => {
+      const arr = prev.map((l) =>
+        l.producto_id === productoId
+          ? {
+              ...l,
+              qty: nextQty,
+              subtotal: Math.max(0, Number(nextQty)) * Number(l.price || 0),
+            }
+          : l
+      );
+      return arr.filter((l) => Number(l.qty || 0) > 0);
+    });
+  }
+
   async function handleQty(productoId, next) {
+    const prev = [...lines];
+    optimisticSet(productoId, next);
     try {
       await updateCartItemQty(productoId, next);
-      await refresh();
+      // no refresh: mantenemos estado optimista
     } catch (e) {
+      // rollback
+      setLines(prev);
       alert(e?.message || "Could not update quantity.");
     }
   }
 
   async function handleRemove(productoId) {
+    const prev = [...lines];
+    setLines(prev.filter((l) => l.producto_id !== productoId));
     try {
       await removeCartItem(productoId);
-      await refresh();
     } catch (e) {
+      setLines(prev);
       alert(e?.message || "Could not remove item.");
     }
   }
@@ -104,9 +124,7 @@ function CartDrawer({ open, onClose }) {
           {loading ? (
             <div className="text-sm text-gray-500">Loading…</div>
           ) : lines.length === 0 ? (
-            <div className="text-sm text-gray-500">
-              Your cart is empty.
-            </div>
+            <div className="text-sm text-gray-500">Your cart is empty.</div>
           ) : (
             <div className="space-y-3">
               {lines.map((l) => (
@@ -132,14 +150,12 @@ function CartDrawer({ open, onClose }) {
 
                   <div className="flex-1 min-w-0">
                     <div className="font-medium truncate">{l.nombre}</div>
-                    <div className="text-xs text-gray-500">
-                      {l.marca || "—"} · {l.codigo}
-                    </div>
+                    <div className="text-xs text-gray-500">{l.marca || "—"}</div>
 
                     <div className="mt-2 flex items-center gap-2">
                       <button
                         className="w-7 h-7 rounded-md border hover:bg-gray-50"
-                        onClick={() => handleQty(l.producto_id, Math.max(0, l.qty - 1))}
+                        onClick={() => handleQty(l.producto_id, Math.max(0, Number(l.qty || 0) - 1))}
                         title="Less"
                       >
                         −
@@ -147,7 +163,7 @@ function CartDrawer({ open, onClose }) {
                       <span className="w-8 text-center text-sm">{l.qty}</span>
                       <button
                         className="w-7 h-7 rounded-md border hover:bg-gray-50"
-                        onClick={() => handleQty(l.producto_id, l.qty + 1)}
+                        onClick={() => handleQty(l.producto_id, Number(l.qty || 0) + 1)}
                         title="More"
                       >
                         +
@@ -205,6 +221,47 @@ function CartDrawer({ open, onClose }) {
   );
 }
 
+/* -------------------- Mini Deal Card (hero) -------------------- */
+function DealCardMini({ p, onAdd }) {
+  const price = Number(p.price_online ?? p.price_base ?? 0);
+  return (
+    <div className="bg-white/95 rounded-xl p-3 border hover:shadow-sm transition">
+      <div className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center">
+        {p.main_image_url ? (
+          <img
+            src={p.main_image_url}
+            alt={p.nombre}
+            className="w-full h-full object-contain p-2"
+            loading="lazy"
+            onError={(e) => (e.currentTarget.style.display = "none")}
+          />
+        ) : (
+          <span className="text-xs text-gray-400">no image</span>
+        )}
+      </div>
+      <div className="mt-2 font-medium line-clamp-1">{p.nombre}</div>
+      <div className="text-xs text-gray-500 line-clamp-1">{p.marca || "—"}</div>
+      {p.descripcion ? (
+        <div className="text-xs text-gray-600 mt-1 line-clamp-2">{p.descripcion}</div>
+      ) : null}
+      <div className="mt-2 font-semibold">
+        <Price value={price} />
+        {p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base) ? (
+          <span className="ml-2 text-xs text-gray-500 line-through">
+            <Price value={p.price_base} />
+          </span>
+        ) : null}
+      </div>
+      <button
+        className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700"
+        onClick={() => onAdd(p)}
+      >
+        Add to cart
+      </button>
+    </div>
+  );
+}
+
 /* -------------------- Storefront -------------------- */
 export default function Storefront() {
   const [q, setQ] = useState("");
@@ -225,17 +282,9 @@ export default function Storefront() {
 
   const navigate = useNavigate();
   const offersRef = useRef(null);
-
-  // Debounce control for realtime reload (reduce flicker)
   const reloadTimeoutRef = useRef(null);
 
-  // Simple announcement content (editable)
-  const announcements = [
-    { id: 1, text: "Free pickup at store. New arrivals every week!" },
-    { id: 2, text: "Apple Pay & Google Pay at checkout on supported devices." },
-  ];
-
-  // session
+  // session (no bloqueamos el carrito si no hay user)
   useEffect(() => {
     let sub;
     (async () => {
@@ -256,12 +305,12 @@ export default function Storefront() {
         const c = await cartCount(cid);
         setCount(c);
       } catch {
-        // ignore (RLS/401); will be handled on add
+        // ignore
       }
     })();
   }, [user]);
 
-  // load catalog
+  // load catalog (vista ya funcional)
   async function reloadCatalog() {
     setLoading(true);
     try {
@@ -275,7 +324,6 @@ export default function Storefront() {
         .order("nombre", { ascending: true });
       if (error) throw error;
 
-      // cover images
       const ids = (data || []).map((r) => r.id);
       let coverMap = new Map();
       if (ids.length) {
@@ -284,9 +332,7 @@ export default function Storefront() {
           .select("producto_id, main_image_url")
           .in("producto_id", ids);
         if (cErr) throw cErr;
-        coverMap = new Map(
-          (covers || []).map((c) => [c.producto_id, c.main_image_url])
-        );
+        coverMap = new Map((covers || []).map((c) => [c.producto_id, c.main_image_url]));
       }
 
       const enriched = (data || []).map((p) => ({
@@ -298,7 +344,7 @@ export default function Storefront() {
         price_online: p.price_online == null ? null : Number(p.price_online),
         price: Number(p.price_online ?? p.price_base),
         stock: Number(p.stock ?? 0),
-        descripcion: p.descripcion ?? null,
+        descripcion: p.descripcion ?? "",
         main_image_url: coverMap.get(p.id) || null,
       }));
 
@@ -323,36 +369,19 @@ export default function Storefront() {
       const onlineVanId = await getOnlineVanId();
 
       const scheduleReload = () => {
-        if (reloadTimeoutRef.current) {
-          clearTimeout(reloadTimeoutRef.current);
-        }
-        reloadTimeoutRef.current = setTimeout(() => {
-          reloadCatalog();
-        }, 600); // debounce 600ms
+        if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
+        reloadTimeoutRef.current = setTimeout(() => reloadCatalog(), 600);
       };
 
       channel = supabase
         .channel("online-catalog-watch")
         .on(
           "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "stock_van",
-            filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined,
-          },
+          { event: "*", schema: "public", table: "stock_van", filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined },
           scheduleReload
         )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "productos" },
-          scheduleReload
-        )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "online_product_meta" },
-          scheduleReload
-        )
+        .on("postgres_changes", { event: "*", schema: "public", table: "productos" }, scheduleReload)
+        .on("postgres_changes", { event: "*", schema: "public", table: "online_product_meta" }, scheduleReload)
         .subscribe();
     })();
 
@@ -405,34 +434,20 @@ export default function Storefront() {
     try {
       const newCount = await addToCart(p, 1);
       setCount(newCount);
+      setCartOpen(true);
     } catch (e) {
-      const msg = String(e?.message || "");
-      const isAuthIssue =
-        e?.status === 401 ||
-        msg.includes("row-level security") ||
-        msg.includes("RLS") ||
-        e?.code === "42501";
-
-      if (isAuthIssue) {
-        setAuthMode("login");
-        setAuthOpen(true);
-        alert(
-          "Please sign in to use the cart. (Anonymous carts are possible by adding an RLS policy on 'carts')."
-        );
-        return;
-      }
-
-      alert(msg || "Could not add to cart.");
+      // No bloqueamos por login; solo informamos
+      alert(String(e?.message || "Could not add to cart."));
     }
   }
 
   function ProductCard({ p }) {
-    const price = p.price ?? p.price_online ?? p.price_base ?? 0;
+    const price = Number(p.price_online ?? p.price_base ?? 0);
     const hasOffer =
       p.price_online != null &&
       p.price_base != null &&
       Number(p.price_online) < Number(p.price_base);
-    const outOfStock = Number(p.stock || 0) <= 0;
+
     return (
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
         <div className="p-3">
@@ -445,7 +460,6 @@ export default function Storefront() {
                   className="w-full h-full object-contain p-2"
                   loading="lazy"
                   onError={(e) => {
-                    // Hide broken image to avoid flashing
                     e.currentTarget.style.display = "none";
                   }}
                 />
@@ -460,13 +474,18 @@ export default function Storefront() {
             )}
           </div>
 
-          <div className="mt-3 text-xs text-green-700">Stock: {Number(p.stock || 0)}</div>
-
           <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px]">
             {p.nombre}
           </div>
           <div className="text-xs text-gray-500">{p.marca || "—"}</div>
-          <div className="text-xs text-gray-500">{p.codigo}</div>
+
+          {p.descripcion ? (
+            <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">
+              {p.descripcion}
+            </div>
+          ) : (
+            <div className="mt-1 text-xs text-gray-400 min-h-[32px]"> </div>
+          )}
 
           <div className="mt-2 font-semibold">
             <Price value={price} />
@@ -479,23 +498,32 @@ export default function Storefront() {
 
           <button
             type="button"
-            disabled={outOfStock}
-            className={`mt-3 w-full rounded-lg px-3 py-2 text-sm ${
-              outOfStock
-                ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                : "bg-blue-600 text-white hover:bg-blue-700"
-            }`}
+            className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700"
             onClick={() => handleAdd(p)}
           >
-            {outOfStock ? "Out of stock" : "Add to cart"}
+            Add to cart
           </button>
         </div>
       </div>
     );
   }
 
+  // top deals (for hero replacement)
+  const deals = useMemo(
+    () =>
+      allRows
+        .filter(
+          (p) =>
+            p.price_online != null &&
+            p.price_base != null &&
+            Number(p.price_online) < Number(p.price_base)
+        )
+        .slice(0, 6),
+    [allRows]
+  );
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 pb-16 sm:pb-0">
       {/* HEADER */}
       <header className="sticky top-0 z-20 bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
@@ -524,9 +552,9 @@ export default function Storefront() {
             />
           </div>
 
-          {/* Auth (now visible on mobile too) */}
+          {/* Auth shortcuts (opcional; no se requiere para usar carrito) */}
           {!user ? (
-            <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2">
               <button
                 className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
                 onClick={() => {
@@ -549,7 +577,7 @@ export default function Storefront() {
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2">
               <span className="text-sm text-gray-700 truncate max-w-[180px]">
                 Hi, {user.email}
               </span>
@@ -564,11 +592,11 @@ export default function Storefront() {
             </div>
           )}
 
-          {/* Cart */}
+          {/* Cart (desktop header) */}
           <button
             type="button"
             onClick={() => setCartOpen(true)}
-            className="relative ml-1 inline-flex items-center justify-center rounded-lg border px-3 py-2 hover:bg-gray-50"
+            className="relative ml-1 hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 hover:bg-gray-50"
             title="Open cart"
             aria-label="Cart"
           >
@@ -583,44 +611,17 @@ export default function Storefront() {
             </span>
           </button>
         </div>
-
-        {/* Payment methods info bar */}
-        <div className="bg-gray-50 border-t">
-          <div className="max-w-7xl mx-auto px-4 py-2 text-xs flex items-center gap-3 text-gray-700">
-            <span>Accepted at checkout (when available):</span>
-            <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1 bg-white">
-               Apple&nbsp;Pay
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1 bg-white">
-              G&nbsp;Google&nbsp;Pay
-            </span>
-            <span className="text-gray-500">
-              Requires HTTPS & verified domain in Stripe.
-            </span>
-          </div>
-        </div>
       </header>
 
-      {/* ANNOUNCEMENT BAR */}
-      <div className="bg-blue-50 border-b border-blue-100">
-        <div className="max-w-7xl mx-auto px-4 py-2 text-sm text-blue-900 flex gap-6 overflow-x-auto">
-          {announcements.map((a) => (
-            <div key={a.id} className="shrink-0">
-              • {a.text}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* HERO */}
+      {/* HERO (reemplaza contadores por ofertas) */}
       <section className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white">
-        <div className="max-w-7xl mx-auto px-4 py-10 grid md:grid-cols-2 gap-6 items-center">
+        <div className="max-w-7xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-6 items-center">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold leading-tight">
-              Tools4care: Weekly deals & new arrivals
+              Weekly deals & new arrivals
             </h1>
             <p className="mt-2 text-white/90">
-              Discover special prices and freshly added products. Grab them before they’re gone!
+              Discover special prices and freshly added products.
             </p>
             <div className="mt-4 flex gap-2">
               <button
@@ -637,37 +638,23 @@ export default function Storefront() {
               </a>
             </div>
           </div>
-          <div className="bg-white/10 rounded-2xl p-4">
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="bg-white/10 rounded-lg p-3">
-                <div className="text-2xl font-bold">{allRows.length}</div>
-                <div className="text-xs">Products</div>
+
+          {/* Ofertas en lugar de contadores */}
+          <div className="bg-white/10 rounded-2xl p-3">
+            {deals.length ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {deals.slice(0, 6).map((p) => (
+                  <DealCardMini key={p.id} p={p} onAdd={handleAdd} />
+                ))}
               </div>
-              <div className="bg-white/10 rounded-lg p-3">
-                <div className="text-2xl font-bold">
-                  {
-                    allRows.filter(
-                      (p) =>
-                        p.price_online != null &&
-                        p.price_base != null &&
-                        Number(p.price_online) < Number(p.price_base)
-                    ).length
-                  }
-                </div>
-                <div className="text-xs">Deals</div>
-              </div>
-              <div className="bg-white/10 rounded-lg p-3">
-                <div className="text-2xl font-bold">
-                  {[...allRows].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 12).length}
-                </div>
-                <div className="text-xs">New</div>
-              </div>
-            </div>
+            ) : (
+              <div className="text-sm text-white/90 p-4">No deals yet.</div>
+            )}
           </div>
         </div>
       </section>
 
-      {/* DEALS */}
+      {/* DEALS (sección principal) */}
       <section ref={offersRef} className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-end justify-between">
           <h2 className="text-xl font-bold">Featured deals</h2>
@@ -675,24 +662,11 @@ export default function Storefront() {
             See full catalog →
           </a>
         </div>
-        {allRows.filter(
-          (p) =>
-            p.price_online != null &&
-            p.price_base != null &&
-            Number(p.price_online) < Number(p.price_base)
-        ).length ? (
+        {deals.length ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {allRows
-              .filter(
-                (p) =>
-                  p.price_online != null &&
-                  p.price_base != null &&
-                  Number(p.price_online) < Number(p.price_base)
-              )
-              .slice(0, 8)
-              .map((p) => (
-                <ProductCard key={p.id} p={p} />
-              ))}
+            {deals.slice(0, 8).map((p) => (
+              <ProductCard key={p.id} p={p} />
+            ))}
           </div>
         ) : (
           <div className="mt-4 text-gray-500">No deals yet.</div>
@@ -705,8 +679,7 @@ export default function Storefront() {
         {[...allRows].length ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {[...allRows]
-              .sort((a, b) => Number(b.id) - Number(a.id))
-              .slice(0, 12)
+              .slice(0, 12) // si quieres “nuevos” reales, trae un campo created_at en la vista
               .map((p) => (
                 <ProductCard key={p.id} p={p} />
               ))}
@@ -804,7 +777,7 @@ export default function Storefront() {
         © {new Date().getFullYear()} Tools4care — made with 💙
       </footer>
 
-      {/* Auth modal */}
+      {/* Auth modal (no necesario para carrito, pero lo dejamos disponible) */}
       <AuthModal
         open={authOpen}
         mode={authMode}
@@ -814,6 +787,46 @@ export default function Storefront() {
 
       {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
+
+      {/* Mobile bottom bar (always visible, like Amazon) */}
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
+        <div className="flex justify-around items-center py-2">
+          <button
+            className="flex flex-col items-center text-xs"
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+            </svg>
+            Home
+          </button>
+          <a href="#catalog" className="flex flex-col items-center text-xs">
+            <svg width="22" height="22" viewBox="0 0 24 24">
+              <path
+                fill="currentColor"
+                d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.471 6.471 0 0 0 4.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14"
+              />
+            </svg>
+            Search
+          </a>
+          <button
+            className="relative flex flex-col items-center text-xs"
+            onClick={() => setCartOpen(true)}
+            aria-label="Open cart"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24">
+              <path
+                fill="currentColor"
+                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2m10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z"
+              />
+            </svg>
+            <span className="absolute -top-2 -right-3 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5">
+              {count}
+            </span>
+            Cart
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
