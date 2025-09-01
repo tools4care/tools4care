@@ -313,6 +313,76 @@ async function getStockMapForVan(vanId, ids = []) {
   return map;
 }
 
+/* ===== CxC helpers: lectura + suscripción a limite_manual ===== */
+async function getCxcCliente(clienteId) {
+  if (!clienteId) return null;
+
+  // 1) Intento: vista oficial (traigo todo por compatibilidad con diferentes esquemas)
+  let saldo = 0;
+  let limitePolitica = 0;
+  let limiteManual = null;
+  let disponibleVista = null;
+
+  try {
+    const { data } = await supabase
+      .from("v_cxc_cliente_detalle")
+      .select("*")
+      .eq("cliente_id", clienteId)
+      .maybeSingle();
+
+    if (data) {
+      saldo = Number(data.saldo ?? data.balance ?? 0);
+      // Algunas vistas lo exponen como limite, otras como limite_politica
+      limitePolitica = Number(
+        data.limite_politica ?? data.limite ?? data.credit_limit ?? 0
+      );
+      // Si la vista no trae limite_manual, lo busco abajo
+      limiteManual = data.limite_manual != null ? Number(data.limite_manual) : null;
+      disponibleVista = data.credito_disponible != null ? Number(data.credito_disponible) : null;
+    }
+  } catch (e) {
+    // noop: pasamos al fallback
+  }
+
+  // 2) Fallback para limite_manual directo desde clientes
+  if (limiteManual == null) {
+    try {
+      const { data: cli } = await supabase
+        .from("clientes")
+        .select("limite_manual")
+        .eq("id", clienteId)
+        .maybeSingle();
+      if (cli && cli.limite_manual != null) limiteManual = Number(cli.limite_manual);
+    } catch {}
+  }
+
+  const limite =
+    limiteManual != null && !Number.isNaN(limiteManual) && limiteManual > 0
+      ? limiteManual
+      : limitePolitica;
+
+  const disponibleCalc = Math.max(0, limite - Math.max(0, saldo));
+  const disponible = Number.isFinite(disponibleVista) ? disponibleVista : disponibleCalc;
+
+  return { saldo, limite, limitePolitica, limiteManual, disponible };
+}
+function subscribeClienteLimiteManual(clienteId, onChange) {
+  if (!clienteId) return { unsubscribe() {} };
+  const channel = supabase
+    .channel(`cxc-limite-manual-${clienteId}`)
+    .on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "clientes", filter: `id=eq.${clienteId}` },
+      () => onChange?.()
+    )
+    .subscribe();
+  return {
+    unsubscribe() {
+      try { supabase.removeChannel(channel); } catch {}
+    },
+  };
+}
+
 /* ========================= Componente ========================= */
 export default function Sales() {
   const { van } = useVan();
@@ -362,6 +432,9 @@ export default function Sales() {
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState("");
   const [adjustNote, setAdjustNote] = useState("Saldo viejo importado");
+
+  // ---- UI: detalles de pago (mobile simplificado por default)
+  const [showPaymentDetails, setShowPaymentDetails] = useState(false);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
@@ -469,32 +542,46 @@ export default function Sales() {
     fetchHistory();
   }, [selectedClient?.id]);
 
-  /* ---------- Traer límite/disponible/saldo ---------- */
+  /* ---------- Traer límite/disponible/saldo (con auto refresh + realtime) ---------- */
   useEffect(() => {
-    async function fetchCxC() {
-      setCxcLimit(null);
-      setCxcAvailable(null);
-      setCxcBalance(null);
-      const id = selectedClient?.id;
-      if (!id) return;
+    let disposed = false;
+    let sub = null;
+    let timer = null;
 
-      try {
-        const { data, error } = await supabase
-          .from("v_cxc_cliente_detalle")
-          .select("limite_politica, credito_disponible, saldo, cliente_id")
-          .eq("cliente_id", id)
-          .maybeSingle();
-        if (!error && data) {
-          const lim = Number(data.limite_politica);
-          const disp = Number(data.credito_disponible);
-          const sal = Number(data.saldo);
-          if (!Number.isNaN(lim)) setCxcLimit(lim);
-          if (!Number.isNaN(disp)) setCxcAvailable(disp);
-          if (!Number.isNaN(sal)) setCxcBalance(sal);
-        }
-      } catch {}
+    async function refreshCxC() {
+      const id = selectedClient?.id;
+      if (!id) {
+        setCxcLimit(null);
+        setCxcAvailable(null);
+        setCxcBalance(null);
+        return;
+      }
+      const info = await getCxcCliente(id);
+      if (disposed || !info) return;
+      setCxcLimit(info.limite);
+      setCxcAvailable(info.disponible);
+      setCxcBalance(info.saldo);
     }
-    fetchCxC();
+
+    function onFocus() { refreshCxC(); }
+    function onVisible() { if (!document.hidden) refreshCxC(); }
+
+    refreshCxC();
+
+    if (selectedClient?.id) {
+      sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
+      window.addEventListener("focus", onFocus);
+      document.addEventListener("visibilitychange", onVisible);
+      timer = setInterval(refreshCxC, 20000);
+    }
+
+    return () => {
+      disposed = true;
+      sub?.unsubscribe?.();
+      if (timer) clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [selectedClient?.id]);
 
   /* ========== TOP productos (si falta code/brand/price los enriquezco desde catálogo) ========== */
@@ -872,6 +959,7 @@ export default function Sales() {
     : 0;
 
   const creditAvailableAfter = Math.max(0, creditLimit - Math.max(0, balanceAfter));
+  const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
   /* ---------- Guardar venta pendiente local ---------- */
   useEffect(() => {
@@ -961,224 +1049,222 @@ export default function Sales() {
   }
 
   /* ===================== Guardar venta (RPC con fallback INSERT) ===================== */
- // Reemplaza tu saveSale() completo por este:
-async function saveSale() {
-  setSaving(true);
-  setPaymentError("");
+  async function saveSale() {
+    setSaving(true);
+    setPaymentError("");
 
-  const currentPendingId = window.pendingSaleId;
+    const currentPendingId = window.pendingSaleId;
 
-  try {
-    if (!usuario?.id) throw new Error("User not synced, please re-login.");
-    if (!van?.id) throw new Error("Select a VAN first.");
-    if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
-    if (cartSafe.length === 0) throw new Error("Add at least one product.");
+    try {
+      if (!usuario?.id) throw new Error("User not synced, please re-login.");
+      if (!van?.id) throw new Error("Select a VAN first.");
+      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
+      if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
-    if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
-      setPaymentError(
-        `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
-      );
-      setSaving(false);
-      return;
-    }
-
-    if (amountToCredit > 0) {
-      const ok = window.confirm(
-        `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
-          (showCreditPanel
-            ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
-                creditAvailable
-              )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
-            : `\n(No credit history yet)\n\n`) +
-          `Do you want to continue?`
-      );
-      if (!ok) {
+      if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
+        setPaymentError(
+          `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
+        );
         setSaving(false);
         return;
       }
-    }
 
-    // Recalcular al guardar
-    const existingCreditNow = Math.max(0, -balanceBefore);
-    const oldDebtNow = Math.max(0, balanceBefore);
-    const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
-    const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
-
-    const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
-    const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
-    const changeNow = Math.max(0, paid - totalAPagarNow);
-
-    // Pendiente que nace de ESTA venta
-    const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
-
-    // Estado de pago (NECESARIO para la columna NOT NULL)
-    const estadoPago =
-      pendingFromThisSale === 0
-        ? "pagado"
-        : paidForSaleNow > 0
-        ? "parcial"
-        : "pendiente";
-
-    // Desglose de pagos > 0
-    const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
-    const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
-    nonZeroPayments.forEach((p) => {
-      if (paymentMap[p.forma] !== undefined) paymentMap[p.forma] += Number(p.monto || 0);
-    });
-
-    // Items para DB/RPC
-    const itemsForDb = cartSafe.map((p) => {
-      const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
-      const qty = Number(p.cantidad);
-      let base = Number(meta.base || p.precio_unitario) || 0;
-      let descuento_pct = 0;
-
-      const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
-      if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
-        descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
-      } else if (Number(meta.pct) > 0) {
-        descuento_pct = Number(meta.pct);
-      }
-
-      if (!base || !Number.isFinite(base)) {
-        base = Number(p.precio_unitario) || 0;
-        descuento_pct = 0;
-      }
-
-      return {
-        producto_id: p.producto_id,
-        cantidad: qty,
-        precio_unit: Number(base.toFixed(2)),
-        descuento_pct: Number(descuento_pct.toFixed(4)),
-      };
-    });
-
-    const pagoJson = {
-      metodos: nonZeroPayments,
-      map: paymentMap,
-      total_ingresado: Number(paid.toFixed(2)),
-      aplicado_venta: Number(paidForSaleNow.toFixed(2)),
-      aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
-      cambio: Number(changeNow.toFixed(2)),
-      ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
-    };
-
-    // ---------- 1) RPC preferida (si falla, seguimos a INSERT) ----------
-    let ventaId = null;
-    let rpcError = null;
-    try {
-      const { data, error } = await supabase.rpc("create_venta", {
-        p_cliente_id: selectedClient?.id || null,
-        p_van_id: van.id || null,
-        p_usuario: usuario.id,
-        p_items: itemsForDb,
-        p_pago: pagoJson,
-        p_notas: notes || null,
-        // Si tu RPC soporta este parámetro lo usará; si no, lo ignora:
-        p_estado_pago: estadoPago,
-        p_total: Number(saleTotal.toFixed(2)),
-        p_total_venta: Number(saleTotal.toFixed(2)),
-        p_total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
-      });
-      if (error) throw error;
-      ventaId = data?.venta_id || data?.id || data?.[0]?.id || null;
-    } catch (e) {
-      rpcError = e;
-      console.warn("RPC create_venta falló, probando INSERT directo:", e?.message || e);
-    }
-
-    // ---------- 2) Fallback INSERT directo cumpliendo NOT NULL ----------
-    if (!ventaId) {
-      const payloadVenta = {
-        cliente_id: selectedClient?.id ?? null,
-        van_id: van.id ?? null,
-        usuario_id: usuario.id,
-        total: Number(saleTotal.toFixed(2)),
-        total_venta: Number(saleTotal.toFixed(2)),
-        total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
-        estado_pago: estadoPago, // <-- clave NOT NULL
-        pago: pagoJson,
-        productos: itemsForDb,
-        notas: notes || null,
-      };
-
-      const { data: ins, error: insErr } = await supabase
-        .from("ventas")
-        .insert([payloadVenta])
-        .select()
-        .single();
-
-      if (insErr) {
-        throw new Error(
-          `RPC & INSERT failed. RPC: ${rpcError?.message || "N/A"} | INSERT: ${insErr.message}`
+      if (amountToCredit > 0) {
+        const ok = window.confirm(
+          `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
+            (showCreditPanel
+              ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
+                  creditAvailable
+                )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
+              : `\n(No credit history yet)\n\n`) +
+            `Do you want to continue?`
         );
+        if (!ok) {
+          setSaving(false);
+          return;
+        }
       }
-      ventaId = ins?.id || null;
-    }
 
-    // (Opcional) registrar ajuste/pago de deuda si usas funciones aparte
-    await Promise.all([
-      pendingFromThisSale > 0 && selectedClient?.id && ventaId
-        ? supabase
-            .rpc("cxc_crear_ajuste_por_venta", {
+      // Recalcular al guardar
+      const existingCreditNow = Math.max(0, -balanceBefore);
+      const oldDebtNow = Math.max(0, balanceBefore);
+      const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
+      const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+
+      const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
+      const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
+      const changeNow = Math.max(0, paid - totalAPagarNow);
+
+      // Pendiente que nace de ESTA venta
+      const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
+
+      // Estado de pago (NECESARIO para la columna NOT NULL)
+      const estadoPago =
+        pendingFromThisSale === 0
+          ? "pagado"
+          : paidForSaleNow > 0
+          ? "parcial"
+          : "pendiente";
+
+      // Desglose de pagos > 0
+      const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
+      const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+      nonZeroPayments.forEach((p) => {
+        if (paymentMap[p.forma] !== undefined) paymentMap[p.forma] += Number(p.monto || 0);
+      });
+
+      // Items para DB/RPC
+      const itemsForDb = cartSafe.map((p) => {
+        const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
+        const qty = Number(p.cantidad);
+        let base = Number(meta.base || p.precio_unitario) || 0;
+        let descuento_pct = 0;
+
+        const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
+        if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
+          descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
+        } else if (Number(meta.pct) > 0) {
+          descuento_pct = Number(meta.pct);
+        }
+
+        if (!base || !Number.isFinite(base)) {
+          base = Number(p.precio_unitario) || 0;
+          descuento_pct = 0;
+        }
+
+        return {
+          producto_id: p.producto_id,
+          cantidad: qty,
+          precio_unit: Number(base.toFixed(2)),
+          descuento_pct: Number(descuento_pct.toFixed(4)),
+        };
+      });
+
+      const pagoJson = {
+        metodos: nonZeroPayments,
+        map: paymentMap,
+        total_ingresado: Number(paid.toFixed(2)),
+        aplicado_venta: Number(paidForSaleNow.toFixed(2)),
+        aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
+        cambio: Number(changeNow.toFixed(2)),
+        ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
+      };
+
+      // ---------- 1) RPC preferida (si falla, seguimos a INSERT) ----------
+      let ventaId = null;
+      let rpcError = null;
+      try {
+        const { data, error } = await supabase.rpc("create_venta", {
+          p_cliente_id: selectedClient?.id || null,
+          p_van_id: van.id || null,
+          p_usuario: usuario.id,
+          p_items: itemsForDb,
+          p_pago: pagoJson,
+          p_notas: notes || null,
+          // Si tu RPC soporta este parámetro lo usará; si no, lo ignora:
+          p_estado_pago: estadoPago,
+          p_total: Number(saleTotal.toFixed(2)),
+          p_total_venta: Number(saleTotal.toFixed(2)),
+          p_total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
+        });
+        if (error) throw error;
+        ventaId = data?.venta_id || data?.id || data?.[0]?.id || null;
+      } catch (e) {
+        rpcError = e;
+        console.warn("RPC create_venta falló, probando INSERT directo:", e?.message || e);
+      }
+
+      // ---------- 2) Fallback INSERT directo cumpliendo NOT NULL ----------
+      if (!ventaId) {
+        const payloadVenta = {
+          cliente_id: selectedClient?.id ?? null,
+          van_id: van.id ?? null,
+          usuario_id: usuario.id,
+          total: Number(saleTotal.toFixed(2)),
+          total_venta: Number(saleTotal.toFixed(2)),
+          total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
+          estado_pago: estadoPago, // <-- clave NOT NULL
+          pago: pagoJson,
+          productos: itemsForDb,
+          notas: notes || null,
+        };
+
+        const { data: ins, error: insErr } = await supabase
+          .from("ventas")
+          .insert([payloadVenta])
+          .select()
+          .single();
+
+        if (insErr) {
+          throw new Error(
+            `RPC & INSERT failed. RPC: ${rpcError?.message || "N/A"} | INSERT: ${insErr.message}`
+          );
+        }
+        ventaId = ins?.id || null;
+      }
+
+      // (Opcional) registrar ajuste/pago de deuda si usas funciones aparte
+      await Promise.all([
+        pendingFromThisSale > 0 && selectedClient?.id && ventaId
+          ? supabase
+              .rpc("cxc_crear_ajuste_por_venta", {
+                p_cliente_id: selectedClient.id,
+                p_venta_id: ventaId,
+                p_monto: Number(pendingFromThisSale),
+                p_van_id: van.id,
+                p_usuario_id: usuario.id,
+                p_nota: "Saldo de venta no pagado",
+              })
+              .catch((e) => console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e))
+          : Promise.resolve(),
+        payOldDebtNow > 0 && selectedClient?.id
+          ? supabase.rpc("cxc_registrar_pago", {
               p_cliente_id: selectedClient.id,
-              p_venta_id: ventaId,
-              p_monto: Number(pendingFromThisSale),
+              p_monto: Number(payOldDebtNow),
+              p_metodo: "mix",
               p_van_id: van.id,
-              p_usuario_id: usuario.id,
-              p_nota: "Saldo de venta no pagado",
             })
-            .catch((e) => console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e))
-        : Promise.resolve(),
-      payOldDebtNow > 0 && selectedClient?.id
-        ? supabase.rpc("cxc_registrar_pago", {
-            p_cliente_id: selectedClient.id,
-            p_monto: Number(payOldDebtNow),
-            p_metodo: "mix",
-            p_van_id: van.id,
-          })
-        : Promise.resolve({}),
-    ]);
+          : Promise.resolve({}),
+      ]);
 
-    // Recibo
-    const payload = {
-      clientName: selectedClient?.nombre || "",
-      creditNumber: getCreditNumber(selectedClient),
-      dateStr: new Date().toLocaleString(),
-      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-      items: cartSafe.map((p) => ({
-        name: p.nombre,
-        qty: p.cantidad,
-        unit: p.precio_unitario,
-        subtotal: p.cantidad * p.precio_unitario,
-      })),
-      saleTotal,
-      paid: paidForSaleNow + payOldDebtNow,
-      change: changeNow,
-      prevBalance: Math.max(0, balanceBefore),
-      toCredit: pendingFromThisSale,
-      creditLimit,
-      availableBefore: creditAvailable,
-      availableAfter: Math.max(0, creditLimit - Math.max(0, balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow))),
-    };
+      // Recibo
+      const payload = {
+        clientName: selectedClient?.nombre || "",
+        creditNumber: getCreditNumber(selectedClient),
+        dateStr: new Date().toLocaleString(),
+        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+        items: cartSafe.map((p) => ({
+          name: p.nombre,
+          qty: p.cantidad,
+          unit: p.precio_unitario,
+          subtotal: p.cantidad * p.precio_unitario,
+        })),
+        saleTotal,
+        paid: paidForSaleNow + payOldDebtNow,
+        change: changeNow,
+        prevBalance: Math.max(0, balanceBefore),
+        toCredit: pendingFromThisSale,
+        creditLimit,
+        availableBefore: creditAvailable,
+        availableAfter: Math.max(0, creditLimit - Math.max(0, balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow))),
+      };
 
-    removePendingFromLSById(currentPendingId);
-    await requestAndSendNotifications({ client: selectedClient, payload });
+      removePendingFromLSById(currentPendingId);
+      await requestAndSendNotifications({ client: selectedClient, payload });
 
-    alert(
-      `✅ Sale saved successfully` +
-        (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
-        (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
-    );
-    clearSale();
-  } catch (err) {
-    setPaymentError("❌ Error saving sale: " + (err?.message || ""));
-    console.error(err);
-  } finally {
-    setSaving(false);
+      alert(
+        `✅ Sale saved successfully` +
+          (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
+          (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
+      );
+      clearSale();
+    } catch (err) {
+      setPaymentError("❌ Error saving sale: " + (err?.message || ""));
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
   }
-}
-
 
   /* ======================== Modal: ventas pendientes ======================== */
   function handleSelectPendingSale(sale) {
@@ -1324,16 +1410,24 @@ async function saveSale() {
                   </div>
                 </div>
 
-                {!showCreditPanel && (
-                  <div className="mt-3">
-                    <span className="bg-gray-100 text-gray-600 text-xs px-3 py-1 rounded-full">
-                      ✨ New customer — no credit history yet
-                    </span>
-                  </div>
-                )}
-
                 {migrationMode && selectedClient?.id && (
-                  <div className="mt-3">
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        // refresco inmediato de CxC
+                        const info = await getCxcCliente(selectedClient.id);
+                        if (info) {
+                          setCxcLimit(info.limite);
+                          setCxcAvailable(info.disponible);
+                          setCxcBalance(info.saldo);
+                        }
+                      }}
+                      className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded"
+                    >
+                      🔄 Refresh credit
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => {
@@ -1348,68 +1442,81 @@ async function saveSale() {
                 )}
               </div>
 
-              {showCreditPanel && (
-                <div className="bg-white rounded-lg border shadow-sm p-4 min-w-0 lg:min-w-[280px]">
-                  <div className="grid grid-cols-1 gap-3">
-                    <div>
-                      <div className="text-xs text-gray-500 uppercase font-semibold">
-                        Credit Limit
-                      </div>
-                      <div className="text-xl font-bold text-gray-900">
-                        {fmt(creditLimit)}
-                      </div>
+              {/* Panel crédito compacto */}
+              <div className="bg-white rounded-lg border shadow-sm p-4 min-w-0 lg:min-w-[280px]">
+                <div className="grid grid-cols-1 gap-3">
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">
+                      Credit Limit
                     </div>
-
-                    <div>
-                      <div className="text-xs text-gray-500 uppercase font-semibold">
-                        Available
-                      </div>
-                      <div className="text-xl font-bold text-emerald-600">
-                        {fmt(creditAvailable)}
-                      </div>
+                    <div className="text-xl font-bold text-gray-900">
+                      {fmt(Number(cxcLimit ?? policyLimit(clientScore)))}
                     </div>
-
-                    <div>
-                      <div className="text-xs text-gray-500 uppercase font-semibold">
-                        After Sale
-                      </div>
-                      <div
-                        className={`text-xl font-bold ${
-                          creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"
-                        }`}
-                      >
-                        {fmt(creditAvailableAfter)}
-                      </div>
-                    </div>
-
-                    {balanceBefore !== 0 && (
-                      <div
-                        className={`rounded-lg p-2 border ${
-                          balanceBefore > 0 ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
-                        }`}
-                      >
-                        <div
-                          className={`text-xs font-semibold ${
-                            balanceBefore > 0 ? "text-red-700" : "text-green-700"
-                          }`}
-                        >
-                          {balanceBefore > 0 ? "Outstanding Balance" : "Credit in Favor"}
-                        </div>
-                        <div
-                          className={`text-lg font-bold ${
-                            balanceBefore > 0 ? "text-red-700" : "text-green-700"
-                          }`}
-                        >
-                          {fmt(Math.abs(balanceBefore))}
-                        </div>
-                      </div>
-                    )}
                   </div>
+
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">
+                      Available
+                    </div>
+                    <div className="text-xl font-bold text-emerald-600">
+                      {fmt(creditAvailable)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">
+                      After Sale
+                    </div>
+                    <div
+                      className={`text-xl font-bold ${
+                        creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"
+                      }`}
+                    >
+                      {fmt(creditAvailableAfter)}
+                    </div>
+                  </div>
+
+                  {balanceBefore !== 0 && (
+                    <div
+                      className={`rounded-lg p-2 border ${
+                        balanceBefore > 0 ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
+                      }`}
+                    >
+                      <div
+                        className={`text-xs font-semibold ${
+                          balanceBefore > 0 ? "text-red-700" : "text-green-700"
+                        }`}
+                      >
+                        {balanceBefore > 0 ? "Outstanding Balance" : "Credit in Favor"}
+                      </div>
+                      <div
+                        className={`text-lg font-bold ${
+                          balanceBefore > 0 ? "text-red-700" : "text-green-700"
+                        }`}
+                      >
+                        {fmt(Math.abs(balanceBefore))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
 
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 flex justify-between">
+              <button
+                type="button"
+                className="text-sm text-blue-700 underline"
+                onClick={async () => {
+                  const info = await getCxcCliente(selectedClient?.id);
+                  if (info) {
+                    setCxcLimit(info.limite);
+                    setCxcAvailable(info.disponible);
+                    setCxcBalance(info.saldo);
+                  }
+                }}
+              >
+                🔄 Refresh credit
+              </button>
               <button
                 className="text-sm text-red-600 underline hover:text-red-800 transition-colors"
                 onClick={() => setSelectedClient(null)}
@@ -1806,7 +1913,7 @@ async function saveSale() {
     );
   }
 
-  /* ======================== Paso 3: Pago ======================== */
+  /* ======================== Paso 3: Pago (SIMPLE/MOBILE) ======================== */
   function renderStepPayment() {
     function handleChangePayment(index, field, value) {
       setPayments((arr) => arr.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
@@ -1822,61 +1929,58 @@ async function saveSale() {
       <div className="space-y-6">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 text-center">
-            <div className="text-xs text-blue-600 uppercase font-semibold">Client</div>
-            <div className="font-bold text-gray-900 text-sm mt-1">{selectedClient?.nombre || "Quick sale"}</div>
-            <div className="text-xs text-gray-500 mt-1 font-mono">#{getCreditNumber(selectedClient)}</div>
+        {/* HERO compacto (mobile first) */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-center">
+            <div className="text-[10px] uppercase text-blue-700 font-semibold tracking-wide">Total</div>
+            <div className="text-2xl font-extrabold text-blue-800">{fmt(saleTotal)}</div>
           </div>
-
-          <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
-            <div className="text-xs text-green-600 uppercase font-semibold">Sale Total</div>
-            <div className="text-lg font-bold text-green-700">{fmt(saleTotal)}</div>
+          <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 text-center">
+            <div className="text-[10px] uppercase text-amber-700 font-semibold tracking-wide">To Credit (A/R)</div>
+            <div className="text-2xl font-extrabold text-amber-700">{fmt(amountToCredit)}</div>
           </div>
-
-          <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
-            <div className="text-xs text-red-600 uppercase font-semibold">Outstanding</div>
-            <div className="text-lg font-bold text-red-700">{fmt(Math.max(0, balanceBefore))}</div>
-          </div>
-
-          <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border-2 border-orange-200 rounded-lg p-4 text-center">
-            <div className="text-xs text-orange-600 uppercase font-semibold">To Credit</div>
-            <div className={`text-lg font-bold ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
-              {fmt(amountToCredit)}
-            </div>
+          <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-3 text-center">
+            <div className="text-[10px] uppercase text-emerald-700 font-semibold tracking-wide">Change</div>
+            <div className="text-2xl font-extrabold text-emerald-700">{fmt(change)}</div>
           </div>
         </div>
 
+        {excesoCredito > 0 && (
+          <div className="bg-rose-50 border-2 border-rose-300 rounded-lg p-3 text-center">
+            <div className="text-rose-700 font-semibold">❌ Credit Limit Exceeded</div>
+            <div className="text-rose-600 text-sm">
+              Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
+            </div>
+          </div>
+        )}
+
         {/* Payment Methods */}
         <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="font-bold text-gray-900 flex items-center gap-2">💳 Payment Methods</div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="font-bold text-gray-900">Payment Methods</div>
             <button
-              className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-1 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+              className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
               onClick={handleAddPayment}
             >
-              ➕ Add Method
+              ➕ Add
             </button>
           </div>
 
           <div className="space-y-3">
             {payments.map((p, i) => (
-              <div className="bg-gray-50 rounded-lg p-4 border" key={i}>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1">
-                    <select
-                      value={p.forma}
-                      onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
-                      className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
-                    >
-                      {PAYMENT_METHODS.map((fp) => (
-                        <option key={fp.key} value={fp.key}>
-                          {fp.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+              <div className="bg-gray-50 rounded-lg p-3 border" key={i}>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={p.forma}
+                    onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
+                    className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
+                  >
+                    {PAYMENT_METHODS.map((fp) => (
+                      <option key={fp.key} value={fp.key}>
+                        {fp.label}
+                      </option>
+                    ))}
+                  </select>
 
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-bold">$</span>
@@ -1886,26 +1990,63 @@ async function saveSale() {
                       step={0.01}
                       value={p.monto}
                       onChange={(e) => handleChangePayment(i, "monto", e.target.value)}
-                      className="w-full sm:w-32 border-2 border-gray-300 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none transition-all"
+                      className="w-28 border-2 border-gray-300 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none"
                       placeholder="0.00"
                     />
-
-                    {payments.length > 1 && (
-                      <button
-                        className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
-                        onClick={() => handleRemovePayment(i)}
-                      >
-                        ✖️
-                      </button>
-                    )}
                   </div>
+
+                  {payments.length > 1 && (
+                    <button
+                      className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
+                      onClick={() => handleRemovePayment(i)}
+                    >
+                      ✖️
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
           </div>
+
+          {/* Toggle para ver más (sin hooks dentro) */}
+          <button
+            type="button"
+            className="mt-3 text-sm text-blue-700 underline"
+            onClick={() => setShowPaymentDetails((v) => !v)}
+          >
+            {showPaymentDetails ? "Hide details" : "Show details"}
+          </button>
+
+          {showPaymentDetails && (
+            <div className="mt-3 grid grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="bg-gray-50 rounded-lg p-3 border">
+                <div className="text-[10px] uppercase text-gray-500 font-semibold">Client</div>
+                <div className="font-semibold text-gray-900 text-sm mt-1">{selectedClient?.nombre || "Quick sale"}</div>
+                <div className="text-xs text-gray-500 mt-1 font-mono">#{getCreditNumber(selectedClient)}</div>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 border">
+                <div className="text-[10px] uppercase text-gray-500 font-semibold">Sale Total</div>
+                <div className="text-lg font-bold">{fmt(saleTotal)}</div>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 border">
+                <div className="text-[10px] uppercase text-gray-500 font-semibold">Paid</div>
+                <div className="text-lg font-bold">{fmt(paid)}</div>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 border">
+                <div className="text-[10px] uppercase text-gray-500 font-semibold">Applied to Old Debt</div>
+                <div className="text-lg font-bold">{fmt(paidToOldDebt)}</div>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 border">
+                <div className="text-[10px] uppercase text-gray-500 font-semibold">New Balance</div>
+                <div className={`text-lg font-bold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                  {fmt(Math.abs(balanceAfter))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Payment Summary */}
+        {/* Totales simples al pie */}
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-4">
           <div className="grid grid-cols-2 gap-4 text-center">
             <div>
@@ -1943,7 +2084,7 @@ async function saveSale() {
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row gap-3 pt-4">
+        <div className="flex flex-col sm:flex-row gap-3 pt-2">
           <button
             className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
             onClick={() => setStep(2)}
@@ -2064,15 +2205,11 @@ async function saveSale() {
                       return;
                     }
                     try {
-                      const { data } = await supabase
-                        .from("v_cxc_cliente_detalle")
-                        .select("limite_politica, credito_disponible, saldo")
-                        .eq("cliente_id", selectedClient.id)
-                        .maybeSingle();
-                      if (data) {
-                        setCxcLimit(Number(data.limite_politica));
-                        setCxcAvailable(Number(data.credito_disponible));
-                        setCxcBalance(Number(data.saldo));
+                      const info = await getCxcCliente(selectedClient.id);
+                      if (info) {
+                        setCxcLimit(info.limite);
+                        setCxcAvailable(info.disponible);
+                        setCxcBalance(info.saldo);
                       }
                     } catch {}
                     setShowAdjustModal(false);

@@ -1,5 +1,5 @@
 // src/Clientes.jsx
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
@@ -9,8 +9,15 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
   MapPin, Building2, Calendar, TrendingUp, X, Check, ChevronsLeft,
-  ChevronLeft, ChevronRight, ChevronsRight, BarChart3
+  ChevronLeft, ChevronRight, ChevronsRight, BarChart3, RefreshCcw
 } from "lucide-react";
+
+/* === CxC centralizado ===
+   Lee límite efectivo y disponible usando src/lib/cxc.js
+   - getCxcCliente(clienteId): { saldo, limite, disponible, limite_manual_aplicado? }
+   - subscribeClienteLimiteManual(clienteId, cb): devuelve { unsubscribe }
+*/
+import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 
 /* -------------------- Utilidades -------------------- */
 const estadosUSA = [
@@ -30,21 +37,35 @@ const zipToCiudadEstado = (zip) => {
   return mapa[zip] || { ciudad: "", estado: "" };
 };
 
-// Traer CxC desde la vista canónica
-async function fetchCxc(clienteId) {
-  if (!clienteId) return null;
-  const { data, error } = await supabase
-    .from("v_cxc_cliente_detalle")
-    .select("saldo, limite_politica, credito_disponible") // <-- columnas existentes
-    .eq("cliente_id", clienteId)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  return {
-    saldo: Number(data.saldo ?? 0),
-    limite: Number(data.limite_politica ?? 0),
-    disponible: Number(data.credito_disponible ?? 0),
-  };
+// Wrapper por si no existiera la lib (fallback seguro)
+async function safeGetCxc(clienteId) {
+  try {
+    const info = await getCxcCliente(clienteId);
+    if (info) {
+      return {
+        saldo: Number(info.saldo ?? 0),
+        limite: Number(info.limite ?? 0),
+        disponible: Number(info.disponible ?? 0),
+        limite_manual_aplicado: Boolean(info.limite_manual_aplicado ?? false),
+      };
+    }
+  } catch (_) {
+    // Fallback a la vista canónica
+    if (!clienteId) return null;
+    const { data, error } = await supabase
+      .from("v_cxc_cliente_detalle")
+      .select("saldo, limite_politica, credito_disponible")
+      .eq("cliente_id", clienteId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      saldo: Number(data.saldo ?? 0),
+      limite: Number(data.limite_politica ?? 0),
+      disponible: Number(data.credito_disponible ?? 0),
+      limite_manual_aplicado: false,
+    };
+  }
+  return null;
 }
 
 /* -------------------- COMPONENTE PRINCIPAL -------------------- */
@@ -78,6 +99,11 @@ export default function Clientes() {
 
   // Mapa con CxC por cliente en página actual
   const [cxcByClient, setCxcByClient] = useState({});
+
+  // Auto-refresh crédito refs
+  const focusHandlerRef = useRef(null);
+  const intervalRef = useRef(null);
+  const realtimeUnsubRef = useRef(null);
 
   // --- Formulario ---
   const [form, setForm] = useState({
@@ -148,10 +174,10 @@ export default function Clientes() {
     setClientes(data || []);
     setTotalRows(count || 0);
 
-    // CxC para la página actual
+    // CxC para la página actual (usa lib centralizada)
     const entries = await Promise.allSettled(
       (data || []).map(async (c) => {
-        const info = await fetchCxc(c.id);
+        const info = await safeGetCxc(c.id);
         return [c.id, info];
       })
     );
@@ -276,7 +302,7 @@ export default function Clientes() {
       else {
         setMensaje("Client saved successfully");
         setMostrarEdicion(false);
-        navigate("/clientes");
+        navigate("/clientes"); // ← mantiene tu flujo
         await fetchPage({ p: 1, ps: pageSize, q: debounced });
         await cargarTotales();
       }
@@ -288,7 +314,7 @@ export default function Clientes() {
       else {
         setMensaje("Changes saved successfully");
         setMostrarEdicion(false);
-        navigate("/clientes");
+        navigate("/clientes"); // ← mantiene tu flujo
         await fetchPage({ p: page, ps: pageSize, q: debounced });
       }
     }
@@ -313,6 +339,97 @@ export default function Clientes() {
     setIsLoading(false);
   }
 
+  // ---------- Auto-refresh de crédito ----------
+  const refreshCreditoActivo = useMemo(() => {
+    return async () => {
+      if (!clienteSeleccionado?.id) return;
+      const info = await safeGetCxc(clienteSeleccionado.id);
+      if (info) {
+        setResumen((r) => ({
+          ...r,
+          balance: info.saldo,
+          cxc: info,
+        }));
+        // También refresca fila en tabla si está en la página actual
+        setCxcByClient((prev) => ({ ...prev, [clienteSeleccionado.id]: info }));
+      }
+    };
+    // eslint-disable-next-line
+  }, [clienteSeleccionado?.id]);
+
+  // 1) Al cambiar de cliente
+  useEffect(() => {
+    if (!clienteSeleccionado?.id) return;
+    (async () => { await refreshCreditoActivo(); })();
+  }, [clienteSeleccionado?.id, refreshCreditoActivo]);
+
+  // 2) Al recuperar foco la ventana
+  useEffect(() => {
+    focusHandlerRef.current = async () => { await refreshCreditoActivo(); };
+    const handler = () => focusHandlerRef.current && focusHandlerRef.current();
+    window.addEventListener("focus", handler);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") handler();
+    });
+    return () => {
+      window.removeEventListener("focus", handler);
+    };
+    // eslint-disable-next-line
+  }, [refreshCreditoActivo]);
+
+  // 3) Cada 20s en segundo plano
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      refreshCreditoActivo();
+    }, 20000);
+    return () => clearInterval(intervalRef.current);
+  }, [refreshCreditoActivo]);
+
+  // 4) Realtime limite_manual del cliente activo
+  useEffect(() => {
+    // Limpia sub anterior
+    if (realtimeUnsubRef.current) {
+      realtimeUnsubRef.current.unsubscribe?.();
+      realtimeUnsubRef.current = null;
+    }
+    if (!clienteSeleccionado?.id) return;
+
+    // Suscribirse a cambios del cliente activo (limite_manual)
+    try {
+      const sub = subscribeClienteLimiteManual(clienteSeleccionado.id, async () => {
+        await refreshCreditoActivo();
+      });
+      realtimeUnsubRef.current = sub;
+    } catch {
+      // Fallback: postgres_changes directo (por si no se usa la helper lib)
+      const channel = supabase
+        .channel(`clientes-limite-manual-${clienteSeleccionado.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "clientes",
+            filter: `id=eq.${clienteSeleccionado.id}`,
+          },
+          async () => { await refreshCreditoActivo(); }
+        )
+        .subscribe();
+      realtimeUnsubRef.current = channel;
+    }
+
+    return () => {
+      if (realtimeUnsubRef.current) {
+        realtimeUnsubRef.current.unsubscribe?.();
+        // Para canales supabase-js v2:
+        try { supabase.removeChannel?.(realtimeUnsubRef.current); } catch {}
+        realtimeUnsubRef.current = null;
+      }
+    };
+    // eslint-disable-next-line
+  }, [clienteSeleccionado?.id, refreshCreditoActivo]);
+
+  // Cargar resumen (ventas/pagos + CxC)
   useEffect(() => {
     async function cargarResumen() {
       if (!clienteSeleccionado) {
@@ -328,7 +445,7 @@ export default function Clientes() {
           .from("pagos")
           .select("id, fecha_pago, monto, metodo_pago")
           .eq("cliente_id", clienteSeleccionado.id),
-        fetchCxc(clienteSeleccionado.id),
+        safeGetCxc(clienteSeleccionado.id),
       ]);
 
       const ventas = ventasRes.data || [];
@@ -439,13 +556,32 @@ export default function Clientes() {
               </h1>
               <p className="text-gray-600 mt-2">Manage your clients and track their payments</p>
             </div>
-            <button
-              onClick={() => { abrirNuevoCliente(); navigate("/clientes/nuevo"); }}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-            >
-              <Plus size={20} />
-              New Client
-            </button>
+            <div className="flex items-center gap-3">
+              {clienteSeleccionado?.id && (
+                <button
+                  onClick={() => safeGetCxc(clienteSeleccionado.id).then(info => {
+                    if (info) {
+                      setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
+                      setCxcByClient(prev => ({ ...prev, [clienteSeleccionado.id]: info }));
+                      setMensaje("Credit refreshed");
+                      setTimeout(() => setMensaje(""), 1200);
+                    }
+                  })}
+                  className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-4 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm"
+                  title="Refresh credit"
+                >
+                  <RefreshCcw size={18} />
+                  Refresh
+                </button>
+              )}
+              <button
+                onClick={() => { abrirNuevoCliente(); navigate("/clientes/nuevo"); }}
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+              >
+                <Plus size={20} />
+                New Client
+              </button>
+            </div>
           </div>
 
           {/* Stats Cards */}
@@ -523,6 +659,7 @@ export default function Clientes() {
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Contact</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Address</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Balance</th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Credit</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
@@ -537,6 +674,7 @@ export default function Clientes() {
                       }
                       const cxc = cxcByClient[c.id];
                       const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
+                      const disp = typeof cxc?.disponible === "number" ? cxc.disponible : null;
 
                       return (
                         <tr
@@ -597,14 +735,30 @@ export default function Clientes() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            {/* SOLO Payment aquí. Edit fue removido de la tabla */}
+                            {disp === null ? (
+                              <span className="text-xs text-gray-400">—</span>
+                            ) : (
+                              <div className="flex flex-col">
+                                <span className={`text-sm font-semibold ${disp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                  Avail: ${disp.toFixed(2)}
+                                </span>
+                                {cxc?.limite_manual_aplicado && (
+                                  <span className="text-[10px] uppercase tracking-wide text-blue-500 mt-0.5">
+                                    Manual limit active
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {/* SOLO Payment aquí. Edit fue movido al modal */}
                             <button
                               className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors duration-150"
                               onClick={async (e) => {
                                 e.stopPropagation();
-                                const info = await fetchCxc(c.id);
+                                const info = await safeGetCxc(c.id);
                                 setClienteSeleccionado({ ...c, direccion: d });
-                                setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info }));
+                                setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info || null }));
                                 setMostrarAbono(true);
                               }}
                             >
@@ -617,7 +771,7 @@ export default function Clientes() {
                     })}
                     {clientes.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center">
+                        <td colSpan={6} className="px-6 py-12 text-center">
                           <div className="flex flex-col items-center gap-3">
                             <div className="bg-gray-100 rounded-full p-3">
                               <Search className="text-gray-400" size={24} />
@@ -714,6 +868,10 @@ export default function Clientes() {
           onEdit={() => { setMostrarStats(false); handleEditCliente(); }}
           onDelete={handleEliminar}
           generatePDF={generatePDF}
+          onRefreshCredito={async () => {
+            const info = await safeGetCxc(clienteSeleccionado.id);
+            if (info) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
+          }}
         />
       )}
 
@@ -908,7 +1066,7 @@ export default function Clientes() {
 
 /* -------------------- MODAL: ESTADÍSTICAS -------------------- */
 function ClienteStatsModal({
-  open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete, generatePDF
+  open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete, generatePDF, onRefreshCredito
 }) {
   if (!open || !cliente) return null;
 
@@ -939,6 +1097,10 @@ function ClienteStatsModal({
     ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado))
     : (resumen.ventas || []);
 
+  const limite = Number(resumen?.cxc?.limite ?? 0);
+  const disponible = Number(resumen?.cxc?.disponible ?? 0);
+  const saldo = Number(resumen?.balance ?? 0);
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
@@ -964,9 +1126,31 @@ function ClienteStatsModal({
             <div className="bg-white/20 rounded-full p-3">
               <User size={24} />
             </div>
-            <div>
+            <div className="flex-1">
               <h3 className="text-2xl font-bold">{cliente.nombre}</h3>
-              <div className="mt-2 space-y-1 text-blue-100">
+              <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div className="bg-white/10 rounded-lg p-3">
+                  <div className="uppercase tracking-wide text-xs text-white/70">Current Balance</div>
+                  <div className="text-xl font-bold">{saldo >= 0 ? `$${saldo.toFixed(2)}` : `-$${Math.abs(saldo).toFixed(2)}`}</div>
+                </div>
+                <div className="bg-white/10 rounded-lg p-3">
+                  <div className="uppercase tracking-wide text-xs text-white/70">Effective Limit</div>
+                  <div className="text-xl font-bold">${limite.toFixed(2)}</div>
+                </div>
+                <div className="bg-white/10 rounded-lg p-3">
+                  <div className="uppercase tracking-wide text-xs text-white/70">Available</div>
+                  <div className={`text-xl font-bold ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>
+                    ${disponible.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              {resumen?.cxc?.limite_manual_aplicado && (
+                <div className="mt-2 text-[11px] uppercase tracking-wide text-yellow-200">
+                  Manual limit applied for this client
+                </div>
+              )}
+
+              <div className="mt-3 text-blue-100 flex items-center gap-3 flex-wrap">
                 {cliente.email && (
                   <div className="flex items-center gap-2">
                     <Mail size={14} />
@@ -991,6 +1175,14 @@ function ClienteStatsModal({
                     {[cliente.direccion.calle, cliente.direccion.ciudad, cliente.direccion.estado, cliente.direccion.zip].filter(Boolean).join(", ")}
                   </div>
                 )}
+                <button
+                  onClick={onRefreshCredito}
+                  className="ml-auto bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1"
+                  title="Refresh credit"
+                >
+                  <RefreshCcw size={14} />
+                  Refresh Credit
+                </button>
               </div>
             </div>
           </div>
@@ -1019,13 +1211,13 @@ function ClienteStatsModal({
               </div>
             </div>
 
-            <div className={`bg-gradient-to-br ${resumen.balance > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
+            <div className={`bg-gradient-to-br ${saldo > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className={`${resumen.balance > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
-                  <p className={`text-2xl font-bold ${resumen.balance > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(resumen.balance).toFixed(2)}</p>
+                  <p className={`${saldo > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
+                  <p className={`text-2xl font-bold ${saldo > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(saldo).toFixed(2)}</p>
                 </div>
-                <DollarSign className={`${resumen.balance > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
+                <DollarSign className={`${saldo > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
               </div>
             </div>
           </div>
@@ -1131,13 +1323,29 @@ function ClienteStatsModal({
               </div>
             )}
           </div>
+
+          {/* Acciones secundarias */}
+          <div className="flex items-center justify-end gap-3 mt-6">
+            <button
+              onClick={generatePDF}
+              className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              Export PDF
+            </button>
+            <button
+              onClick={() => onDelete?.(cliente)}
+              className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              Delete Client
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/* -------------------- MODAL: ABONO -------------------- */
+/* -------------------- MODAL: ABONO (área de pagos mejorada) -------------------- */
 function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { van } = useVan();
   const [monto, setMonto] = useState("");
@@ -1145,10 +1353,10 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
-  // Refrescar saldo al abrir el modal para evitar valores stale
+  // Refrescar saldo y crédito al abrir el modal
   useEffect(() => {
     (async () => {
-      const info = await fetchCxc(cliente.id);
+      const info = await safeGetCxc(cliente.id);
       if (info && setResumen) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
     })();
   }, [cliente.id, setResumen]);
@@ -1163,14 +1371,16 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   });
 
   const saldoActual = Number(resumen?.balance ?? cliente?.balance ?? 0);
+  const disponible = Number(resumen?.cxc?.disponible ?? 0);
+  const limite = Number(resumen?.cxc?.limite ?? 0);
+  const montoNum = Number(monto || 0);
+  const excedente = Math.max(0, montoNum - saldoActual); // efectivo a devolver si paga más que el saldo
 
   async function guardarAbono(e) {
     e.preventDefault();
     if (guardando) return;
     setGuardando(true);
     setMensaje("");
-
-    const montoNum = Number(monto);
 
     if (!van || !van.id) {
       setMensaje("You must select a VAN before adding a payment.");
@@ -1202,7 +1412,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       return;
     }
 
-    const info = await fetchCxc(cliente.id);
+    const info = await safeGetCxc(cliente.id);
     if (info && setResumen) {
       setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
     }
@@ -1224,16 +1434,27 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
         </div>
 
         <form onSubmit={guardarAbono} className="p-6">
-          <div className="bg-gray-50 rounded-xl p-4 mb-6">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-gray-700">Current Balance:</span>
-              <span className={`text-xl font-bold ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>
+          {/* Panel crédito dinámico */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+            <div className="bg-gray-50 rounded-xl p-4 border">
+              <div className="text-xs text-gray-500 uppercase">Balance</div>
+              <div className={`text-xl font-bold ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>
                 ${saldoActual.toFixed(2)}
-              </span>
+              </div>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-4 border">
+              <div className="text-xs text-gray-500 uppercase">Effective Limit</div>
+              <div className="text-xl font-bold">${limite.toFixed(2)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-4 border">
+              <div className="text-xs text-gray-500 uppercase">Available</div>
+              <div className={`text-xl font-bold ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                ${disponible.toFixed(2)}
+              </div>
             </div>
           </div>
 
-          <div className="space-y-4 mb-6">
+          <div className="space-y-4 mb-2">
             <div>
               <label className="font-semibold text-gray-700 mb-2 block">Payment Amount</label>
               <input
@@ -1260,6 +1481,25 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                 <option value="Transfer">🏦 Transfer</option>
               </select>
             </div>
+          </div>
+
+          {/* Visualización clara de cambio/efectivo a devolver */}
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 mb-4">
+            {montoNum <= 0 ? (
+              <span className="text-sm">Enter a payment amount to see details.</span>
+            ) : excedente > 0 ? (
+              <div className="text-sm">
+                The payment exceeds the current balance by{" "}
+                <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
+              </div>
+            ) : (
+              <div className="text-sm">
+                Payment will reduce balance to{" "}
+                <span className="font-bold">
+                  ${Math.max(0, saldoActual - montoNum).toFixed(2)}
+                </span>.
+              </div>
+            )}
           </div>
 
           {mensaje && (
@@ -1301,7 +1541,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               <div>
                 <p className="text-sm font-medium text-gray-600 mb-2">Recent Payments:</p>
                 <div className="max-h-32 overflow-y-auto space-y-1">
-                  {resumen.pagos.length === 0 ? (
+                  {resumen.pagos?.length === 0 ? (
                     <p className="text-gray-500 text-sm italic">No previous payments</p>
                   ) : (
                     resumen.pagos.map(p => (
