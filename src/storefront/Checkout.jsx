@@ -13,11 +13,9 @@ import { supabase } from "../supabaseClient";
 import { getAnonId } from "../utils/anon";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
-
-// Edge Function URL that creates a PaymentIntent
 const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
 
-/* ----------------- helpers: cart ----------------- */
+/* ---------------- helpers de carrito ---------------- */
 async function ensureCart() {
   const { data: session } = await supabase.auth.getSession();
   const userId = session?.session?.user?.id ?? null;
@@ -86,17 +84,14 @@ const fmt = (n) =>
     maximumFractionDigits: 2,
   });
 
-/* -------------------- shipping & taxes -------------------- */
+/* ---------------- shipping & taxes ---------------- */
 const SHIPPING_METHODS = [
   { key: "pickup",   label: "Pickup in store",        calc: () => 0, note: "Free" },
   { key: "standard", label: "Standard (3–7 days)",    calc: (sub) => (sub >= 75 ? 0 : 6.99), note: "Free over $75" },
   { key: "express",  label: "Express (1–2 days)",     calc: () => 14.99, note: null },
 ];
 
-// Basic state tax map (edit as needed)
-const STATE_TAX = {
-  FL: 0.06, NY: 0.08875, NJ: 0.06625, CA: 0.0725, TX: 0.0625, MA: 0.0625,
-};
+const STATE_TAX = { FL:0.06, NY:0.08875, NJ:0.06625, CA:0.0725, TX:0.0625, MA:0.0625 };
 
 function calcShipping(methodKey, subtotal, freeShippingOverride = false) {
   if (freeShippingOverride) return 0;
@@ -108,10 +103,22 @@ function calcTax(taxableSubtotal, stateCode) {
   return taxableSubtotal * rate;
 }
 
-/* -------------------- promo codes -------------------- */
+/* -------------- helpers extra -------------- */
+// VAN Online (para descuentos de stock en fallback)
+async function getOnlineVanId() {
+  const { data, error } = await supabase
+    .from("vans")
+    .select("id, nombre_van")
+    .ilike("nombre_van", "%online%")
+    .maybeSingle();
+  if (error) return null;
+  return data?.id ?? null;
+}
+
+/* ---------------- promo codes ---------------- */
 const LOCAL_CODES = [
   { code: "SAVE10", type: "percent", value: 10, active: true },
-  { code: "WELCOME5", type: "amount", value: 5, active: true },
+  { code: "WELCOME5", type: "amount",  value: 5, active: true },
   { code: "FREESHIP", type: "free_shipping", value: 0, active: true },
 ];
 
@@ -148,7 +155,7 @@ async function resolvePromo(codeInput) {
       };
     }
   } catch {
-    // fallback abajo
+    // fallback a locales
   }
 
   const local = LOCAL_CODES.find((c) => c.code === code && c.active);
@@ -164,7 +171,7 @@ async function resolvePromo(codeInput) {
 function computeDiscount(subtotal, promo) {
   if (!promo) return 0;
   if (promo.type === "percent") return Math.max(0, (subtotal * promo.value) / 100);
-  if (promo.type === "amount") return Math.min(subtotal, promo.value);
+  if (promo.type === "amount")  return Math.min(subtotal, promo.value);
   return 0;
 }
 
@@ -180,19 +187,12 @@ export default function Checkout() {
   const [items, setItems] = useState([]);
 
   const [shipping, setShipping] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    address1: "",
-    address2: "",
-    city: "",
-    state: "MA",
-    zip: "",
-    country: "US",
+    name: "", email: "", phone: "",
+    address1: "", address2: "",
+    city: "", state: "MA", zip: "", country: "US",
     method: "standard",
   });
 
-  // Promo code UI state
   const [promoInput, setPromoInput] = useState("");
   const [promo, setPromo] = useState(null);
   const [promoError, setPromoError] = useState("");
@@ -203,7 +203,7 @@ export default function Checkout() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  // CART LOAD
+  // Cargar carrito
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -224,15 +224,13 @@ export default function Checkout() {
     return () => (cancel = true);
   }, [cidFromNav]);
 
+  // Totales en UI
   const subtotal = useMemo(
     () => items.reduce((s, it) => s + Number(it.qty) * Number(it.producto?.precio || 0), 0),
     [items]
   );
   const discount = useMemo(() => computeDiscount(subtotal, promo), [subtotal, promo]);
-  const subAfterDiscount = useMemo(
-    () => Math.max(0, subtotal - discount),
-    [subtotal, discount]
-  );
+  const subAfterDiscount = useMemo(() => Math.max(0, subtotal - discount), [subtotal, discount]);
 
   const freeShippingOverride = promo?.freeShipping === true;
   const shippingCost = useMemo(
@@ -248,21 +246,18 @@ export default function Checkout() {
     [subAfterDiscount, shippingCost, taxes]
   );
 
-  function extractPiId(secret) {
+  const extractPiId = (secret) => {
     if (!secret) return "";
     const m = String(secret).match(/^(pi_[^_]+)/);
     return m ? m[1] : "";
-  }
+  };
 
-  // PREPARE PAYMENT (Edge Function)
+  // Crear PaymentIntent (Edge Function)
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        if (!items.length) {
-          setClientSecret(""); setPaymentIntentId("");
-          return;
-        }
+        if (!items.length) { setClientSecret(""); setPaymentIntentId(""); return; }
         setCreating(true); setError("");
 
         const payload = {
@@ -311,7 +306,6 @@ export default function Checkout() {
           throw new Error(errText || `Edge Function error (${res.status})`);
         }
         const data = await res.json();
-
         if (cancel) return;
         if (!data?.clientSecret) throw new Error("Could not create the payment.");
         setClientSecret(data.clientSecret);
@@ -324,49 +318,35 @@ export default function Checkout() {
     })();
     return () => (cancel = true);
   }, [
-    items,
-    subtotal,
-    discount,
-    subAfterDiscount,
-    shippingCost,
-    taxes,
-    total,
-    cartId,
-    shipping.name,
-    shipping.phone,
-    shipping.address1,
-    shipping.address2,
-    shipping.city,
-    shipping.state,
-    shipping.zip,
-    shipping.country,
-    shipping.method,
-    freeShippingOverride,
-    promo?.code,
+    items, subtotal, discount, subAfterDiscount, shippingCost, taxes, total,
+    cartId, shipping.name, shipping.phone, shipping.address1, shipping.address2,
+    shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method,
+    freeShippingOverride, promo?.code,
   ]);
 
-  // SUCCESS: create order + clear cart
+  // SUCCESS: crear orden + descontar stock
   async function handlePaid(paymentIntent) {
     try {
       const cid = cartId || (await ensureCart());
       const list = await fetchCartItems(cid);
 
       const meta = paymentIntent?.metadata || {};
-      const amounts = {
-        subtotal: Number(meta.subtotal_cents || 0) / 100 || subtotal,
-        discount: Number(meta.discount_cents || 0) / 100 || discount,
-        sub_after_discount:
-          Number(meta.subtotal_after_discount_cents || 0) / 100 || subAfterDiscount,
-        shipping: Number(meta.shipping_cents || 0) / 100 || shippingCost,
-        taxes: Number(meta.taxes_cents || 0) / 100 || taxes,
-        total:
-          (Number(meta.subtotal_after_discount_cents || 0) +
-            Number(meta.shipping_cents || 0) +
-            Number(meta.taxes_cents || 0)) /
-            100 || total,
-      };
 
-      // Preferred: RPC that creates order + discounts stock in one transaction
+      // 1) leer montos (con fallback local) y CALCULAR EL TOTAL a partir de esos montos
+      const amounts = {
+        subtotal: Number(meta.subtotal_cents ?? 0) / 100 || subtotal,
+        discount: Number(meta.discount_cents ?? 0) / 100 || discount,
+        sub_after_discount:
+          Number(meta.subtotal_after_discount_cents ?? 0) / 100 || subAfterDiscount,
+        shipping: Number(meta.shipping_cents ?? 0) / 100 || shippingCost,
+        taxes: Number(meta.taxes_cents ?? 0) / 100 || taxes,
+      };
+      // 🔧 clave: total se arma con los valores ya resueltos arriba (evita 0.00)
+      amounts.total = Number(
+        (amounts.sub_after_discount + amounts.shipping + amounts.taxes).toFixed(2)
+      );
+
+      // 2) payloads
       const itemsPayload = list.map((it) => ({
         producto_id: it.producto_id,
         qty: Number(it.qty || 0),
@@ -384,6 +364,7 @@ export default function Checkout() {
         country: shipping.country || "US",
       };
 
+      // 3) RPC preferido (c/ transacción). Si falla, haremos fallback y aun así descontaremos stock.
       let orderIdFromRpc = null;
       try {
         const { data: newOrderId, error: rpcErr } = await supabase.rpc(
@@ -406,26 +387,20 @@ export default function Checkout() {
         );
         if (!rpcErr) orderIdFromRpc = newOrderId || null;
       } catch {
-        // ignore
+        // ignore, haremos fallback abajo
       }
 
       if (orderIdFromRpc) {
-        // Limpia carrito (v2: sin .catch)
+        // limpiar carrito y listo
         try {
-          const { error: delErr } = await supabase
-            .from("cart_items")
-            .delete()
-            .eq("cart_id", cid);
-          if (delErr) throw delErr;
-        } catch (e) {
-          console.error("Error al limpiar carrito:", e);
-        }
+          await supabase.from("cart_items").delete().eq("cart_id", cid);
+        } catch (e) { console.error("Error clearing cart:", e); }
         setSuccess({ paymentIntent, orderId: orderIdFromRpc, amounts });
         setPhase("success");
         return;
       }
 
-      // Fallback: legacy flow (insert order, then mark paid)
+      // 4) Fallback: crear orden simple y marcar paid
       const { data: order, error: e1 } = await supabase
         .from("orders")
         .insert({
@@ -446,7 +421,6 @@ export default function Checkout() {
         .select("id")
         .single();
       if (e1) throw new Error(e1.message);
-
       const orderId = order.id;
 
       const rows = list.map((it) => ({
@@ -459,22 +433,33 @@ export default function Checkout() {
         codigo: it.producto?.codigo ?? null,
         taxable: true,
       }));
-
       const { error: oiErr } = await supabase.from("order_items").insert(rows);
       if (oiErr) throw oiErr;
 
-      // limpia carrito
+      // 5) Descontar stock en VAN Online también en fallback (uno por uno)
       try {
-        const { error: delErr } = await supabase
-          .from("cart_items")
-          .delete()
-          .eq("cart_id", cid);
-        if (delErr) throw delErr;
+        const onlineVanId = await getOnlineVanId();
+        if (onlineVanId) {
+          for (const it of list) {
+            const qty = Number(it.qty || 0);
+            if (qty > 0) {
+              await supabase.rpc("decrement_stock_van", {
+                p_van_id: onlineVanId,
+                p_producto_id: it.producto_id,
+                p_delta: qty,
+              });
+            }
+          }
+        }
       } catch (e) {
-        console.error("Error al limpiar carrito:", e);
+        console.error("Fallback stock decrement error:", e?.message || e);
       }
 
-      // marca pagado
+      // 6) limpiar carrito y marcar pagado
+      try {
+        await supabase.from("cart_items").delete().eq("cart_id", cid);
+      } catch (e) { console.error("Error clearing cart:", e); }
+
       const { error: upErr } = await supabase
         .from("orders")
         .update({ status: "paid" })
@@ -499,11 +484,7 @@ export default function Checkout() {
       setPromoError(e.message || "Invalid promo code.");
     }
   }
-  function clearPromo() {
-    setPromo(null);
-    setPromoInput("");
-    setPromoError("");
-  }
+  function clearPromo() { setPromo(null); setPromoInput(""); setPromoError(""); }
 
   if (phase === "success") {
     const { paymentIntent: pi, amounts } = success;
@@ -558,7 +539,7 @@ export default function Checkout() {
       </header>
 
       <main className="max-w-4xl mx-auto p-4 grid lg:grid-cols-2 gap-4">
-        {/* Shipping form */}
+        {/* Shipping */}
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
@@ -618,24 +599,16 @@ export default function Checkout() {
                   onChange={(e) => setPromoInput(e.target.value)}
                 />
                 {!promo ? (
-                  <button
-                    onClick={applyPromo}
-                    className="rounded-lg bg-gray-900 text-white px-4 py-2 hover:bg-black/80"
-                  >
+                  <button onClick={applyPromo} className="rounded-lg bg-gray-900 text-white px-4 py-2 hover:bg-black/80">
                     Apply
                   </button>
                 ) : (
-                  <button
-                    onClick={clearPromo}
-                    className="rounded-lg border px-4 py-2 hover:bg-gray-50"
-                  >
+                  <button onClick={clearPromo} className="rounded-lg border px-4 py-2 hover:bg-gray-50">
                     Remove
                   </button>
                 )}
               </div>
-              {promoError && (
-                <div className="text-sm text-rose-700 mt-1">{promoError}</div>
-              )}
+              {promoError && <div className="text-sm text-rose-700 mt-1">{promoError}</div>}
               {promo && (
                 <div className="text-sm text-emerald-700 mt-1">
                   Applied <b>{promo.code}</b>
@@ -675,14 +648,7 @@ export default function Checkout() {
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
 
           {clientSecret ? (
-            <Elements
-              key={clientSecret}
-              options={{
-                clientSecret,
-                locale: "en",
-              }}
-              stripe={stripePromise}
-            >
+            <Elements key={clientSecret} options={{ clientSecret, locale: "en" }} stripe={stripePromise}>
               <PaymentBlock onPaid={handlePaid} total={total} />
             </Elements>
           ) : (
@@ -696,7 +662,7 @@ export default function Checkout() {
   );
 }
 
-/* ---------------- Payment UI (Apple Pay / Google Pay + Payment Element) ---------------- */
+/* ---------------- Payment UI ---------------- */
 function PaymentBlock({ onPaid, total }) {
   return (
     <div className="space-y-3">
@@ -734,13 +700,7 @@ function AppleGooglePayButton({ total }) {
       <PaymentRequestButtonElement
         options={{
           paymentRequest: pr,
-          style: {
-            paymentRequestButton: {
-              type: "buy",
-              theme: "dark",
-              height: "44px",
-            },
-          },
+          style: { paymentRequestButton: { type: "buy", theme: "dark", height: "44px" } },
         }}
       />
       <div className="mt-2 text-xs text-gray-500">

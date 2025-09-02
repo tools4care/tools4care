@@ -297,6 +297,8 @@ export default function Storefront() {
   const [authMode, setAuthMode] = useState("signup");
   const [cartOpen, setCartOpen] = useState(false);
 
+  const [settings, setSettings] = useState(null); // ← site_settings (logo + nombre)
+
   const navigate = useNavigate();
   const offersRef = useRef(null);
   const reloadTimeoutRef = useRef(null);
@@ -312,6 +314,22 @@ export default function Storefront() {
         .data?.subscription;
     })();
     return () => sub?.unsubscribe?.();
+  }, []);
+
+  // Lee site_settings (logo + nombre público)
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("site_settings")
+          .select("site_name, logo_url")
+          .eq("id", 1)
+          .maybeSingle();
+        if (data) setSettings(data);
+      } catch {
+        // ignorar: si no existe la tabla/registro igual hay fallback
+      }
+    })();
   }, []);
 
   // contador del carrito
@@ -411,7 +429,7 @@ export default function Storefront() {
 
       setAllRows(enriched);
     } catch (err) {
-      // Si ves este alert sin estar logeado, es tema de RLS (ver SQL de abajo)
+      // Si ves este alert sin estar logeado, es tema de RLS (ver políticas)
       alert(err?.message || "Could not load products.");
       setAllRows([]);
     } finally {
@@ -613,24 +631,37 @@ export default function Storefront() {
     return pick.slice(0, 8);
   }, [allRows]);
 
+  const siteName = settings?.site_name || "Tools4care";
+  const logoUrl = settings?.logo_url || null;
+
   return (
     <div className="min-h-screen bg-gray-50 pb-16 sm:pb-0">
       {/* HEADER */}
       <header className="sticky top-0 z-20 bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
-          {/* Brand */}
+          {/* Brand (logo + fallback a texto) */}
           <button
             className="flex items-center gap-2 text-lg font-semibold"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
             title="Home"
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
-              <path
-                fill="currentColor"
-                d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 9h6.5z"
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={siteName}
+                className="h-7 w-auto object-contain"
+                onError={(e) => (e.currentTarget.style.display = "none")}
               />
-            </svg>
-            <span>Tools4care</span>
+            ) : (
+              // Fallback ícono si no hay logo
+              <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
+                <path
+                  fill="currentColor"
+                  d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 9h6.5z"
+                />
+              </svg>
+            )}
+            <span className="truncate max-w-[180px]">{siteName}</span>
           </button>
 
           {/* Quick search */}
@@ -656,7 +687,7 @@ export default function Storefront() {
               >
                 Login
               </button>
-              <div className="hidden sm:flex items-center gap-2">
+              <div className="hidden sm:flex itemseter gap-2">
                 <button
                   className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
                   onClick={() => {
@@ -876,7 +907,7 @@ export default function Storefront() {
       </section>
 
       <footer className="mt-10 py-6 text-center text-sm text-gray-500">
-        © {new Date().getFullYear()} Tools4care — made with 💙
+        © {new Date().getFullYear()} {siteName} — made with 💙
       </footer>
 
       {/* Auth modal */}
