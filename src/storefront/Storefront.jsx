@@ -72,18 +72,18 @@ function CartDrawer({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // --- Optimistic updates para velocidad en +/- qty ---
+  // --- Optimistic updates para velocidad en +/- qty (con CLAMP a stock) ---
   function optimisticSet(productoId, nextQty) {
     setLines((prev) => {
-      const arr = prev.map((l) =>
-        l.producto_id === productoId
-          ? {
-              ...l,
-              qty: nextQty,
-              subtotal: Math.max(0, Number(nextQty)) * Number(l.price || 0),
-            }
-          : l
-      );
+      const arr = prev.map((l) => {
+        if (l.producto_id !== productoId) return l;
+        const clamped = Math.max(0, Math.min(Number(nextQty), Number(l.stock ?? Infinity)));
+        return {
+          ...l,
+          qty: clamped,
+          subtotal: clamped * Number(l.price || 0),
+        };
+      });
       return arr.filter((l) => Number(l.qty || 0) > 0);
     });
   }
@@ -93,6 +93,8 @@ function CartDrawer({ open, onClose }) {
     optimisticSet(productoId, next);
     try {
       await updateCartItemQty(productoId, next);
+      // refrescamos para reflejar el clamp del servidor si aplicó
+      await refresh();
     } catch (e) {
       setLines(prev); // rollback si falla
       alert(e?.message || "Could not update quantity.");
@@ -133,76 +135,89 @@ function CartDrawer({ open, onClose }) {
             <div className="text-sm text-gray-500">Your cart is empty.</div>
           ) : (
             <div className="space-y-3">
-              {lines.map((l) => (
-                <div
-                  key={l.producto_id}
-                  className="flex gap-3 border rounded-xl p-2 bg-white"
-                >
-                  <div className="w-20">
-                    <div className="aspect-square bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
-                      {l.main_image_url ? (
-                        <img
-                          src={l.main_image_url}
-                          alt=""
-                          className="w-full h-full object-contain p-1"
-                          loading="lazy"
-                          onError={(e) => (e.currentTarget.style.display = "none")}
-                        />
-                      ) : (
-                        <span className="text-[10px] text-gray-400">no image</span>
+              {lines.map((l) => {
+                const qty = Number(l.qty || 0);
+                const stock = Number(l.stock || 0);
+                const atMax = qty >= stock && stock > 0;
+                const left = Math.max(0, stock - qty);
+
+                return (
+                  <div
+                    key={l.producto_id}
+                    className="flex gap-3 border rounded-xl p-2 bg-white"
+                  >
+                    <div className="w-20">
+                      <div className="aspect-square bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
+                        {l.main_image_url ? (
+                          <img
+                            src={l.main_image_url}
+                            alt=""
+                            className="w-full h-full object-contain p-1"
+                            loading="lazy"
+                            onError={(e) => (e.currentTarget.style.display = "none")}
+                          />
+                        ) : (
+                          <span className="text-[10px] text-gray-400">no image</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{l.nombre}</div>
+                      <div className="text-xs text-gray-500">{l.marca || "—"}</div>
+
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          className="w-7 h-7 rounded-md border hover:bg-gray-50"
+                          onClick={() =>
+                            handleQty(
+                              l.producto_id,
+                              Math.max(0, qty - 1)
+                            )
+                          }
+                          title="Less"
+                        >
+                          −
+                        </button>
+                        <span className="w-8 text-center text-sm">{qty}</span>
+                        <button
+                          className="w-7 h-7 rounded-md border hover:bg-gray-50 disabled:opacity-50"
+                          onClick={() => handleQty(l.producto_id, qty + 1)}
+                          disabled={stock > 0 ? atMax : false}
+                          title={atMax ? "No more stock" : "More"}
+                        >
+                          +
+                        </button>
+
+                        <button
+                          className="ml-2 text-xs text-rose-600 hover:underline"
+                          onClick={() => handleRemove(l.producto_id)}
+                        >
+                          Remove
+                        </button>
+
+                        {/* aviso de poco stock */}
+                        {left <= 3 && stock > 0 && (
+                          <span className="ml-2 text-[11px] text-amber-700">
+                            Only {left} left
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className="font-semibold">
+                        <Price value={l.subtotal} />
+                      </div>
+                      {qty > 1 && (
+                        <div className="text-[11px] text-gray-500">
+                          <Price value={l.price} /> each
+                        </div>
                       )}
                     </div>
                   </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{l.nombre}</div>
-                    <div className="text-xs text-gray-500">{l.marca || "—"}</div>
-
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        className="w-7 h-7 rounded-md border hover:bg-gray-50"
-                        onClick={() =>
-                          handleQty(
-                            l.producto_id,
-                            Math.max(0, Number(l.qty || 0) - 1)
-                          )
-                        }
-                        title="Less"
-                      >
-                        −
-                      </button>
-                      <span className="w-8 text-center text-sm">{l.qty}</span>
-                      <button
-                        className="w-7 h-7 rounded-md border hover:bg-gray-50"
-                        onClick={() =>
-                          handleQty(l.producto_id, Number(l.qty || 0) + 1)
-                        }
-                        title="More"
-                      >
-                        +
-                      </button>
-
-                      <button
-                        className="ml-2 text-xs text-rose-600 hover:underline"
-                        onClick={() => handleRemove(l.producto_id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="text-right">
-                    <div className="font-semibold">
-                      <Price value={l.subtotal} />
-                    </div>
-                    {Number(l.qty || 0) > 1 && (
-                      <div className="text-[11px] text-gray-500">
-                        <Price value={l.price} /> each
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -297,13 +312,13 @@ export default function Storefront() {
   const [authMode, setAuthMode] = useState("signup");
   const [cartOpen, setCartOpen] = useState(false);
 
-  const [settings, setSettings] = useState(null); // ← site_settings (logo + nombre)
+  const [settings, setSettings] = useState(null); // site_settings (logo + nombre)
 
   const navigate = useNavigate();
   const offersRef = useRef(null);
   const reloadTimeoutRef = useRef(null);
 
-  // sesión (pero el carrito y el catálogo NO requieren login)
+  // sesión
   useEffect(() => {
     let sub;
     (async () => {
@@ -316,7 +331,7 @@ export default function Storefront() {
     return () => sub?.unsubscribe?.();
   }, []);
 
-  // Lee site_settings (logo + nombre público)
+  // site_settings (logo + nombre público)
   useEffect(() => {
     (async () => {
       try {
@@ -327,7 +342,7 @@ export default function Storefront() {
           .maybeSingle();
         if (data) setSettings(data);
       } catch {
-        // ignorar: si no existe la tabla/registro igual hay fallback
+        // ignore
       }
     })();
   }, []);
@@ -340,7 +355,7 @@ export default function Storefront() {
         const c = await cartCount(cid);
         setCount(c);
       } catch {
-        // ignorar
+        // ignore
       }
     })();
   }, [user]);
@@ -352,7 +367,7 @@ export default function Storefront() {
       const onlineVanId = await getOnlineVanId();
       if (!onlineVanId) throw new Error("Online VAN not found.");
 
-      // 1) Stock del VAN Online + datos base del producto (incluye precio base)
+      // 1) Stock del VAN Online + producto base
       const { data: stock, error: stErr } = await supabase
         .from("stock_van")
         .select(
@@ -369,7 +384,7 @@ export default function Storefront() {
 
       const ids = (stock || []).map((r) => r.producto_id);
 
-      // 2) Metas online (precio_online, descripcion, visible_online + DEALS)
+      // 2) Metas online
       let metasMap = new Map();
       if (ids.length) {
         const { data: metas, error: mErr } = await supabase
@@ -382,7 +397,7 @@ export default function Storefront() {
         metasMap = new Map((metas || []).map((m) => [m.producto_id, m]));
       }
 
-      // 3) Imagen principal para cards
+      // 3) Imagen principal
       let coverMap = new Map();
       if (ids.length) {
         const { data: covers, error: cErr } = await supabase
@@ -395,7 +410,7 @@ export default function Storefront() {
         );
       }
 
-      // 4) Enriquecer y filtrar por visible_online
+      // 4) Enriquecer y filtrar
       const enriched = (stock || [])
         .filter((r) => !!r.productos)
         .map((r) => {
@@ -410,7 +425,7 @@ export default function Storefront() {
             marca: r.productos.marca,
             price_base: base,
             price_online: online,
-            price: Number(online ?? base), // mostrado en storefront
+            price: Number(online ?? base),
             stock: Number(r.cantidad ?? 0),
             descripcion: m.descripcion ?? "",
             visible_online: !!m.visible_online,
@@ -429,7 +444,6 @@ export default function Storefront() {
 
       setAllRows(enriched);
     } catch (err) {
-      // Si ves este alert sin estar logeado, es tema de RLS (ver políticas)
       alert(err?.message || "Could not load products.");
       setAllRows([]);
     } finally {
@@ -442,7 +456,7 @@ export default function Storefront() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime con debounce (evita flicker)
+  // Realtime con debounce
   useEffect(() => {
     let channel;
     (async () => {
@@ -600,7 +614,7 @@ export default function Storefront() {
     );
   }
 
-  // Featured deals: prioriza lo marcado en inventario y respeta fechas/priority
+  // Featured deals
   const deals = useMemo(() => {
     const now = Date.now();
     const within = (p) => {
@@ -653,7 +667,6 @@ export default function Storefront() {
                 onError={(e) => (e.currentTarget.style.display = "none")}
               />
             ) : (
-              // Fallback ícono si no hay logo
               <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
                 <path
                   fill="currentColor"
@@ -808,7 +821,7 @@ export default function Storefront() {
         )}
       </section>
 
-      {/* NEW ARRIVALS (simple: top 12 del set) */}
+      {/* NEW ARRIVALS */}
       <section className="max-w-7xl mx-auto px-4 pb-2">
         <h2 className="text-xl font-bold">New arrivals</h2>
         {[...allRows].length ? (
@@ -898,7 +911,6 @@ export default function Storefront() {
         {!rows.length && !loading && (
           <div className="text-gray-500">No products match your filters.</div>
         )}
-        {/* 👉 2 columnas en mobile */}
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
             <ProductCard key={p.id} p={p} />
@@ -921,7 +933,7 @@ export default function Storefront() {
       {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
 
-      {/* Mobile bottom bar (tipo Amazon, carrito visible siempre) */}
+      {/* Mobile bottom bar */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
         <div className="flex justify-around items-center py-2">
           <button
