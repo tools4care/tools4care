@@ -9,26 +9,35 @@ export default function OnlineDiscounts() {
 
   async function loadCodes() {
     setLoading(true);
-    const { data, error } = await supabase.from("discount_codes").select("*").order("created_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("discount_codes")
+      .select("code, percent, created_at")
+      .order("created_at", { ascending: false });
     if (!error) setCodes(data || []);
     setLoading(false);
   }
 
   async function addCode(e) {
     e.preventDefault();
-    if (!form.code || form.percent <= 0) return alert("Code and % required");
-    const { error } = await supabase.from("discount_codes").insert({
-      code: form.code,
-      percent: form.percent,
-    });
+    const upc = String(form.code || "").trim().toUpperCase();
+    const pct = Number(form.percent || 0);
+    if (!upc || pct <= 0) return alert("Code and % required");
+
+    // evita duplicados del mismo code
+    const { error } = await supabase
+      .from("discount_codes")
+      .upsert({ code: upc, percent: pct }, { onConflict: "code" });
+
     if (error) return alert(error.message);
     setForm({ code: "", percent: 0 });
     loadCodes();
   }
 
-  async function deleteCode(id) {
+  async function deleteCode(code) {
     if (!confirm("Delete this code?")) return;
-    await supabase.from("discount_codes").delete().eq("id", id);
+    const upc = String(code || "").toUpperCase();
+    const { error } = await supabase.from("discount_codes").delete().eq("code", upc);
+    if (error) return alert(error.message);
     loadCodes();
   }
 
@@ -75,13 +84,15 @@ export default function OnlineDiscounts() {
           </thead>
           <tbody>
             {codes.map((c) => (
-              <tr key={c.id} className="border-t">
+              <tr key={c.code} className="border-t">
                 <td className="p-2">{c.code}</td>
-                <td className="p-2 text-center">{c.percent}%</td>
-                <td className="p-2">{new Date(c.created_at).toLocaleString()}</td>
+                <td className="p-2 text-center">{Number(c.percent || 0)}%</td>
+                <td className="p-2">
+                  {c.created_at ? new Date(c.created_at).toLocaleString() : "—"}
+                </td>
                 <td className="p-2 text-right">
                   <button
-                    onClick={() => deleteCode(c.id)}
+                    onClick={() => deleteCode(c.code)}
                     className="text-red-600 hover:underline"
                   >
                     Delete

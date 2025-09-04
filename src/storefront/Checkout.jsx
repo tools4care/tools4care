@@ -50,6 +50,7 @@ async function ensureCart() {
   return inserted.id;
 }
 
+/** Lee líneas del carrito + precio y STOCK **online** */
 async function fetchCartItems(cartId) {
   const { data: items, error: itErr } = await supabase
     .from("cart_items")
@@ -61,20 +62,33 @@ async function fetchCartItems(cartId) {
   const ids = (items || []).map((i) => i.producto_id);
   if (!ids.length) return [];
 
-  const { data: productos, error: pErr } = await supabase
-    .from("productos")
-    .select("id, codigo, nombre, precio, marca")
+  // Usamos la vista online para obtener price_base/price_online/stock
+  const { data: prods, error: pErr } = await supabase
+    .from("online_products_v")
+    .select("id, codigo, nombre, marca, price_base, price_online, stock")
     .in("id", ids);
 
   if (pErr) throw pErr;
 
-  const idx = new Map((productos || []).map((p) => [p.id, p]));
+  const idx = new Map((prods || []).map((p) => [p.id, p]));
   return (items || [])
-    .map((i) => ({
-      producto_id: i.producto_id,
-      qty: Number(i.qty || 0),
-      producto: idx.get(i.producto_id),
-    }))
+    .map((i) => {
+      const p = idx.get(i.producto_id);
+      if (!p) return null;
+      const unit = Number(p.price_online ?? p.price_base ?? 0);
+      return {
+        producto_id: i.producto_id,
+        qty: Number(i.qty || 0),
+        producto: {
+          id: p.id,
+          codigo: p.codigo,
+          nombre: p.nombre,
+          marca: p.marca,
+          precio: unit,
+          stock: Number(p.stock ?? 0),
+        },
+      };
+    })
     .filter(Boolean);
 }
 
@@ -116,48 +130,50 @@ async function getOnlineVanId() {
 }
 
 /* ---------------- promo codes ---------------- */
+/** Códigos locales de respaldo (opcional) */
 const LOCAL_CODES = [
   { code: "SAVE10", type: "percent", value: 10, active: true },
   { code: "WELCOME5", type: "amount",  value: 5, active: true },
   { code: "FREESHIP", type: "free_shipping", value: 0, active: true },
 ];
 
+/** Lee un código desde la tabla discount_codes (usa columna `percent`) */
 async function resolvePromo(codeInput) {
   const code = String(codeInput || "").trim().toUpperCase();
   if (!code) return null;
 
   try {
+    // 👇 Ajustado a tu schema: code, percent (+campos opcionales si los tienes)
     const { data, error } = await supabase
       .from("discount_codes")
-      .select("code, type, value, active, expires_at, max_uses, times_used")
+      .select("code, percent, active, expires_at, max_uses, times_used")
       .ilike("code", code)
       .maybeSingle();
 
     if (!error && data) {
       const now = new Date();
-      const expired =
-        data.expires_at ? new Date(data.expires_at).getTime() < now.getTime() : false;
+      const expired = data.expires_at ? new Date(data.expires_at) < now : false;
       const overUsed =
         typeof data.max_uses === "number" &&
         typeof data.times_used === "number" &&
         data.max_uses > 0 &&
         data.times_used >= data.max_uses;
 
-      if (!data.active) throw new Error("This code is not active.");
+      // si no tienes active/times_used en tu tabla, estos checks se ignoran
+      if (data.active === false) throw new Error("This code is not active.");
       if (expired) throw new Error("This code is expired.");
       if (overUsed) throw new Error("This code has reached its limit.");
 
-      return {
-        code: data.code.toUpperCase(),
-        type: data.type,
-        value: Number(data.value || 0),
-        freeShipping: data.type === "free_shipping",
-      };
+      // Normalizamos a formato {type,value}
+      const pct = Number(data.percent || 0);
+      if (pct <= 0) throw new Error("Invalid promo code.");
+      return { code: data.code.toUpperCase(), type: "percent", value: pct, freeShipping: false };
     }
   } catch {
-    // fallback a locales
+    // cae al respaldo local
   }
 
+  // Respaldo local
   const local = LOCAL_CODES.find((c) => c.code === code && c.active);
   if (!local) throw new Error("Invalid or inactive promo code.");
   return {
@@ -168,10 +184,20 @@ async function resolvePromo(codeInput) {
   };
 }
 
+/** Cálculo del descuento — ¡ahora sí existe! */
 function computeDiscount(subtotal, promo) {
+  const sub = Math.max(0, Number(subtotal) || 0);
   if (!promo) return 0;
-  if (promo.type === "percent") return Math.max(0, (subtotal * promo.value) / 100);
-  if (promo.type === "amount")  return Math.min(subtotal, promo.value);
+
+  if (promo.type === "percent") {
+    const pct = Math.max(0, Number(promo.value || 0));
+    return Math.min(sub, (sub * pct) / 100);
+  }
+  if (promo.type === "amount") {
+    const amt = Math.max(0, Number(promo.value || 0));
+    return Math.min(sub, amt);
+  }
+  // otros tipos (p.ej., free_shipping) no descuentan subtotal
   return 0;
 }
 
@@ -199,6 +225,7 @@ export default function Checkout() {
 
   const [clientSecret, setClientSecret] = useState("");
   const [paymentIntentId, setPaymentIntentId] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -246,18 +273,29 @@ export default function Checkout() {
     [subAfterDiscount, shippingCost, taxes]
   );
 
+  // 🚫 Detecta líneas que exceden stock
+  const stockIssues = useMemo(
+    () => items.filter((it) => Number(it.qty) > Number(it.producto?.stock ?? 0)),
+    [items]
+  );
+  const hasStockIssues = stockIssues.length > 0;
+
   const extractPiId = (secret) => {
     if (!secret) return "";
     const m = String(secret).match(/^(pi_[^_]+)/);
     return m ? m[1] : "";
   };
 
-  // Crear PaymentIntent (Edge Function)
+  // Crear PaymentIntent (Edge Function) — no lo creamos si hay issues de stock
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        if (!items.length) { setClientSecret(""); setPaymentIntentId(""); return; }
+        if (!items.length || hasStockIssues) {
+          setClientSecret("");
+          setPaymentIntentId("");
+          return;
+        }
         setCreating(true); setError("");
 
         const payload = {
@@ -321,7 +359,7 @@ export default function Checkout() {
     items, subtotal, discount, subAfterDiscount, shippingCost, taxes, total,
     cartId, shipping.name, shipping.phone, shipping.address1, shipping.address2,
     shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method,
-    freeShippingOverride, promo?.code,
+    freeShippingOverride, promo?.code, hasStockIssues,
   ]);
 
   // SUCCESS: crear orden + descontar stock
@@ -341,7 +379,6 @@ export default function Checkout() {
         shipping: Number(meta.shipping_cents ?? 0) / 100 || shippingCost,
         taxes: Number(meta.taxes_cents ?? 0) / 100 || taxes,
       };
-      // 🔧 clave: total se arma con los valores ya resueltos arriba (evita 0.00)
       amounts.total = Number(
         (amounts.sub_after_discount + amounts.shipping + amounts.taxes).toFixed(2)
       );
@@ -364,7 +401,7 @@ export default function Checkout() {
         country: shipping.country || "US",
       };
 
-      // 3) RPC preferido (c/ transacción). Si falla, haremos fallback y aun así descontaremos stock.
+      // 3) RPC preferido (c/ transacción)
       let orderIdFromRpc = null;
       try {
         const { data: newOrderId, error: rpcErr } = await supabase.rpc(
@@ -387,20 +424,17 @@ export default function Checkout() {
         );
         if (!rpcErr) orderIdFromRpc = newOrderId || null;
       } catch {
-        // ignore, haremos fallback abajo
+        // ignore; haremos fallback
       }
 
       if (orderIdFromRpc) {
-        // limpiar carrito y listo
-        try {
-          await supabase.from("cart_items").delete().eq("cart_id", cid);
-        } catch (e) { console.error("Error clearing cart:", e); }
+        try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
         setSuccess({ paymentIntent, orderId: orderIdFromRpc, amounts });
         setPhase("success");
         return;
       }
 
-      // 4) Fallback: crear orden simple y marcar paid
+      // 4) Fallback simple (crea order/items, descuenta y marca paid)
       const { data: order, error: e1 } = await supabase
         .from("orders")
         .insert({
@@ -436,7 +470,6 @@ export default function Checkout() {
       const { error: oiErr } = await supabase.from("order_items").insert(rows);
       if (oiErr) throw oiErr;
 
-      // 5) Descontar stock en VAN Online también en fallback (uno por uno)
       try {
         const onlineVanId = await getOnlineVanId();
         if (onlineVanId) {
@@ -455,10 +488,7 @@ export default function Checkout() {
         console.error("Fallback stock decrement error:", e?.message || e);
       }
 
-      // 6) limpiar carrito y marcar pagado
-      try {
-        await supabase.from("cart_items").delete().eq("cart_id", cid);
-      } catch (e) { console.error("Error clearing cart:", e); }
+      try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
 
       const { error: upErr } = await supabase
         .from("orders")
@@ -647,7 +677,21 @@ export default function Checkout() {
 
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
 
-          {clientSecret ? (
+          {/* 🚫 Bloquea el pago si hay exceso de stock */}
+          {hasStockIssues ? (
+            <div className="bg-white rounded-2xl shadow-sm p-4">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">
+                Some items exceed available stock. Please reduce quantities:
+                <ul className="list-disc ml-5 mt-1">
+                  {stockIssues.map((it) => (
+                    <li key={it.producto_id}>
+                      {it.producto?.nombre || it.producto_id}: requested {it.qty}, in stock {it.producto?.stock ?? 0}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : clientSecret ? (
             <Elements key={clientSecret} options={{ clientSecret, locale: "en" }} stripe={stripePromise}>
               <PaymentBlock onPaid={handlePaid} total={total} />
             </Elements>

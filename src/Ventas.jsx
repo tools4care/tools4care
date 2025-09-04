@@ -672,8 +672,10 @@ export default function Sales() {
       // 1) RPC original
       try {
         const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
-          van_id_param: van.id,
-        });
+  van_id_param: van.id,
+ dias: 30,     // ajusta si quieres otra ventana
+  limite: 10,   // top N
+});
         if (error) throw error;
 
         if (Array.isArray(data) && data.length > 0) {
@@ -1201,6 +1203,26 @@ export default function Sales() {
           );
         }
         ventaId = ins?.id || null;
+
+        /* ⬇️ AJUSTE CLAVE: si usamos fallback, también insertamos las líneas.
+           Esto asegura que tus triggers en detalle_ventas/ventas puedan
+           descontar stock y que los reportes muestren los productos. */
+        if (ventaId && itemsForDb.length > 0) {
+          await supabase
+            .from("detalle_ventas")
+            .insert(
+              itemsForDb.map((it) => ({
+                venta_id: ventaId,
+                producto_id: it.producto_id,
+                cantidad: it.cantidad,
+                precio_unit: it.precio_unit,
+                descuento_pct: it.descuento_pct,
+              }))
+            );
+
+          // (Opcional) si tienes un RPC explícito para aplicar stock:
+          // await supabase.rpc("apply_sale_stock", { p_sale_id: ventaId }).catch(() => {});
+        }
       }
 
       // (Opcional) registrar ajuste/pago de deuda si usas funciones aparte

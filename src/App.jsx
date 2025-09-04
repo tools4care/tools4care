@@ -21,13 +21,12 @@ import Orders from "./admin/Orders";
 import OnlineCatalog from "./online/OnlineCatalog";
 import Checkout from "./storefront/Checkout";
 
-// ➕ NUEVO: módulos del panel Online
+// ➕ (seguimos usando descuentos)
 import OnlineDiscounts from "./online/Discounts";
-import OnlineInventory from "./online/Inventory";
+// ❌  ⬇️  Eliminado: import OnlineInventory from "./online/Inventory";
 
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
-// ✅ Callback público para confirmación de correo / magic link
 import AuthCallback from "./storefront/AuthCallback";
 
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
@@ -73,11 +72,11 @@ export default function App() {
         <Routes>
           {/* --- Público: flujo tienda --- */}
           <Route path="/storefront" element={<Storefront />} />
-          <Route path="/checkout" element={<Checkout />} />
-          {/* Si algún código viejo navega a /online/checkout, redirigimos al checkout público */}
-          <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
+          <Route path="/shop" element={<Navigate to="/storefront" replace />} />
+          <Route path="/store" element={<Navigate to="/storefront" replace />} />
 
-          {/* ✅ Callback de autenticación (confirmación email / magic link) */}
+          <Route path="/checkout" element={<Checkout />} />
+          <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
           {/* --- Público general --- */}
@@ -105,11 +104,14 @@ export default function App() {
             <Route index element={<OnlineDashboard />} />
             <Route path="orders" element={<Orders />} />
             <Route path="catalog" element={<OnlineCatalog />} />
-            {/* ➕ NUEVOS módulos */}
             <Route path="discounts" element={<OnlineDiscounts />} />
-            <Route path="inventory" element={<OnlineInventory />} />
-            {/* checkout admin sigue existiendo vía redirect arriba */}
+            {/* ❌ Inventario ya no existe en el menú.
+                ✅ Redirigimos si alguien entra por enlace viejo */}
+            <Route path="inventory" element={<Navigate to="/online/catalog" replace />} />
           </Route>
+
+          {/* Alias para enlaces antiguos al catálogo admin */}
+          <Route path="/catalog" element={<Navigate to="/online/catalog" replace />} />
 
           {/* Área Vans (protegido) */}
           <Route

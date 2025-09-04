@@ -26,10 +26,6 @@ export default function OnlineSidebar() {
           Catálogo
         </NavLink>
 
-        <NavLink to="/online/inventory" className={({ isActive }) => `${base} ${isActive ? active : idle}`}>
-          Inventario
-        </NavLink>
-
         <NavLink to="/online/discounts" className={({ isActive }) => `${base} ${isActive ? active : idle}`}>
           Cupones de descuento
         </NavLink>

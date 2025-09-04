@@ -13,8 +13,11 @@ import {
 import AuthModal from "./AuthModal";
 
 /* -------------------- Helpers -------------------- */
+const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
+
 // VAN Online (para escuchar cambios de stock)
 async function getOnlineVanId() {
+  if (ENV_ONLINE_VAN_ID) return ENV_ONLINE_VAN_ID;
   const { data, error } = await supabase
     .from("vans")
     .select("id, nombre_van")
@@ -26,6 +29,30 @@ async function getOnlineVanId() {
   }
   return data?.id ?? null;
 }
+
+// util para consultas .in() en bloques y evitar URLs enormes
+async function selectInChunks({ table, columns, key, ids, chunkSize = 150 }) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const slice = ids.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from(table)
+      .select(columns)
+      .in(key, slice);
+    if (error) throw error;
+    out.push(...(data || []));
+  }
+  return out;
+}
+
+// booleano robusto para valores de PG ('t'/'f', 'true'/'false', 1/0, null)
+const toBool = (v) => {
+  if (v === true) return true;
+  if (v === false || v == null) return false;
+  if (typeof v === "string") return /^t(rue)?|1$/i.test(v);
+  if (typeof v === "number") return v !== 0;
+  return false;
+};
 
 function Price({ value, currency = "USD" }) {
   const n = Number(value || 0);
@@ -72,17 +99,15 @@ function CartDrawer({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // --- Optimistic updates para velocidad en +/- qty (con CLAMP a stock) ---
   function optimisticSet(productoId, nextQty) {
     setLines((prev) => {
       const arr = prev.map((l) => {
         if (l.producto_id !== productoId) return l;
-        const clamped = Math.max(0, Math.min(Number(nextQty), Number(l.stock ?? Infinity)));
-        return {
-          ...l,
-          qty: clamped,
-          subtotal: clamped * Number(l.price || 0),
-        };
+        const clamped = Math.max(
+          0,
+          Math.min(Number(nextQty), Number(l.stock ?? Infinity))
+        );
+        return { ...l, qty: clamped, subtotal: clamped * Number(l.price || 0) };
       });
       return arr.filter((l) => Number(l.qty || 0) > 0);
     });
@@ -93,10 +118,9 @@ function CartDrawer({ open, onClose }) {
     optimisticSet(productoId, next);
     try {
       await updateCartItemQty(productoId, next);
-      // refrescamos para reflejar el clamp del servidor si aplicó
       await refresh();
     } catch (e) {
-      setLines(prev); // rollback si falla
+      setLines(prev);
       alert(e?.message || "Could not update quantity.");
     }
   }
@@ -107,7 +131,7 @@ function CartDrawer({ open, onClose }) {
     try {
       await removeCartItem(productoId);
     } catch (e) {
-      setLines(prev); // rollback
+      setLines(prev);
       alert(e?.message || "Could not remove item.");
     }
   }
@@ -157,7 +181,9 @@ function CartDrawer({ open, onClose }) {
                             onError={(e) => (e.currentTarget.style.display = "none")}
                           />
                         ) : (
-                          <span className="text-[10px] text-gray-400">no image</span>
+                          <span className="text-[10px] text-gray-400">
+                            no image
+                          </span>
                         )}
                       </div>
                     </div>
@@ -170,10 +196,7 @@ function CartDrawer({ open, onClose }) {
                         <button
                           className="w-7 h-7 rounded-md border hover:bg-gray-50"
                           onClick={() =>
-                            handleQty(
-                              l.producto_id,
-                              Math.max(0, qty - 1)
-                            )
+                            handleQty(l.producto_id, Math.max(0, qty - 1))
                           }
                           title="Less"
                         >
@@ -196,7 +219,6 @@ function CartDrawer({ open, onClose }) {
                           Remove
                         </button>
 
-                        {/* aviso de poco stock */}
                         {left <= 3 && stock > 0 && (
                           <span className="ml-2 text-[11px] text-amber-700">
                             Only {left} left
@@ -207,6 +229,7 @@ function CartDrawer({ open, onClose }) {
 
                     <div className="text-right">
                       <div className="font-semibold">
+                        {/* FIX: subtotal de línea, no el global */}
                         <Price value={l.subtotal} />
                       </div>
                       {qty > 1 && (
@@ -384,30 +407,39 @@ export default function Storefront() {
 
       const ids = (stock || []).map((r) => r.producto_id);
 
-      // 2) Metas online
-      let metasMap = new Map();
-      if (ids.length) {
-        const { data: metas, error: mErr } = await supabase
-          .from("online_product_meta")
-          .select(
-            "producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority"
-          )
-          .in("producto_id", ids);
-        if (mErr) throw mErr;
-        metasMap = new Map((metas || []).map((m) => [m.producto_id, m]));
-      }
+      
+  // 2) Metas online (solo visibles) en bloques
+let metasMap = new Map();
+if (ids.length) {
+  const chunkSize = 150;
+  const metas = [];
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const slice = ids.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from("online_product_meta")
+      .select(
+        "producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority"
+      )
+      .eq("visible_online", true)       // 👈 filtro en servidor
+      .in("producto_id", slice);
+    if (error) throw error;
+    metas.push(...(data || []));
+  }
+  metas.forEach((m) => metasMap.set(m.producto_id, m));
+}
 
-      // 3) Imagen principal
+
+      // 3) Imagen principal (chunked)
       let coverMap = new Map();
       if (ids.length) {
-        const { data: covers, error: cErr } = await supabase
-          .from("product_main_image_v")
-          .select("producto_id, main_image_url")
-          .in("producto_id", ids);
-        if (cErr) throw cErr;
-        coverMap = new Map(
-          (covers || []).map((c) => [c.producto_id, c.main_image_url])
-        );
+        const covers = await selectInChunks({
+          table: "product_main_image_v",
+          columns: "producto_id, main_image_url",
+          key: "producto_id",
+          ids,
+          chunkSize: 150,
+        });
+        coverMap = new Map(covers.map((c) => [c.producto_id, c.main_image_url]));
       }
 
       // 4) Enriquecer y filtrar
@@ -416,8 +448,7 @@ export default function Storefront() {
         .map((r) => {
           const m = metasMap.get(r.producto_id) || {};
           const base = Number(r.productos.precio ?? 0);
-          const online =
-            m.price_online == null ? null : Number(m.price_online);
+          const online = m.price_online == null ? null : Number(m.price_online);
           return {
             id: r.productos.id,
             codigo: r.productos.codigo,
@@ -428,11 +459,11 @@ export default function Storefront() {
             price: Number(online ?? base),
             stock: Number(r.cantidad ?? 0),
             descripcion: m.descripcion ?? "",
-            visible_online: !!m.visible_online,
+            visible_online: toBool(m.visible_online), // << robusto
             main_image_url: coverMap.get(r.producto_id) || null,
 
             // Ofertas
-            is_deal: !!m.is_deal,
+            is_deal: toBool(m.is_deal),
             deal_starts_at: m.deal_starts_at || null,
             deal_ends_at: m.deal_ends_at || null,
             deal_badge: m.deal_badge || "Deal",
@@ -670,7 +701,7 @@ export default function Storefront() {
               <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
                 <path
                   fill="currentColor"
-                  d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 9h6.5z"
+                  d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 12h6.5z"
                 />
               </svg>
             )}
@@ -687,42 +718,30 @@ export default function Storefront() {
             />
           </div>
 
-          {/* Auth (botón Login visible en mobile) */}
+          {/* Auth (en móvil ya NO mostramos otro login; queda solo el de la barra inferior) */}
           {!user ? (
-            <>
+            <div className="hidden sm:flex items-center gap-2">
               <button
-                className="sm:hidden inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                onClick={() => {
+                  setAuthMode("signup");
+                  setAuthOpen(true);
+                }}
+                title="Create account"
+              >
+                Sign up
+              </button>
+              <button
+                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
                 onClick={() => {
                   setAuthMode("login");
                   setAuthOpen(true);
                 }}
                 title="Sign in"
               >
-                Login
+                Sign in
               </button>
-              <div className="hidden sm:flex itemseter gap-2">
-                <button
-                  className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                  onClick={() => {
-                    setAuthMode("signup");
-                    setAuthOpen(true);
-                  }}
-                  title="Create account"
-                >
-                  Sign up
-                </button>
-                <button
-                  className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                  onClick={() => {
-                    setAuthMode("login");
-                    setAuthOpen(true);
-                  }}
-                  title="Sign in"
-                >
-                  Sign in
-                </button>
-              </div>
-            </>
+            </div>
           ) : (
             <div className="hidden sm:flex items-center gap-2">
               <span className="text-sm text-gray-700 truncate max-w-[180px]">
@@ -933,7 +952,7 @@ export default function Storefront() {
       {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
 
-      {/* Mobile bottom bar */}
+      {/* Mobile bottom bar (aquí queda el ÚNICO login en móvil) */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
         <div className="flex justify-around items-center py-2">
           <button
@@ -956,7 +975,6 @@ export default function Storefront() {
             Search
           </a>
 
-          {/* Login visible en mobile */}
           {!user && (
             <button
               className="flex flex-col items-center text-xs"
@@ -983,7 +1001,7 @@ export default function Storefront() {
             <svg width="22" height="22" viewBox="0 0 24 24">
               <path
                 fill="currentColor"
-                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2m10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z"
+                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z"
               />
             </svg>
             <span className="absolute -top-2 -right-3 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5">
