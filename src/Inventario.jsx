@@ -20,7 +20,7 @@ export default function Inventory() {
     tipo: "warehouse",
   });
 
-  const [inventory, setInventory] = useState([]); // {id?, producto_id, cantidad, productos:{codigo,nombre,marca,size}}
+  const [inventory, setInventory] = useState([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -72,7 +72,7 @@ export default function Inventory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [van?.id]);
 
-  // reset de paginación cada vez que cambia ubicación o refresco
+  // Reset de paginación e items cuando cambia ubicación o pedimos refresh
   useEffect(() => {
     setPage(0);
     setHasMore(true);
@@ -95,12 +95,10 @@ export default function Inventory() {
           return;
         }
 
-        // Consulta **única** a stock_van con embed de productos
-        // Evita la URL gigante que generaba el .in([...ids])
         const from = offset;
         const to = offset + PAGE_SIZE - 1;
 
-        const { data, error: sErr } = await supabase
+        const { data, error: sErr, count } = await supabase
           .from("stock_van")
           .select(
             `
@@ -127,15 +125,35 @@ export default function Inventory() {
             productos: s.productos || null,
           })) ?? [];
 
-        setInventory((prev) => (page === 0 ? rows : [...prev, ...rows]));
-        setHasMore(rows.length === PAGE_SIZE);
+        setInventory((prev) => (offset === 0 ? rows : [...prev, ...rows]));
+        // Mejor criterio de "hay más": compara contra el total (count)
+        const loaded = offset + rows.length;
+        setHasMore(typeof count === "number" ? loaded < count : rows.length === PAGE_SIZE);
       } catch (e) {
         setError(e?.message || String(e));
         setHasMore(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected.id, selected.tipo, offset]);
+    // 👉 IMPORTANTE: añadimos `refresh` para que recargue tras agregar/transferir
+  }, [selected.id, selected.tipo, offset, refresh]);
+
+  // ======================== Realtime: actualiza al cambiar stock_van ========================
+  useEffect(() => {
+    if (selected.tipo !== "van" || !selected.id) return;
+
+    const channel = supabase
+      .channel(`inv-${selected.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "stock_van", filter: `van_id=eq.${selected.id}` },
+        () => setRefresh((r) => r + 1)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selected.tipo, selected.id]);
 
   // ======================== Filtro de búsqueda ========================
   const filteredInventory = useMemo(() => {
@@ -293,13 +311,20 @@ export default function Inventory() {
           cerrar={() => setModalOpen(false)}
           tipo={selected.tipo}          // "van" o "warehouse"
           ubicacionId={selected.id}     // van_id cuando es "van"
-          onSuccess={() => setRefresh((r) => r + 1)}
+          onSuccess={() => {
+            // Opcional: forzamos volver a la primera página y refrescar
+            setPage(0);
+            setRefresh((r) => r + 1);
+          }}
         />
         <ModalTraspasoStock
           abierto={modalTransferOpen}
           cerrar={() => setModalTransferOpen(false)}
           ubicaciones={locations}
-          onSuccess={() => setRefresh((r) => r + 1)}
+          onSuccess={() => {
+            setPage(0);
+            setRefresh((r) => r + 1);
+          }}
         />
       </div>
     </div>
