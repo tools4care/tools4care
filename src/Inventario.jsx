@@ -5,6 +5,8 @@ import { useVan } from "./hooks/VanContext";
 import AgregarStockModal from "./AgregarStockModal";
 import ModalTraspasoStock from "./ModalTraspasoStock";
 
+const PAGE_SIZE = 100; // ajusta según necesites
+
 export default function Inventory() {
   const { van } = useVan();
 
@@ -18,20 +20,30 @@ export default function Inventory() {
     tipo: "warehouse",
   });
 
-  const [inventory, setInventory] = useState([]); // {id, producto_id, cantidad, productos:{codigo,nombre,marca}}
+  const [inventory, setInventory] = useState([]); // {id?, producto_id, cantidad, productos:{codigo,nombre,marca,size}}
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTransferOpen, setModalTransferOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
+  // paginación
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const offset = page * PAGE_SIZE;
+
   // ======================== Cargar ubicaciones ========================
   useEffect(() => {
     (async () => {
-      const { data: vansData } = await supabase
+      const { data: vansData, error: vErr } = await supabase
         .from("vans")
         .select("id, nombre_van")
         .order("id", { ascending: true });
+
+      if (vErr) {
+        setError(vErr.message);
+        return;
+      }
 
       const vansLocations = (vansData || []).map((v) => ({
         key: `van_${v.id}`,
@@ -60,53 +72,70 @@ export default function Inventory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [van?.id]);
 
-  // ======================== Cargar inventario ========================
+  // reset de paginación cada vez que cambia ubicación o refresco
   useEffect(() => {
-    loadInventory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setPage(0);
+    setHasMore(true);
+    setInventory([]);
+    setError("");
   }, [selected.key, selected.id, selected.tipo, refresh]);
 
-  async function loadInventory() {
-    setError("");
-    if (!selected) return;
+  // ======================== Cargar inventario (paginado) ========================
+  useEffect(() => {
+    (async () => {
+      if (!selected) return;
 
-    try {
-      const table = selected.tipo === "warehouse" ? "stock_almacen" : "stock_van";
+      try {
+        setError("");
 
-      // 1) Leer stock de la ubicación (SIN joins embebidos)
-      let q = supabase.from(table).select("id, producto_id, cantidad");
-      if (selected.tipo === "van" && selected.id) q = q.eq("van_id", selected.id);
+        if (selected.tipo === "warehouse") {
+          // Si no tienes tabla de almacén aún, mostramos vacío sin error
+          setInventory([]);
+          setHasMore(false);
+          return;
+        }
 
-      const { data: stock, error: sErr } = await q;
-      if (sErr) throw sErr;
+        // Consulta **única** a stock_van con embed de productos
+        // Evita la URL gigante que generaba el .in([...ids])
+        const from = offset;
+        const to = offset + PAGE_SIZE - 1;
 
-      // 2) Traer info de productos para los IDs involucrados
-      const ids = (stock || []).map((s) => s.producto_id);
-      let productos = [];
-      if (ids.length) {
-        const { data: prods, error: pErr } = await supabase
-          .from("productos")
-          .select("id, codigo, nombre, marca")
-          .in("id", ids);
-        if (pErr) throw pErr;
-        productos = prods || [];
+        const { data, error: sErr } = await supabase
+          .from("stock_van")
+          .select(
+            `
+            id,
+            producto_id,
+            cantidad,
+            productos:producto_id (
+              id, codigo, nombre, marca, size
+            )
+          `,
+            { count: "exact", head: false }
+          )
+          .eq("van_id", selected.id)
+          .order("cantidad", { ascending: false })
+          .range(from, to);
+
+        if (sErr) throw sErr;
+
+        const rows =
+          (data || []).map((s) => ({
+            id: s.id,
+            producto_id: s.producto_id,
+            cantidad: Number(s.cantidad || 0),
+            productos: s.productos || null,
+          })) ?? [];
+
+        setInventory((prev) => (page === 0 ? rows : [...prev, ...rows]));
+        setHasMore(rows.length === PAGE_SIZE);
+      } catch (e) {
+        setError(e?.message || String(e));
+        setHasMore(false);
       }
-
-      // 3) Unir en memoria
-      const map = new Map(productos.map((p) => [p.id, p]));
-      const rows = (stock || []).map((s) => ({
-        id: s.id,
-        producto_id: s.producto_id,
-        cantidad: Number(s.cantidad || 0),
-        productos: map.get(s.producto_id) || null,
-      }));
-
-      setInventory(rows);
-    } catch (e) {
-      setError(e?.message || String(e));
-      setInventory([]);
-    }
-  }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected.id, selected.tipo, offset]);
 
   // ======================== Filtro de búsqueda ========================
   const filteredInventory = useMemo(() => {
@@ -235,6 +264,18 @@ export default function Inventory() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Botón cargar más (paginación simple) */}
+          {hasMore && (
+            <div className="p-3 border-t flex justify-center">
+              <button
+                className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Load more
+              </button>
             </div>
           )}
         </div>

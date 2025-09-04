@@ -1,5 +1,5 @@
 // src/online/Inventory.jsx
-import { useEffect, useMemo, useState, lazy, Suspense } from "react";
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { supabase } from "../supabaseClient";
 
 // Panel de imágenes (opcional, si administras fotos del storefront)
@@ -268,7 +268,7 @@ function Price({ v }) {
 
 export default function Inventory() {
   const [q, setQ] = useState("");
-  const [rows, setRows] = useState([]); // filas: stock_van (online) + productos + meta
+  const [rows, setRows] = useState([]); // stock_van (online) + productos + meta
   const [loading, setLoading] = useState(false);
   const [onlineVan, setOnlineVan] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -278,7 +278,13 @@ export default function Inventory() {
 
   const [transferOpen, setTransferOpen] = useState(false);
 
+  // 🔁 para debounce del realtime
+  const reloadTimeoutRef = useRef(null);
+
   async function getOnlineVanId() {
+    const fromEnv = import.meta.env.VITE_ONLINE_VAN_ID;
+    if (fromEnv) return fromEnv;
+
     const { data, error } = await supabase
       .from("vans")
       .select("id, nombre_van")
@@ -296,19 +302,31 @@ export default function Inventory() {
       if (!v) v = await getOnlineVanId();
       setOnlineVan(v);
 
-      // 1) Stock del VAN Online + datos básicos del producto (incluye PRECIO)
-      const { data: stock, error: eStock } = await supabase
+      // Una sola consulta con join al meta (como array)
+      const { data, error: eStock } = await supabase
         .from("stock_van")
         .select(
           `
           producto_id,
           cantidad,
-          productos (
+          productos:producto_id (
             id,
             codigo,
             nombre,
             marca,
-            precio
+            precio,
+            online_product_meta (
+              price_online,
+              visible,
+              visible_online,
+              descripcion,
+              meta_updated_at,
+              is_deal,
+              deal_starts_at,
+              deal_ends_at,
+              deal_badge,
+              deal_priority
+            )
           )
         `
         )
@@ -317,44 +335,36 @@ export default function Inventory() {
 
       if (eStock) throw eStock;
 
-      const list = (stock || []).filter((r) => !!r.productos);
+      let combined = (data || [])
+        .filter((r) => !!r.productos)
+        .map((r) => {
+          const m = (r.productos?.online_product_meta || [])[0] || {};
+          return {
+            id: r.productos.id,
+            codigo: r.productos.codigo,
+            nombre: r.productos.nombre,
+            marca: r.productos.marca,
+            stock: Number(r.cantidad || 0),
 
-      // 2) Metas para esos productos
-      const ids = list.map((r) => r.producto_id);
-      let metasMap = new Map();
-      if (ids.length) {
-        const { data: metas, error: eMeta } = await supabase
-          .from("online_product_meta")
-          .select(
-            "producto_id, price_online, visible, visible_online, descripcion, meta_updated_at"
-          )
-          .in("producto_id", ids);
-        if (eMeta) throw eMeta;
-        (metas || []).forEach((m) => metasMap.set(m.producto_id, m));
-      }
+            // Base = productos.precio (si no hay price_online)
+            precio: r.productos.precio ?? null,
+            price_online: m.price_online ?? null,
 
-      // 3) Combinar
-      let combined = list.map((r) => {
-        const m = metasMap.get(r.producto_id) || {};
-        return {
-          id: r.productos.id,
-          codigo: r.productos.codigo,
-          nombre: r.productos.nombre,
-          marca: r.productos.marca,
-          stock: Number(r.cantidad || 0),
+            visible: m.visible ?? false,
+            visible_online: m.visible_online ?? false,
+            descripcion: m.descripcion ?? "",
+            meta_updated_at: m.meta_updated_at ?? null,
 
-          // 👇 Base = productos.precio
-          precio: r.productos.precio ?? null,
-          price_online: m.price_online ?? null,
+            // Ofertas
+            is_deal: !!m.is_deal,
+            deal_starts_at: m.deal_starts_at || null,
+            deal_ends_at: m.deal_ends_at || null,
+            deal_badge: m.deal_badge || "Deal",
+            deal_priority: m.deal_priority ?? 0,
+          };
+        });
 
-          visible: m.visible ?? false,
-          visible_online: m.visible_online ?? false,
-          descripcion: m.descripcion ?? "",
-          meta_updated_at: m.meta_updated_at ?? null,
-        };
-      });
-
-      // 4) Búsqueda en memoria
+      // Búsqueda en memoria
       if (q.trim()) {
         const term = q.trim().toLowerCase();
         combined = combined.filter(
@@ -375,23 +385,78 @@ export default function Inventory() {
     }
   }
 
+  // Cargar 1 vez
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, []);
 
-  const totalProducts = useMemo(() => rows.length, [rows]);
+  // 🔔 Realtime: refresca cuando cambian stock_van/productos/online_product_meta
+  useEffect(() => {
+    let channel;
+    (async () => {
+      const v = await getOnlineVanId();
+      const scheduleReload = () => {
+        if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
+        reloadTimeoutRef.current = setTimeout(() => reload(), 600);
+      };
+
+      channel = supabase
+        .channel("online-inventory-watch")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "stock_van",
+            filter: `van_id=eq.${v}`,
+          },
+          scheduleReload
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "productos" },
+          scheduleReload
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "online_product_meta" },
+          scheduleReload
+        )
+        .subscribe();
+    })();
+
+    return () => {
+      if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
+      if (channel) supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Refiltrar en memoria cuando cambia q
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(
+      (r) =>
+        (r.nombre || "").toLowerCase().includes(term) ||
+        (r.marca || "").toLowerCase().includes(term) ||
+        (r.codigo || "").toLowerCase().includes(term)
+    );
+  }, [rows, q]);
+
+  const totalProducts = useMemo(() => filtered.length, [filtered]);
   const totalUnits = useMemo(
-    () => rows.reduce((a, r) => a + Number(r.stock || 0), 0),
-    [rows]
+    () => filtered.reduce((a, r) => a + Number(r.stock || 0), 0),
+    [filtered]
   );
 
-  // Actualiza metas (no tocamos 'productos')
+  // ✅ upsert de metas (si no existe fila, la crea)
   async function updateMeta(producto_id, patch) {
+    const payload = { producto_id, ...patch };
     const { error } = await supabase
       .from("online_product_meta")
-      .update(patch)
-      .eq("producto_id", producto_id);
+      .upsert(payload, { onConflict: "producto_id" });
     if (error) throw error;
   }
 
@@ -478,7 +543,7 @@ export default function Inventory() {
       </div>
 
       <div className="overflow-x-auto border rounded-xl">
-        <table className="min-w-[980px] w-full text-sm">
+        <table className="min-w-[1200px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-3 py-2 text-left">Code</th>
@@ -490,20 +555,25 @@ export default function Inventory() {
               <th className="px-3 py-2 text-center">Visible (admin)</th>
               <th className="px-3 py-2 text-center">Visible online</th>
               <th className="px-3 py-2 text-left">Description</th>
+              <th className="px-3 py-2 text-center">Deal</th>
+              <th className="px-3 py-2 text-left">Badge</th>
+              <th className="px-3 py-2 text-left">Starts</th>
+              <th className="px-3 py-2 text-left">Ends</th>
+              <th className="px-3 py-2 text-right">Priority</th>
               <th className="px-3 py-2 text-center">Images</th>
               <th className="px-3 py-2 text-right">Meta updated</th>
             </tr>
           </thead>
           <tbody>
-            {!rows.length && (
+            {!filtered.length && (
               <tr>
-                <td colSpan={11} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={16} className="px-3 py-8 text-center text-gray-500">
                   {loading ? "Loading…" : "No products found in Online inventory."}
                 </td>
               </tr>
             )}
 
-            {rows.map((r) => {
+            {filtered.map((r) => {
               const shownPrice = Number(
                 r.price_online != null ? r.price_online : r.precio
               );
@@ -513,13 +583,9 @@ export default function Inventory() {
                   <td className="px-3 py-2">{r.nombre}</td>
                   <td className="px-3 py-2">{r.marca || "—"}</td>
                   <td className="px-3 py-2 text-right">{Number(r.stock || 0)}</td>
-
-                  {/* Precio base = productos.precio */}
                   <td className="px-3 py-2 text-right">
                     <Price v={r.precio} />
                   </td>
-
-                  {/* Online price (editable) */}
                   <td className="px-3 py-2 text-right">
                     <div className="flex items-center gap-2 justify-end">
                       <input
@@ -543,8 +609,6 @@ export default function Inventory() {
                       </span>
                     </div>
                   </td>
-
-                  {/* Visible admin */}
                   <td className="px-3 py-2 text-center">
                     <input
                       type="checkbox"
@@ -552,8 +616,6 @@ export default function Inventory() {
                       onChange={(e) => onToggle(r.id, "visible", e.target.checked)}
                     />
                   </td>
-
-                  {/* Visible online */}
                   <td className="px-3 py-2 text-center">
                     <input
                       type="checkbox"
@@ -563,8 +625,6 @@ export default function Inventory() {
                       }
                     />
                   </td>
-
-                  {/* Descripción */}
                   <td className="px-3 py-2">
                     <input
                       className="w-full border rounded-lg px-2 py-1"
@@ -577,8 +637,72 @@ export default function Inventory() {
                       }
                     />
                   </td>
-
-                  {/* Imágenes */}
+                  <td className="px-3 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={!!r.is_deal}
+                      onChange={(e) => onToggle(r.id, "is_deal", e.target.checked)}
+                      title="Show in Featured deals"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className="w-full border rounded-lg px-2 py-1"
+                      placeholder="Badge"
+                      defaultValue={r.deal_badge || "Deal"}
+                      onBlur={(e) =>
+                        onUpdate(r.id, { deal_badge: e.target.value.trim() || "Deal" })
+                      }
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="datetime-local"
+                      className="w-full border rounded-lg px-2 py-1"
+                      defaultValue={
+                        r.deal_starts_at
+                          ? new Date(r.deal_starts_at).toISOString().slice(0, 16)
+                          : ""
+                      }
+                      onBlur={(e) =>
+                        onUpdate(r.id, {
+                          deal_starts_at: e.target.value
+                            ? new Date(e.target.value).toISOString()
+                            : null,
+                        })
+                      }
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="datetime-local"
+                      className="w-full border rounded-lg px-2 py-1"
+                      defaultValue={
+                        r.deal_ends_at
+                          ? new Date(r.deal_ends_at).toISOString().slice(0, 16)
+                          : ""
+                      }
+                      onBlur={(e) =>
+                        onUpdate(r.id, {
+                          deal_ends_at: e.target.value
+                            ? new Date(e.target.value).toISOString()
+                            : null,
+                        })
+                      }
+                    />
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <input
+                      type="number"
+                      className="w-[80px] border rounded-lg px-2 py-1 text-right"
+                      defaultValue={r.deal_priority ?? 0}
+                      onBlur={(e) =>
+                        onUpdate(r.id, {
+                          deal_priority: Number(e.target.value || 0),
+                        })
+                      }
+                    />
+                  </td>
                   <td className="px-3 py-2 text-center">
                     <button
                       className="px-2.5 py-1.5 rounded-lg border hover:bg-gray-50"
@@ -590,7 +714,6 @@ export default function Inventory() {
                       Manage
                     </button>
                   </td>
-
                   <td className="px-3 py-2 text-right">
                     <span className="text-xs text-gray-500">
                       {r.meta_updated_at
