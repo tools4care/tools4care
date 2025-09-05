@@ -68,6 +68,129 @@ async function safeGetCxc(clienteId) {
   return null;
 }
 
+/* ===================================================================
+   ======  MÓDULO DE MENSAJES / RECIBOS (SMS / Email)  ===============
+   =================================================================== */
+
+// Personalización básica (variables de entorno opcionales)
+const COMPANY_NAME  = import.meta?.env?.VITE_COMPANY_NAME  || "Tools4CareMovil";
+const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
+/** "mailto" (abre cliente local) o "edge" (Supabase Edge Function 'send-receipt') */
+const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
+
+function fmtCurrency(n) {
+  return `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function getCreditNumber(c) {
+  return c?.credito_id || c?.id || "—";
+}
+function isIOS() {
+  const ua = navigator.userAgent || navigator.vendor || "";
+  return /iPad|iPhone|iPod|Macintosh/.test(ua);
+}
+function normalizePhoneE164ish(raw, defaultCountry = "1") {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (!digits) return "";
+  const withCc = digits.length === 10 ? defaultCountry + digits : digits;
+  return withCc.startsWith("+") ? withCc : `+${withCc}`;
+}
+function buildSmsUrl(phone, message) {
+  const target = normalizePhoneE164ish(phone, "1");
+  if (!target) return null;
+  const body = encodeURIComponent(String(message || ""));
+  const sep = isIOS() ? "&" : "?";
+  return `sms:${target}${sep}body=${body}`;
+}
+async function sendSmsIfPossible({ phone, text }) {
+  if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
+  const href = buildSmsUrl(phone, text);
+  if (!href) return { ok: false, reason: "invalid_sms_url" };
+  try {
+    const a = document.createElement("a");
+    a.href = href; a.rel = "noopener"; a.style.display = "none";
+    document.body.appendChild(a); a.click(); a.remove();
+    return { ok: true, opened: true };
+  } catch {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("SMS preparado. Abre tu app de Mensajes y pega el texto.");
+      return { ok: true, copied: true };
+    } catch {
+      return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
+    }
+  }
+}
+function buildMailtoUrl(to, subject, body) {
+  if (!to) return null;
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+async function sendEmailSmart({ to, subject, html, text }) {
+  if (!to) return { ok: false, reason: "missing_email" };
+
+  if (EMAIL_MODE === "edge") {
+    try {
+      const { data, error } = await supabase.functions.invoke("send-receipt", {
+        body: { to, subject, html, text, from: COMPANY_EMAIL, company: COMPANY_NAME },
+      });
+      if (error) throw error;
+      return { ok: true, via: "edge", data };
+    } catch (e) {
+      console.warn("Edge email failed, fallback a mailto:", e?.message || e);
+    }
+  }
+
+  const mailto = buildMailtoUrl(to, subject, text);
+  const w = mailto ? window.open(mailto, "_blank") : null;
+  if (!w && text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("Email copiado. Abre tu correo y pega el contenido.");
+      return { ok: true, via: "mailto-copy" };
+    } catch {
+      return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
+    }
+  }
+  return { ok: true, via: "mailto" };
+}
+async function askChannel({ hasPhone, hasEmail }) {
+  if (!hasPhone && !hasEmail) return null;
+  if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
+  if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
+  const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "").trim().toLowerCase();
+  if (ans === "sms" && hasPhone) return "sms";
+  if (ans === "email" && hasEmail) return "email";
+  return null;
+}
+function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, prevBalance, newBalance, pointOfSaleName }) {
+  const lines = [];
+  lines.push(`${COMPANY_NAME} — Payment Receipt`);
+  lines.push(`Date: ${dateStr}`);
+  if (pointOfSaleName) lines.push(`Point of sale: ${pointOfSaleName}`);
+  if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
+  lines.push("");
+  lines.push(`Payment received: ${fmtCurrency(amount)}`);
+  lines.push(`Previous balance: ${fmtCurrency(prevBalance)}`);
+  lines.push(`*** New balance: ${fmtCurrency(newBalance)} ***`);
+  lines.push("");
+  lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
+  return lines.join("\n");
+}
+async function requestAndSendPaymentReceipt({ client, payload }) {
+  const hasPhone = !!client?.telefono;
+  const hasEmail = !!client?.email;
+  if (!hasPhone && !hasEmail) return;
+
+  const wants = await askChannel({ hasPhone, hasEmail });
+  if (!wants) return;
+
+  const subject = `${COMPANY_NAME} — Payment ${new Date().toLocaleDateString()}`;
+  const text = composePaymentMessageEN(payload);
+  const html = text; // simple: mismo contenido
+
+  if (wants === "sms") await sendSmsIfPossible({ phone: client.telefono, text });
+  else if (wants === "email") await sendEmailSmart({ to: client.email, subject, html, text });
+}
+
 /* -------------------- COMPONENTE PRINCIPAL -------------------- */
 export default function Clientes() {
   const location = useLocation();
@@ -1398,25 +1521,61 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       return;
     }
 
-    const { error } = await supabase.rpc("cxc_registrar_pago", {
-      p_cliente_id: cliente.id,
-      p_monto: Math.min(montoNum, saldoActual),
-      p_metodo: metodo,
-      p_van_id: van.id,
-    });
+    // 1) Intento RPC
+    let rpcOk = false;
+    try {
+      const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
+        p_cliente_id: cliente.id,
+        p_monto: Math.min(montoNum, saldoActual),
+        p_metodo: metodo,
+        p_van_id: van.id,
+      });
+      if (!rpcErr) rpcOk = true;
+      else console.warn("RPC error:", rpcErr?.message);
+    } catch (e) {
+      console.warn("RPC NOT AVAILABLE:", e?.message || e);
+    }
+
+    // 2) Fallback: insert directo si el RPC no existe
+    if (!rpcOk) {
+      const dbRow = {
+        cliente_id: cliente.id,
+        monto: Math.min(montoNum, saldoActual),
+        metodo_pago: metodo,
+        fecha_pago: new Date().toISOString(),
+        // Si existe en tu esquema, descomenta:
+        // van_id: van.id,
+      };
+      const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
+      if (insErr) {
+        setGuardando(false);
+        setMensaje("Error saving payment: " + (insErr?.message || "unknown"));
+        return;
+      }
+    }
 
     setGuardando(false);
 
-    if (error) {
-      setMensaje("Error saving payment: " + (error.message || ""));
-      return;
-    }
-
+    // 3) Refrescar CxC + tabla
     const info = await safeGetCxc(cliente.id);
-    if (info && setResumen) {
-      setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
-    }
+    if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
     if (typeof refresh === "function") await refresh();
+
+    // 4) Componer y enviar recibo por SMS/Email
+    const receiptPayload = {
+      clientName: cliente?.nombre || "",
+      creditNumber: getCreditNumber(cliente),
+      dateStr: new Date().toLocaleString(),
+      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+      amount: Math.min(montoNum, saldoActual),
+      prevBalance: saldoActual,
+      newBalance: Math.max(0, saldoActual - Math.min(montoNum, saldoActual)),
+    };
+    try {
+      await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload });
+    } catch (err) {
+      console.warn("Receipt send failed:", err?.message || err);
+    }
 
     setMensaje("Payment registered!");
     setTimeout(() => { onClose(); }, 900);

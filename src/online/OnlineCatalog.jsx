@@ -3,9 +3,7 @@ import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { supabase } from "../supabaseClient";
 import OnlineCatalogActions from "./OnlineCatalogActions.jsx";
 
-
 const ProductImagesPanel = lazy(() => import("./ProductImagesPanel.jsx"));
-
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
 
 async function getOnlineVanId() {
@@ -155,11 +153,7 @@ export default function OnlineCatalog() {
           { event: "*", schema: "public", table: "stock_van", filter: `van_id=eq.${v}` },
           scheduleReload
         )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "productos" },
-          scheduleReload
-        )
+        .on("postgres_changes", { event: "*", schema: "public", table: "productos" }, scheduleReload)
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "online_product_meta" },
@@ -204,223 +198,226 @@ export default function OnlineCatalog() {
   const total = useMemo(() => rows.length, [rows]);
 
   return (
-    <div className="p-6">
-      <h1 className="text-xl font-semibold">Tienda Online</h1>
-      <h2 className="text-lg mt-1 mb-1">
-        Catálogo (solo productos con stock en VAN Online)
-      </h2>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
+      <div className="w-full max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                🛍️ Tienda Online
+              </h1>
+              <p className="text-xs text-gray-600 mt-1">
+                Catálogo · solo productos con stock en <b>VAN Online</b>.
+              </p>
+            </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm mb-3">
-        <span className="px-2 py-1 rounded-lg border bg-blue-50 text-blue-700">
-          Online Store
-        </span>
-        <input
-          className="border rounded-lg px-3 py-2"
-          placeholder="Search by name, brand or code…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <button className="px-3 py-2 rounded-lg bg-blue-600 text-white" onClick={reload}>
-          {loading ? "Loading…" : "Refresh"}
-        </button>
-        <span className="ml-auto text-xs text-gray-500">
-          Last update: {lastUpdate ? lastUpdate.toLocaleString() : "—"}
-        </span>
-      </div>
+            <OnlineCatalogActions
+              onlineVanId={onlineVan}
+              onChanged={() => reload()}
+            />
+          </div>
 
-      {/* 🔹 Acciones (Agregar / Transferir) */}
-      <div className="mb-4">
-        <OnlineCatalogActions onlineVanId={onlineVan} onChanged={reload} />
-      </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="px-2 py-1 rounded-lg border bg-blue-50 text-blue-700">Online Store</span>
+            <input
+              className="border rounded-lg px-3 py-2"
+              placeholder="Search by name, brand or code…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <button
+              className="px-3 py-2 rounded-lg text-white bg-gradient-to-r from-blue-600 to-blue-700 shadow-md hover:shadow-lg"
+              onClick={reload}
+            >
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+            <span className="ml-auto text-xs text-gray-500">
+              Last update: {lastUpdate ? lastUpdate.toLocaleString() : "—"}
+            </span>
+          </div>
+        </div>
 
-      <div className="text-sm text-gray-600 mb-2">
-        {loading ? "Loading…" : `${total} item${total === 1 ? "" : "s"}`} · VAN:{" "}
-        {onlineVan || "—"}
-      </div>
+        {/* Meta info */}
+        <div className="text-sm text-gray-600 mb-2 px-1">
+          {loading ? "Loading…" : `${total} item${total === 1 ? "" : "s"}`} · VAN: {onlineVan || "—"}
+        </div>
 
-      <div className="space-y-3">
-        {rows.map((r) => {
-          const shownPrice = Number(r.price_online ?? r.price_base ?? 0);
-          const hasOffer =
-            r.price_online != null && r.price_base != null && r.price_online < r.price_base;
+        {/* Listado */}
+        <div className="space-y-3">
+          {rows.map((r) => {
+            const shownPrice = Number(r.price_online ?? r.price_base ?? 0);
+            const hasOffer =
+              r.price_online != null && r.price_base != null && r.price_online < r.price_base;
 
-          return (
-            <div key={r.id} className="border rounded-xl p-3 bg-white">
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium truncate">{r.nombre}</div>
-                    <div className="text-right whitespace-nowrap">
-                      <div className="font-semibold">
-                        <Price v={shownPrice} />
-                        {hasOffer && (
-                          <span className="ml-2 text-xs text-gray-500 line-through">
-                            <Price v={r.price_base} />
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-gray-500">
-                        Qty: <b>{r.qty}</b>
+            return (
+              <div key={r.id} className="bg-white border rounded-xl p-3 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="font-medium truncate">{r.nombre}</div>
+                      <div className="text-right whitespace-nowrap">
+                        <div className="font-semibold">
+                          <Price v={shownPrice} />
+                          {hasOffer && (
+                            <span className="ml-2 text-xs text-gray-500 line-through">
+                              <Price v={r.price_base} />
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-gray-500">
+                          Qty: <b>{r.qty}</b>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {r.marca} · <span className="font-mono">{r.codigo}</span>
-                  </div>
+                    <div className="text-xs text-gray-500">
+                      {r.marca} · <span className="font-mono">{r.codigo}</span>
+                    </div>
 
-                  <div className="mt-2 grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={!!r.visible}
-                        onChange={(e) => onToggle(r.id, "visible", e.target.checked)}
-                      />
-                      Visible (admin)
-                    </label>
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!r.visible}
+                          onChange={(e) => onToggle(r.id, "visible", e.target.checked)}
+                        />
+                        Visible (admin)
+                      </label>
 
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={!!r.visible_online}
-                        onChange={(e) =>
-                          onToggle(r.id, "visible_online", e.target.checked)
-                        }
-                      />
-                      Visible online
-                    </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!r.visible_online}
+                          onChange={(e) => onToggle(r.id, "visible_online", e.target.checked)}
+                        />
+                        Visible online
+                      </label>
 
-                    <div className="md:col-span-2">
-                      <input
-                        className="w-full border rounded-lg px-2 py-1"
-                        placeholder="Online price"
-                        defaultValue={r.price_online ?? ""}
-                        onBlur={(e) => {
-                          const val = e.target.value.trim();
-                          if (val === "") {
-                            onUpdate(r.id, { price_online: null });
-                          } else {
-                            const n = Number(val);
-                            onUpdate(r.id, {
-                              price_online: Number.isFinite(n) ? n : null,
-                            });
+                      <div className="md:col-span-2">
+                        <input
+                          className="w-full border rounded-lg px-2 py-1"
+                          placeholder="Online price"
+                          defaultValue={r.price_online ?? ""}
+                          onBlur={(e) => {
+                            const val = e.target.value.trim();
+                            if (val === "") {
+                              onUpdate(r.id, { price_online: null });
+                            } else {
+                              const n = Number(val);
+                              onUpdate(r.id, { price_online: Number.isFinite(n) ? n : null });
+                            }
+                          }}
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <input
+                          className="w-full border rounded-lg px-2 py-1"
+                          placeholder="Description"
+                          defaultValue={r.descripcion || ""}
+                          onBlur={(e) =>
+                            onUpdate(r.id, { descripcion: e.target.value.trim() || "N/A" })
                           }
-                        }}
-                      />
+                        />
+                      </div>
                     </div>
 
-                    <div className="md:col-span-2">
+                    {/* deals */}
+                    <div className="mt-2 grid grid-cols-2 md:grid-cols-6 gap-2 items-center">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!r.is_deal}
+                          onChange={(e) => onToggle(r.id, "is_deal", e.target.checked)}
+                        />
+                        Deal
+                      </label>
+
                       <input
-                        className="w-full border rounded-lg px-2 py-1"
-                        placeholder="Description"
-                        defaultValue={r.descripcion || ""}
+                        className="border rounded-lg px-2 py-1"
+                        placeholder="Badge"
+                        defaultValue={r.deal_badge || "Deal"}
                         onBlur={(e) =>
-                          onUpdate(r.id, { descripcion: e.target.value.trim() || "N/A" })
+                          onUpdate(r.id, { deal_badge: e.target.value.trim() || "Deal" })
                         }
                       />
-                    </div>
-                  </div>
 
-                  {/* deals */}
-                  <div className="mt-2 grid grid-cols-2 md:grid-cols-6 gap-2 items-center">
-                    <label className="flex items-center gap-2">
                       <input
-                        type="checkbox"
-                        checked={!!r.is_deal}
-                        onChange={(e) => onToggle(r.id, "is_deal", e.target.checked)}
+                        type="datetime-local"
+                        className="border rounded-lg px-2 py-1"
+                        defaultValue={
+                          r.deal_starts_at ? new Date(r.deal_starts_at).toISOString().slice(0, 16) : ""
+                        }
+                        onBlur={(e) =>
+                          onUpdate(r.id, {
+                            deal_starts_at: e.target.value
+                              ? new Date(e.target.value).toISOString()
+                              : null,
+                            meta_updated_at: new Date().toISOString(),
+                          })
+                        }
                       />
-                      Deal
-                    </label>
 
-                    <input
-                      className="border rounded-lg px-2 py-1"
-                      placeholder="Badge"
-                      defaultValue={r.deal_badge || "Deal"}
-                      onBlur={(e) =>
-                        onUpdate(r.id, { deal_badge: e.target.value.trim() || "Deal" })
-                      }
-                    />
+                      <input
+                        type="datetime-local"
+                        className="border rounded-lg px-2 py-1"
+                        defaultValue={
+                          r.deal_ends_at ? new Date(r.deal_ends_at).toISOString().slice(0, 16) : ""
+                        }
+                        onBlur={(e) =>
+                          onUpdate(r.id, {
+                            deal_ends_at: e.target.value
+                              ? new Date(e.target.value).toISOString()
+                              : null,
+                            meta_updated_at: new Date().toISOString(),
+                          })
+                        }
+                      />
 
-                    <input
-                      type="datetime-local"
-                      className="border rounded-lg px-2 py-1"
-                      defaultValue={
-                        r.deal_starts_at
-                          ? new Date(r.deal_starts_at).toISOString().slice(0, 16)
-                          : ""
-                      }
-                      onBlur={(e) =>
-                        onUpdate(r.id, {
-                          deal_starts_at: e.target.value
-                            ? new Date(e.target.value).toISOString()
-                            : null,
-                          meta_updated_at: new Date().toISOString(),
-                        })
-                      }
-                    />
+                      <input
+                        type="number"
+                        className="border rounded-lg px-2 py-1"
+                        defaultValue={r.deal_priority ?? 0}
+                        onBlur={(e) =>
+                          onUpdate(r.id, { deal_priority: Number(e.target.value || 0) })
+                        }
+                      />
 
-                    <input
-                      type="datetime-local"
-                      className="border rounded-lg px-2 py-1"
-                      defaultValue={
-                        r.deal_ends_at
-                          ? new Date(r.deal_ends_at).toISOString().slice(0, 16)
-                          : ""
-                      }
-                      onBlur={(e) =>
-                        onUpdate(r.id, {
-                          deal_ends_at: e.target.value
-                            ? new Date(e.target.value).toISOString()
-                            : null,
-                          meta_updated_at: new Date().toISOString(),
-                        })
-                      }
-                    />
+                      <button
+                        className="px-2.5 py-1.5 rounded-lg border hover:bg-gray-50"
+                        onClick={() => {
+                          setImgPid(r.id);
+                          setImgOpen(true);
+                        }}
+                      >
+                        Images…
+                      </button>
+                    </div>
 
-                    <input
-                      type="number"
-                      className="border rounded-lg px-2 py-1"
-                      defaultValue={r.deal_priority ?? 0}
-                      onBlur={(e) =>
-                        onUpdate(r.id, { deal_priority: Number(e.target.value || 0) })
-                      }
-                    />
-
-                    <button
-                      className="px-2.5 py-1.5 rounded-lg border hover:bg-gray-50"
-                      onClick={() => {
-                        setImgPid(r.id);
-                        setImgOpen(true);
-                      }}
-                    >
-                      Images…
-                    </button>
-                  </div>
-
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    Meta updated:{" "}
-                    {r.meta_updated_at
-                      ? new Date(r.meta_updated_at).toLocaleString()
-                      : "—"}
+                    <div className="mt-1 text-[11px] text-gray-500">
+                      Meta updated:{" "}
+                      {r.meta_updated_at ? new Date(r.meta_updated_at).toLocaleString() : "—"}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      <Suspense fallback={null}>
-        {imgOpen && (
-          <ProductImagesPanel
-            open={imgOpen}
-            productoId={imgPid}
-            onClose={() => {
-              setImgOpen(false);
-              setImgPid(null);
-            }}
-          />
-        )}
-      </Suspense>
+        <Suspense fallback={null}>
+          {imgOpen && (
+            <ProductImagesPanel
+              open={imgOpen}
+              productoId={imgPid}
+              onClose={() => {
+                setImgOpen(false);
+                setImgPid(null);
+              }}
+            />
+          )}
+        </Suspense>
+      </div>
     </div>
   );
 }
