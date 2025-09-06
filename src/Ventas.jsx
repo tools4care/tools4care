@@ -229,7 +229,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
   return { ok: true, via: "mailto" };
 }
 
-/* ======= Recibo ======= */
+/* ======= Recibo (ACTUALIZADO) ======= */
 function composeReceiptMessageEN(payload) {
   const {
     clientName,
@@ -241,11 +241,19 @@ function composeReceiptMessageEN(payload) {
     paid,
     change,
     prevBalance,
+    // nuevo: incluir restante de esta venta + balance nuevo total
+    saleRemaining,
+    newDue,
+    // compat: se sigue aceptando "toCredit" si lo pasan con ese nombre
     toCredit,
     creditLimit,
     availableBefore,
     availableAfter,
   } = payload;
+
+  const remainingThisSale = Number.isFinite(Number(saleRemaining))
+    ? Number(saleRemaining)
+    : Number(toCredit || 0);
 
   const lines = [];
   lines.push(`${COMPANY_NAME} — Receipt`);
@@ -260,7 +268,9 @@ function composeReceiptMessageEN(payload) {
   lines.push(`Paid now:   ${fmt(paid)}`);
   if (change > 0) lines.push(`Change:      ${fmt(change)}`);
   lines.push(`Previous balance: ${fmt(prevBalance)}`);
-  if (toCredit > 0) lines.push(`*** Balance due (new): ${fmt(toCredit)} ***`);
+  if (remainingThisSale > 0) lines.push(`Remaining (this sale): ${fmt(remainingThisSale)}`);
+  // *** Aquí va el cálculo correcto: saldo anterior + restante de esta venta - pagos a deuda ***
+  lines.push(`*** Balance due (new): ${fmt(Number(newDue || 0))} ***`);
   if (creditLimit > 0) {
     lines.push("");
     lines.push(`Credit limit:       ${fmt(creditLimit)}`);
@@ -1063,7 +1073,7 @@ export default function Sales() {
       if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
       if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
-      if (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
+      if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
         setPaymentError(
           `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
         );
@@ -1074,7 +1084,7 @@ export default function Sales() {
       if (amountToCredit > 0) {
         const ok = window.confirm(
           `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
-            (showCreditPanel
+            (selectedClient
               ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
                   creditAvailable
                 )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
@@ -1249,7 +1259,9 @@ export default function Sales() {
           : Promise.resolve({}),
       ]);
 
-      // Recibo
+      // ===== Recibo (payload con NUEVOS CAMPOS) =====
+      const prevDue = Math.max(0, balanceBefore);
+      const newDue = Math.max(0, balanceAfter); // ← saldo anterior + restante de la venta − pagos a deuda
       const payload = {
         clientName: selectedClient?.nombre || "",
         creditNumber: getCreditNumber(selectedClient),
@@ -1264,11 +1276,12 @@ export default function Sales() {
         saleTotal,
         paid: paidForSaleNow + payOldDebtNow,
         change: changeNow,
-        prevBalance: Math.max(0, balanceBefore),
-        toCredit: pendingFromThisSale,
+        prevBalance: prevDue,
+        saleRemaining: pendingFromThisSale, // restante SOLO de esta venta
+        newDue, // 🔥 este es el “Balance due (new)” correcto
         creditLimit,
         availableBefore: creditAvailable,
-        availableAfter: Math.max(0, creditLimit - Math.max(0, balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow))),
+        availableAfter: Math.max(0, creditLimit - Math.max(0, balanceAfter)),
       };
 
       removePendingFromLSById(currentPendingId);
