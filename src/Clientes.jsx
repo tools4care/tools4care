@@ -12,11 +12,7 @@ import {
   ChevronLeft, ChevronRight, ChevronsRight, BarChart3, RefreshCcw
 } from "lucide-react";
 
-/* === CxC centralizado ===
-   Lee límite efectivo y disponible usando src/lib/cxc.js
-   - getCxcCliente(clienteId): { saldo, limite, disponible, limite_manual_aplicado? }
-   - subscribeClienteLimiteManual(clienteId, cb): devuelve { unsubscribe }
-*/
+/* === CxC centralizado === */
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 
 /* -------------------- Utilidades -------------------- */
@@ -50,7 +46,6 @@ async function safeGetCxc(clienteId) {
       };
     }
   } catch (_) {
-    // Fallback a la vista canónica
     if (!clienteId) return null;
     const { data, error } = await supabase
       .from("v_cxc_cliente_detalle")
@@ -72,10 +67,8 @@ async function safeGetCxc(clienteId) {
    ======  MÓDULO DE MENSAJES / RECIBOS (SMS / Email)  ===============
    =================================================================== */
 
-// Personalización básica (variables de entorno opcionales)
 const COMPANY_NAME  = import.meta?.env?.VITE_COMPANY_NAME  || "Tools4CareMovil";
 const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
-/** "mailto" (abre cliente local) o "edge" (Supabase Edge Function 'send-receipt') */
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
 function fmtCurrency(n) {
@@ -155,6 +148,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
 async function askChannel({ hasPhone, hasEmail }) {
   if (!hasPhone && !hasEmail) return null;
   if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
+  if (!hasEmail && hasPhone === false) return null;
   if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
   const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "").trim().toLowerCase();
   if (ans === "sms" && hasPhone) return "sms";
@@ -185,7 +179,7 @@ async function requestAndSendPaymentReceipt({ client, payload }) {
 
   const subject = `${COMPANY_NAME} — Payment ${new Date().toLocaleDateString()}`;
   const text = composePaymentMessageEN(payload);
-  const html = text; // simple: mismo contenido
+  const html = text;
 
   if (wants === "sms") await sendSmsIfPossible({ phone: client.telefono, text });
   else if (wants === "email") await sendEmailSmart({ to: client.email, subject, html, text });
@@ -297,7 +291,6 @@ export default function Clientes() {
     setClientes(data || []);
     setTotalRows(count || 0);
 
-    // CxC para la página actual (usa lib centralizada)
     const entries = await Promise.allSettled(
       (data || []).map(async (c) => {
         const info = await safeGetCxc(c.id);
@@ -425,7 +418,7 @@ export default function Clientes() {
       else {
         setMensaje("Client saved successfully");
         setMostrarEdicion(false);
-        navigate("/clientes"); // ← mantiene tu flujo
+        navigate("/clientes");
         await fetchPage({ p: 1, ps: pageSize, q: debounced });
         await cargarTotales();
       }
@@ -437,7 +430,7 @@ export default function Clientes() {
       else {
         setMensaje("Changes saved successfully");
         setMostrarEdicion(false);
-        navigate("/clientes"); // ← mantiene tu flujo
+        navigate("/clientes");
         await fetchPage({ p: page, ps: pageSize, q: debounced });
       }
     }
@@ -473,20 +466,17 @@ export default function Clientes() {
           balance: info.saldo,
           cxc: info,
         }));
-        // También refresca fila en tabla si está en la página actual
         setCxcByClient((prev) => ({ ...prev, [clienteSeleccionado.id]: info }));
       }
     };
     // eslint-disable-next-line
   }, [clienteSeleccionado?.id]);
 
-  // 1) Al cambiar de cliente
   useEffect(() => {
     if (!clienteSeleccionado?.id) return;
     (async () => { await refreshCreditoActivo(); })();
   }, [clienteSeleccionado?.id, refreshCreditoActivo]);
 
-  // 2) Al recuperar foco la ventana
   useEffect(() => {
     focusHandlerRef.current = async () => { await refreshCreditoActivo(); };
     const handler = () => focusHandlerRef.current && focusHandlerRef.current();
@@ -500,7 +490,6 @@ export default function Clientes() {
     // eslint-disable-next-line
   }, [refreshCreditoActivo]);
 
-  // 3) Cada 20s en segundo plano
   useEffect(() => {
     intervalRef.current = setInterval(() => {
       refreshCreditoActivo();
@@ -508,23 +497,19 @@ export default function Clientes() {
     return () => clearInterval(intervalRef.current);
   }, [refreshCreditoActivo]);
 
-  // 4) Realtime limite_manual del cliente activo
   useEffect(() => {
-    // Limpia sub anterior
     if (realtimeUnsubRef.current) {
       realtimeUnsubRef.current.unsubscribe?.();
       realtimeUnsubRef.current = null;
     }
     if (!clienteSeleccionado?.id) return;
 
-    // Suscribirse a cambios del cliente activo (limite_manual)
     try {
       const sub = subscribeClienteLimiteManual(clienteSeleccionado.id, async () => {
         await refreshCreditoActivo();
       });
       realtimeUnsubRef.current = sub;
     } catch {
-      // Fallback: postgres_changes directo (por si no se usa la helper lib)
       const channel = supabase
         .channel(`clientes-limite-manual-${clienteSeleccionado.id}`)
         .on(
@@ -544,7 +529,6 @@ export default function Clientes() {
     return () => {
       if (realtimeUnsubRef.current) {
         realtimeUnsubRef.current.unsubscribe?.();
-        // Para canales supabase-js v2:
         try { supabase.removeChannel?.(realtimeUnsubRef.current); } catch {}
         realtimeUnsubRef.current = null;
       }
@@ -552,7 +536,6 @@ export default function Clientes() {
     // eslint-disable-next-line
   }, [clienteSeleccionado?.id, refreshCreditoActivo]);
 
-  // Cargar resumen (ventas/pagos + CxC)
   useEffect(() => {
     async function cargarResumen() {
       if (!clienteSeleccionado) {
@@ -669,17 +652,17 @@ export default function Clientes() {
   /* -------------------- UI -------------------- */
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-8">
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="mb-4 sm:mb-8">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 sm:gap-4">
             <div>
-              <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 Client Management
               </h1>
-              <p className="text-gray-600 mt-2">Manage your clients and track their payments</p>
+              <p className="text-gray-600 mt-1 sm:mt-2 text-sm sm:text-base">Manage your clients and track their payments</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               {clienteSeleccionado?.id && (
                 <button
                   onClick={() => safeGetCxc(clienteSeleccionado.id).then(info => {
@@ -690,7 +673,7 @@ export default function Clientes() {
                       setTimeout(() => setMensaje(""), 1200);
                     }
                   })}
-                  className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-4 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm"
+                  className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm text-sm"
                   title="Refresh credit"
                 >
                   <RefreshCcw size={18} />
@@ -699,7 +682,7 @@ export default function Clientes() {
               )}
               <button
                 onClick={() => { abrirNuevoCliente(); navigate("/clientes/nuevo"); }}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base"
               >
                 <Plus size={20} />
                 New Client
@@ -708,41 +691,41 @@ export default function Clientes() {
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-            <div className="bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-6 mt-4 sm:mt-8">
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-500 text-sm font-medium">Total Clients</p>
-                  <p className="text-3xl font-bold text-gray-800">{totales.totalClients}</p>
+                  <p className="text-gray-500 text-xs sm:text-sm font-medium">Total Clients</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-gray-800">{totales.totalClients}</p>
                 </div>
-                <div className="bg-blue-100 p-3 rounded-full">
-                  <User className="text-blue-600" size={24} />
+                <div className="bg-blue-100 p-2 sm:p-3 rounded-full">
+                  <User className="text-blue-600" size={22} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-500 text-sm font-medium">Clients with Debt</p>
-                  <p className="text-3xl font-bold text-orange-600">{totales.withDebt}</p>
+                  <p className="text-gray-500 text-xs sm:text-sm font-medium">Clients with Debt</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-orange-600">{totales.withDebt}</p>
                 </div>
-                <div className="bg-orange-100 p-3 rounded-full">
-                  <TrendingUp className="text-orange-600" size={24} />
+                <div className="bg-orange-100 p-2 sm:p-3 rounded-full">
+                  <TrendingUp className="text-orange-600" size={22} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-500 text-sm font-medium">Total Outstanding</p>
-                  <p className="text-3xl font-bold text-red-600">
+                  <p className="text-gray-500 text-xs sm:text-sm font-medium">Total Outstanding</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-red-600">
                     ${totales.totalOutstanding.toFixed(2)}
                   </p>
                 </div>
-                <div className="bg-red-100 p-3 rounded-full">
-                  <DollarSign className="text-red-600" size={24} />
+                <div className="bg-red-100 p-2 sm:p-3 rounded-full">
+                  <DollarSign className="text-red-600" size={22} />
                 </div>
               </div>
             </div>
@@ -752,11 +735,11 @@ export default function Clientes() {
         {/* Main card */}
         <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
           {/* Search */}
-          <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">
+          <div className="p-4 sm:p-6 bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input
-                className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white shadow-sm"
+                className="w-full pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white shadow-sm text-sm sm:text-base"
                 placeholder="Search clients by name, phone, email or business..."
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value)}
@@ -766,8 +749,8 @@ export default function Clientes() {
 
           {/* Loading */}
           {isLoading && (
-            <div className="flex justify-center items-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <div className="flex justify-center items-center py-10 sm:py-12">
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
             </div>
           )}
 
@@ -775,15 +758,15 @@ export default function Clientes() {
           {!isLoading && (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full text-xs sm:text-sm">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Client Info</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Contact</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Address</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Balance</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Credit</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
+                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Client Info</th>
+                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Contact</th>
+                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider hidden md:table-cell">Address</th>
+                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Balance</th>
+                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider hidden lg:table-cell">Credit</th>
+                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
@@ -808,7 +791,7 @@ export default function Clientes() {
                             setMostrarStats(true);
                           }}
                         >
-                          <td className="px-6 py-4">
+                          <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <div className="flex items-center">
                               <div className="bg-blue-100 rounded-full p-2 mr-3">
                                 <User size={16} className="text-blue-600" />
@@ -816,7 +799,7 @@ export default function Clientes() {
                               <div>
                                 <div className="text-sm font-semibold text-gray-900">{c.nombre}</div>
                                 {c.negocio && (
-                                  <div className="text-sm text-gray-500 flex items-center gap-1">
+                                  <div className="text-[12px] sm:text-sm text-gray-500 flex items-center gap-1">
                                     <Building2 size={12} />
                                     {c.negocio}
                                   </div>
@@ -824,7 +807,7 @@ export default function Clientes() {
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <div className="space-y-1">
                               {c.telefono && (
                                 <div className="text-sm text-gray-900 flex items-center gap-2">
@@ -833,14 +816,14 @@ export default function Clientes() {
                                 </div>
                               )}
                               {c.email && (
-                                <div className="text-sm text-gray-500 flex items-center gap-2">
+                                <div className="text-[12px] sm:text-sm text-gray-500 flex items-center gap-2">
                                   <Mail size={12} className="text-gray-400" />
                                   {c.email}
                                 </div>
                               )}
                             </div>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-4 sm:px-6 py-3 sm:py-4 hidden md:table-cell">
                             <div className="text-sm text-gray-900 flex items-start gap-2">
                               <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
                               <div>
@@ -848,18 +831,18 @@ export default function Clientes() {
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <span
-                              className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold ${
+                              className={`inline-flex items-center px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold ${
                                 saldo > 0 ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
                               }`}
                             >
                               ${Number(saldo).toFixed(2)}
                             </span>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-4 sm:px-6 py-3 sm:py-4 hidden lg:table-cell">
                             {disp === null ? (
-                              <span className="text-xs text-gray-400">—</span>
+                              <span className="text-[11px] text-gray-400">—</span>
                             ) : (
                               <div className="flex flex-col">
                                 <span className={`text-sm font-semibold ${disp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
@@ -873,10 +856,9 @@ export default function Clientes() {
                               </div>
                             )}
                           </td>
-                          <td className="px-6 py-4">
-                            {/* SOLO Payment aquí. Edit fue movido al modal */}
+                          <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <button
-                              className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors duration-150"
+                              className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duration-150"
                               onClick={async (e) => {
                                 e.stopPropagation();
                                 const info = await safeGetCxc(c.id);
@@ -910,14 +892,14 @@ export default function Clientes() {
               </div>
 
               {/* Footer: paginación */}
-              <div className="flex flex-col md:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
-                <div className="text-sm text-gray-600">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-200 bg-gray-50 text-sm">
+                <div className="text-gray-600">
                   Showing <span className="font-semibold">{clientes.length}</span> of{" "}
                   <span className="font-semibold">{totalRows}</span> • Page{" "}
                   <span className="font-semibold">{page}</span> / {pageCount}
                 </div>
                 <div className="flex items-center gap-3">
-                  <label className="text-sm text-gray-600">Page size</label>
+                  <label className="text-gray-600">Page size</label>
                   <select
                     className="px-3 py-2 border rounded-lg"
                     value={pageSize}
@@ -965,7 +947,7 @@ export default function Clientes() {
         {/* Mensajes */}
         {mensaje && (
           <div
-            className={`fixed top-4 right-4 px-6 py-4 rounded-xl shadow-lg z-50 transition-all duration-300 ${
+            className={`fixed top-4 right-4 px-4 sm:px-6 py-3 sm:py-4 rounded-xl shadow-lg z-50 transition-all duration-300 text-sm sm:text-base ${
               mensaje.includes("Error") || mensaje.includes("invalid")
                 ? "bg-red-500 text-white"
                 : "bg-green-500 text-white"
@@ -998,24 +980,24 @@ export default function Clientes() {
         />
       )}
 
-      {/* Modal edición (abre también al navegar a /clientes/nuevo) */}
+      {/* Modal edición */}
       {mostrarEdicion && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
           <form
             onSubmit={handleGuardar}
             className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden"
           >
-            <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
-              <h3 className="text-2xl font-bold">
+            <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+              <h3 className="text-xl sm:text-2xl font-bold">
                 {clienteSeleccionado ? "Edit Client" : "New Client"}
               </h3>
-              <p className="text-blue-100 mt-1">
+              <p className="text-blue-100 mt-1 text-sm">
                 {clienteSeleccionado ? "Update client information" : "Add a new client to your system"}
               </p>
             </div>
 
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 <div className="md:col-span-2">
                   <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
                     <User size={16} />
@@ -1138,7 +1120,7 @@ export default function Clientes() {
               </div>
             </div>
 
-            <div className="p-6 bg-gray-50 border-t border-gray-200 flex gap-3">
+            <div className="p-4 sm:p-6 bg-gray-50 border-t border-gray-200 flex gap-3">
               <button
                 type="submit"
                 disabled={isLoading}
@@ -1170,7 +1152,7 @@ export default function Clientes() {
         </div>
       )}
 
-      {/* Modal Abono */}
+      {/* Modal Abono (visual mejorado / botones siempre visibles) */}
       {mostrarAbono && clienteSeleccionado && (
         <ModalAbonar
           cliente={clienteSeleccionado}
@@ -1225,10 +1207,10 @@ function ClienteStatsModal({
   const saldo = Number(resumen?.balance ?? 0);
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
-        {/* Header */}
-        <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white relative">
+        {/* Header (pegajoso) */}
+        <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white relative sticky top-0 z-20">
           <button
             className="absolute right-4 top-4 text-white/80 hover:text-white transition-colors p-1"
             onClick={onClose}
@@ -1236,7 +1218,6 @@ function ClienteStatsModal({
             <X size={24} />
           </button>
 
-          {/* Botón Edit SOLO dentro del modal */}
           <button
             className="absolute right-16 top-4 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1"
             onClick={() => onEdit && onEdit()}
@@ -1250,7 +1231,7 @@ function ClienteStatsModal({
               <User size={24} />
             </div>
             <div className="flex-1">
-              <h3 className="text-2xl font-bold">{cliente.nombre}</h3>
+              <h3 className="text-xl sm:text-2xl font-bold">{cliente.nombre}</h3>
               <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                 <div className="bg-white/10 rounded-lg p-3">
                   <div className="uppercase tracking-wide text-xs text-white/70">Current Balance</div>
@@ -1311,7 +1292,8 @@ function ClienteStatsModal({
           </div>
         </div>
 
-        <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+        {/* Body con scroll */}
+        <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
           {/* Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
@@ -1536,15 +1518,13 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       console.warn("RPC NOT AVAILABLE:", e?.message || e);
     }
 
-    // 2) Fallback: insert directo si el RPC no existe
+    // 2) Fallback insert
     if (!rpcOk) {
       const dbRow = {
         cliente_id: cliente.id,
         monto: Math.min(montoNum, saldoActual),
         metodo_pago: metodo,
         fecha_pago: new Date().toISOString(),
-        // Si existe en tu esquema, descomenta:
-        // van_id: van.id,
       };
       const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
       if (insErr) {
@@ -1556,12 +1536,12 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
     setGuardando(false);
 
-    // 3) Refrescar CxC + tabla
+    // 3) Refrescar
     const info = await safeGetCxc(cliente.id);
     if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
     if (typeof refresh === "function") await refresh();
 
-    // 4) Componer y enviar recibo por SMS/Email
+    // 4) Recibo
     const receiptPayload = {
       clientName: cliente?.nombre || "",
       creditNumber: getCreditNumber(cliente),
@@ -1582,173 +1562,183 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-40 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
-        <div className="p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white">
-          <h3 className="text-xl font-bold flex items-center gap-2">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-40 p-0 sm:p-4">
+      {/* Contenedor a pantalla completa en mobile con layout flexible */}
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md sm:max-w-2xl h-[100svh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header pegajoso */}
+        <div className="p-4 sm:p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20">
+          <h3 className="text-lg sm:text-xl font-bold flex items-center gap-2">
             <DollarSign size={20} />
             Payment for {cliente.nombre}
           </h3>
-          <p className="text-green-100 mt-1">Record a new payment from this client</p>
+          <p className="text-green-100 mt-1 text-sm">Record a new payment from this client</p>
         </div>
 
-        <form onSubmit={guardarAbono} className="p-6">
-          {/* Panel crédito dinámico */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-            <div className="bg-gray-50 rounded-xl p-4 border">
-              <div className="text-xs text-gray-500 uppercase">Balance</div>
-              <div className={`text-xl font-bold ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>
-                ${saldoActual.toFixed(2)}
+        {/* Form como columna con área scroll + footer fijo */}
+        <form onSubmit={guardarAbono} className="flex-1 flex flex-col min-h-0">
+          {/* Área con scroll */}
+          <div className="p-4 sm:p-6 overflow-y-auto flex-1">
+            {/* Panel crédito dinámico */}
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4 sm:mb-6">
+              <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
+                <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Balance</div>
+                <div className={`text-lg sm:text-xl font-bold ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>
+                  ${saldoActual.toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
+                <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Effective Limit</div>
+                <div className="text-lg sm:text-xl font-bold">${limite.toFixed(2)}</div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
+                <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Available</div>
+                <div className={`text-lg sm:text-xl font-bold ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  ${disponible.toFixed(2)}
+                </div>
               </div>
             </div>
-            <div className="bg-gray-50 rounded-xl p-4 border">
-              <div className="text-xs text-gray-500 uppercase">Effective Limit</div>
-              <div className="text-xl font-bold">${limite.toFixed(2)}</div>
-            </div>
-            <div className="bg-gray-50 rounded-xl p-4 border">
-              <div className="text-xs text-gray-500 uppercase">Available</div>
-              <div className={`text-xl font-bold ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                ${disponible.toFixed(2)}
+
+            <div className="space-y-3 sm:space-y-4 mb-2">
+              <div>
+                <label className="font-semibold text-gray-700 mb-2 block text-sm">Payment Amount</label>
+                <input
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 text-lg"
+                  placeholder="0.00"
+                  type="number"
+                  min="1"
+                  step="any"
+                  value={monto}
+                  onChange={e => setMonto(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-gray-700 mb-2 block text-sm">Payment Method</label>
+                <select
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 bg-white"
+                  value={metodo}
+                  onChange={e => setMetodo(e.target.value)}
+                >
+                  <option value="Cash">💵 Cash</option>
+                  <option value="Card">💳 Card</option>
+                  <option value="Transfer">🏦 Transfer</option>
+                </select>
               </div>
             </div>
-          </div>
 
-          <div className="space-y-4 mb-2">
-            <div>
-              <label className="font-semibold text-gray-700 mb-2 block">Payment Amount</label>
-              <input
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 text-lg"
-                placeholder="0.00"
-                type="number"
-                min="1"
-                step="any"
-                value={monto}
-                onChange={e => setMonto(e.target.value)}
-                required
-              />
+            {/* Visualización clara de cambio/efectivo a devolver */}
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 sm:p-4 mb-4">
+              {montoNum <= 0 ? (
+                <span className="text-sm">Enter a payment amount to see details.</span>
+              ) : excedente > 0 ? (
+                <div className="text-sm">
+                  The payment exceeds the current balance by{" "}
+                  <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
+                </div>
+              ) : (
+                <div className="text-sm">
+                  Payment will reduce balance to{" "}
+                  <span className="font-bold">
+                    ${Math.max(0, saldoActual - montoNum).toFixed(2)}
+                  </span>.
+                </div>
+              )}
             </div>
 
-            <div>
-              <label className="font-semibold text-gray-700 mb-2 block">Payment Method</label>
-              <select
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 bg-white"
-                value={metodo}
-                onChange={e => setMetodo(e.target.value)}
-              >
-                <option value="Cash">💵 Cash</option>
-                <option value="Card">💳 Card</option>
-                <option value="Transfer">🏦 Transfer</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Visualización clara de cambio/efectivo a devolver */}
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 mb-4">
-            {montoNum <= 0 ? (
-              <span className="text-sm">Enter a payment amount to see details.</span>
-            ) : excedente > 0 ? (
-              <div className="text-sm">
-                The payment exceeds the current balance by{" "}
-                <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
-              </div>
-            ) : (
-              <div className="text-sm">
-                Payment will reduce balance to{" "}
-                <span className="font-bold">
-                  ${Math.max(0, saldoActual - montoNum).toFixed(2)}
-                </span>.
+            {mensaje && (
+              <div className={`mb-4 p-4 rounded-xl ${
+                mensaje.includes("Error") || mensaje.includes("invalid")
+                  ? "bg-red-50 text-red-700 border border-red-200"
+                  : "bg-green-50 text-green-700 border border-green-200"
+              }`}>
+                <div className="flex items-center gap-2">
+                  {mensaje.includes("Error") ? <X size={16} /> : <Check size={16} />}
+                  <span className="text-sm font-medium">{mensaje}</span>
+                </div>
               </div>
             )}
-          </div>
 
-          {mensaje && (
-            <div className={`mb-4 p-4 rounded-xl ${
-              mensaje.includes("Error") || mensaje.includes("invalid")
-                ? "bg-red-50 text-red-700 border border-red-200"
-                : "bg-green-50 text-green-700 border border-green-200"
-            }`}>
-              <div className="flex items-center gap-2">
-                {mensaje.includes("Error") ? <X size={16} /> : <Check size={16} />}
-                <span className="text-sm font-medium">{mensaje}</span>
-              </div>
-            </div>
-          )}
+            {/* Resumen compacto en mobile */}
+            <div className="bg-gray-50 rounded-xl p-4 mb-20 sm:mb-6">
+              <h4 className="font-bold mb-3 text-gray-800 flex items-center gap-2">
+                <TrendingUp size={16} />
+                Purchase History Summary
+              </h4>
 
-          <div className="bg-gray-50 rounded-xl p-4 mb-6">
-            <h4 className="font-bold mb-3 text-gray-800 flex items-center gap-2">
-              <TrendingUp size={16} />
-              Purchase History Summary
-            </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-600 mb-2">Monthly Purchases:</p>
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {Object.keys(comprasPorMes).length === 0 ? (
+                      <p className="text-gray-500 text-sm italic">No sales registered</p>
+                    ) : (
+                      Object.entries(comprasPorMes).sort((a,b) => b[0].localeCompare(a[0])).map(([mes, total]) => (
+                        <div key={mes} className="flex justify-between items-center py-1">
+                          <span className="text-sm text-gray-600">{mes}</span>
+                          <span className="font-semibold text-blue-600">${total.toFixed(2)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-2">Monthly Purchases:</p>
-                <div className="max-h-32 overflow-y-auto space-y-1">
-                  {Object.keys(comprasPorMes).length === 0 ? (
-                    <p className="text-gray-500 text-sm italic">No sales registered</p>
-                  ) : (
-                    Object.entries(comprasPorMes).sort((a,b) => b[0].localeCompare(a[0])).map(([mes, total]) => (
-                      <div key={mes} className="flex justify-between items-center py-1">
-                        <span className="text-sm text-gray-600">{mes}</span>
-                        <span className="font-semibold text-blue-600">${total.toFixed(2)}</span>
-                      </div>
-                    ))
-                  )}
+                <div>
+                  <p className="text-sm font-medium text-gray-600 mb-2">Recent Payments:</p>
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {resumen.pagos?.length === 0 ? (
+                      <p className="text-gray-500 text-sm italic">No previous payments</p>
+                    ) : (
+                      resumen.pagos.map(p => (
+                        <div key={p.id} className="flex justify-between items-center py-1">
+                          <span className="text-sm text-gray-600">{p.fecha_pago?.slice(0,10)}</span>
+                          <span className="font-semibold text-green-600">${(p.monto || 0).toFixed(2)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-2">Recent Payments:</p>
-                <div className="max-h-32 overflow-y-auto space-y-1">
-                  {resumen.pagos?.length === 0 ? (
-                    <p className="text-gray-500 text-sm italic">No previous payments</p>
-                  ) : (
-                    resumen.pagos.map(p => (
-                      <div key={p.id} className="flex justify-between items-center py-1">
-                        <span className="text-sm text-gray-600">{p.fecha_pago?.slice(0,10)}</span>
-                        <span className="font-semibold text-green-600">${(p.monto || 0).toFixed(2)}</span>
-                      </div>
-                    ))
-                  )}
+              <div className="border-t border-gray-200 pt-3">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-gray-700">Lifetime Total:</span>
+                  <span className="text-xl font-bold text-green-700">${totalLifetime.toFixed(2)}</span>
                 </div>
-              </div>
-            </div>
-
-            <div className="border-t border-gray-200 pt-3">
-              <div className="flex justify-between items-center">
-                <span className="font-bold text-gray-700">Lifetime Total:</span>
-                <span className="text-xl font-bold text-green-700">${totalLifetime.toFixed(2)}</span>
               </div>
             </div>
           </div>
 
-          <div className="flex gap-3">
-            <button
-              type="submit"
-              disabled={guardando}
-              className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
-            >
-              {guardando ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Check size={16} />
-                  Record Payment
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
-              onClick={onClose}
-              disabled={guardando}
-            >
-              <X size={16} />
-              Cancel
-            </button>
+          {/* Footer fijo con botones visibles siempre */}
+          <div className="sticky bottom-0 bg-white border-t border-gray-200 p-3 sm:p-4 z-20 pb-[env(safe-area-inset-bottom)]">
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={guardando}
+                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+              >
+                {guardando ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Check size={16} />
+                    Record Payment
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+                onClick={onClose}
+                disabled={guardando}
+              >
+                <X size={16} />
+                Cancel
+              </button>
+            </div>
           </div>
         </form>
       </div>
