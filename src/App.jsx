@@ -57,6 +57,7 @@ function LayoutPrivado() {
       <div className="hidden lg:block">
         <Sidebar />
       </div>
+      {/* espacio inferior para BottomNav en mobile */}
       <main className="flex-1 pt-4 pb-20 px-2 sm:px-6 transition-all duration-300">
         <Outlet />
       </main>
@@ -82,7 +83,10 @@ export default function App() {
           {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />
 
-          {/* Selección de VAN (protegido) */}
+          {/* Alias cómodo para ir directo al selector de VAN */}
+          <Route path="/change-van" element={<Navigate to="/van" replace />} />
+
+          {/* Selección de VAN (protegido por login, NO requiere VAN previa) */}
           <Route
             path="/van"
             element={
@@ -113,7 +117,7 @@ export default function App() {
           {/* Alias para enlaces antiguos al catálogo admin */}
           <Route path="/catalog" element={<Navigate to="/online/catalog" replace />} />
 
-          {/* Área Vans (protegido) */}
+          {/* Área Vans (requiere login + VAN seleccionada) */}
           <Route
             path="/*"
             element={
