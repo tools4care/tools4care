@@ -88,16 +88,44 @@ export default function Inventory() {
       try {
         setError("");
 
-        if (selected.tipo === "warehouse") {
-          // Si no tienes tabla de almacén aún, mostramos vacío sin error
-          setInventory([]);
-          setHasMore(false);
-          return;
-        }
-
         const from = offset;
         const to = offset + PAGE_SIZE - 1;
 
+        if (selected.tipo === "warehouse") {
+          // INVENTARIO DE ALMACÉN CENTRAL
+          const { data, error: sErr, count } = await supabase
+            .from("stock_almacen")
+            .select(
+              `
+              id,
+              producto_id,
+              cantidad,
+              productos:producto_id (
+                id, codigo, nombre, marca, size
+              )
+            `,
+              { count: "exact", head: false }
+            )
+            .order("cantidad", { ascending: false })
+            .range(from, to);
+
+          if (sErr) throw sErr;
+
+          const rows =
+            (data || []).map((s) => ({
+              id: s.id,
+              producto_id: s.producto_id,
+              cantidad: Number(s.cantidad || 0),
+              productos: s.productos || null,
+            })) ?? [];
+
+          setInventory((prev) => (offset === 0 ? rows : [...prev, ...rows]));
+          const loaded = offset + rows.length;
+          setHasMore(typeof count === "number" ? loaded < count : rows.length === PAGE_SIZE);
+          return;
+        }
+
+        // INVENTARIO DE VAN
         const { data, error: sErr, count } = await supabase
           .from("stock_van")
           .select(
@@ -126,7 +154,6 @@ export default function Inventory() {
           })) ?? [];
 
         setInventory((prev) => (offset === 0 ? rows : [...prev, ...rows]));
-        // Mejor criterio de "hay más": compara contra el total (count)
         const loaded = offset + rows.length;
         setHasMore(typeof count === "number" ? loaded < count : rows.length === PAGE_SIZE);
       } catch (e) {
@@ -137,22 +164,37 @@ export default function Inventory() {
     // 👉 IMPORTANTE: añadimos `refresh` para que recargue tras agregar/transferir
   }, [selected.id, selected.tipo, offset, refresh]);
 
-  // ======================== Realtime: actualiza al cambiar stock_van ========================
+  // ======================== Realtime: actualiza al cambiar inventario ========================
   useEffect(() => {
-    if (selected.tipo !== "van" || !selected.id) return;
+    // VAN
+    if (selected.tipo === "van" && selected.id) {
+      const channel = supabase
+        .channel(`inv-van-${selected.id}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "stock_van", filter: `van_id=eq.${selected.id}` },
+          () => setRefresh((r) => r + 1)
+        )
+        .subscribe();
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
 
-    const channel = supabase
-      .channel(`inv-${selected.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "stock_van", filter: `van_id=eq.${selected.id}` },
-        () => setRefresh((r) => r + 1)
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    // WAREHOUSE (tabla global sin van_id)
+    if (selected.tipo === "warehouse") {
+      const channel = supabase
+        .channel(`inv-warehouse`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "stock_almacen" },
+          () => setRefresh((r) => r + 1)
+        )
+        .subscribe();
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
   }, [selected.tipo, selected.id]);
 
   // ======================== Filtro de búsqueda ========================
