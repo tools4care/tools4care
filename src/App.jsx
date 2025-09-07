@@ -20,10 +20,7 @@ import OnlineDashboard from "./online/OnlineDashboard";
 import Orders from "./admin/Orders";
 import OnlineCatalog from "./online/OnlineCatalog";
 import Checkout from "./storefront/Checkout";
-
-// ➕ (seguimos usando descuentos)
 import OnlineDiscounts from "./online/Discounts";
-// ❌  ⬇️  Eliminado: import OnlineInventory from "./online/Inventory";
 
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
@@ -57,7 +54,6 @@ function LayoutPrivado() {
       <div className="hidden lg:block">
         <Sidebar />
       </div>
-      {/* espacio inferior para BottomNav en mobile */}
       <main className="flex-1 pt-4 pb-20 px-2 sm:px-6 transition-all duration-300">
         <Outlet />
       </main>
@@ -71,11 +67,10 @@ export default function App() {
     <UsuarioProvider>
       <VanProvider>
         <Routes>
-          {/* --- Público: flujo tienda --- */}
+          {/* --- Público: tienda --- */}
           <Route path="/storefront" element={<Storefront />} />
           <Route path="/shop" element={<Navigate to="/storefront" replace />} />
           <Route path="/store" element={<Navigate to="/storefront" replace />} />
-
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
@@ -83,10 +78,7 @@ export default function App() {
           {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />
 
-          {/* Alias cómodo para ir directo al selector de VAN */}
-          <Route path="/change-van" element={<Navigate to="/van" replace />} />
-
-          {/* Selección de VAN (protegido por login, NO requiere VAN previa) */}
+          {/* Selector de VAN (protegido) */}
           <Route
             path="/van"
             element={
@@ -96,7 +88,7 @@ export default function App() {
             }
           />
 
-          {/* ÁREA ONLINE (protegido, admin) */}
+          {/* ÁREA ONLINE (protegido) */}
           <Route
             path="/online/*"
             element={
@@ -109,15 +101,13 @@ export default function App() {
             <Route path="orders" element={<Orders />} />
             <Route path="catalog" element={<OnlineCatalog />} />
             <Route path="discounts" element={<OnlineDiscounts />} />
-            {/* ❌ Inventario ya no existe en el menú.
-                ✅ Redirigimos si alguien entra por enlace viejo */}
             <Route path="inventory" element={<Navigate to="/online/catalog" replace />} />
           </Route>
 
-          {/* Alias para enlaces antiguos al catálogo admin */}
+          {/* Alias antiguos */}
           <Route path="/catalog" element={<Navigate to="/online/catalog" replace />} />
 
-          {/* Área Vans (requiere login + VAN seleccionada) */}
+          {/* Área Vans (protegido + VAN) */}
           <Route
             path="/*"
             element={

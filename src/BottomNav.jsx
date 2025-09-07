@@ -12,7 +12,8 @@ import {
   Truck,
   UserCircle2,
   FileText,
-  CreditCard, // NUEVO ícono para CXC
+  CreditCard,
+  RefreshCcw, // ícono para "Change VAN"
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -23,7 +24,6 @@ const items = [
   { to: "/ventas", label: "Sales", icon: ShoppingCart, color: "#059669" },
   { to: "/productos", label: "Products", icon: Box, color: "#a21caf" },
   { to: "/clientes", label: "Customers", icon: Users, color: "#f59e42" },
-  // NUEVO: tab directo de CXC
   { to: "/cxc", label: "Accounts", icon: CreditCard, color: "#0ea5e9" },
   { action: "more", label: "More", icon: MoreHorizontal, color: "#64748b" },
 ];
@@ -31,20 +31,19 @@ const items = [
 export default function BottomNav() {
   const [showMore, setShowMore] = useState(false);
   const { usuario, setUsuario } = useUsuario();
-  const { van, setVan } = useVan();
+  const { van } = useVan(); // no necesitamos setVan para cambiar VAN si solo navegamos
   const navigate = useNavigate();
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUsuario(null);
-    setVan(null);
     localStorage.clear();
     navigate("/login");
   };
 
+  // ✅ Igual que en OnlineSidebar: NO cierra sesión ni borra nada, solo navega a /van
   const handleChangeVan = () => {
-    setVan(null);
-    localStorage.removeItem("van");
+    setShowMore(false);
     navigate("/van");
   };
 
@@ -71,9 +70,7 @@ export default function BottomNav() {
               to={to}
               key={to}
               className={({ isActive }) =>
-                (isActive
-                  ? "text-blue-600"
-                  : "text-gray-500 hover:text-blue-600") +
+                (isActive ? "text-blue-600" : "text-gray-500 hover:text-blue-600") +
                 " flex flex-col items-center justify-center px-2 transition"
               }
               end={to === "/"}
@@ -85,10 +82,10 @@ export default function BottomNav() {
         )}
       </nav>
 
-      {/* Simple bottom modal */}
+      {/* Bottom sheet */}
       {showMore && (
         <div
-          className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-end"
+          className="fixed inset-0 z-50 bg-black/50 flex items-end"
           onClick={() => setShowMore(false)}
         >
           <div
@@ -115,13 +112,21 @@ export default function BottomNav() {
               >
                 <Truck size={18} color="#059669" /> Van Closeout
               </button>
-              {/* NUEVO: acceso a CXC desde el modal */}
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
                 onClick={() => handleNav("/cxc")}
               >
                 <CreditCard size={18} color="#0ea5e9" /> Accounts Receivable
               </button>
+
+              {/* ✅ Cambiar VAN (solo ir al selector, sin cerrar sesión) */}
+              <button
+                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-amber-50 text-left"
+                onClick={handleChangeVan}
+              >
+                <RefreshCcw size={18} color="#b45309" /> Change VAN
+              </button>
+
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-red-50 text-left"
                 onClick={handleLogout}
@@ -137,7 +142,7 @@ export default function BottomNav() {
               </div>
               <div className="flex items-center gap-1">
                 <Truck size={14} color="#059669" /> VAN:
-                <b className="ml-1">{van?.nombre_van || "Not selected"}</b>
+                <b className="ml-1">{van?.nombre_van || van?.nombre || "Not selected"}</b>
               </div>
             </div>
 
