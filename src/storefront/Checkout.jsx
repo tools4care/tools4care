@@ -15,6 +15,27 @@ import { getAnonId } from "../utils/anon";
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
 
+/* ---------------- Email helper (Edge Function) ---------------- */
+async function sendOrderEmail({ to, subject, text, html }) {
+  try {
+    const { data, error } = await supabase.functions.invoke("send-order-email", {
+      body: { to, subject, text, html },
+    });
+    if (error) {
+      console.error("[send-order-email] error:", error);
+      return { ok: false, error };
+    }
+    return { ok: true, data };
+  } catch (e) {
+    console.error("[send-order-email] catch:", e);
+    return { ok: false, error: e };
+  }
+}
+
+// Validadores simples
+const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
+const isValidPhone = (s) => String(s || "").replace(/[^\d]/g, "").length >= 7;
+
 /* ---------------- helpers de carrito ---------------- */
 async function ensureCart() {
   const { data: session } = await supabase.auth.getSession();
@@ -230,6 +251,15 @@ export default function Checkout() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
+  // Campos obligatorios OK?
+  const requiredOk = useMemo(() => {
+    const ok =
+      String(shipping.name || "").trim().length > 1 &&
+      isValidEmail(shipping.email) &&
+      isValidPhone(shipping.phone);
+    return ok;
+  }, [shipping.name, shipping.email, shipping.phone]);
+
   // Cargar carrito
   useEffect(() => {
     let cancel = false;
@@ -286,12 +316,12 @@ export default function Checkout() {
     return m ? m[1] : "";
   };
 
-  // Crear PaymentIntent (Edge Function) — no lo creamos si hay issues de stock
+  // Crear PaymentIntent (Edge Function) — no lo creamos si hay issues de stock o faltan datos requeridos
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        if (!items.length || hasStockIssues) {
+        if (!items.length || hasStockIssues || !requiredOk) {
           setClientSecret("");
           setPaymentIntentId("");
           return;
@@ -359,7 +389,7 @@ export default function Checkout() {
     items, subtotal, discount, subAfterDiscount, shippingCost, taxes, total,
     cartId, shipping.name, shipping.phone, shipping.address1, shipping.address2,
     shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method,
-    freeShippingOverride, promo?.code, hasStockIssues,
+    freeShippingOverride, promo?.code, hasStockIssues, requiredOk,
   ]);
 
   // SUCCESS: crear orden + descontar stock
@@ -429,6 +459,21 @@ export default function Checkout() {
 
       if (orderIdFromRpc) {
         try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
+
+        // ✉️ Email de confirmación (no bloqueante)
+        if (shipping.email) {
+          const subject = `Order #${orderIdFromRpc} confirmed`;
+          const text = `Hi ${shipping.name}, thanks for your purchase. Order #${orderIdFromRpc}. Total $${fmt(amounts.total)}.`;
+          const html = `
+            <div style="font-family:system-ui,Segoe UI,Arial,sans-serif">
+              <h2>Order #${orderIdFromRpc} confirmed 🎉</h2>
+              <p>Thanks, <b>${shipping.name}</b>. We received your order.</p>
+              <p><b>Total:</b> $${fmt(amounts.total)}</p>
+              <p style="color:#555;font-size:12px">If you have questions, reply to this email.</p>
+            </div>`;
+          sendOrderEmail({ to: shipping.email, subject, text, html });
+        }
+
         setSuccess({ paymentIntent, orderId: orderIdFromRpc, amounts });
         setPhase("success");
         return;
@@ -496,6 +541,20 @@ export default function Checkout() {
         .eq("id", orderId)
         .neq("status", "paid");
       if (upErr) throw upErr;
+
+      // ✉️ Email de confirmación (no bloqueante)
+      if (shipping.email) {
+        const subject = `Order #${orderId} confirmed`;
+        const text = `Hi ${shipping.name}, thanks for your purchase. Order #${orderId}. Total $${fmt(amounts.total)}.`;
+        const html = `
+          <div style="font-family:system-ui,Segoe UI,Arial,sans-serif">
+            <h2>Order #${orderId} confirmed 🎉</h2>
+            <p>Thanks, <b>${shipping.name}</b>. We received your order.</p>
+            <p><b>Total:</b> $${fmt(amounts.total)}</p>
+            <p style="color:#555;font-size:12px">If you have questions, reply to this email.</p>
+          </div>`;
+        sendOrderEmail({ to: shipping.email, subject, text, html });
+      }
 
       setSuccess({ paymentIntent, orderId, amounts });
       setPhase("success");
@@ -573,13 +632,28 @@ export default function Checkout() {
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
-            <input className="border rounded-lg px-3 py-2" placeholder="Full name"
-              value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })}/>
+            <input
+              className="border rounded-lg px-3 py-2"
+              placeholder="Full name"
+              value={shipping.name}
+              onChange={(e) => setShipping({ ...shipping, name: e.target.value })}
+              required
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input className="border rounded-lg px-3 py-2" placeholder="Email (optional)"
-                value={shipping.email} onChange={(e) => setShipping({ ...shipping, email: e.target.value })}/>
-              <input className="border rounded-lg px-3 py-2" placeholder="Phone (optional)"
-                value={shipping.phone} onChange={(e) => setShipping({ ...shipping, phone: e.target.value })}/>
+              <input
+                className="border rounded-lg px-3 py-2"
+                placeholder="Email (required)"
+                value={shipping.email}
+                onChange={(e) => setShipping({ ...shipping, email: e.target.value })}
+                required
+              />
+              <input
+                className="border rounded-lg px-3 py-2"
+                placeholder="Phone (required)"
+                value={shipping.phone}
+                onChange={(e) => setShipping({ ...shipping, phone: e.target.value })}
+                required
+              />
             </div>
             <input className="border rounded-lg px-3 py-2" placeholder="Address line 1"
               value={shipping.address1} onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}/>
@@ -648,6 +722,13 @@ export default function Checkout() {
                 </div>
               )}
             </div>
+
+            {/* Mensaje de validación de requeridos */}
+            {!requiredOk && (
+              <div className="text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                Please complete <b>name</b>, a valid <b>email</b> and <b>phone</b> to continue.
+              </div>
+            )}
           </div>
         </section>
 
@@ -677,7 +758,7 @@ export default function Checkout() {
 
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
 
-          {/* 🚫 Bloquea el pago si hay exceso de stock */}
+          {/* 🚫 Bloquea el pago si hay exceso de stock o faltan requeridos */}
           {hasStockIssues ? (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">
@@ -690,6 +771,10 @@ export default function Checkout() {
                   ))}
                 </ul>
               </div>
+            </div>
+          ) : !requiredOk ? (
+            <div className="bg-white rounded-2xl p-4 shadow-sm text-sm text-amber-700">
+              Complete the required contact fields to enable payment.
             </div>
           ) : clientSecret ? (
             <Elements key={clientSecret} options={{ clientSecret, locale: "en" }} stripe={stripePromise}>
