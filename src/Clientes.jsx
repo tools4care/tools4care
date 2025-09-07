@@ -1551,7 +1551,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-40 p-0 sm:p-4">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md sm:max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header pegajoso */}
         <div className="p-4 sm:p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20">
@@ -1696,11 +1696,16 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
 
             {/* Espaciador para la barra fija */}
-            <div className="h-[112px] sm:h-[96px]" />
+         <div className="h-[140px] sm:h-[120px]" />
+
           </div>
 
           {/* Barra de acciones FIJA (siempre visible) */}
-          <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border-t border-gray-200 p-3 sm:p-4 z-[130] pb-[env(safe-area-inset-bottom)]">
+          <div
+  className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
+  style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}  // ~24px arriba del borde
+>
+
             <div className="flex gap-3">
               <button
                 type="submit"
