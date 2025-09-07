@@ -1710,7 +1710,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
           </div>
 
           {/* Footer fijo con botones visibles siempre */}
-          <div className="sticky bottom-0 bg-white border-t border-gray-200 p-3 sm:p-4 z-20 pb-[env(safe-area-inset-bottom)]">
+          <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 sm:p-4 z-20 pb-[env(safe-area-inset-bottom)]">
             <div className="flex gap-3">
               <button
                 type="submit"
