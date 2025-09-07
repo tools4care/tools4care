@@ -2,52 +2,59 @@
 import { supabase } from "../supabaseClient";
 import { getAnonId } from "../utils/anon";
 
-/* ---------------------------- helpers de stock ---------------------------- */
+/* ----------------- caché ligera en memoria ----------------- */
+let cartCache = {
+  id: null,
+  items: new Map(), // producto_id -> qty
+  count: 0,
+  hydrated: false,
+};
 
-async function getOnlineVanId() {
+async function hydrateCartCache(cartId) {
   const { data, error } = await supabase
-    .from("vans")
-    .select("id, nombre_van")
-    .ilike("nombre_van", "%online%")
-    .maybeSingle();
+    .from("cart_items")
+    .select("producto_id, qty")
+    .eq("cart_id", cartId);
   if (error) throw error;
-  return data?.id ?? null;
+  cartCache.items = new Map((data || []).map((r) => [r.producto_id, Number(r.qty || 0)]));
+  cartCache.count = (data || []).reduce((s, r) => s + Number(r.qty || 0), 0);
+  cartCache.hydrated = true;
 }
 
-async function getStockFor(productoId) {
-  const vanId = await getOnlineVanId();
-  if (!vanId) return 0;
-
+/* ----------------- utils ----------------- */
+async function getOnlineStock(productId) {
   const { data, error } = await supabase
-    .from("stock_van")
-    .select("cantidad")
-    .eq("van_id", vanId)
-    .eq("producto_id", productoId)
+    .from("online_products_v")
+    .select("id, stock")
+    .eq("id", productId)
     .maybeSingle();
-
   if (error) throw error;
-  return Number(data?.cantidad ?? 0);
+  return Number(data?.stock ?? 0);
 }
 
-/* ------------------------------ helpers carrito ------------------------------ */
-
+/* ------------------------------------------
+   Crea (o reutiliza) un carrito del usuario
+-------------------------------------------*/
 export async function ensureCart() {
+  if (cartCache.id) return cartCache.id;
+
   const { data: session } = await supabase.auth.getSession();
   const userId = session?.session?.user?.id ?? null;
   const col = userId ? "user_id" : "anon_id";
   const val = userId ?? getAnonId();
 
-  // buscar existente
   const { data: found, error: selErr } = await supabase
     .from("carts")
     .select("id")
     .eq(col, val)
     .maybeSingle();
 
-  if (!selErr && found?.id) return found.id;
   if (selErr && selErr.code !== "PGRST116") throw selErr;
+  if (found?.id) {
+    cartCache.id = found.id;
+    return found.id;
+  }
 
-  // crear
   const { data: inserted, error: insErr } = await supabase
     .from("carts")
     .insert({ [col]: val })
@@ -60,162 +67,273 @@ export async function ensureCart() {
       .select("id")
       .eq(col, val)
       .maybeSingle();
-    if (again?.id) return again.id;
+    if (again?.id) {
+      cartCache.id = again.id;
+      return again.id;
+    }
   }
   if (insErr) throw insErr;
 
+  cartCache.id = inserted.id;
   return inserted.id;
 }
 
-async function getCartLineQty(cartId, productoId) {
+/* -----------------------------
+   Contador total de unidades
+------------------------------*/
+export async function cartCount(cartId) {
+  const id = cartId || (await ensureCart());
+  if (cartCache.id === id && cartCache.hydrated) return cartCache.count;
+
   const { data, error } = await supabase
     .from("cart_items")
     .select("qty")
-    .eq("cart_id", cartId)
-    .eq("producto_id", productoId)
-    .maybeSingle();
+    .eq("cart_id", id);
   if (error) throw error;
-  return Number(data?.qty ?? 0);
+
+  const total = (data || []).reduce((s, r) => s + Number(r.qty || 0), 0);
+  if (cartCache.id === id) {
+    cartCache.count = total;
+    cartCache.hydrated = true;
+    cartCache.items = new Map();
+  }
+  return total;
 }
 
-/**
- * Ajusta una línea del carrito a la cantidad deseada, respetando el stock.
- * Si desiredQty <= 0 -> elimina la línea.
- * Devuelve { appliedQty, maxStock }.
- */
-async function setCartQtyClamped(cartId, productoId, desiredQty) {
-  const maxStock = await getStockFor(productoId);
-  const nextQty = Math.max(0, Math.min(Number(desiredQty || 0), maxStock));
+/* ----------------------------------------------------
+   Agregar al carrito (suma y CLAMPEA a stock online)
+   Fast-path: RPC cart_add_clamped (1 roundtrip)
+   Fallback: camino anterior si el RPC no existe
+-----------------------------------------------------*/
+export async function addToCart(product, delta = 1) {
+  const cartId = await ensureCart();
+  const deltaNum = Number(delta || 0);
 
-  if (nextQty <= 0) {
-    // eliminar si existe
-    await supabase
+  // si del catálogo viene stock, validación temprana (mejor UX)
+  const incomingStock =
+    product && Number.isFinite(Number(product.stock)) ? Number(product.stock) : null;
+  if (incomingStock != null && incomingStock <= 0) {
+    throw new Error("Out of stock");
+  }
+
+  // ---------- FAST PATH: RPC ----------
+  try {
+    const { data, error } = await supabase.rpc("cart_add_clamped", {
+      p_cart_id: cartId,
+      p_producto_id: product.id,
+      p_delta: deltaNum,
+    });
+    if (error) throw error;
+
+    const row = Array.isArray(data) ? data[0] : data;
+    const newQty = Number(row?.new_qty ?? 0);
+    const newTotal = Number(row?.new_total ?? 0);
+
+    if (cartCache.id === cartId) {
+      cartCache.items.set(product.id, newQty);
+      cartCache.count = newTotal;
+      cartCache.hydrated = true;
+    }
+    return newTotal;
+  } catch (rpcErr) {
+    // Si el RPC aún no existe, usamos el camino anterior
+    // ------- LEGACY PATH (mismo comportamiento) -------
+    const stock =
+      incomingStock != null ? incomingStock : await getOnlineStock(product.id);
+    if (stock <= 0) throw new Error("Out of stock");
+
+    let current = 0;
+    if (cartCache.hydrated && cartCache.items.has(product.id)) {
+      current = Number(cartCache.items.get(product.id) || 0);
+    } else {
+      const { data: cur, error: selErr } = await supabase
+        .from("cart_items")
+        .select("qty")
+        .eq("cart_id", cartId)
+        .eq("producto_id", product.id)
+        .maybeSingle();
+      if (selErr && selErr.code !== "PGRST116") throw selErr;
+      current = Number(cur?.qty ?? 0);
+    }
+
+    const desired = Math.max(0, Math.min(stock, current + deltaNum));
+    if (desired === current) {
+      return cartCache.count || (await cartCount(cartId));
+    }
+
+    const { error: upErr } = await supabase
       .from("cart_items")
-      .delete()
-      .eq("cart_id", cartId)
-      .eq("producto_id", productoId);
-    return { appliedQty: 0, maxStock };
+      .upsert(
+        { cart_id: cartId, producto_id: product.id, qty: desired },
+        { onConflict: "cart_id,producto_id" }
+      );
+    if (upErr) throw upErr;
+
+    if (cartCache.id === cartId) {
+      cartCache.items.set(product.id, desired);
+      cartCache.count += desired - current;
+      cartCache.hydrated = true;
+      return cartCache.count;
+    }
+    return cartCount(cartId);
   }
-
-  // upsert con clave única (cart_id, producto_id)
-  const { error } = await supabase
-    .from("cart_items")
-    .upsert(
-      { cart_id: cartId, producto_id: productoId, qty: nextQty },
-      { onConflict: "cart_id,producto_id" }
-    );
-  if (error) throw error;
-
-  return { appliedQty: nextQty, maxStock };
 }
 
-/* --------------------------------- API usada -------------------------------- */
-
-export async function addToCart(product, inc = 1) {
-  const cartId = await ensureCart();
-  const current = await getCartLineQty(cartId, product.id);
-  const { appliedQty, maxStock } = await setCartQtyClamped(
-    cartId,
-    product.id,
-    current + Number(inc || 0)
-  );
-
-  if (appliedQty < current + Number(inc || 0)) {
-    // Se topó con el stock: mostrará alerta el caller si lo desea,
-    // aquí solo devolvemos info.
-    console.warn(
-      `addToCart: limitado por stock. solicitado=${current + Number(inc || 0)} aplicado=${appliedQty} stock=${maxStock}`
-    );
-  }
-
-  return await cartCount(cartId);
-}
-
-export async function updateCartItemQty(productoId, nextQty) {
-  const cartId = await ensureCart();
-  const { appliedQty, maxStock } = await setCartQtyClamped(
-    cartId,
-    productoId,
-    Number(nextQty || 0)
-  );
-  return { appliedQty, maxStock };
-}
-
-export async function removeCartItem(productoId) {
-  const cartId = await ensureCart();
-  await supabase
-    .from("cart_items")
-    .delete()
-    .eq("cart_id", cartId)
-    .eq("producto_id", productoId);
-  return await cartCount(cartId);
-}
-
-export async function listCartItems(cartId) {
-  const cid = cartId || (await ensureCart());
+/* =====================================================
+   Listar líneas del carrito (con price/stock/imagen)
+=====================================================*/
+export async function listCartItems(cartIdInput) {
+  const cartId = cartIdInput || (await ensureCart());
   const { data: items, error } = await supabase
     .from("cart_items")
     .select("producto_id, qty")
-    .eq("cart_id", cid);
+    .eq("cart_id", cartId);
   if (error) throw error;
 
-  const ids = (items || []).map((i) => i.producto_id);
-  if (!ids.length) return [];
+  const lines = items || [];
+  if (!lines.length) {
+    if (cartCache.id === cartId) {
+      cartCache.items = new Map();
+      cartCache.count = 0;
+      cartCache.hydrated = true;
+    }
+    return [];
+  }
 
-  // Datos del producto + precio
-  const { data: productos, error: pErr } = await supabase
-    .from("productos")
-    .select("id, codigo, nombre, marca, precio")
+  const ids = lines.map((r) => r.producto_id);
+
+  const { data: prods, error: pErr } = await supabase
+    .from("online_products_v")
+    .select("id,codigo,nombre,marca,price_base,price_online,stock")
     .in("id", ids);
   if (pErr) throw pErr;
-  const mapProd = new Map((productos || []).map((p) => [p.id, p]));
 
-  // Imagen principal (opcional)
-  const { data: covers, error: cErr } = await supabase
+  const { data: covers } = await supabase
     .from("product_main_image_v")
     .select("producto_id, main_image_url")
     .in("producto_id", ids);
-  if (cErr) throw cErr;
-  const mapImg = new Map((covers || []).map((c) => [c.producto_id, c.main_image_url]));
 
-  // También traemos stock actual y, si hace falta, bajamos qty en DB
-  const result = [];
-  for (const it of items) {
-    const p = mapProd.get(it.producto_id);
-    if (!p) continue;
+  const coverMap = new Map((covers || []).map((c) => [c.producto_id, c.main_image_url]));
+  const prodMap = new Map((prods || []).map((p) => [p.id, p]));
 
-    const stock = await getStockFor(it.producto_id);
-    let qty = Number(it.qty || 0);
-
-    if (qty > stock) {
-      // clamp en DB para evitar oversell si el usuario dejó el carrito abierto
-      await setCartQtyClamped(cid, it.producto_id, stock);
-      qty = stock;
-    }
-
-    const price = Number(p.precio || 0);
-    result.push({
-      producto_id: it.producto_id,
-      nombre: p.nombre,
-      marca: p.marca ?? null,
-      codigo: p.codigo ?? null,
-      price,
-      qty,
-      subtotal: qty * price,
-      main_image_url: mapImg.get(it.producto_id) || null,
-    });
+  if (cartCache.id === cartId) {
+    cartCache.items = new Map(lines.map((r) => [r.producto_id, Number(r.qty || 0)]));
+    cartCache.count = lines.reduce((s, r) => s + Number(r.qty || 0), 0);
+    cartCache.hydrated = true;
   }
 
-  return result;
+  return lines.map((it) => {
+    const p = prodMap.get(it.producto_id) || {};
+    const price = Number(p.price_online ?? p.price_base ?? 0);
+    const qty = Number(it.qty || 0);
+    return {
+      producto_id: it.producto_id,
+      qty,
+      nombre: p.nombre || "",
+      marca: p.marca || "",
+      codigo: p.codigo || "",
+      price_base: p.price_base ?? null,
+      price_online: p.price_online ?? null,
+      price,
+      stock: Number(p.stock ?? 0),
+      main_image_url: coverMap.get(it.producto_id) || null,
+      subtotal: price * qty,
+    };
+  });
 }
 
-export async function cartCount(cartId) {
-  const cid = cartId || (await ensureCart());
-  const { data, error } = await supabase
+/* ----------------------------------------------------
+   Cambiar qty (CLAMPEA a stock; <=0 elimina la línea)
+   Usa RPC cart_set_qty_clamped si existe
+-----------------------------------------------------*/
+export async function updateCartQty(producto_id, qty) {
+  const cartId = await ensureCart();
+  const wanted = Math.max(0, Number(qty || 0));
+
+  // FAST PATH RPC
+  try {
+    const { data, error } = await supabase.rpc("cart_set_qty_clamped", {
+      p_cart_id: cartId,
+      p_producto_id: producto_id,
+      p_wanted: wanted,
+    });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    const newQty = Number(row?.new_qty ?? 0);
+    const newTotal = Number(row?.new_total ?? 0);
+
+    if (cartCache.id === cartId) {
+      if (newQty <= 0) cartCache.items.delete(producto_id);
+      else cartCache.items.set(producto_id, newQty);
+      cartCache.count = newTotal;
+      cartCache.hydrated = true;
+    }
+    return newTotal;
+  } catch {
+    // Fallback legacy
+    const stock = await getOnlineStock(producto_id);
+    const clamped = Math.min(wanted, Math.max(0, stock));
+    if (clamped <= 0) return removeFromCart(producto_id);
+
+    const prev = cartCache.items.get(producto_id) || 0;
+
+    const { error } = await supabase
+      .from("cart_items")
+      .upsert(
+        { cart_id: cartId, producto_id, qty: clamped },
+        { onConflict: "cart_id,producto_id" }
+      );
+    if (error) throw error;
+
+    if (cartCache.id === cartId) {
+      cartCache.items.set(producto_id, clamped);
+      cartCache.count += clamped - prev;
+      cartCache.hydrated = true;
+      return cartCache.count;
+    }
+
+    const { data } = await supabase
+      .from("cart_items")
+      .select("qty")
+      .eq("cart_id", cartId);
+    return (data || []).reduce((s, r) => s + Number(r.qty || 0), 0);
+  }
+}
+export const updateCartItemQty = updateCartQty;
+
+/* ---------------------- eliminar / limpiar ---------------------- */
+export async function removeFromCart(producto_id) {
+  const cartId = await ensureCart();
+  const prev = cartCache.items.get(producto_id) || 0;
+
+  const { error } = await supabase
     .from("cart_items")
-    .select("qty", { count: "exact", head: false })
-    .eq("cart_id", cid);
-
+    .delete()
+    .eq("cart_id", cartId)
+    .eq("producto_id", producto_id);
   if (error) throw error;
-  return (data || []).reduce((a, r) => a + Number(r.qty || 0), 0);
+
+  if (cartCache.id === cartId) {
+    cartCache.items.delete(producto_id);
+    cartCache.count = Math.max(0, cartCache.count - prev);
+    cartCache.hydrated = true;
+    return cartCache.count;
+  }
+
+  const { data } = await supabase
+    .from("cart_items")
+    .select("qty")
+    .eq("cart_id", cartId);
+
+  return (data || []).reduce((s, r) => s + Number(r.qty || 0), 0);
 }
+export async function clearCart() {
+  const cartId = await ensureCart();
+  await supabase.from("cart_items").delete().eq("cart_id", cartId);
+  if (cartCache.id === cartId) {
+    cartCache.items = new Map();
+    cartCache.count = 0;
+    cartCache.hydrated = true;
+  }
+}
+export { removeFromCart as removeCartItem };
