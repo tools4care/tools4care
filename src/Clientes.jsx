@@ -1450,7 +1450,7 @@ function ClienteStatsModal({
   );
 }
 
-/* -------------------- MODAL: ABONO (área de pagos mejorada) -------------------- */
+//* -------------------- MODAL: ABONO (área de pagos mejorada) -------------------- */
 function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { van } = useVan();
   const [monto, setMonto] = useState("");
@@ -1479,7 +1479,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const limite = Number(resumen?.cxc?.limite ?? 0);
   const montoNum = Number(monto || 0);
-  const excedente = Math.max(0, montoNum - saldoActual); // efectivo a devolver si paga más que el saldo
+  const excedente = Math.max(0, montoNum - saldoActual);
 
   async function guardarAbono(e) {
     e.preventDefault();
@@ -1503,7 +1503,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       return;
     }
 
-    // 1) Intento RPC
     let rpcOk = false;
     try {
       const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
@@ -1513,12 +1512,8 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
         p_van_id: van.id,
       });
       if (!rpcErr) rpcOk = true;
-      else console.warn("RPC error:", rpcErr?.message);
-    } catch (e) {
-      console.warn("RPC NOT AVAILABLE:", e?.message || e);
-    }
+    } catch {}
 
-    // 2) Fallback insert
     if (!rpcOk) {
       const dbRow = {
         cliente_id: cliente.id,
@@ -1536,12 +1531,10 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
     setGuardando(false);
 
-    // 3) Refrescar
     const info = await safeGetCxc(cliente.id);
     if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
     if (typeof refresh === "function") await refresh();
 
-    // 4) Recibo
     const receiptPayload = {
       clientName: cliente?.nombre || "",
       creditNumber: getCreditNumber(cliente),
@@ -1551,11 +1544,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       prevBalance: saldoActual,
       newBalance: Math.max(0, saldoActual - Math.min(montoNum, saldoActual)),
     };
-    try {
-      await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload });
-    } catch (err) {
-      console.warn("Receipt send failed:", err?.message || err);
-    }
+    try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
 
     setMensaje("Payment registered!");
     setTimeout(() => { onClose(); }, 900);
@@ -1563,8 +1552,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-40 p-0 sm:p-4">
-      {/* Contenedor a pantalla completa en mobile con layout flexible */}
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md sm:max-w-2xl h-[100svh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md sm:max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header pegajoso */}
         <div className="p-4 sm:p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20">
           <h3 className="text-lg sm:text-xl font-bold flex items-center gap-2">
@@ -1574,11 +1562,10 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
           <p className="text-green-100 mt-1 text-sm">Record a new payment from this client</p>
         </div>
 
-        {/* Form como columna con área scroll + footer fijo */}
+        {/* Form + contenido scrollable */}
         <form onSubmit={guardarAbono} className="flex-1 flex flex-col min-h-0">
-          {/* Área con scroll */}
           <div className="p-4 sm:p-6 overflow-y-auto flex-1">
-            {/* Panel crédito dinámico */}
+            {/* Panel crédito */}
             <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4 sm:mb-6">
               <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
                 <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Balance</div>
@@ -1627,7 +1614,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
             </div>
 
-            {/* Visualización clara de cambio/efectivo a devolver */}
+            {/* Detalle de cambio */}
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 sm:p-4 mb-4">
               {montoNum <= 0 ? (
                 <span className="text-sm">Enter a payment amount to see details.</span>
@@ -1659,8 +1646,8 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
             )}
 
-            {/* Resumen compacto en mobile */}
-            <div className="bg-gray-50 rounded-xl p-4 mb-20 sm:mb-6">
+            {/* Resumen + separador para que no lo tape el footer */}
+            <div className="bg-gray-50 rounded-xl p-4">
               <h4 className="font-bold mb-3 text-gray-800 flex items-center gap-2">
                 <TrendingUp size={16} />
                 Purchase History Summary
@@ -1707,10 +1694,13 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                 </div>
               </div>
             </div>
+
+            {/* Espaciador para la barra fija */}
+            <div className="h-[112px] sm:h-[96px]" />
           </div>
 
-          {/* Footer fijo con botones visibles siempre */}
-          <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 sm:p-4 z-20 pb-[env(safe-area-inset-bottom)]">
+          {/* Barra de acciones FIJA (siempre visible) */}
+          <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border-t border-gray-200 p-3 sm:p-4 z-[130] pb-[env(safe-area-inset-bottom)]">
             <div className="flex gap-3">
               <button
                 type="submit"
@@ -1729,6 +1719,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                   </>
                 )}
               </button>
+
               <button
                 type="button"
                 className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
