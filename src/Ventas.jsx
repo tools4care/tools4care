@@ -446,6 +446,10 @@ export default function Sales() {
   // ---- UI: detalles de pago (mobile simplificado por default)
   const [showPaymentDetails, setShowPaymentDetails] = useState(false);
 
+  // PATCH: tick para forzar recarga de inventario sin cambiar de ruta
+  const [invTick, setInvTick] = useState(0);           // PATCH
+  const reloadInventory = () => setInvTick(n => n + 1); // PATCH
+
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
     const t = setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 250);
@@ -682,10 +686,10 @@ export default function Sales() {
       // 1) RPC original
       try {
         const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
-  van_id_param: van.id,
- dias: 30,     // ajusta si quieres otra ventana
-  limite: 10,   // top N
-});
+          van_id_param: van.id,
+          dias: 30,     // ajusta si quieres otra ventana
+          limite: 10,   // top N
+        });
         if (error) throw error;
 
         if (Array.isArray(data) && data.length > 0) {
@@ -697,6 +701,7 @@ export default function Sales() {
           const ids = rows.map(r => r.producto_id).filter(Boolean);
           const stockMap = await getStockMapForVan(van.id, ids);
           rows = rows.map(r => ({ ...r, cantidad: stockMap.get(r.producto_id) ?? 0 }));
+          rows = rows.filter(r => Number(r.cantidad) > 0); // PATCH: no mostrar TOP sin stock
 
           setTopProducts(rows);
           return;
@@ -808,7 +813,7 @@ export default function Sales() {
     }
 
     loadTopProducts();
-  }, [van?.id]);
+  }, [van?.id, invTick]); // PATCH: antes solo [van?.id]
 
   /* ---------- INVENTARIO COMPLETO para búsqueda ---------- */
   useEffect(() => {
@@ -906,7 +911,12 @@ export default function Sales() {
     }
 
     loadAllProducts();
-  }, [van?.id]);
+  }, [van?.id, invTick]); // PATCH: antes solo [van?.id]
+
+  // PATCH: Recarga al entrar al Paso 2 (evita salir a otra ruta)
+  useEffect(() => {
+    if (step === 2) reloadInventory();
+  }, [step]); // PATCH
 
   /* ---------- Filtro del buscador ---------- */
   useEffect(() => {
@@ -914,7 +924,7 @@ export default function Sales() {
     const searchActive = filter.length > 0;
     const base = searchActive ? allProducts : topProducts;
 
-    const filtered = !searchActive
+    let filtered = !searchActive
       ? base
       : base.filter((row) => {
           const n = (row.productos?.nombre || row.nombre || "").toLowerCase();
@@ -922,6 +932,9 @@ export default function Sales() {
           const m = (row.productos?.marca || row.marca || "").toLowerCase();
           return n.includes(filter) || c.includes(filter) || m.includes(filter);
         });
+
+    // PATCH: asegurar que jamás se muestren productos con stock 0
+    filtered = filtered.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0); // PATCH
 
     setProducts(filtered);
     setNoProductFound(searchActive && filtered.length === 0 ? productSearch.trim() : "");
@@ -1009,6 +1022,13 @@ export default function Sales() {
 
   /* ======================== Handlers de productos ======================== */
   function handleAddProduct(p) {
+    // PATCH: bloquear click si no hay stock
+    const stockNow = Number(p.cantidad ?? p.stock ?? 0); // PATCH
+    if (!Number.isFinite(stockNow) || stockNow <= 0) {   // PATCH
+      setProductError("🚫 Sin stock disponible para este producto."); // PATCH
+      return; // PATCH
+    } // PATCH
+
     const exists = cartSafe.find((x) => x.producto_id === p.producto_id);
     const qty = 1;
 
@@ -1292,6 +1312,8 @@ export default function Sales() {
           (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
           (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
       );
+
+      reloadInventory(); // PATCH: refrescar inventario tras guardar
       clearSale();
     } catch (err) {
       setPaymentError("❌ Error saving sale: " + (err?.message || ""));

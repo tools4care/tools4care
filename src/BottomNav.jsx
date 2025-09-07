@@ -13,7 +13,7 @@ import {
   UserCircle2,
   FileText,
   CreditCard,
-  RefreshCcw, // ícono para "Change VAN"
+  RefreshCcw,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -31,20 +31,15 @@ const items = [
 export default function BottomNav() {
   const [showMore, setShowMore] = useState(false);
   const { usuario, setUsuario } = useUsuario();
-  const { van } = useVan(); // no necesitamos setVan para cambiar VAN si solo navegamos
+  const { van } = useVan();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUsuario(null);
-    localStorage.clear();
+    // 👇 OJO: no hagas localStorage.clear() aquí si no es necesario,
+    // podría borrar el token de Supabase en ciertos setups.
     navigate("/login");
-  };
-
-  // ✅ Igual que en OnlineSidebar: NO cierra sesión ni borra nada, solo navega a /van
-  const handleChangeVan = () => {
-    setShowMore(false);
-    navigate("/van");
   };
 
   const handleNav = (path) => {
@@ -82,55 +77,35 @@ export default function BottomNav() {
         )}
       </nav>
 
-      {/* Bottom sheet */}
       {showMore && (
-        <div
-          className="fixed inset-0 z-50 bg-black/50 flex items-end"
-          onClick={() => setShowMore(false)}
-        >
-          <div
-            className="bg-white w-full rounded-t-2xl p-6 space-y-2"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end" onClick={() => setShowMore(false)}>
+          <div className="bg-white w-full rounded-t-2xl p-6 space-y-2" onClick={(e) => e.stopPropagation()}>
             <div className="text-center font-semibold text-lg mb-1">More Options</div>
+
             <div className="flex flex-col gap-2">
-              <button
-                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
-                onClick={() => handleNav("/inventario")}
-              >
+              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/inventario")}>
                 <ClipboardList size={18} color="#6366f1" /> Inventory
               </button>
-              <button
-                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
-                onClick={() => handleNav("/facturas")}
-              >
+              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/facturas")}>
                 <FileText size={18} color="#a21caf" /> Invoicing
               </button>
-              <button
-                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
-                onClick={() => handleNav("/cierres")}
-              >
+              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/cierres")}>
                 <Truck size={18} color="#059669" /> Van Closeout
               </button>
-              <button
-                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left"
-                onClick={() => handleNav("/cxc")}
-              >
+              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/cxc")}>
                 <CreditCard size={18} color="#0ea5e9" /> Accounts Receivable
               </button>
 
-              {/* ✅ Cambiar VAN (solo ir al selector, sin cerrar sesión) */}
-              <button
-                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-amber-50 text-left"
-                onClick={handleChangeVan}
+              {/* ✅ Igual a OnlineSidebar: solo navegar a /van */}
+              <NavLink
+                to="/van"
+                onClick={() => setShowMore(false)}
+                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-amber-50 text-left text-gray-700"
               >
                 <RefreshCcw size={18} color="#b45309" /> Change VAN
-              </button>
+              </NavLink>
 
-              <button
-                className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-red-50 text-left"
-                onClick={handleLogout}
-              >
+              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-red-50 text-left" onClick={handleLogout}>
                 <LogOut size={18} color="#dc2626" /> Log out
               </button>
             </div>
@@ -146,10 +121,7 @@ export default function BottomNav() {
               </div>
             </div>
 
-            <button
-              className="mt-3 w-full text-gray-400 font-medium text-sm"
-              onClick={() => setShowMore(false)}
-            >
+            <button className="mt-3 w-full text-gray-400 font-medium text-sm" onClick={() => setShowMore(false)}>
               Close
             </button>
           </div>
