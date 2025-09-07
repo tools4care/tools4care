@@ -6,7 +6,7 @@ import autoTable from "jspdf-autotable";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 
-// ------ Utilities -----------
+/* ===================== Utilities ===================== */
 function formatAddress(dir) {
   if (!dir) return "-";
   if (typeof dir === "string") {
@@ -27,13 +27,68 @@ function formatAddress(dir) {
 }
 function formatPhone(phone) {
   if (!phone) return "-";
-  const num = phone.replace(/\D/g, "");
+  const num = String(phone).replace(/\D/g, "");
   if (num.length === 10) return `(${num.substr(0,3)}) ${num.substr(3,3)}-${num.substr(6)}`;
   if (num.length === 11 && num[0] === "1") return `(${num.substr(1,3)}) ${num.substr(4,3)}-${num.substr(7)}`;
-  return phone;
+  return String(phone);
 }
 
-// PDF generator
+/* ========== Normalización / fallbacks de detalle ========== */
+
+// Normaliza filas de detalle (vengan de detalle_ventas o ventas.productos)
+function normalizeDetalleRows(rows, productosMap) {
+  return (rows || []).map((d) => {
+    const pid = d.producto_id ?? d.producto ?? d.id;
+    const prod = productosMap?.get?.(pid);
+
+    const unit =
+      d.precio_unitario != null
+        ? Number(d.precio_unitario)
+        : d.precio_unit != null
+        ? Number(d.precio_unit)
+        : d.precio != null
+        ? Number(d.precio)
+        : d.unit_price != null
+        ? Number(d.unit_price)
+        : 0;
+
+    return {
+      producto_id: pid,
+      cantidad: Number(d.cantidad || 1),
+      precio_unitario: Number(unit || 0),
+      productos: prod
+        ? { nombre: prod.nombre, codigo: prod.codigo }
+        : d.productos
+        ? { nombre: d.productos.nombre, codigo: d.productos.codigo }
+        : null,
+    };
+  });
+}
+
+// Fallback: lee productos desde ventas.productos (JSON) y los enriquece con nombre/código
+async function fetchDetalleFromVenta(ventaId) {
+  const { data: v } = await supabase
+    .from("ventas")
+    .select("productos")
+    .eq("id", ventaId)
+    .maybeSingle();
+
+  const items = Array.isArray(v?.productos) ? v.productos : [];
+  if (items.length === 0) return [];
+
+  const ids = [...new Set(items.map((i) => i.producto_id).filter(Boolean))];
+  let map = new Map();
+  if (ids.length) {
+    const { data: prods } = await supabase
+      .from("productos")
+      .select("id,nombre,codigo")
+      .in("id", ids);
+    map = new Map((prods || []).map((p) => [p.id, { nombre: p.nombre, codigo: p.codigo }]));
+  }
+  return normalizeDetalleRows(items, map);
+}
+
+/* ===================== PDF ===================== */
 function descargarPDFFactura(factura) {
   const doc = new jsPDF("p", "pt", "a4");
   const azul = "#0B4A6F";
@@ -43,7 +98,7 @@ function descargarPDFFactura(factura) {
     nombre: "TOOLS4CARE",
     direccion: "108 Lafayette St, Salem, MA 01970",
     telefono: "(978) 594-1624",
-    email: "soporte@tools4care.com"
+    email: "soporte@tools4care.com",
   };
   const dirCliente = formatAddress(factura.cliente_direccion);
   const telCliente = formatPhone(factura.cliente_telefono);
@@ -73,7 +128,11 @@ function descargarPDFFactura(factura) {
   doc.setFontSize(10);
   doc.setTextColor(negro);
   doc.text(`Invoice Number: ${factura.numero_factura || factura.id?.slice(0, 8)}`, 36, 130);
-  doc.text(`Date: ${factura.fecha ? new Date(factura.fecha).toLocaleDateString("en-US") : ""}`, 36, 145);
+  doc.text(
+    `Date: ${factura.fecha ? new Date(factura.fecha).toLocaleDateString("en-US") : ""}`,
+    36,
+    145
+  );
   doc.text(`Client: ${factura.cliente_nombre_c || "-"}`, 36, 160);
   doc.text(`Address: ${dirCliente}`, 36, 175);
   doc.text(`Phone: ${telCliente}`, 36, 190);
@@ -83,21 +142,27 @@ function descargarPDFFactura(factura) {
   doc.setFont("helvetica", "bold");
   doc.text("Product/Service Details", 36, 230);
 
+  const body =
+    factura.detalle_ventas && factura.detalle_ventas.length > 0
+      ? factura.detalle_ventas.map((d) => {
+          const nombre = d.productos?.nombre || d.producto_nombre || d.producto_id || "-";
+          const qty = Number(d.cantidad || 1);
+          const unit = Number(
+            d.precio_unitario != null ? d.precio_unitario : d.precio_unit != null ? d.precio_unit : 0
+          );
+          const sub = unit * qty;
+          return [nombre, qty, "$" + unit.toFixed(2), "$" + sub.toFixed(2)];
+        })
+      : [["-", "-", "-", "-"]];
+
   autoTable(doc, {
     startY: 240,
     head: [["Product", "Quantity", "Unit Price", "Subtotal"]],
-    body: (factura.detalle_ventas && factura.detalle_ventas.length > 0)
-      ? factura.detalle_ventas.map(d => [
-          d.productos?.nombre || d.producto_nombre || d.producto_id || "-",
-          d.cantidad || 1,
-          "$" + Number(d.precio_unitario || 0).toFixed(2),
-          "$" + Number(d.subtotal || 0).toFixed(2)
-        ])
-      : [["-", "-", "-", "-"]],
+    body,
     theme: "grid",
     headStyles: { fillColor: azul, textColor: "#fff", fontStyle: "bold" },
     styles: { fontSize: 10, lineColor: gris, textColor: "#333" },
-    margin: { left: 36, right: 36 }
+    margin: { left: 36, right: 36 },
   });
 
   let totalY = doc.lastAutoTable.finalY + 25;
@@ -108,7 +173,11 @@ function descargarPDFFactura(factura) {
   doc.text("$" + Number(factura.total_venta || 0).toFixed(2), 470, totalY);
   doc.setFontSize(10);
   doc.setTextColor("#444");
-  doc.text(`Status: ${factura.estado_pago === "pagado" ? "Paid" : "Pending"}`, 36, totalY + 25);
+  doc.text(
+    `Status: ${factura.estado_pago === "pagado" ? "Paid" : "Pending"}`,
+    36,
+    totalY + 25
+  );
 
   let yPie = totalY + 55;
   doc.setDrawColor(gris);
@@ -120,7 +189,7 @@ function descargarPDFFactura(factura) {
   doc.save(`Invoice_${factura.numero_factura || factura.id}.pdf`);
 }
 
-// --- MAIN COMPONENT ---
+/* ===================== MAIN ===================== */
 export default function Facturas() {
   const { usuario } = useUsuario();
   const { van } = useVan();
@@ -145,35 +214,81 @@ export default function Facturas() {
   async function cargarFacturas() {
     setLoading(true);
     let query = supabase.from("facturas_ext").select("*", { count: "exact" });
+
     if (usuario?.rol !== "admin" && van?.id) {
       query = query.eq("van_id", van.id);
     }
+
     const desde = (pagina - 1) * porPagina;
     const hasta = desde + porPagina - 1;
+
     query = query.order("fecha", { ascending: false }).range(desde, hasta);
-    const { data, error, count } = await query;
+
+    const { data, count } = await query;
     setFacturas(data || []);
     setTotalVentas(count || 0);
     setLoading(false);
   }
 
-  // Filtering
-  const facturasFiltradas = facturas.filter(f =>
-    (f.cliente_nombre_c || "").toLowerCase().includes(busqueda.toLowerCase()) ||
-    (f.numero_factura || "").toLowerCase().includes(busqueda.toLowerCase())
-  );
+  const facturasFiltradas = facturas.filter((f) => {
+    const t1 = (f.cliente_nombre_c || "").toLowerCase();
+    const t2 = (f.numero_factura || "").toLowerCase();
+    const q = busqueda.toLowerCase();
+    return t1.includes(q) || t2.includes(q);
+  });
 
-  // Load product details only if needed
+  /* === Carga perezosa del detalle (con fallbacks) === */
   useEffect(() => {
     if (!facturaSeleccionada) return;
     if (facturaSeleccionada.detalle_ventas) return;
+
     async function cargarDetalle() {
-      const { data } = await supabase
-        .from("detalle_ventas")
-        .select("*, productos(nombre)")
-        .eq("venta_id", facturaSeleccionada.id);
-      setFacturaSeleccionada(f => (f ? { ...f, detalle_ventas: data || [] } : f));
+      const ventaId = facturaSeleccionada.id;
+
+      // 1) detalle_ventas por venta_id con alias al precio
+      let rows = [];
+      try {
+        const { data } = await supabase
+          .from("detalle_ventas")
+          .select("producto_id,cantidad,precio_unitario:precio_unit, productos(nombre,codigo)")
+          .eq("venta_id", ventaId);
+        rows = data || [];
+      } catch {}
+
+      // 2) mismo pero con columna nativa precio_unitario
+      if (!rows.length) {
+        try {
+          const { data } = await supabase
+            .from("detalle_ventas")
+            .select("producto_id,cantidad,precio_unitario, productos(nombre,codigo)")
+            .eq("venta_id", ventaId);
+          rows = data || [];
+        } catch {}
+      }
+
+      // 3) algunos esquemas usan FK 'venta' en lugar de 'venta_id'
+      if (!rows.length) {
+        try {
+          const { data } = await supabase
+            .from("detalle_ventas")
+            .select("producto_id,cantidad,precio_unitario:precio_unit, productos(nombre,codigo)")
+            .eq("venta", ventaId);
+          rows = data || [];
+        } catch {}
+      }
+
+      // 4) 🔥 Fallback definitivo: leer ventas.productos (JSON) y enriquecer
+      if (!rows.length) {
+        try {
+          rows = await fetchDetalleFromVenta(ventaId);
+        } catch {}
+      }
+
+      // Normalización final (soporta cualquiera de los casos)
+      const normalizados = normalizeDetalleRows(rows);
+      setFacturaSeleccionada((f) => (f ? { ...f, detalle_ventas: normalizados } : f));
     }
+
     cargarDetalle();
   }, [facturaSeleccionada]);
 
@@ -182,7 +297,7 @@ export default function Facturas() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-6xl mx-auto">
-        {/* Header card */}
+        {/* Header */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
@@ -197,7 +312,7 @@ export default function Facturas() {
               className="w-full sm:w-96 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
               placeholder="🔍 Search by client or invoice number"
               value={busqueda}
-              onChange={e => setBusqueda(e.target.value)}
+              onChange={(e) => setBusqueda(e.target.value)}
             />
             <span className="hidden sm:inline text-xs text-gray-500">
               Page {pagina} / {totalPaginas}
@@ -205,7 +320,7 @@ export default function Facturas() {
           </div>
         </div>
 
-        {/* Table card */}
+        {/* Tabla */}
         <div className="bg-white rounded-xl shadow-lg p-0 overflow-hidden">
           {loading ? (
             <div className="p-8 text-blue-700 font-semibold">Loading invoices…</div>
@@ -230,14 +345,14 @@ export default function Facturas() {
                       </td>
                     </tr>
                   )}
-                  {facturasFiltradas.map(f => (
+                  {facturasFiltradas.map((f) => (
                     <tr
                       key={f.id}
                       className="hover:bg-blue-50 cursor-pointer transition-colors"
                       onClick={() => setFacturaSeleccionada(f)}
                     >
                       <td className="p-3 font-mono text-gray-800">
-                        {f.numero_factura || f.id?.slice(0,8)}
+                        {f.numero_factura || f.id?.slice(0, 8)}
                       </td>
                       <td className="p-3 text-gray-800">
                         {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : ""}
@@ -266,7 +381,7 @@ export default function Facturas() {
           )}
         </div>
 
-        {/* Paginator */}
+        {/* Paginación */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4">
           <div className="text-xs text-gray-500">
             Total records: <b>{totalVentas}</b> · Per page: <b>{porPagina}</b>
@@ -274,7 +389,7 @@ export default function Facturas() {
           <div className="flex items-center gap-2">
             <button
               className="px-4 py-2 rounded-lg bg-gradient-to-r from-gray-200 to-gray-300 text-gray-800 font-medium shadow hover:shadow-md disabled:opacity-50"
-              onClick={() => setPagina(p => Math.max(1, p - 1))}
+              onClick={() => setPagina((p) => Math.max(1, p - 1))}
               disabled={pagina === 1}
             >
               ← Previous
@@ -284,7 +399,7 @@ export default function Facturas() {
             </span>
             <button
               className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold shadow hover:shadow-md disabled:opacity-50"
-              onClick={() => setPagina(p => p + 1)}
+              onClick={() => setPagina((p) => p + 1)}
               disabled={pagina >= totalPaginas}
             >
               Next →
@@ -292,11 +407,10 @@ export default function Facturas() {
           </div>
         </div>
 
-        {/* Modal: Invoice Details */}
+        {/* Modal Detalle */}
         {facturaSeleccionada && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl overflow-hidden">
-              {/* Header */}
               <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-3 flex items-center justify-between">
                 <h3 className="font-bold text-lg tracking-tight">Invoice Details</h3>
                 <button
@@ -307,7 +421,6 @@ export default function Facturas() {
                 </button>
               </div>
 
-              {/* Body */}
               <div className="p-5 text-sm text-gray-700 space-y-2">
                 <div><b>Invoice Number:</b> {facturaSeleccionada.numero_factura || facturaSeleccionada.id}</div>
                 <div><b>Date:</b> {facturaSeleccionada.fecha ? new Date(facturaSeleccionada.fecha).toLocaleDateString("en-US") : ""}</div>
@@ -330,7 +443,6 @@ export default function Facturas() {
                   </span>
                 </div>
 
-                {/* Products */}
                 <div className="mt-3">
                   <b>Products:</b>
                   <ul className="list-disc ml-6 space-y-1 mt-1">
@@ -340,7 +452,7 @@ export default function Facturas() {
                         {" x "}
                         {item.cantidad || 1}
                         {" @ $"}
-                        {Number(item.precio_unitario || 0).toFixed(2)}
+                        {Number(item.precio_unitario != null ? item.precio_unitario : item.precio_unit || 0).toFixed(2)}
                       </li>
                     ))}
                     {(facturaSeleccionada.detalle_ventas || []).length === 0 && (
@@ -350,7 +462,6 @@ export default function Facturas() {
                 </div>
               </div>
 
-              {/* Footer */}
               <div className="p-5 pt-0 flex flex-col gap-2">
                 <button
                   className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold py-2.5 px-4 rounded-lg shadow-md disabled:opacity-50"

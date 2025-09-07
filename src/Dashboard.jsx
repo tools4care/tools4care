@@ -1,4 +1,3 @@
-// src/Dashboard.jsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import dayjs from "dayjs";
@@ -14,6 +13,7 @@ import {
   BarChart,
   Bar,
   Legend,
+  ComposedChart, // 👈 agregado
 } from "recharts";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -32,6 +32,23 @@ function rangeDaysArray(days) {
     arr.push(dayjs().subtract(i, "day").format("YYYY-MM-DD"));
   }
   return arr;
+}
+function dinero(n) {
+  return "$" + Number(n || 0).toFixed(2);
+}
+/* Promedio móvil N (por defecto 7) para la clave indicada (total) */
+function withMA(data, key = "total", windowSize = 7) {
+  const out = [];
+  let sum = 0;
+  const q = [];
+  for (const d of data) {
+    const v = Number(d[key] || 0);
+    q.push(v);
+    sum += v;
+    if (q.length > windowSize) sum -= q.shift();
+    out.push({ ...d, ma7: q.length === windowSize ? sum / windowSize : null });
+  }
+  return out;
 }
 
 /* ---------- Modal Low Stock ---------- */
@@ -138,18 +155,19 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                 {productos.length === 0 ? (
                   <li className="text-gray-400">No products in this sale</li>
                 ) : (
-                  productos.map((p, idx) => (
-                    <li key={idx}>
-                      <span className="font-mono text-gray-500">{p.productos?.codigo || p.producto_id}</span>
-                      <span className="ml-2">{p.productos?.nombre || p.producto_id}</span>
-                      <span className="ml-2">
-                        x <b>{p.cantidad}</b>
-                      </span>
-                      <span className="ml-2 text-gray-500">
-                        {p.precio_unitario != null ? fmtMoney(p.precio_unitario) : ""}
-                      </span>
-                    </li>
-                  ))
+                  productos.map((p, idx) => {
+                    const unit = Number(p.precio_unit ?? p.precio_unitario ?? 0);
+                    const sub  = p.subtotal != null ? Number(p.subtotal) : unit * Number(p.cantidad || 0);
+                    return (
+                      <li key={idx}>
+                        <span className="font-mono text-gray-500">{p.codigo || p.producto_id}</span>
+                        <span className="ml-2">{p.nombre || p.producto_id}</span>
+                        <span className="ml-2">x <b>{p.cantidad}</b></span>
+                        <span className="ml-2 text-gray-500">{dinero(unit)}</span>
+                        <span className="ml-2 text-gray-400">· {dinero(sub)}</span>
+                      </li>
+                    );
+                  })
                 )}
               </ul>
             )}
@@ -264,38 +282,49 @@ export default function Dashboard() {
       setVentasSerie(serie);
     }
 
-    // Top productos vendidos de la VAN (últimos 30 días) — sin joins ambiguos
+    // Top productos vendidos de la VAN (últimos 30 días) — sin embebidos
     const desde30 = dayjs().subtract(30, "day").startOf("day").format("YYYY-MM-DD");
-    // 1) IDs de ventas de la VAN
     const { data: ventasIds } = await supabase
       .from("ventas")
       .select("id")
       .eq("van_id", vanId)
       .gte("fecha", desde30);
-    const ids = (ventasIds || []).map((x) => x.id);
 
+    const ids = (ventasIds || []).map((x) => x.id);
     let det = [];
     if (ids.length > 0) {
       const { data: det2 } = await supabase
         .from("detalle_ventas")
-        .select("producto_id,cantidad,productos(nombre)")
+        .select("producto_id,cantidad")
         .in("venta_id", ids);
       det = det2 || [];
     }
 
-    const vendidos = {};
-    (det || []).forEach((it) => {
-      if (!it.producto_id) return;
-      if (!vendidos[it.producto_id]) {
-        vendidos[it.producto_id] = { cantidad: 0, nombre: it.productos?.nombre || it.producto_id };
-      }
-      vendidos[it.producto_id].cantidad += Number(it.cantidad || 0);
+    // Agrupar cantidades por producto
+    const qtyMap = new Map();
+    (det || []).forEach((r) => {
+      const pid = r.producto_id;
+      qtyMap.set(pid, (qtyMap.get(pid) || 0) + Number(r.cantidad || 0));
     });
 
-    const top = Object.entries(vendidos)
-      .map(([producto_id, v]) => ({ producto_id, ...v }))
-      .sort((a, b) => b.cantidad - a.cantidad)
-      .slice(0, 5);
+    // Traer nombres/códigos
+    let top = [];
+    const idsProds = Array.from(qtyMap.keys()).slice(0, 50);
+    if (idsProds.length > 0) {
+      const { data: prods } = await supabase
+        .from("productos")
+        .select("id,nombre")
+        .in("id", idsProds);
+      const nameMap = new Map((prods || []).map((p) => [p.id, p.nombre]));
+      top = Array.from(qtyMap.entries())
+        .map(([producto_id, cantidad]) => ({
+          producto_id,
+          cantidad,
+          nombre: nameMap.get(producto_id) || producto_id,
+        }))
+        .sort((a, b) => b.cantidad - a.cantidad)
+        .slice(0, 5);
+    }
     setProductosTop(top);
 
     setLoading(false);
@@ -318,39 +347,93 @@ export default function Dashboard() {
     );
   }
 
+  // ======= Helpers para detalle (con fallbacks) =======
+  function normalizeDetalleRows(rows) {
+    return (rows || []).map((r) => ({
+      producto_id: r.producto_id ?? r.producto ?? r.id,
+      cantidad: Number(r.cantidad || 1),
+      precio_unit: r.precio_unit != null ? Number(r.precio_unit) : undefined,
+      precio_unitario: r.precio_unitario != null ? Number(r.precio_unitario) : undefined,
+      subtotal:
+        r.subtotal != null
+          ? Number(r.subtotal)
+          : Number(r.cantidad || 0) *
+            Number(
+              r.precio_unit != null
+                ? r.precio_unit
+                : r.precio_unitario != null
+                ? r.precio_unitario
+                : 0
+            ),
+    }));
+  }
+
+  async function fetchDetalleFromVentaJSON(ventaId) {
+    const { data: v } = await supabase
+      .from("ventas")
+      .select("productos")
+      .eq("id", ventaId)
+      .maybeSingle();
+
+    const items = Array.isArray(v?.productos) ? v.productos : [];
+    return normalizeDetalleRows(items);
+  }
+
+  // ===== Detalle de venta (con múltiples fallbacks) =====
   async function abrirDetalleVenta(venta) {
     setVentaSeleccionada(venta);
     setCargandoDetalle(true);
 
-    // Consulta principal
-    const try1 = await supabase
-      .from("detalle_ventas")
-      .select("producto_id, cantidad, precio_unitario, productos(nombre, codigo)")
-      .eq("venta_id", venta.id);
+    let det = [];
 
-    let prods = try1.data || [];
+    // 1) detalle_ventas por venta_id (alias de precio)
+    try {
+      const { data } = await supabase
+        .from("detalle_ventas")
+        .select("producto_id, cantidad, precio_unit, precio_unitario, subtotal")
+        .eq("venta_id", venta.id);
+      det = data || [];
+    } catch {}
 
-    // Fallbacks por si el FK/columna tiene otro nombre en el esquema
-    if (prods.length === 0) {
+    // 2) si no hay, intenta FK 'venta'
+    if (!det.length) {
       try {
-        const tryAlt = await supabase
+        const { data } = await supabase
           .from("detalle_ventas")
-          .select("producto_id, cantidad, precio_unitario, productos(nombre, codigo)")
-          .eq("venta", venta.id); // algunas bases usan "venta" como FK
-        prods = tryAlt.data || [];
-      } catch {}
-    }
-    if (prods.length === 0) {
-      try {
-        const tryView = await supabase
-          .from("detalle_ventas_view")
-          .select("producto_id, cantidad, precio_unitario, productos(nombre, codigo)")
-          .eq("venta_id", venta.id);
-        prods = tryView.data || [];
+          .select("producto_id, cantidad, precio_unit, precio_unitario, subtotal")
+          .eq("venta", venta.id);
+        det = data || [];
       } catch {}
     }
 
-    setDetalleProductos(prods);
+    // 3) si sigue vacío, fallback a ventas.productos (JSON)
+    if (!det.length) {
+      try {
+        det = await fetchDetalleFromVentaJSON(venta.id);
+      } catch {
+        det = [];
+      }
+    } else {
+      det = normalizeDetalleRows(det);
+    }
+
+    // 4) enriquecer con nombre/código desde productos
+    let merged = det;
+    const ids = Array.from(new Set(det.map((x) => x.producto_id))).filter(Boolean);
+    if (ids.length > 0) {
+      const { data: prods } = await supabase
+        .from("productos")
+        .select("id,nombre,codigo")
+        .in("id", ids);
+      const map = new Map((prods || []).map((p) => [p.id, p]));
+      merged = det.map((r) => ({
+        ...r,
+        nombre: map.get(r.producto_id)?.nombre || r.producto_id,
+        codigo: map.get(r.producto_id)?.codigo || r.producto_id,
+      }));
+    }
+
+    setDetalleProductos(merged);
     setCargandoDetalle(false);
   }
   function cerrarDetalleVenta() {
@@ -363,6 +446,9 @@ export default function Dashboard() {
   const lowPreview = stockVan.slice(0, LOW_STOCK_PREVIEW);
   const remainingLow = Math.max(0, stockVan.length - LOW_STOCK_PREVIEW);
 
+  // 👇 Datos con promedio móvil 7 días
+  const chartData = withMA(ventasSerie, "total", 7);
+
   return (
     <div className="min-h-screen bg-gray-50 p-2 sm:p-4">
       <div className="w-full max-w-6xl mx-auto">
@@ -372,7 +458,7 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">📊 Dashboard</h1>
             <div className="flex items-center gap-3 text-sm">
               <div className="text-gray-500">
-                Last {rangeDays} days · {van?.nombre || van?.nombre_van ? `VAN: ${van.nombre || van.nombre_van}` : "Select a VAN"}
+                Last {rangeDays} days · {van?.nombre || van?.nombre_van ? `VAN: ${van?.nombre || van?.nombre_van}` : "Select a VAN"}
               </div>
               <div className="flex items-center gap-1">
                 {[7, 14, 30].map((d) => (
@@ -396,13 +482,8 @@ export default function Dashboard() {
           <h2 className="font-bold text-gray-800 mb-2 flex items-center gap-2">📈 Sales last {rangeDays} days</h2>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={ventasSerie}>
-                <defs>
-                  <linearGradient id="totalFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
+              {/* 👇 Nueva gráfica: Barras diarias + línea MA7 + orders (verde) */}
+              <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis
                   dataKey="fecha"
@@ -413,33 +494,25 @@ export default function Dashboard() {
                 <Tooltip
                   formatter={(value, name) => {
                     if (name === "total") return [fmtMoney(value), "Revenue"];
+                    if (name === "ma7") return [fmtMoney(value), "7-day avg"];
                     if (name === "orders") return [value, "Orders"];
                     return value;
                   }}
                   labelFormatter={(l) => dayjs(l).format("YYYY-MM-DD")}
                   contentStyle={{ borderRadius: 10 }}
                 />
-                <Area
-                  type="monotone"
-                  dataKey="total"
-                  stroke="#2563eb"
-                  fill="url(#totalFill)"
-                  strokeWidth={3}
-                  activeDot={{ r: 5 }}
-                  animationDuration={600}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="orders"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  animationDuration={600}
-                />
-              </AreaChart>
+                {/* Barras: ventas diarias */}
+                <Bar dataKey="total" radius={[6, 6, 0, 0]} />
+                {/* Línea: promedio móvil 7 días */}
+                <Line type="monotone" dataKey="ma7" stroke="#1f2937" strokeWidth={3} dot={false} />
+                {/* Línea existente: cantidad de órdenes */}
+                <Line type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <p className="text-xs text-gray-500 mt-1">Blue = revenue, green line = orders count</p>
+          <p className="text-xs text-gray-500 mt-1">
+            Barras = ventas diarias · Línea oscura = promedio móvil 7 días · Línea verde = # de órdenes
+          </p>
         </div>
 
         {/* Top selling products */}
