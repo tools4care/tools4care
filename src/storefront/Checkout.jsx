@@ -1090,11 +1090,43 @@ export default function Checkout() {
   );
 }
 
+/* ---------------- NUEVO: handler de retorno ---------------- */
+function ReturnHandler({ onPaid }) {
+  const stripe = useStripe();
+  const { search } = useLocation();
+
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    const clientSecret = params.get("payment_intent_client_secret");
+    if (!stripe || !clientSecret) return;
+
+    (async () => {
+      const { paymentIntent, error } = await stripe.retrievePaymentIntent(clientSecret);
+      if (error) {
+        console.error("[return] retrievePaymentIntent error:", error);
+        return;
+      }
+      if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
+        await onPaid(paymentIntent);
+        // limpia query params
+        const url = new URL(window.location.href);
+        url.searchParams.delete("payment_intent_client_secret");
+        url.searchParams.delete("redirect_status");
+        window.history.replaceState({}, "", url.toString());
+      }
+    })();
+  }, [stripe, search, onPaid]);
+
+  return null;
+}
+
 /* ---------------- Payment UI ---------------- */
 function PaymentBlock({ onPaid, total }) {
   return (
     <div className="space-y-3">
       <AppleGooglePayButton total={total} />
+      {/* NUEVO: maneja el retorno de CashApp/Klarna/Amazon Pay */}
+      <ReturnHandler onPaid={onPaid} />
       <PaymentForm onPaid={onPaid} />
     </div>
   );
@@ -1160,6 +1192,10 @@ function PaymentForm({ onPaid }) {
     setError("");
     const { error: err, paymentIntent } = await stripe.confirmPayment({
       elements,
+      // NUEVO: indispensable para Cash App Pay / Klarna / Amazon Pay
+      confirmParams: {
+        return_url: `${window.location.origin}/checkout`,
+      },
       redirect: "if_required",
     });
 

@@ -1,13 +1,13 @@
 // src/supabaseClient.js
 import { createClient } from "@supabase/supabase-js";
 
-// ⚠️ Puedes moverlos a variables de entorno Vite si quieres:
-// import.meta.env.VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+// ENV de Vite
 const supabaseUrl =
   import.meta?.env?.VITE_SUPABASE_URL || "https://gvloygqbavibmpakzdma.supabase.co";
 const supabaseAnonKey =
   import.meta?.env?.VITE_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o";
+const functionsUrl = import.meta?.env?.VITE_SB_FUNCTIONS_URL; // ← importante para email por Edge
 
 /* ============================================================================
    anon-id persistente (para carritos de invitados con RLS)
@@ -38,13 +38,16 @@ export function getAnonId() {
 export const anonId = getAnonId();
 
 /* ============================================================================
-   Cliente Supabase con header global x-anon-id (para tus políticas RLS)
+   Cliente Supabase con header global x-ev-anon (para tus políticas RLS)
+   + Functions URL para que .functions.invoke use tu dominio de Edge Functions
 ============================================================================ */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
     headers: anonId ? { "x-ev-anon": anonId } : {},
-
   },
+  ...(functionsUrl
+    ? { functions: { url: functionsUrl, headers: anonId ? { "x-ev-anon": anonId } : {} } }
+    : {}),
 });
 
 /* ============================================================================
@@ -60,7 +63,7 @@ export function refreshAnonHeader() {
     // @ts-ignore
     if (supabase && supabase.headers) {
       // @ts-ignore
-      supabase.headers = { ...(supabase.headers || {}), "x-anon-id": id };
+      supabase.headers = { ...(supabase.headers || {}), "x-ev-anon": id }; // <- misma clave
     }
   } catch {
     // silencio: es opcional
