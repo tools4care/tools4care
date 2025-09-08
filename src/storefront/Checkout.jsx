@@ -14,25 +14,229 @@ import { getAnonId } from "../utils/anon";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
+const MIN_PAYMENT_CENTS = 50; // $0.50
 
 /* ---------------- Email helper (Edge Function) ---------------- */
-async function sendOrderEmail({ to, subject, text, html }) {
+async function sendOrderEmail({ to, subject, html }) {
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-order-email`;
+  const payload = { to, subject, html }; // 👈 solo HTML
+
+  // Fetch directo (evita headers extra del SDK)
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return { ok: true, data: await res.json() };
+    console.error("[send-order-email] fetch failed:", await res.text());
+  } catch (e) {
+    console.error("[send-order-email] fetch error:", e);
+  }
+
+  // Fallback al SDK (por si estás en otro entorno)
   try {
     const { data, error } = await supabase.functions.invoke("send-order-email", {
-      body: { to, subject, text, html },
+      body: payload,
     });
-    if (error) {
-      console.error("[send-order-email] error:", error);
-      return { ok: false, error };
-    }
+    if (error) return { ok: false, error };
     return { ok: true, data };
   } catch (e) {
-    console.error("[send-order-email] catch:", e);
     return { ok: false, error: e };
   }
 }
 
-// Validadores simples
+/* ---------- Email template helpers ---------- */
+const escapeHtml = (s) =>
+  String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const fmt = (n) =>
+  (Number(n) || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+function buildOrderEmail({ orderId, amounts, items, shipping, paymentIntent }) {
+  const name = escapeHtml(shipping?.name || "Customer");
+  const when = new Date().toLocaleString("en-US", { hour12: true });
+  const addr = [
+    shipping?.address1,
+    shipping?.address2,
+    [shipping?.city, shipping?.state, shipping?.zip].filter(Boolean).join(", "),
+    shipping?.country || "US",
+  ]
+    .filter(Boolean)
+    .map(escapeHtml)
+    .join("<br>");
+
+  // Filas con 4 columnas: Item | Qty | Unit | Total + marca/código como subtítulo
+  const itemRows = (items || [])
+    .map((it, idx) => {
+      const title = escapeHtml(it.producto?.nombre || it.nombre || `#${it.producto_id}`);
+      const brand = escapeHtml(it.producto?.marca || it.marca || "");
+      const code = escapeHtml(it.producto?.codigo || it.codigo || "");
+      const meta = [brand, code].filter(Boolean).join(" • ");
+      const qty = Number(it.qty || 0);
+      const unit = Number(it.producto?.precio ?? it.precio_unit ?? 0);
+      const line = qty * unit;
+      const zebra = idx % 2 === 1 ? "background:#fafafa;" : "";
+      return `
+        <tr style="${zebra}">
+          <td style="padding:10px 8px;vertical-align:top">
+            <div style="font-weight:600">${title}</div>
+            ${meta ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">${meta}</div>` : ""}
+          </td>
+          <td align="right" style="padding:10px 8px;white-space:nowrap;vertical-align:top">${qty}</td>
+          <td align="right" style="padding:10px 8px;white-space:nowrap;vertical-align:top">$${fmt(unit)}</td>
+          <td align="right" style="padding:10px 8px;white-space:nowrap;vertical-align:top"><b>$${fmt(line)}</b></td>
+        </tr>`;
+    })
+    .join("");
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Order #${orderId} confirmed</title>
+</head>
+<body style="margin:0;background:#f6f7f9;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+          <tr>
+            <td style="padding:20px 24px;background:#111827;color:#fff;font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:18px;font-weight:700;">
+              Tools4care
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px;font-family:system-ui,Segoe UI,Arial,sans-serif;color:#111827;">
+              <h1 style="margin:0 0 8px;font-size:22px;">Order #${orderId} confirmed 🎉</h1>
+              <p style="margin:0 0 16px;color:#374151;font-size:14px;">Thanks, <b>${name}</b>. We received your order.</p>
+
+              <table width="100%" style="border-collapse:collapse;font-size:14px;color:#111827;">
+                <tr>
+                  <td style="padding:8px 0;color:#6b7280;">Date</td>
+                  <td align="right" style="padding:8px 0;">${escapeHtml(when)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#6b7280;">Payment ID</td>
+                  <td align="right" style="padding:8px 0;">${escapeHtml(paymentIntent?.id || "-")}</td>
+                </tr>
+              </table>
+
+              <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
+
+              <h3 style="margin:0 0 8px;font-size:16px;">Items</h3>
+              <table width="100%" style="border-collapse:collapse;font-size:14px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+                <thead>
+                  <tr style="background:#f3f4f6">
+                    <th align="left"  style="text-align:left;padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Item</th>
+                    <th align="right" style="padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Qty</th>
+                    <th align="right" style="padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Unit</th>
+                    <th align="right" style="padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemRows || `<tr><td style="padding:10px 8px;color:#6b7280;">(No items)</td><td></td><td></td><td></td></tr>`}
+                </tbody>
+              </table>
+
+              <table width="100%" style="border-collapse:collapse;font-size:14px;margin-top:12px;">
+                <tr>
+                  <td style="padding:6px 0;color:#374151;">Subtotal</td>
+                  <td align="right" style="padding:6px 0;">$${fmt(amounts.subtotal)}</td>
+                </tr>
+                ${amounts.discount ? `
+                <tr>
+                  <td style="padding:6px 0;color:#b91c1c;">Discount</td>
+                  <td align="right" style="padding:6px 0;color:#b91c1c;">- $${fmt(amounts.discount)}</td>
+                </tr>` : ""}
+                <tr>
+                  <td style="padding:6px 0;color:#374151;">Shipping</td>
+                  <td align="right" style="padding:6px 0;">$${fmt(amounts.shipping)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0;color:#374151;">Taxes</td>
+                  <td align="right" style="padding:6px 0;">$${fmt(amounts.taxes)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;border-top:1px solid #e5e7eb;"><b>Total</b></td>
+                  <td align="right" style="padding:8px 0;border-top:1px solid #e5e7eb;"><b>$${fmt(amounts.total)}</b></td>
+                </tr>
+              </table>
+
+              <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
+
+              <h3 style="margin:0 0 8px;font-size:16px;">Shipping address</h3>
+              <div style="color:#374151;font-size:14px;line-height:1.5;">
+                ${addr || "—"}
+              </div>
+
+              <div style="margin-top:20px;font-size:13px;color:#6b7280;">
+                If you have questions, just reply to this email.
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 24px;background:#f9fafb;color:#6b7280;font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:12px;">
+              © ${new Date().getFullYear()} Tools4care — All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = [
+    `Order #${orderId} confirmed`,
+    `Date: ${when}`,
+    `Payment ID: ${paymentIntent?.id || "-"}`,
+    "",
+    "Items:",
+    ...(items || []).map((it) => {
+      const title = it.producto?.nombre || it.nombre || `#${it.producto_id}`;
+      const brand = it.producto?.marca || it.marca || "";
+      const code = it.producto?.codigo || it.codigo || "";
+      const meta = [brand, code].filter(Boolean).join(" • ");
+      const qty = Number(it.qty || 0);
+      const unit = Number(it.producto?.precio ?? it.precio_unit ?? 0);
+      const line = qty * unit;
+      return ` - ${title}${meta ? ` (${meta})` : ""} — ${qty} × $${fmt(unit)} = $${fmt(line)}`;
+    }),
+    "",
+    `Subtotal: $${fmt(amounts.subtotal)}`,
+    ...(amounts.discount ? [`Discount: -$${fmt(amounts.discount)}`] : []),
+    `Shipping: $${fmt(amounts.shipping)}`,
+    `Taxes: $${fmt(amounts.taxes)}`,
+    `Total: $${fmt(amounts.total)}`,
+    "",
+    "Ship to:",
+    shipping?.address1 || "",
+    shipping?.address2 || "",
+    `${shipping?.city || ""}, ${shipping?.state || ""} ${shipping?.zip || ""}`,
+    shipping?.country || "US",
+    "",
+    "If you have questions, just reply to this email.",
+    "Tools4care",
+  ].join("\n");
+
+  return { html, text };
+}
+
+// Validadores simples (solo aviso UX)
 const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
 const isValidPhone = (s) => String(s || "").replace(/[^\d]/g, "").length >= 7;
 
@@ -71,7 +275,7 @@ async function ensureCart() {
   return inserted.id;
 }
 
-/** Lee líneas del carrito + precio y STOCK **online** */
+/** Lee líneas del carrito + precio y STOCK online (normaliza qty y corrige en DB si es necesario) */
 async function fetchCartItems(cartId) {
   const { data: items, error: itErr } = await supabase
     .from("cart_items")
@@ -83,7 +287,6 @@ async function fetchCartItems(cartId) {
   const ids = (items || []).map((i) => i.producto_id);
   if (!ids.length) return [];
 
-  // Usamos la vista online para obtener price_base/price_online/stock
   const { data: prods, error: pErr } = await supabase
     .from("online_products_v")
     .select("id, codigo, nombre, marca, price_base, price_online, stock")
@@ -92,32 +295,49 @@ async function fetchCartItems(cartId) {
   if (pErr) throw pErr;
 
   const idx = new Map((prods || []).map((p) => [p.id, p]));
-  return (items || [])
-    .map((i) => {
-      const p = idx.get(i.producto_id);
-      if (!p) return null;
-      const unit = Number(p.price_online ?? p.price_base ?? 0);
-      return {
-        producto_id: i.producto_id,
-        qty: Number(i.qty || 0),
-        producto: {
-          id: p.id,
-          codigo: p.codigo,
-          nombre: p.nombre,
-          marca: p.marca,
-          precio: unit,
-          stock: Number(p.stock ?? 0),
-        },
-      };
-    })
-    .filter(Boolean);
-}
+  const result = [];
 
-const fmt = (n) =>
-  (Number(n) || 0).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  for (const i of items || []) {
+    const p = idx.get(i.producto_id);
+    if (!p) continue;
+
+    const unit = Number(p.price_online ?? p.price_base ?? 0);
+    const stock = Number(p.stock ?? 0);
+    const originalQty = Number(i.qty || 0);
+    let qty = Number.isFinite(originalQty) && originalQty > 0 ? originalQty : 1;
+
+    // Normalizamos: mínimo 1, máximo 999 y no mayor al stock (si hay stock > 0)
+    qty = Math.max(1, Math.min(qty, 999, stock > 0 ? stock : qty));
+
+    // Si cambió, lo corregimos silenciosamente en la base
+    if (qty !== originalQty) {
+      try {
+        await supabase
+          .from("cart_items")
+          .update({ qty })
+          .eq("cart_id", cartId)
+          .eq("producto_id", i.producto_id);
+      } catch (e) {
+        console.warn("Failed to normalize qty in DB:", e?.message || e);
+      }
+    }
+
+    result.push({
+      producto_id: i.producto_id,
+      qty,
+      producto: {
+        id: p.id,
+        codigo: p.codigo,
+        nombre: p.nombre,
+        marca: p.marca,
+        precio: unit,
+        stock,
+      },
+    });
+  }
+
+  return result;
+}
 
 /* ---------------- shipping & taxes ---------------- */
 const SHIPPING_METHODS = [
@@ -139,7 +359,6 @@ function calcTax(taxableSubtotal, stateCode) {
 }
 
 /* -------------- helpers extra -------------- */
-// VAN Online (para descuentos de stock en fallback)
 async function getOnlineVanId() {
   const { data, error } = await supabase
     .from("vans")
@@ -151,20 +370,17 @@ async function getOnlineVanId() {
 }
 
 /* ---------------- promo codes ---------------- */
-/** Códigos locales de respaldo (opcional) */
 const LOCAL_CODES = [
   { code: "SAVE10", type: "percent", value: 10, active: true },
   { code: "WELCOME5", type: "amount",  value: 5, active: true },
   { code: "FREESHIP", type: "free_shipping", value: 0, active: true },
 ];
 
-/** Lee un código desde la tabla discount_codes (usa columna `percent`) */
 async function resolvePromo(codeInput) {
   const code = String(codeInput || "").trim().toUpperCase();
   if (!code) return null;
 
   try {
-    // 👇 Ajustado a tu schema: code, percent (+campos opcionales si los tienes)
     const { data, error } = await supabase
       .from("discount_codes")
       .select("code, percent, active, expires_at, max_uses, times_used")
@@ -180,21 +396,18 @@ async function resolvePromo(codeInput) {
         data.max_uses > 0 &&
         data.times_used >= data.max_uses;
 
-      // si no tienes active/times_used en tu tabla, estos checks se ignoran
       if (data.active === false) throw new Error("This code is not active.");
       if (expired) throw new Error("This code is expired.");
       if (overUsed) throw new Error("This code has reached its limit.");
 
-      // Normalizamos a formato {type,value}
       const pct = Number(data.percent || 0);
       if (pct <= 0) throw new Error("Invalid promo code.");
       return { code: data.code.toUpperCase(), type: "percent", value: pct, freeShipping: false };
     }
   } catch {
-    // cae al respaldo local
+    // respaldo local
   }
 
-  // Respaldo local
   const local = LOCAL_CODES.find((c) => c.code === code && c.active);
   if (!local) throw new Error("Invalid or inactive promo code.");
   return {
@@ -205,11 +418,9 @@ async function resolvePromo(codeInput) {
   };
 }
 
-/** Cálculo del descuento — ¡ahora sí existe! */
 function computeDiscount(subtotal, promo) {
   const sub = Math.max(0, Number(subtotal) || 0);
   if (!promo) return 0;
-
   if (promo.type === "percent") {
     const pct = Math.max(0, Number(promo.value || 0));
     return Math.min(sub, (sub * pct) / 100);
@@ -218,7 +429,6 @@ function computeDiscount(subtotal, promo) {
     const amt = Math.max(0, Number(promo.value || 0));
     return Math.min(sub, amt);
   }
-  // otros tipos (p.ej., free_shipping) no descuentan subtotal
   return 0;
 }
 
@@ -251,7 +461,7 @@ export default function Checkout() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  // Campos obligatorios OK?
+  // Campos obligatorios OK? (solo aviso UX; no bloquea el pago)
   const requiredOk = useMemo(() => {
     const ok =
       String(shipping.name || "").trim().length > 1 &&
@@ -303,9 +513,9 @@ export default function Checkout() {
     [subAfterDiscount, shippingCost, taxes]
   );
 
-  // 🚫 Detecta líneas que exceden stock
+  // Detecta líneas que exceden stock (tras normalización debería ser raro)
   const stockIssues = useMemo(
-    () => items.filter((it) => Number(it.qty) > Number(it.producto?.stock ?? 0)),
+    () => items.filter((it) => Number(it.qty) > Number(it.producto?.stock ?? Infinity)),
     [items]
   );
   const hasStockIssues = stockIssues.length > 0;
@@ -316,20 +526,27 @@ export default function Checkout() {
     return m ? m[1] : "";
   };
 
-  // Crear PaymentIntent (Edge Function) — no lo creamos si hay issues de stock o faltan datos requeridos
+  // Crear PaymentIntent — disponible si hay items, sin exceso de stock y total >= $0.50
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        if (!items.length || hasStockIssues || !requiredOk) {
+        if (!items.length || hasStockIssues) {
           setClientSecret("");
           setPaymentIntentId("");
           return;
         }
+        const amountCents = Math.round(total * 100);
+        if (!Number.isFinite(amountCents) || amountCents < MIN_PAYMENT_CENTS) {
+          setClientSecret("");
+          setPaymentIntentId("");
+          return;
+        }
+
         setCreating(true); setError("");
 
         const payload = {
-          amount: Math.round(total * 100),
+          amount: amountCents,
           metadata: {
             subtotal_cents: Math.round(subtotal * 100),
             discount_cents: Math.round(discount * 100),
@@ -389,10 +606,10 @@ export default function Checkout() {
     items, subtotal, discount, subAfterDiscount, shippingCost, taxes, total,
     cartId, shipping.name, shipping.phone, shipping.address1, shipping.address2,
     shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method,
-    freeShippingOverride, promo?.code, hasStockIssues, requiredOk,
+    freeShippingOverride, promo?.code, hasStockIssues,
   ]);
 
-  // SUCCESS: crear orden + descontar stock
+  // SUCCESS: crear orden + descontar stock + enviar email
   async function handlePaid(paymentIntent) {
     try {
       const cid = cartId || (await ensureCart());
@@ -400,7 +617,6 @@ export default function Checkout() {
 
       const meta = paymentIntent?.metadata || {};
 
-      // 1) leer montos (con fallback local) y CALCULAR EL TOTAL a partir de esos montos
       const amounts = {
         subtotal: Number(meta.subtotal_cents ?? 0) / 100 || subtotal,
         discount: Number(meta.discount_cents ?? 0) / 100 || discount,
@@ -413,7 +629,6 @@ export default function Checkout() {
         (amounts.sub_after_discount + amounts.shipping + amounts.taxes).toFixed(2)
       );
 
-      // 2) payloads
       const itemsPayload = list.map((it) => ({
         producto_id: it.producto_id,
         qty: Number(it.qty || 0),
@@ -431,7 +646,7 @@ export default function Checkout() {
         country: shipping.country || "US",
       };
 
-      // 3) RPC preferido (c/ transacción)
+      // RPC preferido (transaccional)
       let orderIdFromRpc = null;
       try {
         const { data: newOrderId, error: rpcErr } = await supabase.rpc(
@@ -454,32 +669,38 @@ export default function Checkout() {
         );
         if (!rpcErr) orderIdFromRpc = newOrderId || null;
       } catch {
-        // ignore; haremos fallback
+        // ignore
       }
 
-      if (orderIdFromRpc) {
-        try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
+      const finalizeAndEmail = async (oid) => {
+  try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
 
-        // ✉️ Email de confirmación (no bloqueante)
-        if (shipping.email) {
-          const subject = `Order #${orderIdFromRpc} confirmed`;
-          const text = `Hi ${shipping.name}, thanks for your purchase. Order #${orderIdFromRpc}. Total $${fmt(amounts.total)}.`;
-          const html = `
-            <div style="font-family:system-ui,Segoe UI,Arial,sans-serif">
-              <h2>Order #${orderIdFromRpc} confirmed 🎉</h2>
-              <p>Thanks, <b>${shipping.name}</b>. We received your order.</p>
-              <p><b>Total:</b> $${fmt(amounts.total)}</p>
-              <p style="color:#555;font-size:12px">If you have questions, reply to this email.</p>
-            </div>`;
-          sendOrderEmail({ to: shipping.email, subject, text, html });
-        }
+  if (shipping.email) {
+    const subject = `Order #${oid} confirmed`;
+    const { html } = buildOrderEmail({
+      orderId: oid,
+      amounts,
+      items: list,
+      shipping,
+      paymentIntent,
+    });
 
-        setSuccess({ paymentIntent, orderId: orderIdFromRpc, amounts });
-        setPhase("success");
-        return;
-      }
+    try {
+      await sendOrderEmail({
+        to: String(shipping.email).trim(),
+        subject,
+        html,         // 👈 solo HTML
+      });
+    } catch (e) {
+      console.error("Email send failed:", e);
+    }
+  }
 
-      // 4) Fallback simple (crea order/items, descuenta y marca paid)
+  setSuccess({ paymentIntent, orderId: oid, amounts });
+  setPhase("success");
+};
+
+      // Fallback simple
       const { data: order, error: e1 } = await supabase
         .from("orders")
         .insert({
@@ -542,22 +763,7 @@ export default function Checkout() {
         .neq("status", "paid");
       if (upErr) throw upErr;
 
-      // ✉️ Email de confirmación (no bloqueante)
-      if (shipping.email) {
-        const subject = `Order #${orderId} confirmed`;
-        const text = `Hi ${shipping.name}, thanks for your purchase. Order #${orderId}. Total $${fmt(amounts.total)}.`;
-        const html = `
-          <div style="font-family:system-ui,Segoe UI,Arial,sans-serif">
-            <h2>Order #${orderId} confirmed 🎉</h2>
-            <p>Thanks, <b>${shipping.name}</b>. We received your order.</p>
-            <p><b>Total:</b> $${fmt(amounts.total)}</p>
-            <p style="color:#555;font-size:12px">If you have questions, reply to this email.</p>
-          </div>`;
-        sendOrderEmail({ to: shipping.email, subject, text, html });
-      }
-
-      setSuccess({ paymentIntent, orderId, amounts });
-      setPhase("success");
+      await finalizeAndEmail(orderId);
     } catch (e) {
       setError(e.message || "Payment was approved, but we couldn't finalize the order.");
     }
@@ -721,14 +927,15 @@ export default function Checkout() {
                   {promo.type === "free_shipping" && ` (Free shipping)`}
                 </div>
               )}
-            </div>
 
-            {/* Mensaje de validación de requeridos */}
-            {!requiredOk && (
-              <div className="text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                Please complete <b>name</b>, a valid <b>email</b> and <b>phone</b> to continue.
-              </div>
-            )}
+              {/* Aviso, pero sin bloquear */}
+              {!requiredOk && (
+                <div className="mt-2 text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                  Please complete <b>name</b>, a valid <b>email</b> and <b>phone</b>. Payment is available,
+                  but we need your contact to confirm the order.
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
@@ -752,13 +959,15 @@ export default function Checkout() {
               <div className="flex justify-between border-t pt-2 text-base"><span>Total</span><b>${fmt(total)}</b></div>
             </div>
             {items.length === 0 && (
-              <div className="mt-2 text-sm text-gray-500">Your cart is empty.</div>
+              <div className="mt-2 text-sm text-amber-700">
+                Your cart is empty. Add items to cart to pay.
+              </div>
             )}
           </div>
 
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
 
-          {/* 🚫 Bloquea el pago si hay exceso de stock o faltan requeridos */}
+          {/* Si hay exceso de stock, bloqueamos el pago */}
           {hasStockIssues ? (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">
@@ -772,17 +981,17 @@ export default function Checkout() {
                 </ul>
               </div>
             </div>
-          ) : !requiredOk ? (
-            <div className="bg-white rounded-2xl p-4 shadow-sm text-sm text-amber-700">
-              Complete the required contact fields to enable payment.
-            </div>
           ) : clientSecret ? (
             <Elements key={clientSecret} options={{ clientSecret, locale: "en" }} stripe={stripePromise}>
               <PaymentBlock onPaid={handlePaid} total={total} />
             </Elements>
           ) : (
             <div className="bg-white rounded-2xl p-4 shadow-sm">
-              {loading || creating ? "Preparing payment…" : "Update shipping/details to pay."}
+              {loading || creating
+                ? "Preparing payment…"
+                : (items.length === 0
+                    ? "Add items to cart to pay."
+                    : "Update shipping/details to pay.")}
             </div>
           )}
         </section>
