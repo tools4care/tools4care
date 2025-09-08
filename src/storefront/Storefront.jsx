@@ -100,7 +100,6 @@ function CartDrawer({ open, onClose }) {
 
   useEffect(() => {
     if (open) refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   function optimisticSet(productoId, nextQty) {
@@ -284,7 +283,7 @@ function DealCardMini({ p, onAdd }) {
     p.price_base != null &&
     Number(p.price_online) < Number(p.price_base);
   return (
-    // ✅ Fondo blanco sólido + texto oscuro para que se lea bien sobre el gradiente azul
+    // Fondo blanco + texto oscuro para legibilidad
     <div className="bg-white rounded-xl p-3 border hover:shadow-sm transition text-gray-900">
       <div className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center">
         {p.main_image_url ? (
@@ -495,7 +494,6 @@ export default function Storefront() {
 
   useEffect(() => {
     reloadCatalog();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Realtime con debounce
@@ -534,7 +532,7 @@ export default function Storefront() {
         .subscribe();
     })();
 
-  return () => {
+    return () => {
       if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
       if (channel) supabase.removeChannel(channel);
     };
@@ -579,15 +577,15 @@ export default function Storefront() {
 
   const total = useMemo(() => rows.length, [rows]);
 
-  // Optimismo suave: sube el badge al instante; addToCart lo corrige al resolver
+  // Optimismo suave
   async function handleAdd(p) {
     setCount((c) => c + 1);
     try {
-      const newCount = await addToCart(p, 1); // mantiene la lógica/clamps
+      const newCount = await addToCart(p, 1);
       setCount(newCount);
       setCartOpen(true);
     } catch (e) {
-      setCount((c) => Math.max(0, c - 1)); // revierte optimismo
+      setCount((c) => Math.max(0, c - 1));
       alert(String(e?.message || "Could not add to cart."));
     }
   }
@@ -707,7 +705,7 @@ export default function Storefront() {
       {/* HEADER */}
       <header className="sticky top-0 z-20 bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
-          {/* Brand (logo + fallback a texto) */}
+          {/* Brand */}
           <button
             className="flex items-center gap-2 text-lg font-semibold"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
@@ -741,7 +739,7 @@ export default function Storefront() {
             />
           </div>
 
-          {/* Auth */}
+          {/* Auth (desktop) */}
           {!user ? (
             <div className="hidden sm:flex items-center gap-2">
               <button
@@ -792,7 +790,7 @@ export default function Storefront() {
             <svg width="22" height="22" viewBox="0 0 24 24" className="text-gray-700">
               <path
                 fill="currentColor"
-                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2m10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z"
+                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z"
               />
             </svg>
             <span className="absolute -top-1 -right-1 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5">
@@ -998,40 +996,23 @@ export default function Storefront() {
             Search
           </a>
 
-          {/* ✅ En mobile, mostrar Login y Sign up directamente en Home */}
+          {/* Único botón: abre el modal con ambas opciones (login/sign up) */}
           {!user && (
-            <>
-              <button
-                className="flex flex-col items-center text-xs"
-                onClick={() => {
-                  setAuthMode("login");
-                  setAuthOpen(true);
-                }}
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24">
-                  <path
-                    fill="currentColor"
-                    d="M10.09 15.59L8.67 17l-5-5 5-5 1.41 1.41L6.5 11H20v2H6.5l3.59 2.59ZM20 3h-8v2h8v14h-8v2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z"
-                  />
-                </svg>
-                Login
-              </button>
-              <button
-                className="flex flex-col items-center text-xs"
-                onClick={() => {
-                  setAuthMode("signup");
-                  setAuthOpen(true);
-                }}
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24">
-                  <path
-                    fill="currentColor"
-                    d="M12 2a5 5 0 0 1 5 5c0 2.76-2.24 5-5 5s-5-2.24-5-5a5 5 0 0 1 5-5m-7 20v-1a7 7 0 0 1 14 0v1H5zm13-9h2v2h-2v2h-2v-2h-2v-2h2V9h2v2z"
-                  />
-                </svg>
-                Sign up
-              </button>
-            </>
+            <button
+              className="flex flex-col items-center text-xs"
+              onClick={() => {
+                setAuthMode("login"); // modo inicial; dentro del modal el usuario puede cambiar a Sign up
+                setAuthOpen(true);
+              }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"
+                />
+              </svg>
+              Login / Sign up
+            </button>
           )}
 
           <button
