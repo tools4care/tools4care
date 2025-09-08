@@ -240,6 +240,24 @@ function buildOrderEmail({ orderId, amounts, items, shipping, paymentIntent }) {
 const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
 const isValidPhone = (s) => String(s || "").replace(/[^\d]/g, "").length >= 7;
 
+/* ==== NUEVO: helpers de teléfono y estados ==== */
+const phoneDigits = (s) => String(s || "").replace(/\D/g, "");
+function formatPhoneUS(s) {
+  const d = phoneDigits(s).slice(0, 10);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
+// Lista completa de estados (incluye DC y PR)
+const US_STATES = [
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
+  "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+  "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+  "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"
+];
+
 /* ---------------- helpers de carrito ---------------- */
 async function ensureCart() {
   const { data: session } = await supabase.auth.getSession();
@@ -461,6 +479,35 @@ export default function Checkout() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
+  /* ==== NUEVO: Prefill con datos del usuario logueado ==== */
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const user = data?.session?.user;
+        if (!user) return;
+
+        const meta = user.user_metadata || {};
+        const fullName =
+          meta.full_name ||
+          meta.name ||
+          [meta.first_name || meta.given_name, meta.last_name || meta.family_name]
+            .filter(Boolean)
+            .join(" ") ||
+          (user.email ? user.email.split("@")[0].replace(/[._-]/g, " ") : "");
+
+        setShipping((s) => ({
+          ...s,
+          name: s.name || fullName || "",
+          email: s.email || user.email || "",
+          phone: s.phone || meta.phone || s.phone || "",
+        }));
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
   // Campos obligatorios OK? (solo aviso UX; no bloquea el pago)
   const requiredOk = useMemo(() => {
     const ok =
@@ -559,7 +606,7 @@ export default function Checkout() {
           },
           shipping: {
             name: shipping.name || "Guest",
-            phone: shipping.phone || undefined,
+            phone: phoneDigits(shipping.phone) || undefined, // 👈 solo dígitos
             address: {
               line1: shipping.address1 || "N/A",
               line2: shipping.address2 || undefined,
@@ -656,7 +703,7 @@ export default function Checkout() {
             p_currency: paymentIntent.currency || "usd",
             p_name: shipping.name || null,
             p_email: shipping.email || null,
-            p_phone: shipping.phone || null,
+            p_phone: phoneDigits(shipping.phone) || null, // 👈 solo dígitos
             p_address: addressJson,
             p_amount_subtotal: amounts.subtotal,
             p_amount_shipping: amounts.shipping,
@@ -673,32 +720,32 @@ export default function Checkout() {
       }
 
       const finalizeAndEmail = async (oid) => {
-  try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
+        try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
 
-  if (shipping.email) {
-    const subject = `Order #${oid} confirmed`;
-    const { html } = buildOrderEmail({
-      orderId: oid,
-      amounts,
-      items: list,
-      shipping,
-      paymentIntent,
-    });
+        if (shipping.email) {
+          const subject = `Order #${oid} confirmed`;
+          const { html } = buildOrderEmail({
+            orderId: oid,
+            amounts,
+            items: list,
+            shipping,
+            paymentIntent,
+          });
 
-    try {
-      await sendOrderEmail({
-        to: String(shipping.email).trim(),
-        subject,
-        html,         // 👈 solo HTML
-      });
-    } catch (e) {
-      console.error("Email send failed:", e);
-    }
-  }
+          try {
+            await sendOrderEmail({
+              to: String(shipping.email).trim(),
+              subject,
+              html,         // 👈 solo HTML
+            });
+          } catch (e) {
+            console.error("Email send failed:", e);
+          }
+        }
 
-  setSuccess({ paymentIntent, orderId: oid, amounts });
-  setPhase("success");
-};
+        setSuccess({ paymentIntent, orderId: oid, amounts });
+        setPhase("success");
+      };
 
       // Fallback simple
       const { data: order, error: e1 } = await supabase
@@ -712,7 +759,7 @@ export default function Checkout() {
           amount_discount: amounts.discount || 0,
           currency: paymentIntent.currency || "usd",
           email: shipping?.email || null,
-          phone: shipping?.phone || null,
+          phone: phoneDigits(shipping?.phone) || null, // 👈 solo dígitos
           name: shipping?.name || null,
           address_json: addressJson,
           status: "pending",
@@ -838,6 +885,7 @@ export default function Checkout() {
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
+            {/* NOMBRE OBLIGATORIO */}
             <input
               className="border rounded-lg px-3 py-2"
               placeholder="Full name"
@@ -845,36 +893,66 @@ export default function Checkout() {
               onChange={(e) => setShipping({ ...shipping, name: e.target.value })}
               required
             />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+            {/* Email más ancho + Tel con formato numérico */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <input
-                className="border rounded-lg px-3 py-2"
+                className="border rounded-lg px-3 py-2 sm:col-span-2"
                 placeholder="Email (required)"
                 value={shipping.email}
                 onChange={(e) => setShipping({ ...shipping, email: e.target.value })}
                 required
+                type="email"
               />
               <input
                 className="border rounded-lg px-3 py-2"
                 placeholder="Phone (required)"
                 value={shipping.phone}
-                onChange={(e) => setShipping({ ...shipping, phone: e.target.value })}
+                onChange={(e) =>
+                  setShipping({ ...shipping, phone: formatPhoneUS(e.target.value) })
+                }
                 required
+                type="tel"
+                inputMode="numeric"
+                pattern="\d*"
               />
             </div>
-            <input className="border rounded-lg px-3 py-2" placeholder="Address line 1"
-              value={shipping.address1} onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}/>
-            <input className="border rounded-lg px-3 py-2" placeholder="Address line 2 (optional)"
-              value={shipping.address2} onChange={(e) => setShipping({ ...shipping, address2: e.target.value })}/>
+
+            <input
+              className="border rounded-lg px-3 py-2"
+              placeholder="Address line 1"
+              value={shipping.address1}
+              onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}
+            />
+            <input
+              className="border rounded-lg px-3 py-2"
+              placeholder="Address line 2 (optional)"
+              value={shipping.address2}
+              onChange={(e) => setShipping({ ...shipping, address2: e.target.value })}
+            />
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <input className="border rounded-lg px-3 py-2 col-span-2" placeholder="City"
-                value={shipping.city} onChange={(e) => setShipping({ ...shipping, city: e.target.value })}/>
-              <select className="border rounded-lg px-3 py-2" value={shipping.state}
-                onChange={(e) => setShipping({ ...shipping, state: e.target.value })}>
-                {Object.keys(STATE_TAX).map((st) => (<option key={st} value={st}>{st}</option>))}
-                <option value="OTHER">OTHER</option>
+              <input
+                className="border rounded-lg px-3 py-2 col-span-2"
+                placeholder="City"
+                value={shipping.city}
+                onChange={(e) => setShipping({ ...shipping, city: e.target.value })}
+              />
+              {/* ESTADOS: lista completa */}
+              <select
+                className="border rounded-lg px-3 py-2"
+                value={shipping.state}
+                onChange={(e) => setShipping({ ...shipping, state: e.target.value })}
+              >
+                {US_STATES.map((st) => (
+                  <option key={st} value={st}>{st}</option>
+                ))}
               </select>
-              <input className="border rounded-lg px-3 py-2" placeholder="ZIP"
-                value={shipping.zip} onChange={(e) => setShipping({ ...shipping, zip: e.target.value })}/>
+              <input
+                className="border rounded-lg px-3 py-2"
+                placeholder="ZIP"
+                value={shipping.zip}
+                onChange={(e) => setShipping({ ...shipping, zip: e.target.value })}
+              />
             </div>
 
             {/* Shipping method */}
@@ -882,13 +960,19 @@ export default function Checkout() {
               <div className="font-medium text-sm">Shipping method</div>
               <div className="grid gap-2">
                 {SHIPPING_METHODS.map((m) => (
-                  <label key={m.key}
+                  <label
+                    key={m.key}
                     className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${
-                      shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""}`}>
+                      shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""
+                    }`}
+                  >
                     <div className="flex items-center gap-2">
-                      <input type="radio" name="shipmethod"
+                      <input
+                        type="radio"
+                        name="shipmethod"
                         checked={shipping.method === m.key}
-                        onChange={() => setShipping({ ...shipping, method: m.key })}/>
+                        onChange={() => setShipping({ ...shipping, method: m.key })}
+                      />
                       <span>{m.label}</span>
                       {m.note && <span className="text-xs text-emerald-700">({m.note})</span>}
                     </div>
@@ -909,11 +993,17 @@ export default function Checkout() {
                   onChange={(e) => setPromoInput(e.target.value)}
                 />
                 {!promo ? (
-                  <button onClick={applyPromo} className="rounded-lg bg-gray-900 text-white px-4 py-2 hover:bg-black/80">
+                  <button
+                    onClick={applyPromo}
+                    className="rounded-lg bg-gray-900 text-white px-4 py-2 hover:bg-black/80"
+                  >
                     Apply
                   </button>
                 ) : (
-                  <button onClick={clearPromo} className="rounded-lg border px-4 py-2 hover:bg-gray-50">
+                  <button
+                    onClick={clearPromo}
+                    className="rounded-lg border px-4 py-2 hover:bg-gray-50"
+                  >
                     Remove
                   </button>
                 )}

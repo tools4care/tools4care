@@ -15,9 +15,12 @@ import AuthModal from "./AuthModal";
 /* -------------------- Helpers -------------------- */
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
 
+// Cache local del VAN Online para evitar consultas repetidas
+let ONLINE_VAN_ID_CACHE = ENV_ONLINE_VAN_ID || null;
+
 // VAN Online (para escuchar cambios de stock)
 async function getOnlineVanId() {
-  if (ENV_ONLINE_VAN_ID) return ENV_ONLINE_VAN_ID;
+  if (ONLINE_VAN_ID_CACHE) return ONLINE_VAN_ID_CACHE;
   const { data, error } = await supabase
     .from("vans")
     .select("id, nombre_van")
@@ -27,7 +30,8 @@ async function getOnlineVanId() {
     console.error(error);
     return null;
   }
-  return data?.id ?? null;
+  ONLINE_VAN_ID_CACHE = data?.id ?? null;
+  return ONLINE_VAN_ID_CACHE;
 }
 
 // util para consultas .in() en bloques y evitar URLs enormes
@@ -229,7 +233,6 @@ function CartDrawer({ open, onClose }) {
 
                     <div className="text-right">
                       <div className="font-semibold">
-                        {/* FIX: subtotal de línea, no el global */}
                         <Price value={l.subtotal} />
                       </div>
                       {qty > 1 && (
@@ -274,13 +277,15 @@ function CartDrawer({ open, onClose }) {
 
 /* -------------------- Mini Deal Card (hero) -------------------- */
 function DealCardMini({ p, onAdd }) {
+  const [adding, setAdding] = useState(false);
   const price = Number(p.price_online ?? p.price_base ?? 0);
   const hasOffer =
     p.price_online != null &&
     p.price_base != null &&
     Number(p.price_online) < Number(p.price_base);
   return (
-    <div className="bg-white/95 rounded-xl p-3 border hover:shadow-sm transition">
+    // ✅ Fondo blanco sólido + texto oscuro para que se lea bien sobre el gradiente azul
+    <div className="bg-white rounded-xl p-3 border hover:shadow-sm transition text-gray-900">
       <div className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center">
         {p.main_image_url ? (
           <img
@@ -294,12 +299,12 @@ function DealCardMini({ p, onAdd }) {
           <span className="text-xs text-gray-400">no image</span>
         )}
       </div>
-      <div className="mt-2 font-medium line-clamp-1">{p.nombre}</div>
-      <div className="text-xs text-gray-500 line-clamp-1">{p.marca || "—"}</div>
+      <div className="mt-2 font-semibold line-clamp-1 text-gray-900">{p.nombre}</div>
+      <div className="text-xs text-gray-600 line-clamp-1">{p.marca || "—"}</div>
       {p.descripcion ? (
-        <div className="text-xs text-gray-600 mt-1 line-clamp-2">{p.descripcion}</div>
+        <div className="text-xs text-gray-700 mt-1 line-clamp-2">{p.descripcion}</div>
       ) : null}
-      <div className="mt-2 font-semibold">
+      <div className="mt-2 font-semibold text-gray-900">
         <Price value={price} />
         {hasOffer ? (
           <span className="ml-2 text-xs text-gray-500 line-through">
@@ -308,10 +313,18 @@ function DealCardMini({ p, onAdd }) {
         ) : null}
       </div>
       <button
-        className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700"
-        onClick={() => onAdd(p)}
+        className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50"
+        disabled={adding}
+        onClick={async () => {
+          try {
+            setAdding(true);
+            await onAdd(p);
+          } finally {
+            setAdding(false);
+          }
+        }}
       >
-        Add to cart
+        {adding ? "Adding…" : "Add to cart"}
       </button>
     </div>
   );
@@ -407,27 +420,25 @@ export default function Storefront() {
 
       const ids = (stock || []).map((r) => r.producto_id);
 
-      
-  // 2) Metas online (solo visibles) en bloques
-let metasMap = new Map();
-if (ids.length) {
-  const chunkSize = 150;
-  const metas = [];
-  for (let i = 0; i < ids.length; i += chunkSize) {
-    const slice = ids.slice(i, i + chunkSize);
-    const { data, error } = await supabase
-      .from("online_product_meta")
-      .select(
-        "producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority"
-      )
-      .eq("visible_online", true)       // 👈 filtro en servidor
-      .in("producto_id", slice);
-    if (error) throw error;
-    metas.push(...(data || []));
-  }
-  metas.forEach((m) => metasMap.set(m.producto_id, m));
-}
-
+      // 2) Metas online (solo visibles) en bloques
+      let metasMap = new Map();
+      if (ids.length) {
+        const chunkSize = 150;
+        const metas = [];
+        for (let i = 0; i < ids.length; i += chunkSize) {
+          const slice = ids.slice(i, i + chunkSize);
+          const { data, error } = await supabase
+            .from("online_product_meta")
+            .select(
+              "producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority"
+            )
+            .eq("visible_online", true)
+            .in("producto_id", slice);
+          if (error) throw error;
+          metas.push(...(data || []));
+        }
+        metas.forEach((m) => metasMap.set(m.producto_id, m));
+      }
 
       // 3) Imagen principal (chunked)
       let coverMap = new Map();
@@ -459,7 +470,7 @@ if (ids.length) {
             price: Number(online ?? base),
             stock: Number(r.cantidad ?? 0),
             descripcion: m.descripcion ?? "",
-            visible_online: toBool(m.visible_online), // << robusto
+            visible_online: toBool(m.visible_online),
             main_image_url: coverMap.get(r.producto_id) || null,
 
             // Ofertas
@@ -523,7 +534,7 @@ if (ids.length) {
         .subscribe();
     })();
 
-    return () => {
+  return () => {
       if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
       if (channel) supabase.removeChannel(channel);
     };
@@ -568,17 +579,21 @@ if (ids.length) {
 
   const total = useMemo(() => rows.length, [rows]);
 
+  // Optimismo suave: sube el badge al instante; addToCart lo corrige al resolver
   async function handleAdd(p) {
+    setCount((c) => c + 1);
     try {
-      const newCount = await addToCart(p, 1);
+      const newCount = await addToCart(p, 1); // mantiene la lógica/clamps
       setCount(newCount);
       setCartOpen(true);
     } catch (e) {
+      setCount((c) => Math.max(0, c - 1)); // revierte optimismo
       alert(String(e?.message || "Could not add to cart."));
     }
   }
 
   function ProductCard({ p }) {
+    const [adding, setAdding] = useState(false);
     const price = Number(p.price_online ?? p.price_base ?? 0);
     const hasOffer =
       p.price_online != null &&
@@ -635,10 +650,18 @@ if (ids.length) {
 
           <button
             type="button"
-            className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700"
-            onClick={() => handleAdd(p)}
+            className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            disabled={adding}
+            onClick={async () => {
+              try {
+                setAdding(true);
+                await handleAdd(p);
+              } finally {
+                setAdding(false);
+              }
+            }}
           >
-            Add to cart
+            {adding ? "Adding…" : "Add to cart"}
           </button>
         </div>
       </div>
@@ -718,7 +741,7 @@ if (ids.length) {
             />
           </div>
 
-          {/* Auth (en móvil ya NO mostramos otro login; queda solo el de la barra inferior) */}
+          {/* Auth */}
           {!user ? (
             <div className="hidden sm:flex items-center gap-2">
               <button
@@ -952,7 +975,7 @@ if (ids.length) {
       {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
 
-      {/* Mobile bottom bar (aquí queda el ÚNICO login en móvil) */}
+      {/* Mobile bottom bar */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
         <div className="flex justify-around items-center py-2">
           <button
@@ -975,22 +998,40 @@ if (ids.length) {
             Search
           </a>
 
+          {/* ✅ En mobile, mostrar Login y Sign up directamente en Home */}
           {!user && (
-            <button
-              className="flex flex-col items-center text-xs"
-              onClick={() => {
-                setAuthMode("login");
-                setAuthOpen(true);
-              }}
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M10.09 15.59L8.67 17l-5-5 5-5 1.41 1.41L6.5 11H20v2H6.5l3.59 2.59ZM20 3h-8v2h8v14h-8v2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z"
-                />
-              </svg>
-              Login
-            </button>
+            <>
+              <button
+                className="flex flex-col items-center text-xs"
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthOpen(true);
+                }}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24">
+                  <path
+                    fill="currentColor"
+                    d="M10.09 15.59L8.67 17l-5-5 5-5 1.41 1.41L6.5 11H20v2H6.5l3.59 2.59ZM20 3h-8v2h8v14h-8v2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z"
+                  />
+                </svg>
+                Login
+              </button>
+              <button
+                className="flex flex-col items-center text-xs"
+                onClick={() => {
+                  setAuthMode("signup");
+                  setAuthOpen(true);
+                }}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24">
+                  <path
+                    fill="currentColor"
+                    d="M12 2a5 5 0 0 1 5 5c0 2.76-2.24 5-5 5s-5-2.24-5-5a5 5 0 0 1 5-5m-7 20v-1a7 7 0 0 1 14 0v1H5zm13-9h2v2h-2v2h-2v-2h-2v-2h2V9h2v2z"
+                  />
+                </svg>
+                Sign up
+              </button>
+            </>
           )}
 
           <button
