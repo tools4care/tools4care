@@ -25,48 +25,21 @@ const estadosUSA = [
 
 const zipToCiudadEstado = (zip) => {
   const mapa = {
-    "02118": { ciudad: "BOSTON", estado: "MA" },
-    "02139": { ciudad: "CAMBRIDGE", estado: "MA" },
-    "01960": { ciudad: "PEABODY", estado: "MA" },
-    "01915": { ciudad: "BEVERLY", estado: "MA" },
+    "02118": { ciudad: "Boston", estado: "MA" },
+    "02139": { ciudad: "Cambridge", estado: "MA" },
+    "01960": { ciudad: "Peabody", estado: "MA" },
+    "01915": { ciudad: "Beverly", estado: "MA" },
   };
   return mapa[zip] || { ciudad: "", estado: "" };
 };
 
-// ==== NUEVO: helpers de mayúsculas, teléfono y ZIP ====
-const toUpperSafe = (s) => String(s ?? "").toUpperCase();
-const digitsOnly = (s) => String(s || "").replace(/\D/g, "");
-
-function maskPhoneUS(input) {
-  const d = digitsOnly(input).slice(0, 10);
-  if (d.length <= 3) return d;
-  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
-  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
-}
-
-async function lookupZipSmart(zip) {
-  const z = String(zip || "").trim();
-  // fallback local inmediato
-  const local = zipToCiudadEstado(z);
-  // intento remoto (mejora; no rompe si falla)
-  try {
-    if (/^\d{5}$/.test(z)) {
-      const res = await fetch(`https://api.zippopotam.us/us/${z}`);
-      if (res.ok) {
-        const json = await res.json();
-        const place = (json.places && json.places[0]) || null;
-        if (place) {
-          const ciudad = toUpperSafe(place["place name"] || "");
-          const estado = toUpperSafe(place["state abbreviation"] || "");
-          return { ciudad, estado };
-        }
-      }
-    }
-  } catch {
-    // ignorar; usar local
-  }
-  return { ciudad: toUpperSafe(local.ciudad || ""), estado: toUpperSafe(local.estado || "") };
-}
+// === Helpers numéricos (evitan mostrar "-0.00")
+const safe2 = (n) => {
+  const x = Math.round(Number(n || 0) * 100) / 100;
+  return Math.abs(x) < 0.005 ? 0 : x;
+};
+const fmtSafe = (n) =>
+  `$${safe2(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Wrapper por si no existiera la lib (fallback seguro)
 async function safeGetCxc(clienteId) {
@@ -106,9 +79,7 @@ const COMPANY_NAME  = import.meta?.env?.VITE_COMPANY_NAME  || "Tools4CareMovil";
 const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
-function fmtCurrency(n) {
-  return `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+const fmtCurrency = (n) => fmtSafe(n);
 function getCreditNumber(c) {
   return c?.credito_id || c?.id || "—";
 }
@@ -361,8 +332,7 @@ export default function Clientes() {
     } else {
       setMostrarEdicion(false);
     }
-    // eslint-disable-next-line
-  }, [location.pathname]);
+  }, [location.pathname]); // eslint-disable-line
 
   function abrirNuevoCliente() {
     setForm({
@@ -412,78 +382,29 @@ export default function Clientes() {
     setMensaje("");
   }
 
-  // ==== NUEVO: cambio unificado con mayúsculas + máscara + ZIP smart ====
   function handleChange(e) {
     const { name, value } = e.target;
-
-    // Dirección
     if (["calle", "ciudad", "estado", "zip"].includes(name)) {
       setForm((f) => {
-        // normalizamos cada campo
-        let val = value;
-        if (name === "zip") val = digitsOnly(value).slice(0, 5);
-        else if (name === "estado" || name === "ciudad" || name === "calle") val = toUpperSafe(value);
-
-        let newDireccion = { ...f.direccion, [name]: val };
-
+        let newDireccion = { ...f.direccion, [name]: value };
         if (name === "estado") {
-          const up = toUpperSafe(val);
-          setEstadoInput(up);
-          setEstadoOpciones(estadosUSA.filter(s => s.startsWith(up)));
-          newDireccion.estado = up;
+          setEstadoInput(value.toUpperCase());
+          setEstadoOpciones(estadosUSA.filter(s => s.startsWith(value.toUpperCase())));
         }
-
-        if (name === "zip" && val.length === 5) {
-          // autocompleta primero con mapa local
-          const local = zipToCiudadEstado(val);
-          if (local.ciudad || local.estado) {
-            newDireccion.ciudad = toUpperSafe(local.ciudad);
-            newDireccion.estado = toUpperSafe(local.estado);
-            setEstadoInput(toUpperSafe(local.estado));
-            setEstadoOpciones(estadosUSA.filter(s => s.startsWith(toUpperSafe(local.estado))));
+        if (name === "zip" && value.length === 5) {
+          const { ciudad, estado } = zipToCiudadEstado(value);
+          if (ciudad || estado) {
+            newDireccion.ciudad = ciudad;
+            newDireccion.estado = estado;
+            setEstadoInput(estado);
+            setEstadoOpciones(estadosUSA.filter(s => s.startsWith(estado)));
           }
-          // lookup remoto sin bloquear UI
-          lookupZipSmart(val).then(({ ciudad, estado }) => {
-            if (ciudad || estado) {
-              setForm((ff) => ({
-                ...ff,
-                direccion: {
-                  ...ff.direccion,
-                  ciudad: ciudad || ff.direccion.ciudad,
-                  estado: estado || ff.direccion.estado,
-                  zip: val
-                }
-              }));
-              if (estado) {
-                setEstadoInput(estado);
-                setEstadoOpciones(estadosUSA.filter(s => s.startsWith(estado)));
-              }
-            }
-          });
         }
         return { ...f, direccion: newDireccion };
       });
-      return;
+    } else {
+      setForm((f) => ({ ...f, [name]: value }));
     }
-
-    // Teléfono con máscara; almacenamos máscara en estado y normalizamos en guardado
-    if (name === "telefono") {
-      const masked = maskPhoneUS(value);
-      setForm((f) => ({ ...f, telefono: masked }));
-      return;
-    }
-
-    // Campos top-level (nombre/negocio/email)
-    setForm((f) => {
-      if (name === "email") {
-        // email tal cual (no forzar mayúsculas para evitar rarezas)
-        return { ...f, email: value };
-      }
-      if (name === "nombre" || name === "negocio") {
-        return { ...f, [name]: toUpperSafe(value) };
-      }
-      return { ...f, [name]: value };
-    });
   }
 
   async function handleGuardar(e) {
@@ -495,21 +416,23 @@ export default function Clientes() {
       return;
     }
 
-    // Normalizaciones finales sin alterar la lógica de guardado
-    const telefonoNormalized = digitsOnly(form.telefono); // guardamos solo dígitos
-    const direccionFinal = {
-      calle: toUpperSafe(form.direccion?.calle),
-      ciudad: toUpperSafe(form.direccion?.ciudad),
-      estado: toUpperSafe(form.direccion?.estado),
-      zip: digitsOnly(form.direccion?.zip).slice(0, 5),
-    };
+    // --- Normalización de teléfono y email ---
+    const phoneDigits = String(form.telefono || "").replace(/\D/g, "");
+    const telefonoFinal =
+      phoneDigits.length === 0
+        ? ""
+        : phoneDigits.length === 10
+        ? `+1${phoneDigits}`
+        : `+${phoneDigits}`;
+    const emailFinal = String(form.email || "").trim();
+
+    let direccionFinal = form.direccion || { calle: "", ciudad: "", estado: "", zip: "" };
 
     const payload = {
-      ...form,
-      nombre: toUpperSafe(form.nombre),
-      negocio: toUpperSafe(form.negocio),
-      // email se guarda tal cual lo ingresó
-      telefono: telefonoNormalized,
+      nombre: form.nombre,
+      telefono: telefonoFinal,
+      email: emailFinal,
+      negocio: form.negocio,
       direccion: direccionFinal,
     };
 
@@ -570,8 +493,7 @@ export default function Clientes() {
         setCxcByClient((prev) => ({ ...prev, [clienteSeleccionado.id]: info }));
       }
     };
-    // eslint-disable-next-line
-  }, [clienteSeleccionado?.id]);
+  }, [clienteSeleccionado?.id]); // eslint-disable-line
 
   useEffect(() => {
     if (!clienteSeleccionado?.id) return;
@@ -588,7 +510,6 @@ export default function Clientes() {
     return () => {
       window.removeEventListener("focus", handler);
     };
-    // eslint-disable-next-line
   }, [refreshCreditoActivo]);
 
   useEffect(() => {
@@ -634,8 +555,7 @@ export default function Clientes() {
         realtimeUnsubRef.current = null;
       }
     };
-    // eslint-disable-next-line
-  }, [clienteSeleccionado?.id, refreshCreditoActivo]);
+  }, [clienteSeleccionado?.id, refreshCreditoActivo]); // eslint-disable-line
 
   useEffect(() => {
     async function cargarResumen() {
@@ -731,7 +651,7 @@ export default function Clientes() {
     doc.text(`Date: ${todayStr}`, 14, 93);
 
     const ventasData = Object.entries(comprasPorMes)
-      .map(([mes, total]) => [mes, `$${total.toFixed(2)}`])
+      .map(([mes, total]) => [mes, fmtSafe(total)])
       .sort((a,b) => b[0].localeCompare(a[0]));
 
     autoTable(doc, {
@@ -745,7 +665,7 @@ export default function Clientes() {
 
     const finalY = doc.lastAutoTable.finalY || 110;
     doc.setFontSize(12);
-    doc.text(`Lifetime Total Sales: $${lifetimeTotal.toFixed(2)}`, 14, finalY + 10);
+    doc.text(`Lifetime Total Sales: ${fmtSafe(lifetimeTotal)}`, 14, finalY + 10);
 
     doc.save(`SalesReport_${clienteSeleccionado.nombre || "Client"}.pdf`);
   }
@@ -822,7 +742,7 @@ export default function Clientes() {
                 <div>
                   <p className="text-gray-500 text-xs sm:text-sm font-medium">Total Outstanding</p>
                   <p className="text-2xl sm:text-3xl font-bold text-red-600">
-                    ${totales.totalOutstanding.toFixed(2)}
+                    {fmtSafe(totales.totalOutstanding)}
                   </p>
                 </div>
                 <div className="bg-red-100 p-2 sm:p-3 rounded-full">
@@ -935,10 +855,10 @@ export default function Clientes() {
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <span
                               className={`inline-flex items-center px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold ${
-                                saldo > 0 ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
+                                safe2(saldo) > 0 ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
                               }`}
                             >
-                              ${Number(saldo).toFixed(2)}
+                              {fmtSafe(saldo)}
                             </span>
                           </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4 hidden lg:table-cell">
@@ -946,8 +866,8 @@ export default function Clientes() {
                               <span className="text-[11px] text-gray-400">—</span>
                             ) : (
                               <div className="flex flex-col">
-                                <span className={`text-sm font-semibold ${disp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                                  Avail: ${disp.toFixed(2)}
+                                <span className={`text-sm font-semibold ${Number(disp) >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                  Avail: {fmtSafe(disp)}
                                 </span>
                                 {cxc?.limite_manual_aplicado && (
                                   <span className="text-[10px] uppercase tracking-wide text-blue-500 mt-0.5">
@@ -1086,7 +1006,7 @@ export default function Clientes() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
           <form
             onSubmit={handleGuardar}
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden"
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h[90vh] sm:max-h-[90vh] overflow-hidden"
           >
             <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
               <h3 className="text-xl sm:text-2xl font-bold">
@@ -1110,8 +1030,7 @@ export default function Clientes() {
                     value={form.nombre}
                     onChange={handleChange}
                     required
-                    placeholder="ENTER FULL NAME"
-                    style={{ textTransform: "uppercase" }}
+                    placeholder="Enter full name"
                   />
                 </div>
 
@@ -1126,8 +1045,6 @@ export default function Clientes() {
                     value={form.telefono}
                     onChange={handleChange}
                     placeholder="(555) 123-4567"
-                    inputMode="tel"
-                    pattern="\d*"
                   />
                 </div>
 
@@ -1156,8 +1073,7 @@ export default function Clientes() {
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                     value={form.negocio}
                     onChange={handleChange}
-                    placeholder="BUSINESS NAME"
-                    style={{ textTransform: "uppercase" }}
+                    placeholder="Business name"
                   />
                 </div>
 
@@ -1175,8 +1091,6 @@ export default function Clientes() {
                         value={form.direccion.zip}
                         onChange={handleChange}
                         maxLength={5}
-                        inputMode="numeric"
-                        pattern="\d*"
                         placeholder="02118"
                       />
                     </div>
@@ -1208,8 +1122,7 @@ export default function Clientes() {
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                         value={form.direccion.ciudad}
                         onChange={handleChange}
-                        placeholder="BOSTON"
-                        style={{ textTransform: "uppercase" }}
+                        placeholder="Boston"
                       />
                     </div>
 
@@ -1220,8 +1133,7 @@ export default function Clientes() {
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                         value={form.direccion.calle}
                         onChange={handleChange}
-                        placeholder="123 MAIN ST"
-                        style={{ textTransform: "uppercase" }}
+                        placeholder="123 Main St"
                       />
                     </div>
                   </div>
@@ -1588,76 +1500,97 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const limite = Number(resumen?.cxc?.limite ?? 0);
   const montoNum = Number(monto || 0);
-  const excedente = Math.max(0, montoNum - saldoActual);
+  const excedente = round2(Math.max(0, montoNum - saldoActual));
+
+  // util local para evitar residuales tipo -0.0000001
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 
   async function guardarAbono(e) {
-    e.preventDefault();
-    if (guardando) return;
-    setGuardando(true);
-    setMensaje("");
+  e.preventDefault();
+  if (guardando) return;
+  setGuardando(true);
+  setMensaje("");
 
-    if (!van || !van.id) {
-      setMensaje("You must select a VAN before adding a payment.");
-      setGuardando(false);
-      return;
-    }
-    if (!monto || isNaN(montoNum) || montoNum <= 0) {
-      setMensaje("Invalid amount. Must be greater than 0.");
-      setGuardando(false);
-      return;
-    }
-    if (saldoActual <= 0) {
-      setMensaje(`This client has no pending balance. You must return ${montoNum.toFixed(2)} to the client.`);
-      setGuardando(false);
-      return;
-    }
-
-    let rpcOk = false;
-    try {
-      const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
-        p_cliente_id: cliente.id,
-        p_monto: Math.min(montoNum, saldoActual),
-        p_metodo: metodo,
-        p_van_id: van.id,
-      });
-      if (!rpcErr) rpcOk = true;
-    } catch {}
-
-    if (!rpcOk) {
-      const dbRow = {
-        cliente_id: cliente.id,
-        monto: Math.min(montoNum, saldoActual),
-        metodo_pago: metodo,
-        fecha_pago: new Date().toISOString(),
-      };
-      const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
-      if (insErr) {
-        setGuardando(false);
-        setMensaje("Error saving payment: " + (insErr?.message || "unknown"));
-        return;
-      }
-    }
-
+  if (!van || !van.id) {
+    setMensaje("You must select a VAN before adding a payment.");
     setGuardando(false);
-
-    const info = await safeGetCxc(cliente.id);
-    if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
-    if (typeof refresh === "function") await refresh();
-
-    const receiptPayload = {
-      clientName: cliente?.nombre || "",
-      creditNumber: getCreditNumber(cliente),
-      dateStr: new Date().toLocaleString(),
-      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-      amount: Math.min(montoNum, saldoActual),
-      prevBalance: saldoActual,
-      newBalance: Math.max(0, saldoActual - Math.min(montoNum, saldoActual)),
-    };
-    try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
-
-    setMensaje("Payment registered!");
-    setTimeout(() => { onClose(); }, 900);
+    return;
   }
+
+  const saldo = round2(Number(resumen?.balance ?? cliente?.balance ?? 0) || 0);
+  const montoIngresado = round2(Number(monto || 0));
+
+  if (!montoIngresado || montoIngresado <= 0) {
+    setMensaje("Invalid amount. Must be greater than 0.");
+    setGuardando(false);
+    return;
+  }
+
+  if (saldo <= 0) {
+    setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`);
+    setGuardando(false);
+    return;
+  }
+
+  // Solo aplicamos hasta el saldo; el resto es devuelta
+  const pagoAplicado   = round2(Math.min(montoIngresado, saldo));
+  const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+
+  let rpcOk = false;
+  try {
+    const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
+      p_cliente_id: cliente.id,
+      p_monto: pagoAplicado,      // nunca más que el saldo
+      p_metodo: metodo,
+      p_van_id: van.id,
+    });
+    if (!rpcErr) rpcOk = true;
+  } catch {}
+
+  if (!rpcOk) {
+    const dbRow = {
+      cliente_id: cliente.id,
+      monto: pagoAplicado,        // nunca más que el saldo
+      metodo_pago: metodo,
+      fecha_pago: new Date().toISOString(),
+    };
+    const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
+    if (insErr) {
+      setGuardando(false);
+      setMensaje("Error saving payment: " + (insErr?.message || "unknown"));
+      return;
+    }
+  }
+
+  // Refrescamos CxC para ver saldo en 0.00
+  const info = await safeGetCxc(cliente.id);
+  if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
+  if (typeof refresh === "function") await refresh();
+
+  // Mensaje final: si hubo exceso, indicamos devuelta (no se registra como crédito)
+  if (cambioDevuelto > 0) {
+    setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
+  } else {
+    setMensaje("Payment registered!");
+  }
+
+  // Recibo solo por el monto aplicado (no por el exceso)
+  const receiptPayload = {
+    clientName: cliente?.nombre || "",
+    creditNumber: getCreditNumber(cliente),
+    dateStr: new Date().toLocaleString(),
+    pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+    amount: pagoAplicado,
+    prevBalance: saldo,
+    newBalance: round2(Math.max(0, saldo - pagoAplicado)),
+  };
+  try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
+
+  setGuardando(false);
+  setTimeout(() => setMensaje(""), 1200);
+}
+
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
@@ -1700,9 +1633,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                 <input
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 text-lg"
                   placeholder="0.00"
-                  type="number"
-                  min="1"
-                  step="any"
+                  type="number" min="0.01" step="0.01"
                   value={monto}
                   onChange={e => setMonto(e.target.value)}
                   required
@@ -1736,7 +1667,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                 <div className="text-sm">
                   Payment will reduce balance to{" "}
                   <span className="font-bold">
-                    ${Math.max(0, saldoActual - montoNum).toFixed(2)}
+                    ${round2(Math.max(0, saldoActual - montoNum)).toFixed(2)}
                   </span>.
                 </div>
               )}
@@ -1805,14 +1736,16 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
 
             {/* Espaciador para la barra fija */}
-            <div className="h-[140px] sm:h-[120px]" />
+         <div className="h-[140px] sm:h-[120px]" />
+
           </div>
 
           {/* Barra de acciones FIJA (siempre visible) */}
           <div
-            className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000]"
-            style={{ bottom: isIOS() ? "calc(env(safe-area-inset-bottom) + 40px)" : "24px" }} // iPhone un poco más arriba
-          >
+  className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
+  style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}  // ~24px arriba del borde
+>
+
             <div className="flex gap-3">
               <button
                 type="submit"
