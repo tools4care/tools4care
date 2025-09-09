@@ -12,7 +12,8 @@ import {
   Boxes,
   Repeat,
   LogOut,
-  CreditCard, // <--- NUEVO: icono para CXC
+  CreditCard,
+  UserCircle2, // 👈 NUEVO
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -24,64 +25,29 @@ export default function Sidebar() {
 
   // App menu
   const menu = [
-    {
-      to: "/",
-      icon: <LayoutDashboard size={ICON_SIZE} className="text-blue-400" />,
-      text: "Dashboard",
-    },
-    {
-      to: "/ventas",
-      icon: <ShoppingCart size={ICON_SIZE} className="text-green-500" />,
-      text: "Sales",
-    },
-    {
-      to: "/facturas",
-      icon: <FileText size={ICON_SIZE} className="text-purple-500" />,
-      text: "Invoices",
-    },
-    {
-      to: "/clientes",
-      icon: <Users size={ICON_SIZE} className="text-yellow-500" />,
-      text: "Customers",
-    },
-    {
-      to: "/productos",
-      icon: <Package size={ICON_SIZE} className="text-pink-500" />,
-      text: "Products",
-    },
-    {
-      to: "/inventario",
-      icon: <Boxes size={ICON_SIZE} className="text-teal-500" />,
-      text: "Inventory",
-    },
-    {
-      to: "/cierres",
-      icon: <Repeat size={ICON_SIZE} className="text-cyan-600" />,
-      text: "Van Closeout",
-    },
-    // ---- NUEVO ÍTEM: Cuentas por Cobrar (CXC) ----
-    {
-      to: "/cxc",
-      icon: <CreditCard size={ICON_SIZE} className="text-orange-400" />,
-      text: "Accounts Receivable",
-    },
+    { to: "/", icon: <LayoutDashboard size={ICON_SIZE} className="text-blue-400" />, text: "Dashboard" },
+    { to: "/ventas", icon: <ShoppingCart size={ICON_SIZE} className="text-green-500" />, text: "Sales" },
+    { to: "/facturas", icon: <FileText size={ICON_SIZE} className="text-purple-500" />, text: "Invoices" },
+    { to: "/clientes", icon: <Users size={ICON_SIZE} className="text-yellow-500" />, text: "Customers" },
+    { to: "/productos", icon: <Package size={ICON_SIZE} className="text-pink-500" />, text: "Products" },
+    { to: "/inventario", icon: <Boxes size={ICON_SIZE} className="text-teal-500" />, text: "Inventory" },
+    { to: "/cierres", icon: <Repeat size={ICON_SIZE} className="text-cyan-600" />, text: "Van Closeout" },
+    { to: "/cxc", icon: <CreditCard size={ICON_SIZE} className="text-orange-400" />, text: "Accounts Receivable" },
+    // 👇 NUEVO: Suplidores
+    { to: "/suplidores", icon: <UserCircle2 size={ICON_SIZE} className="text-indigo-400" />, text: "Suppliers" },
   ];
 
   function handleLogout() {
-    // Here goes your logout logic (Supabase, etc)
     localStorage.clear();
     window.location.href = "/login";
   }
 
-  // Show "Change VAN" button only if admin
   const showChangeVan = usuario?.rol === "admin";
 
   return (
     <aside className="bg-[#162941] text-white min-h-screen w-[220px] flex flex-col justify-between py-5 px-3">
       <div>
-        <div className="font-bold text-lg mb-6 ml-2 tracking-wide">
-          TOOLS4CARE
-        </div>
+        <div className="font-bold text-lg mb-6 ml-2 tracking-wide">TOOLS4CARE</div>
         <nav className="flex flex-col gap-2">
           {menu.map(({ to, icon, text }) => (
             <Link

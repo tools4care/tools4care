@@ -393,6 +393,33 @@ function subscribeClienteLimiteManual(clienteId, onChange) {
   };
 }
 
+/* === Last activity (read-only) === */
+async function tryMaxDate(table, cols, clienteId) {
+  for (const col of cols) {
+    try {
+      const { data, error } = await supabase
+        .from(table)
+        .select(col)
+        .eq("cliente_id", clienteId)
+        .not(col, "is", null)
+        .order(col, { ascending: false })
+        .limit(1);
+      if (!error && data && data[0] && data[0][col]) return new Date(data[0][col]).toISOString();
+    } catch {}
+  }
+  return null;
+}
+async function getLastActivityAt(clienteId) {
+  if (!clienteId) return null;
+  const candidates = [
+    await tryMaxDate("ventas", ["fecha", "created_at", "fecha_venta"], clienteId),
+    await tryMaxDate("pagos", ["fecha", "created_at"], clienteId),
+    await tryMaxDate("cxc_movimientos", ["fecha", "created_at"], clienteId), // si no existe, no rompe
+  ].filter(Boolean);
+  if (candidates.length === 0) return null;
+  return new Date(Math.max(...candidates.map((d) => Date.parse(d)))).toISOString();
+}
+
 /* ========================= Componente ========================= */
 export default function Sales() {
   const { van } = useVan();
@@ -449,6 +476,10 @@ export default function Sales() {
   // PATCH: tick para forzar recarga de inventario sin cambiar de ruta
   const [invTick, setInvTick] = useState(0);           // PATCH
   const reloadInventory = () => setInvTick(n => n + 1); // PATCH
+
+  // === Last activity state ===
+  const [lastActivityAt, setLastActivityAt] = useState(null);
+  const [lastActivityLoading, setLastActivityLoading] = useState(false);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
@@ -917,6 +948,26 @@ export default function Sales() {
   useEffect(() => {
     if (step === 2) reloadInventory();
   }, [step]); // PATCH
+
+  /* === Last activity loader === */
+  useEffect(() => {
+    let disposed = false;
+    (async () => {
+      if (!selectedClient?.id) {
+        setLastActivityAt(null);
+        return;
+      }
+      setLastActivityLoading(true);
+      const d = await getLastActivityAt(selectedClient.id);
+      if (!disposed) {
+        setLastActivityAt(d);
+        setLastActivityLoading(false);
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [selectedClient?.id]);
 
   /* ---------- Filtro del buscador ---------- */
   useEffect(() => {
@@ -1463,6 +1514,18 @@ export default function Sales() {
                     <span>💳</span>
                     <span className="text-xs">
                       Credit #: <span className="font-mono font-semibold">{creditNum}</span>
+                    </span>
+                  </div>
+                  {/* === Last activity UI === */}
+                  <div className="flex items-center gap-2">
+                    <span>🕒</span>
+                    <span className="text-xs text-gray-600">
+                      Last activity:{" "}
+                      {lastActivityLoading
+                        ? "Loading…"
+                        : lastActivityAt
+                        ? new Date(lastActivityAt).toLocaleString()
+                        : "No records"}
                     </span>
                   </div>
                 </div>

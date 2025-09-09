@@ -25,13 +25,48 @@ const estadosUSA = [
 
 const zipToCiudadEstado = (zip) => {
   const mapa = {
-    "02118": { ciudad: "Boston", estado: "MA" },
-    "02139": { ciudad: "Cambridge", estado: "MA" },
-    "01960": { ciudad: "Peabody", estado: "MA" },
-    "01915": { ciudad: "Beverly", estado: "MA" },
+    "02118": { ciudad: "BOSTON", estado: "MA" },
+    "02139": { ciudad: "CAMBRIDGE", estado: "MA" },
+    "01960": { ciudad: "PEABODY", estado: "MA" },
+    "01915": { ciudad: "BEVERLY", estado: "MA" },
   };
   return mapa[zip] || { ciudad: "", estado: "" };
 };
+
+// ==== NUEVO: helpers de mayúsculas, teléfono y ZIP ====
+const toUpperSafe = (s) => String(s ?? "").toUpperCase();
+const digitsOnly = (s) => String(s || "").replace(/\D/g, "");
+
+function maskPhoneUS(input) {
+  const d = digitsOnly(input).slice(0, 10);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
+async function lookupZipSmart(zip) {
+  const z = String(zip || "").trim();
+  // fallback local inmediato
+  const local = zipToCiudadEstado(z);
+  // intento remoto (mejora; no rompe si falla)
+  try {
+    if (/^\d{5}$/.test(z)) {
+      const res = await fetch(`https://api.zippopotam.us/us/${z}`);
+      if (res.ok) {
+        const json = await res.json();
+        const place = (json.places && json.places[0]) || null;
+        if (place) {
+          const ciudad = toUpperSafe(place["place name"] || "");
+          const estado = toUpperSafe(place["state abbreviation"] || "");
+          return { ciudad, estado };
+        }
+      }
+    }
+  } catch {
+    // ignorar; usar local
+  }
+  return { ciudad: toUpperSafe(local.ciudad || ""), estado: toUpperSafe(local.estado || "") };
+}
 
 // Wrapper por si no existiera la lib (fallback seguro)
 async function safeGetCxc(clienteId) {
@@ -377,29 +412,78 @@ export default function Clientes() {
     setMensaje("");
   }
 
+  // ==== NUEVO: cambio unificado con mayúsculas + máscara + ZIP smart ====
   function handleChange(e) {
     const { name, value } = e.target;
+
+    // Dirección
     if (["calle", "ciudad", "estado", "zip"].includes(name)) {
       setForm((f) => {
-        let newDireccion = { ...f.direccion, [name]: value };
+        // normalizamos cada campo
+        let val = value;
+        if (name === "zip") val = digitsOnly(value).slice(0, 5);
+        else if (name === "estado" || name === "ciudad" || name === "calle") val = toUpperSafe(value);
+
+        let newDireccion = { ...f.direccion, [name]: val };
+
         if (name === "estado") {
-          setEstadoInput(value.toUpperCase());
-          setEstadoOpciones(estadosUSA.filter(s => s.startsWith(value.toUpperCase())));
+          const up = toUpperSafe(val);
+          setEstadoInput(up);
+          setEstadoOpciones(estadosUSA.filter(s => s.startsWith(up)));
+          newDireccion.estado = up;
         }
-        if (name === "zip" && value.length === 5) {
-          const { ciudad, estado } = zipToCiudadEstado(value);
-          if (ciudad || estado) {
-            newDireccion.ciudad = ciudad;
-            newDireccion.estado = estado;
-            setEstadoInput(estado);
-            setEstadoOpciones(estadosUSA.filter(s => s.startsWith(estado)));
+
+        if (name === "zip" && val.length === 5) {
+          // autocompleta primero con mapa local
+          const local = zipToCiudadEstado(val);
+          if (local.ciudad || local.estado) {
+            newDireccion.ciudad = toUpperSafe(local.ciudad);
+            newDireccion.estado = toUpperSafe(local.estado);
+            setEstadoInput(toUpperSafe(local.estado));
+            setEstadoOpciones(estadosUSA.filter(s => s.startsWith(toUpperSafe(local.estado))));
           }
+          // lookup remoto sin bloquear UI
+          lookupZipSmart(val).then(({ ciudad, estado }) => {
+            if (ciudad || estado) {
+              setForm((ff) => ({
+                ...ff,
+                direccion: {
+                  ...ff.direccion,
+                  ciudad: ciudad || ff.direccion.ciudad,
+                  estado: estado || ff.direccion.estado,
+                  zip: val
+                }
+              }));
+              if (estado) {
+                setEstadoInput(estado);
+                setEstadoOpciones(estadosUSA.filter(s => s.startsWith(estado)));
+              }
+            }
+          });
         }
         return { ...f, direccion: newDireccion };
       });
-    } else {
-      setForm((f) => ({ ...f, [name]: value }));
+      return;
     }
+
+    // Teléfono con máscara; almacenamos máscara en estado y normalizamos en guardado
+    if (name === "telefono") {
+      const masked = maskPhoneUS(value);
+      setForm((f) => ({ ...f, telefono: masked }));
+      return;
+    }
+
+    // Campos top-level (nombre/negocio/email)
+    setForm((f) => {
+      if (name === "email") {
+        // email tal cual (no forzar mayúsculas para evitar rarezas)
+        return { ...f, email: value };
+      }
+      if (name === "nombre" || name === "negocio") {
+        return { ...f, [name]: toUpperSafe(value) };
+      }
+      return { ...f, [name]: value };
+    });
   }
 
   async function handleGuardar(e) {
@@ -410,10 +494,27 @@ export default function Clientes() {
       setIsLoading(false);
       return;
     }
-    let direccionFinal = form.direccion || { calle: "", ciudad: "", estado: "", zip: "" };
+
+    // Normalizaciones finales sin alterar la lógica de guardado
+    const telefonoNormalized = digitsOnly(form.telefono); // guardamos solo dígitos
+    const direccionFinal = {
+      calle: toUpperSafe(form.direccion?.calle),
+      ciudad: toUpperSafe(form.direccion?.ciudad),
+      estado: toUpperSafe(form.direccion?.estado),
+      zip: digitsOnly(form.direccion?.zip).slice(0, 5),
+    };
+
+    const payload = {
+      ...form,
+      nombre: toUpperSafe(form.nombre),
+      negocio: toUpperSafe(form.negocio),
+      // email se guarda tal cual lo ingresó
+      telefono: telefonoNormalized,
+      direccion: direccionFinal,
+    };
 
     if (!clienteSeleccionado) {
-      const { error } = await supabase.from("clientes").insert([{ ...form, direccion: direccionFinal }]);
+      const { error } = await supabase.from("clientes").insert([payload]);
       if (error) setMensaje("Error saving: " + error.message);
       else {
         setMensaje("Client saved successfully");
@@ -424,7 +525,7 @@ export default function Clientes() {
       }
     } else {
       const { error } = await supabase.from("clientes")
-        .update({ ...form, direccion: direccionFinal })
+        .update(payload)
         .eq("id", clienteSeleccionado.id);
       if (error) setMensaje("Error editing: " + error.message);
       else {
@@ -1009,7 +1110,8 @@ export default function Clientes() {
                     value={form.nombre}
                     onChange={handleChange}
                     required
-                    placeholder="Enter full name"
+                    placeholder="ENTER FULL NAME"
+                    style={{ textTransform: "uppercase" }}
                   />
                 </div>
 
@@ -1024,6 +1126,8 @@ export default function Clientes() {
                     value={form.telefono}
                     onChange={handleChange}
                     placeholder="(555) 123-4567"
+                    inputMode="tel"
+                    pattern="\d*"
                   />
                 </div>
 
@@ -1052,7 +1156,8 @@ export default function Clientes() {
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                     value={form.negocio}
                     onChange={handleChange}
-                    placeholder="Business name"
+                    placeholder="BUSINESS NAME"
+                    style={{ textTransform: "uppercase" }}
                   />
                 </div>
 
@@ -1070,6 +1175,8 @@ export default function Clientes() {
                         value={form.direccion.zip}
                         onChange={handleChange}
                         maxLength={5}
+                        inputMode="numeric"
+                        pattern="\d*"
                         placeholder="02118"
                       />
                     </div>
@@ -1101,7 +1208,8 @@ export default function Clientes() {
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                         value={form.direccion.ciudad}
                         onChange={handleChange}
-                        placeholder="Boston"
+                        placeholder="BOSTON"
+                        style={{ textTransform: "uppercase" }}
                       />
                     </div>
 
@@ -1112,7 +1220,8 @@ export default function Clientes() {
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                         value={form.direccion.calle}
                         onChange={handleChange}
-                        placeholder="123 Main St"
+                        placeholder="123 MAIN ST"
+                        style={{ textTransform: "uppercase" }}
                       />
                     </div>
                   </div>
@@ -1696,16 +1805,14 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
 
             {/* Espaciador para la barra fija */}
-         <div className="h-[140px] sm:h-[120px]" />
-
+            <div className="h-[140px] sm:h-[120px]" />
           </div>
 
           {/* Barra de acciones FIJA (siempre visible) */}
           <div
-  className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
-  style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}  // ~24px arriba del borde
->
-
+            className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000]"
+            style={{ bottom: isIOS() ? "calc(env(safe-area-inset-bottom) + 40px)" : "24px" }} // iPhone un poco más arriba
+          >
             <div className="flex gap-3">
               <button
                 type="submit"

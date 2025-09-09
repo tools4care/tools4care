@@ -29,6 +29,9 @@ import AuthCallback from "./storefront/AuthCallback";
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
 
+// 👇 NUEVO: módulo de Suplidores
+import Suplidores from "./Suplidores";
+
 function PrivateRoute({ children }) {
   const { usuario } = useUsuario();
   if (!usuario) return <Navigate to="/login" />;
@@ -127,6 +130,10 @@ export default function App() {
             <Route path="cierres/van" element={<CierreVan />} />
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
+
+            {/* 👇 NUEVO: ruta al módulo de Suplidores */}
+            <Route path="suplidores" element={<Suplidores />} />
+
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>
