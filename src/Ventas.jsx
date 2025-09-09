@@ -1189,12 +1189,33 @@ export default function Sales() {
           ? "parcial"
           : "pendiente";
 
-      // Desglose de pagos > 0
-      const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
-      const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
-      nonZeroPayments.forEach((p) => {
-        if (paymentMap[p.forma] !== undefined) paymentMap[p.forma] += Number(p.monto || 0);
-      });
+// Desglose de pagos > 0 (capados a lo realmente aplicado)
+const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
+
+// Total aplicable (venta + deuda vieja) — no incluye cambio
+const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2));
+
+let remainingToApply = paidApplied;
+const metodosAplicados = [];
+for (const p of nonZeroPayments) {
+  if (remainingToApply <= 0) break;
+  const original = Number(p.monto || 0);
+  const usar = Math.min(original, remainingToApply);
+  if (usar > 0) {
+    metodosAplicados.push({ ...p, monto: Number(usar.toFixed(2)) });
+    remainingToApply = Number((remainingToApply - usar).toFixed(2));
+  }
+}
+
+// Map por forma solo con lo aplicado
+const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+for (const p of metodosAplicados) {
+  if (paymentMap[p.forma] !== undefined) {
+    paymentMap[p.forma] += Number(p.monto || 0);
+  }
+}
+
+
 
       // Items para DB/RPC
       const itemsForDb = cartSafe.map((p) => {
@@ -1223,15 +1244,15 @@ export default function Sales() {
         };
       });
 
-      const pagoJson = {
-        metodos: nonZeroPayments,
-        map: paymentMap,
-        total_ingresado: Number(paid.toFixed(2)),
-        aplicado_venta: Number(paidForSaleNow.toFixed(2)),
-        aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
-        cambio: Number(changeNow.toFixed(2)),
-        ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
-      };
+   const pagoJson = {
+  metodos: metodosAplicados,              // ← antes: nonZeroPayments
+  map: paymentMap,
+  total_ingresado: Number(paid.toFixed(2)),
+  aplicado_venta: Number(paidForSaleNow.toFixed(2)),
+  aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
+  cambio: Number(changeNow.toFixed(2)),
+  ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
+};
 
       // ---------- 1) RPC preferida (si falla, seguimos a INSERT) ----------
       let ventaId = null;
@@ -1248,7 +1269,7 @@ export default function Sales() {
           p_estado_pago: estadoPago,
           p_total: Number(saleTotal.toFixed(2)),
           p_total_venta: Number(saleTotal.toFixed(2)),
-          p_total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
+          p_total_pagado: paidApplied,
         });
         if (error) throw error;
         ventaId = data?.venta_id || data?.id || data?.[0]?.id || null;
