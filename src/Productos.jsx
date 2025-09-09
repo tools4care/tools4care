@@ -9,35 +9,203 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 function CrearSuplidor({ onCreate }) {
   const [form, setForm] = useState({ nombre: "", contacto: "", telefono: "", direccion: "", email: "" });
   const [cargando, setCargando] = useState(false);
+  const [err, setErr] = useState("");
 
-  async function guardarSuplidor(e) {
-    e.preventDefault();
+  // Opcional: crear deuda u orden de compra al crear el suplidor
+  const [finanzasOpen, setFinanzasOpen] = useState(false);
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  // Deuda (CXP)
+  const [cxpMonto, setCxpMonto] = useState("");
+  const [cxpFecha, setCxpFecha] = useState(hoy);
+  const [cxpNotas, setCxpNotas] = useState("");
+
+  // Orden de compra (OC)
+  const [ocMonto, setOcMonto] = useState("");
+  const [ocFecha, setOcFecha] = useState(hoy);
+  const [ocNotas, setOcNotas] = useState("");
+
+  const preventEnterSubmit = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  async function guardarSuplidor() {
+    setErr("");
+    if (!form.nombre.trim()) {
+      setErr("El nombre es obligatorio.");
+      return;
+    }
+
     setCargando(true);
-    const { data, error } = await supabase
-      .from("suplidores")
-      .insert([form])
-      .select()
-      .maybeSingle();
-    setCargando(false);
-    if (!error) onCreate(data);
+    try {
+      const payload = {
+        nombre: form.nombre.trim(),
+        contacto: form.contacto || null,
+        telefono: form.telefono || null,
+        direccion: form.direccion || null,
+        email: form.email || null,
+      };
+
+      const { data, error } = await supabase
+        .from("suplidores")
+        .insert([payload])
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        setErr(error.message || "Error al guardar el suplidor.");
+        return;
+      }
+
+      // Opcional: crear deuda inicial (cuentas por pagar)
+      try {
+        const monto = Number(cxpMonto);
+        if (finanzasOpen && monto > 0) {
+          await supabase.from("cuentas_por_pagar").insert([
+            {
+              suplidor_id: data.id,
+              monto,
+              estado: "pendiente",
+              fecha: cxpFecha || hoy,
+              notas: cxpNotas || null,
+            },
+          ]);
+        }
+      } catch (_) {
+        // Silencioso si la tabla no existe o no hay permisos; no rompe el flujo
+      }
+
+      // Opcional: crear orden de compra
+      try {
+        const total = Number(ocMonto);
+        if (finanzasOpen && total > 0) {
+          await supabase.from("ordenes_compra").insert([
+            {
+              suplidor_id: data.id,
+              total,
+              estado: "abierta",
+              fecha: ocFecha || hoy,
+              notas: ocNotas || null,
+            },
+          ]);
+        }
+      } catch (_) {
+        // Silencioso si la tabla no existe; no rompe el flujo
+      }
+
+      if (onCreate) onCreate(data);
+    } finally {
+      setCargando(false);
+    }
   }
 
+  // ⚠️ Importante: NO usamos <form> aquí para evitar anidar formularios.
   return (
-    <form onSubmit={guardarSuplidor} className="p-2 bg-gray-50 rounded mt-2">
-      {["nombre", "contacto", "telefono", "direccion", "email"].map(f => (
+    <div className="p-2 bg-gray-50 rounded mt-2" onKeyDown={preventEnterSubmit}>
+      {["nombre", "contacto", "telefono", "direccion", "email"].map((f) => (
         <input
           key={f}
           className="border rounded p-2 w-full mb-1"
           placeholder={f.charAt(0).toUpperCase() + f.slice(1)}
           value={form[f]}
-          onChange={e => setForm(prev => ({ ...prev, [f]: e.target.value }))}
+          onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
+          // validación visual mínima
           required={f === "nombre"}
         />
       ))}
-      <button className="bg-green-600 text-white rounded px-3 py-1 mt-1 w-full" disabled={cargando}>
+
+      <div className="mt-2">
+        <button
+          type="button"
+          className="text-xs text-blue-700"
+          onClick={() => setFinanzasOpen((v) => !v)}
+        >
+          {finanzasOpen ? "Ocultar" : "+ Deuda u Orden con este suplidor (opcional)"}
+        </button>
+
+        {finanzasOpen && (
+          <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div className="border rounded p-2">
+              <b className="text-sm">Deuda / CXP</b>
+              <div className="mt-1">
+                <label className="text-xs">Monto</label>
+                <input
+                  className="border rounded p-2 w-full"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={cxpMonto}
+                  onChange={(e) => setCxpMonto(e.target.value)}
+                />
+              </div>
+              <div className="mt-1">
+                <label className="text-xs">Fecha</label>
+                <input
+                  className="border rounded p-2 w-full"
+                  type="date"
+                  value={cxpFecha}
+                  onChange={(e) => setCxpFecha(e.target.value)}
+                />
+              </div>
+              <div className="mt-1">
+                <label className="text-xs">Notas</label>
+                <input
+                  className="border rounded p-2 w-full"
+                  value={cxpNotas}
+                  onChange={(e) => setCxpNotas(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="border rounded p-2">
+              <b className="text-sm">Orden de compra</b>
+              <div className="mt-1">
+                <label className="text-xs">Total</label>
+                <input
+                  className="border rounded p-2 w-full"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={ocMonto}
+                  onChange={(e) => setOcMonto(e.target.value)}
+                />
+              </div>
+              <div className="mt-1">
+                <label className="text-xs">Fecha</label>
+                <input
+                  className="border rounded p-2 w-full"
+                  type="date"
+                  value={ocFecha}
+                  onChange={(e) => setOcFecha(e.target.value)}
+                />
+              </div>
+              <div className="mt-1">
+                <label className="text-xs">Notas</label>
+                <input
+                  className="border rounded p-2 w-full"
+                  value={ocNotas}
+                  onChange={(e) => setOcNotas(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {err && <div className="text-red-600 text-xs mt-1">{err}</div>}
+
+      <button
+        type="button"
+        className="bg-green-600 text-white rounded px-3 py-1 mt-2 w-full disabled:opacity-50"
+        onClick={guardarSuplidor}
+        disabled={cargando}
+      >
         Save supplier
       </button>
-    </form>
+    </div>
   );
 }
 
@@ -84,14 +252,21 @@ function BuscadorSuplidor({ value, onChange }) {
         className="border rounded p-2 w-full"
         value={busqueda}
         placeholder="Search supplier..."
-        onChange={e => setBusqueda(e.target.value)}
+        onChange={(e) => setBusqueda(e.target.value)}
         onKeyDown={(e) => {
           const list = suplidores || [];
-          if (e.key === "ArrowDown") { e.preventDefault(); setHl(i => Math.min((i < 0 ? 0 : i + 1), list.length - 1)); }
-          else if (e.key === "ArrowUp") { e.preventDefault(); setHl(i => Math.max(i - 1, 0)); }
-          else if (e.key === "Enter") {
-            if (hl >= 0 && list[hl]) { pickSupplier(hl); }
-            else if (list.length > 0) { pickSupplier(0); }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHl((i) => Math.max(i - 1, 0));
+          } else if (e.key === "Enter") {
+            if (hl >= 0 && list[hl]) {
+              pickSupplier(hl);
+            } else if (list.length > 0) {
+              pickSupplier(0);
+            }
           } else if (e.key === "Escape") {
             setHl(-1);
           }
@@ -121,7 +296,7 @@ function BuscadorSuplidor({ value, onChange }) {
       </button>
       {showCrear && (
         <CrearSuplidor
-          onCreate={s => {
+          onCreate={(s) => {
             onChange(s.id, s.nombre);
             setBusqueda(s.nombre);
             setShowCrear(false);
@@ -133,7 +308,17 @@ function BuscadorSuplidor({ value, onChange }) {
 }
 
 const SIZES_COMUNES = [
-  ".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "BOX", "SACK", "BAG"
+  ".05L",
+  ".100ML",
+  "5.25 OZ",
+  "PACK",
+  "TUB",
+  "UNIT",
+  "500ML",
+  "1L",
+  "BOX",
+  "SACK",
+  "BAG",
 ];
 
 // --------------- COMPONENTE DE PESTAÑA DE VENTAS --------------
@@ -175,16 +360,16 @@ function PestañaVentas({ productoId, nombre }) {
       }
 
       // 2) ventas para esos IDs
-      const ventaIds = Array.from(new Set(det.map(d => d.venta_id).filter(Boolean)));
+      const ventaIds = Array.from(new Set(det.map((d) => d.venta_id).filter(Boolean)));
       const { data: ventasRows } = await supabase
         .from("ventas")
         .select("id,fecha,cliente_id")
         .in("id", ventaIds);
 
-      const mapVenta = new Map((ventasRows || []).map(v => [v.id, v]));
+      const mapVenta = new Map((ventasRows || []).map((v) => [v.id, v]));
       // Enriquecer
       const enriquecido = det
-        .map(d => {
+        .map((d) => {
           const v = mapVenta.get(d.venta_id);
           if (!v) return null;
           return { venta_id: d.venta_id, cantidad: d.cantidad || 0, fecha: v.fecha, cliente_id: v.cliente_id };
@@ -200,10 +385,10 @@ function PestañaVentas({ productoId, nombre }) {
       }
       const lista = Object.keys(agg)
         .sort((a, b) => b.localeCompare(a))
-        .map(m => ({ mes: m, cantidad: agg[m] }));
+        .map((m) => ({ mes: m, cantidad: agg[m] }));
 
       setVentasMes(lista);
-      setMeses(lista.map(x => x.mes));
+      setMeses(lista.map((x) => x.mes));
       setMesSeleccionado(lista[0]?.mes || "");
 
       // 4) Facturas del primer mes seleccionado
@@ -215,9 +400,10 @@ function PestañaVentas({ productoId, nombre }) {
 
       // 5) Ventas por día (últimos 30)
       const byDay = {};
-      (ventasRows || []).forEach(v => {
+      (ventasRows || []).forEach((v) => {
         const d = (v.fecha || "").slice(0, 10);
-        const cant = (det || []).filter(x => x.venta_id === v.id)
+        const cant = (det || [])
+          .filter((x) => x.venta_id === v.id)
           .reduce((t, x) => t + Number(x.cantidad || 0), 0);
         byDay[d] = (byDay[d] || 0) + cant;
       });
@@ -233,21 +419,23 @@ function PestañaVentas({ productoId, nombre }) {
   }, [productoId]);
 
   async function cargarFacturasMes(detallesEnriquecidos, mes) {
-    const filtrado = (detallesEnriquecidos || []).filter(d => yyyymm(d.fecha) === mes);
+    const filtrado = (detallesEnriquecidos || []).filter((d) => yyyymm(d.fecha) === mes);
 
     // Traer nombres de clientes en un solo query
-    const idsClientes = Array.from(new Set(filtrado.map(f => f.cliente_id).filter(Boolean)));
+    const idsClientes = Array.from(new Set(filtrado.map((f) => f.cliente_id).filter(Boolean)));
     const nombres = {};
     if (idsClientes.length > 0) {
       const { data: clientesData } = await supabase
         .from("clientes")
         .select("id,nombre")
         .in("id", idsClientes);
-      (clientesData || []).forEach(c => { nombres[c.id] = c.nombre; });
+      (clientesData || []).forEach((c) => {
+        nombres[c.id] = c.nombre;
+      });
     }
 
     // Formatear lista
-    const lista = filtrado.map(f => ({
+    const lista = filtrado.map((f) => ({
       venta_id: f.venta_id,
       cantidad: f.cantidad,
       fecha: f.fecha,
@@ -267,15 +455,15 @@ function PestañaVentas({ productoId, nombre }) {
         .select("venta_id,cantidad")
         .eq("producto_id", productoId);
 
-      const ventaIds = Array.from(new Set((det || []).map(d => d.venta_id).filter(Boolean)));
+      const ventaIds = Array.from(new Set((det || []).map((d) => d.venta_id).filter(Boolean)));
       const { data: ventasRows } = await supabase
         .from("ventas")
         .select("id,fecha,cliente_id")
         .in("id", ventaIds);
 
-      const mapVenta = new Map((ventasRows || []).map(v => [v.id, v]));
+      const mapVenta = new Map((ventasRows || []).map((v) => [v.id, v]));
       const enriquecido = (det || [])
-        .map(d => {
+        .map((d) => {
           const v = mapVenta.get(d.venta_id);
           if (!v) return null;
           return { venta_id: d.venta_id, cantidad: d.cantidad || 0, fecha: v.fecha, cliente_id: v.cliente_id };
@@ -302,7 +490,7 @@ function PestañaVentas({ productoId, nombre }) {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="mes" fontSize={12} />
                 <YAxis fontSize={12} />
-                <Tooltip formatter={v => `${v} units`} />
+                <Tooltip formatter={(v) => `${v} units`} />
                 <Bar dataKey="cantidad" fill="#1976D2" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -315,10 +503,12 @@ function PestañaVentas({ productoId, nombre }) {
         <select
           className="border rounded p-2 ml-2"
           value={mesSeleccionado}
-          onChange={e => setMesSeleccionado(e.target.value)}
+          onChange={(e) => setMesSeleccionado(e.target.value)}
         >
-          {meses.map(m => (
-            <option key={m} value={m}>{m}</option>
+          {meses.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
           ))}
         </select>
       </div>
@@ -341,7 +531,7 @@ function PestañaVentas({ productoId, nombre }) {
                 </tr>
               </thead>
               <tbody>
-                {facturas.map(f => (
+                {facturas.map((f) => (
                   <tr key={f.venta_id + "-" + (f.fecha || "")} className="border-b">
                     <td className="border px-2 py-1 font-mono">{f.venta_id}</td>
                     <td className="border px-2 py-1">{(f.fecha || "").slice(0, 10)}</td>
@@ -370,7 +560,7 @@ function PestañaVentas({ productoId, nombre }) {
                 </tr>
               </thead>
               <tbody>
-                {porDia.map(r => (
+                {porDia.map((r) => (
                   <tr key={r.dia} className="border-b">
                     <td className="border px-2 py-1">{r.dia}</td>
                     <td className="border px-2 py-1 text-right">{r.qty}</td>
@@ -406,9 +596,7 @@ async function addStockSeleccionado(productoId, productoActual) {
         .update({ cantidad: Number(existente.cantidad || 0) + qty })
         .eq("id", existente.id);
     } else {
-      await supabase.from("stock_almacen").insert([
-        { producto_id: productoId, cantidad: qty },
-      ]);
+      await supabase.from("stock_almacen").insert([{ producto_id: productoId, cantidad: qty }]);
     }
 
     // Log de movimiento (si la tabla existe)
@@ -443,9 +631,7 @@ async function addStockSeleccionado(productoId, productoActual) {
         .update({ cantidad: Number(existente.cantidad || 0) + qty })
         .eq("id", existente.id);
     } else {
-      await supabase.from("stock_van").insert([
-        { producto_id: productoId, van_id: vanId, cantidad: qty },
-      ]);
+      await supabase.from("stock_van").insert([{ producto_id: productoId, van_id: vanId, cantidad: qty }]);
     }
 
     // Log de movimiento (si la tabla existe)
@@ -525,7 +711,7 @@ export default function Productos() {
 
   async function cargarUbicaciones() {
     const { data: vansData } = await supabase.from("vans").select("id, nombre_van");
-    const vans = (vansData || []).map(v => ({
+    const vans = (vansData || []).map((v) => ({
       key: `van_${v.id}`,
       nombre: v.nombre_van,
       van_id: v.id,
@@ -533,7 +719,9 @@ export default function Productos() {
     setUbicaciones([{ key: "almacen", nombre: "Central warehouse" }, ...vans]);
   }
 
-  useEffect(() => { cargarProductos(); }, [debounced, pagina]);
+  useEffect(() => {
+    cargarProductos();
+  }, [debounced, pagina]);
 
   // ✅ MEJORADO: búsqueda por código exacto con antirace y fallback difuso
   async function cargarProductos() {
@@ -645,7 +833,7 @@ export default function Productos() {
 
       setStockResumen({
         unidades: total,
-        valor: total * Number(costoUnit || 0)
+        valor: total * Number(costoUnit || 0),
       });
 
       // última venta
@@ -654,7 +842,7 @@ export default function Productos() {
         .select("venta_id")
         .eq("producto_id", prodId);
 
-      const ventaIds = Array.from(new Set((dv || []).map(d => d.venta_id).filter(Boolean)));
+      const ventaIds = Array.from(new Set((dv || []).map((d) => d.venta_id).filter(Boolean)));
       if (ventaIds.length > 0) {
         const { data: v } = await supabase
           .from("ventas")
@@ -724,8 +912,16 @@ export default function Productos() {
       codigoInicial = params.get("codigo") || "";
     }
     setProductoActual({
-      id: null, codigo: codigoInicial, nombre: "", marca: "", categoria: "",
-      costo: "", precio: "", notas: "", size: "", proveedor: null,
+      id: null,
+      codigo: codigoInicial,
+      nombre: "",
+      marca: "",
+      categoria: "",
+      costo: "",
+      precio: "",
+      notas: "",
+      size: "",
+      proveedor: null,
       // pricing nuevos
       descuento_pct: "",
       bulk_min_qty: "",
@@ -747,11 +943,7 @@ export default function Productos() {
   }
 
   useEffect(() => {
-    if (
-      location.pathname.endsWith("/productos/nuevo") &&
-      !modalAbierto &&
-      !modalAutoOpenRef.current
-    ) {
+    if (location.pathname.endsWith("/productos/nuevo") && !modalAbierto && !modalAutoOpenRef.current) {
       modalAutoOpenRef.current = true;
       agregarProductoNuevo();
     }
@@ -780,17 +972,13 @@ export default function Productos() {
       return;
     }
 
-    if (
-      existentes &&
-      existentes.length > 0 &&
-      (!productoActual.id || existentes[0].id !== productoActual.id)
-    ) {
+    if (existentes && existentes.length > 0 && (!productoActual.id || existentes[0].id !== productoActual.id)) {
       setMensaje("Error: There is already a product with this code/UPC.");
       return;
     }
 
     const dataProducto = {
-      codigo: productoActual.codigo,
+      codigo: productoActual.codigo, // ahora puede ser alfanumérico
       nombre: productoActual.nombre,
       marca: productoActual.marca,
       categoria: productoActual.categoria,
@@ -800,20 +988,17 @@ export default function Productos() {
       proveedor: suplidorId,
       notas: productoActual.notas || "",
       // NUEVO: pricing por producto
-      descuento_pct: productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
-      bulk_min_qty: productoActual.bulk_min_qty !== "" ? Number(productoActual.bulk_min_qty) : null,
-      bulk_unit_price: productoActual.bulk_unit_price !== "" ? Number(productoActual.bulk_unit_price) : null,
+      descuento_pct:
+        productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
+      bulk_min_qty:
+        productoActual.bulk_min_qty !== "" ? Number(productoActual.bulk_min_qty) : null,
+      bulk_unit_price:
+        productoActual.bulk_unit_price !== "" ? Number(productoActual.bulk_unit_price) : null,
     };
 
     // (opcional) validación suave: bulk por debajo del costo
-    if (
-      dataProducto.bulk_unit_price != null &&
-      dataProducto.costo != null &&
-      dataProducto.bulk_unit_price < dataProducto.costo
-    ) {
-      const ok = window.confirm(
-        "⚠️ The bulk unit price is below cost. Do you still want to save?"
-      );
+    if (dataProducto.bulk_unit_price != null && dataProducto.costo != null && dataProducto.bulk_unit_price < dataProducto.costo) {
+      const ok = window.confirm("⚠️ The bulk unit price is below cost. Do you still want to save?");
       if (!ok) return;
     }
 
@@ -823,19 +1008,27 @@ export default function Productos() {
       // update
       const { error } = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
       if (error) {
-        setMensaje(error.message?.toLowerCase().includes("unique")
-          ? "Error: This code/UPC is already in use. Please use another one."
-          : "Error: " + error.message);
+        setMensaje(
+          error.message?.toLowerCase().includes("unique")
+            ? "Error: This code/UPC is already in use. Please use another one."
+            : "Error: " + error.message
+        );
         return;
       }
       setMensaje("Product updated.");
     } else {
       // insert
-      const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
+      const { data, error } = await supabase
+        .from("productos")
+        .insert([dataProducto])
+        .select()
+        .maybeSingle();
       if (error) {
-        setMensaje(error.message?.toLowerCase().includes("unique")
-          ? "Error: This code/UPC is already in use. Please use another one."
-          : "Error: " + error.message);
+        setMensaje(
+          error.message?.toLowerCase().includes("unique")
+            ? "Error: This code/UPC is already in use. Please use another one."
+            : "Error: " + error.message
+        );
         return;
       }
       productoId = data.id;
@@ -846,17 +1039,21 @@ export default function Productos() {
     try {
       await addStockSeleccionado(productoId, productoActual);
     } catch (e2) {
-      setMensaje(prev => (prev ? prev + " " : "") + "Error adding stock: " + (e2?.message || e2));
+      setMensaje((prev) => (prev ? prev + " " : "") + "Error adding stock: " + (e2?.message || e2));
     }
 
     // limpiar campos de add stock para evitar doble inserción en futuros guardados
-    setProductoActual(prev => prev ? {
-      ...prev,
-      id: productoId,
-      cantidad_inicial: "",
-      ubicacion_inicial: "almacen",
-      van_id_inicial: null
-    } : prev);
+    setProductoActual((prev) =>
+      prev
+        ? {
+            ...prev,
+            id: productoId,
+            cantidad_inicial: "",
+            ubicacion_inicial: "almacen",
+            van_id_inicial: null,
+          }
+        : prev
+    );
 
     await cargarProductos();
     cerrarModal();
@@ -904,46 +1101,46 @@ export default function Productos() {
   }
 
   // === Etiqueta escaneable (Code128 / UPC / EAN13 / Code39) ===
-// Incluye: Nombre, MARCA - TAMAÑO, Precio grande, código de barras real y dígitos.
-// Mantiene una sola página para evitar hojas en blanco.
-function imprimirEtiqueta(prod, opts = {}) {
-  if (!prod) return;
+  // Incluye: Nombre, MARCA - TAMAÑO, Precio grande, código de barras real y dígitos.
+  // Mantiene una sola página para evitar hojas en blanco.
+  function imprimirEtiqueta(prod, opts = {}) {
+    if (!prod) return;
 
-  // Tamaño de tu etiqueta física (ajústalo si tu rollo es distinto)
-  const LABEL_W = opts.widthMm  || "100mm";
-  const LABEL_H = opts.heightMm || "60mm";
-  const MARGIN  = opts.marginMm || "6mm";
+    // Tamaño de tu etiqueta física (ajústalo si tu rollo es distinto)
+    const LABEL_W = opts.widthMm || "100mm";
+    const LABEL_H = opts.heightMm || "60mm";
+    const MARGIN = opts.marginMm || "6mm";
 
-  const fmtMoney = (n) =>
-    `$${Number(n || 0).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+    const fmtMoney = (n) =>
+      `$${Number(n || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
 
-  const name  = String(prod.nombre || "").toUpperCase();
-  const brand = String(prod.marca || "").toUpperCase();
-  const size  = String(prod.size  || "").toUpperCase();
-  const price = fmtMoney(prod.precio);
-  const code  = String(prod.codigo ?? "").trim();
+    const name = String(prod.nombre || "").toUpperCase();
+    const brand = String(prod.marca || "").toUpperCase();
+    const size = String(prod.size || "").toUpperCase();
+    const price = fmtMoney(prod.precio);
+    const code = String(prod.codigo ?? "").trim();
 
-  if (!code) {
-    alert("Este producto no tiene código/UPC para generar el código de barras.");
-    return;
-  }
+    if (!code) {
+      alert("Este producto no tiene código/UPC para generar el código de barras.");
+      return;
+    }
 
-  // Elegimos automáticamente el tipo de código más conveniente
-  // - 12 dígitos -> UPC-A
-  // - 13 dígitos -> EAN-13
-  // - Alfanumérico compatible -> Code39 (si quieres “estilo retail viejo”)
-  // - En cualquier otro caso -> Code128 (robusto y compacto)
-  let format = "CODE128";
-  if (/^\d{12}$/.test(code)) format = "UPC";
-  else if (/^\d{13}$/.test(code)) format = "EAN13";
-  else if (/^[0-9A-Z.\- $/+%]+$/.test(code.toUpperCase())) format = "CODE39";
+    // Elegimos automáticamente el tipo de código más conveniente
+    // - 12 dígitos -> UPC-A
+    // - 13 dígitos -> EAN-13
+    // - Alfanumérico compatible -> Code39
+    // - En cualquier otro caso -> Code128
+    let format = "CODE128";
+    if (/^\d{12}$/.test(code)) format = "UPC";
+    else if (/^\d{13}$/.test(code)) format = "EAN13";
+    else if (/^[0-9A-Z.\- $/+%]+$/.test(code.toUpperCase())) format = "CODE39";
 
-  const safe = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const safe = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-  const html = `<!doctype html>
+    const html = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -1016,34 +1213,31 @@ function imprimirEtiqueta(prod, opts = {}) {
       // Ajustes equilibrados para etiqueta pequeña
       JsBarcode(svg, value, {
         format,
-        displayValue: false,    // mostramos los dígitos aparte (más limpio)
+        displayValue: false,
         lineColor: "#111",
         margin: 0,
         marginTop: 0,
         marginBottom: 0,
-        width: 2,               // grosor de barra (sube/baja si necesitas)
-        height: 46              // alto de barras (ajusta si tu etiqueta es más baja)
+        width: 2,
+        height: 46
       });
 
-      // Imprime cuando el SVG esté listo
       setTimeout(() => { try { window.print(); } catch(e) {} }, 150);
     })();
   </script>
 </body>
 </html>`;
 
-  const w = window.open("", "_blank");
-  if (!w) {
-    alert("Habilita los pop-ups del navegador para imprimir la etiqueta.");
-    return;
+    const w = window.open("", "_blank");
+    if (!w) {
+      alert("Habilita los pop-ups del navegador para imprimir la etiqueta.");
+      return;
+    }
+    w.document.open("text/html", "replace");
+    w.document.write(html);
+    w.document.close();
+    w.focus();
   }
-  w.document.open("text/html", "replace");
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-}
-
-
 
   // ------ RENDER ---------
   return (
@@ -1061,10 +1255,10 @@ function imprimirEtiqueta(prod, opts = {}) {
             const list = productos || [];
             if (e.key === "ArrowDown") {
               e.preventDefault();
-              setHl(i => Math.min((i < 0 ? 0 : i + 1), list.length - 1));
+              setHl((i) => Math.min((i < 0 ? 0 : i + 1), list.length - 1));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
-              setHl(i => Math.max(i - 1, 0));
+              setHl((i) => Math.max(i - 1, 0));
             } else if (e.key === "PageDown") {
               e.preventDefault();
               if (pagina * 50 < total) setPagina(pagina + 1);
@@ -1119,9 +1313,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                       id={`prod-row-${idx}`}
                       key={p.id}
                       className={`cursor-pointer border-t ${
-                        idx === hl
-                          ? "bg-blue-50 ring-2 ring-blue-200"
-                          : "hover:bg-blue-50"
+                        idx === hl ? "bg-blue-50 ring-2 ring-blue-200" : "hover:bg-blue-50"
                       }`}
                       onMouseEnter={() => setHl(idx)}
                       onClick={() => abrirModal(p)}
@@ -1203,13 +1395,17 @@ function imprimirEtiqueta(prod, opts = {}) {
 
             <div className="flex mb-4 border-b mt-6 sm:mt-2">
               <button
-                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+                className={`px-4 sm:px-6 py-2 font-bold ${
+                  tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"
+                }`}
                 onClick={() => setTabActivo("editar")}
               >
                 Edit product
               </button>
               <button
-                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
+                className={`px-4 sm:px-6 py-2 font-bold ${
+                  tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"
+                }`}
                 onClick={() => setTabActivo("ventas")}
               >
                 Sales
@@ -1224,12 +1420,9 @@ function imprimirEtiqueta(prod, opts = {}) {
                     <input
                       className="border rounded p-2 w-full"
                       value={productoActual.codigo}
-                      inputMode="numeric"
                       autoComplete="off"
-                      pattern="[0-9]*"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, codigo: e.target.value })
-                      }
+                      // ACEPTA ALFANUMÉRICO (quitamos pattern y modo numérico)
+                      onChange={(e) => setProductoActual({ ...productoActual, codigo: e.target.value })}
                       required
                       autoFocus
                     />
@@ -1240,9 +1433,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                       className="border rounded p-2 w-full"
                       value={productoActual.nombre}
                       autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, nombre: e.target.value })
-                      }
+                      onChange={(e) => setProductoActual({ ...productoActual, nombre: e.target.value })}
                       required
                     />
                   </div>
@@ -1252,9 +1443,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                       className="border rounded p-2 w-full"
                       value={productoActual.marca}
                       autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, marca: e.target.value })
-                      }
+                      onChange={(e) => setProductoActual({ ...productoActual, marca: e.target.value })}
                     />
                   </div>
                   <div>
@@ -1263,22 +1452,20 @@ function imprimirEtiqueta(prod, opts = {}) {
                       className="border rounded p-2 w-full"
                       value={productoActual.categoria}
                       autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, categoria: e.target.value })
-                      }
+                      onChange={(e) => setProductoActual({ ...productoActual, categoria: e.target.value })}
                     />
                   </div>
                   <div>
                     <label className="font-bold">Size</label>
                     <select
                       className="border rounded p-2 w-full"
-                      value={isCustomSize ? "custom" : (productoActual.size || "")}
-                      onChange={e => {
+                      value={isCustomSize ? "custom" : productoActual.size || ""}
+                      onChange={(e) => {
                         if (e.target.value === "custom") {
                           setIsCustomSize(true);
                         } else {
                           setIsCustomSize(false);
-                          setProductoActual(prev => ({
+                          setProductoActual((prev) => ({
                             ...prev,
                             size: e.target.value,
                           }));
@@ -1286,8 +1473,10 @@ function imprimirEtiqueta(prod, opts = {}) {
                       }}
                     >
                       <option value="">Select size</option>
-                      {SIZES_COMUNES.map(sz => (
-                        <option value={sz} key={sz}>{sz}</option>
+                      {SIZES_COMUNES.map((sz) => (
+                        <option value={sz} key={sz}>
+                          {sz}
+                        </option>
                       ))}
                       <option value="custom">Add custom size...</option>
                     </select>
@@ -1296,7 +1485,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                         className="border rounded p-2 mt-1 w-full"
                         value={sizeCustom}
                         placeholder="Enter custom size"
-                        onChange={e => setSizeCustom(e.target.value)}
+                        onChange={(e) => setSizeCustom(e.target.value)}
                       />
                     )}
                   </div>
@@ -1307,7 +1496,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                       onChange={(id, nombre) => {
                         setSuplidorId(id);
                         setSuplidorNombre(nombre);
-                        setProductoActual(prev => ({
+                        setProductoActual((prev) => ({
                           ...prev,
                           proveedor: id,
                         }));
@@ -1324,9 +1513,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                       inputMode="numeric"
                       min="0"
                       autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, costo: e.target.value })
-                      }
+                      onChange={(e) => setProductoActual({ ...productoActual, costo: e.target.value })}
                     />
                   </div>
                   <div>
@@ -1339,9 +1526,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                       inputMode="numeric"
                       min="0"
                       autoComplete="off"
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, precio: e.target.value })
-                      }
+                      onChange={(e) => setProductoActual({ ...productoActual, precio: e.target.value })}
                       required
                     />
                   </div>
@@ -1351,8 +1536,8 @@ function imprimirEtiqueta(prod, opts = {}) {
                     {(() => {
                       const c = Number(productoActual?.costo || 0);
                       const p = Number(productoActual?.precio || 0);
-                      const margin = p > 0 ? ((p - c) / p) * 100 : 0;   // margen sobre venta
-                      const markup = c > 0 ? ((p - c) / c) * 100 : 0;   // sobre costo
+                      const margin = p > 0 ? ((p - c) / p) * 100 : 0; // margen sobre venta
+                      const markup = c > 0 ? ((p - c) / c) * 100 : 0; // sobre costo
                       return (
                         <div className="mt-1 flex flex-wrap gap-2 text-sm">
                           <span className="inline-flex items-center rounded-full bg-blue-50 text-blue-800 px-3 py-1">
@@ -1376,9 +1561,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                       min="0"
                       max="100"
                       value={productoActual.descuento_pct ?? ""}
-                      onChange={e =>
-                        setProductoActual({ ...productoActual, descuento_pct: e.target.value })
-                      }
+                      onChange={(e) => setProductoActual({ ...productoActual, descuento_pct: e.target.value })}
                       placeholder="e.g. 10"
                     />
                     <p className="text-xs text-gray-500 mt-1">
@@ -1396,8 +1579,8 @@ function imprimirEtiqueta(prod, opts = {}) {
                           type="number"
                           min="1"
                           value={productoActual.bulk_min_qty ?? ""}
-                          onChange={e =>
-                            setProductoActual(prev => ({ ...prev, bulk_min_qty: e.target.value }))
+                          onChange={(e) =>
+                            setProductoActual((prev) => ({ ...prev, bulk_min_qty: e.target.value }))
                           }
                           placeholder="e.g. 10"
                         />
@@ -1410,8 +1593,8 @@ function imprimirEtiqueta(prod, opts = {}) {
                           step="0.01"
                           min="0"
                           value={productoActual.bulk_unit_price ?? ""}
-                          onChange={e =>
-                            setProductoActual(prev => ({ ...prev, bulk_unit_price: e.target.value }))
+                          onChange={(e) =>
+                            setProductoActual((prev) => ({ ...prev, bulk_unit_price: e.target.value }))
                           }
                           placeholder="e.g. 9.60"
                         />
@@ -1433,7 +1616,7 @@ function imprimirEtiqueta(prod, opts = {}) {
                           type="number"
                           min="0"
                           value={productoActual.cantidad_inicial || ""}
-                          onChange={e =>
+                          onChange={(e) =>
                             setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })
                           }
                           placeholder="0"
@@ -1444,18 +1627,18 @@ function imprimirEtiqueta(prod, opts = {}) {
                         <select
                           className="border rounded p-2 w-full"
                           value={productoActual.ubicacion_inicial}
-                          onChange={e => {
+                          onChange={(e) => {
                             const value = e.target.value;
-                            setProductoActual(prev => ({
+                            setProductoActual((prev) => ({
                               ...prev,
                               ubicacion_inicial: value,
                               van_id_inicial: value.startsWith("van_")
-                                ? ubicaciones.find(u => u.key === value)?.van_id
+                                ? ubicaciones.find((u) => u.key === value)?.van_id
                                 : null,
                             }));
                           }}
                         >
-                          {ubicaciones.map(u => (
+                          {ubicaciones.map((u) => (
                             <option key={u.key} value={u.key}>
                               {u.nombre}
                             </option>
@@ -1474,20 +1657,15 @@ function imprimirEtiqueta(prod, opts = {}) {
                       className="border rounded p-2 w-full min-h-[60px]"
                       value={productoActual.notas || ""}
                       placeholder="Special notes, important details, etc."
-                      onChange={e => setProductoActual({ ...productoActual, notas: e.target.value })}
+                      onChange={(e) => setProductoActual({ ...productoActual, notas: e.target.value })}
                     />
                   </div>
                 </div>
 
-                {mensaje && (
-                  <div className="text-blue-700 text-center mt-2">{mensaje}</div>
-                )}
+                {mensaje && <div className="text-blue-700 text-center mt-2">{mensaje}</div>}
 
                 <div className="flex flex-col sm:flex-row gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
-                  <button
-                    type="submit"
-                    className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2"
-                  >
+                  <button type="submit" className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2">
                     {productoActual.id ? "Save changes" : "Add product"}
                   </button>
 
