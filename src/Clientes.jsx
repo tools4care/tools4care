@@ -41,6 +41,30 @@ const safe2 = (n) => {
 const fmtSafe = (n) =>
   `$${safe2(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** (opcional) Enmascarado anterior, ya no usado para mostrar */
+function maskPhoneForDisplay(raw) {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.length === 11 && d.startsWith("1")) d = d.slice(1);
+  if (d.length < 4) return "*".repeat(Math.max(0, d.length));
+  const last4 = d.slice(-4);
+  return `(***) ***-${last4}`;
+}
+
+/** ✅ Formateo en tiempo real y para mostrar sin asteriscos: "(555) 123-4567" */
+function formatPhoneForInput(raw) {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (d.startsWith("1") && d.length > 10) d = d.slice(1);
+  d = d.slice(0, 10);
+  if (d.length === 0) return "";
+  if (d.length < 4) return `(${d}`;
+  const a = d.slice(0, 3);
+  if (d.length < 7) return `(${a}) ${d.slice(3)}`;
+  const b = d.slice(3, 6);
+  const c = d.slice(6);
+  return `(${a}) ${b}-${c}`;
+}
+
 // Wrapper por si no existiera la lib (fallback seguro)
 async function safeGetCxc(clienteId) {
   try {
@@ -80,9 +104,7 @@ const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
 const fmtCurrency = (n) => fmtSafe(n);
-function getCreditNumber(c) {
-  return c?.credito_id || c?.id || "—";
-}
+function getCreditNumber(c) { return c?.credito_id || c?.id || "—"; }
 function isIOS() {
   const ua = navigator.userAgent || navigator.vendor || "";
   return /iPad|iPhone|iPod|Macintosh/.test(ua);
@@ -237,6 +259,9 @@ export default function Clientes() {
     direccion: { calle: "", ciudad: "", estado: "", zip: "" },
   });
 
+  // ✅ Ref para buscar con atajo
+  const searchRef = useRef(null);
+
   /* -------------------- Debounce búsqueda -------------------- */
   useEffect(() => {
     const t = setTimeout(() => setDebounced(busqueda.trim()), 350);
@@ -251,13 +276,8 @@ export default function Clientes() {
       .select("*", { count: "exact", head: true })
       .gt("saldo", 0);
     const { data: saldosRows } = await supabase.from("v_cxc_cliente_detalle").select("saldo");
-    const totalOutstanding = (saldosRows || []).reduce((s, r) => s + Math.max(0, Number(r.saldo || 0)), 0); // solo positivos
-
-    setTotales({
-      totalClients: totalClients || 0,
-      withDebt: withDebt || 0,
-      totalOutstanding,
-    });
+    const totalOutstanding = (saldosRows || []).reduce((s, r) => s + Math.max(0, Number(r.saldo || 0)), 0);
+    setTotales({ totalClients: totalClients || 0, withDebt: withDebt || 0, totalOutstanding });
   }
 
   /* -------------------- Cargar página -------------------- */
@@ -265,15 +285,9 @@ export default function Clientes() {
     const { p = page, ps = pageSize, q = debounced } = opts;
     setIsLoading(true);
     setMensaje("");
-
     const from = (p - 1) * ps;
     const to = from + ps - 1;
-
-    let query = supabase
-      .from("clientes_balance")
-      .select("*", { count: "exact" })
-      .range(from, to);
-
+    let query = supabase.from("clientes_balance").select("*", { count: "exact" }).range(from, to);
     if (q) {
       const like = `%${q}%`;
       query = query.or(
@@ -285,15 +299,12 @@ export default function Clientes() {
         ].join(",")
       );
     }
-
     const { data, error, count } = await query;
-
     if (error) {
       setMensaje("Error loading clients");
       setIsLoading(false);
       return;
     }
-
     setClientes(data || []);
     setTotalRows(count || 0);
 
@@ -349,6 +360,26 @@ export default function Clientes() {
     setMensaje("");
   }
 
+  // ✅ Atajos: ⌘/Ctrl+N (nuevo), ⌘/Ctrl+K (buscar)
+  useEffect(() => {
+    const handler = (e) => {
+      const key = (e.key || "").toLowerCase();
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      if (key === "n") {
+        e.preventDefault();
+        abrirNuevoCliente();
+        navigate("/clientes/nuevo");
+      } else if (key === "k") {
+        e.preventDefault();
+        try { searchRef.current?.focus(); } catch {}
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line
+  }, []);
+
   // --- acepta cliente opcional ---
   function handleEditCliente(cArg) {
     const c = cArg || clienteSeleccionado;
@@ -368,9 +399,12 @@ export default function Clientes() {
       };
     }
 
+    // 👉 formateamos teléfono guardado (+1XXXXXXXXXX → (XXX) XXX-XXXX) sólo para mostrar en input
+    const telFmt = formatPhoneForInput(c.telefono);
+
     setForm({
       nombre: c.nombre || "",
-      telefono: c.telefono || "",
+      telefono: telFmt || "",
       email: c.email || "",
       negocio: c.negocio || "",
       direccion,
@@ -384,6 +418,14 @@ export default function Clientes() {
 
   function handleChange(e) {
     const { name, value } = e.target;
+
+    if (name === "telefono") {
+      // 👉 Formateo en tiempo real para el input
+      const pretty = formatPhoneForInput(value);
+      setForm((f) => ({ ...f, telefono: pretty }));
+      return;
+    }
+
     if (["calle", "ciudad", "estado", "zip"].includes(name)) {
       setForm((f) => {
         let newDireccion = { ...f.direccion, [name]: value ?? "" };
@@ -416,7 +458,7 @@ export default function Clientes() {
       return;
     }
 
-    // --- Normalización de teléfono y email ---
+    // --- Normalización de teléfono y email (GUARDADO NO CAMBIA) ---
     const phoneDigits = String(form.telefono || "").replace(/\D/g, "");
     const telefonoFinal =
       phoneDigits.length === 0
@@ -447,9 +489,7 @@ export default function Clientes() {
         await cargarTotales();
       }
     } else {
-      const { error } = await supabase.from("clientes")
-        .update(payload)
-        .eq("id", clienteSeleccionado.id);
+      const { error } = await supabase.from("clientes").update(payload).eq("id", clienteSeleccionado.id);
       if (error) setMensaje("Error editing: " + error.message);
       else {
         setMensaje("Changes saved successfully");
@@ -485,11 +525,7 @@ export default function Clientes() {
       if (!clienteSeleccionado?.id) return;
       const info = await safeGetCxc(clienteSeleccionado.id);
       if (info) {
-        setResumen((r) => ({
-          ...r,
-          balance: info.saldo,
-          cxc: info,
-        }));
+        setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
         setCxcByClient((prev) => ({ ...prev, [clienteSeleccionado.id]: info }));
       }
     };
@@ -536,12 +572,7 @@ export default function Clientes() {
         .channel(`clientes-limite-manual-${clienteSeleccionado.id}`)
         .on(
           "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "clientes",
-            filter: `id=eq.${clienteSeleccionado.id}`,
-          },
+          { event: "*", schema: "public", table: "clientes", filter: `id=eq.${clienteSeleccionado.id}` },
           async () => { await refreshCreditoActivo(); }
         )
         .subscribe();
@@ -564,21 +595,13 @@ export default function Clientes() {
         return;
       }
       const [ventasRes, pagosRes, cxcInfo] = await Promise.all([
-        supabase
-          .from("ventas")
-          .select("id, fecha, total_venta, total_pagado, estado_pago")
-          .eq("cliente_id", clienteSeleccionado.id),
-        supabase
-          .from("pagos")
-          .select("id, fecha_pago, monto, metodo_pago")
-          .eq("cliente_id", clienteSeleccionado.id),
+        supabase.from("ventas").select("id, fecha, total_venta, total_pagado, estado_pago").eq("cliente_id", clienteSeleccionado.id),
+        supabase.from("pagos").select("id, fecha_pago, monto, metodo_pago").eq("cliente_id", clienteSeleccionado.id),
         safeGetCxc(clienteSeleccionado.id),
       ]);
-
       const ventas = ventasRes.data || [];
       const pagos = pagosRes.data || [];
       const balanceCxC = cxcInfo ? cxcInfo.saldo : 0;
-
       setResumen({ ventas, pagos, balance: balanceCxC, cxc: cxcInfo });
       setMesSeleccionado(null);
     }
@@ -639,7 +662,8 @@ export default function Clientes() {
     const dir = clienteSeleccionado.direccion || {};
     const dirTxt = [dir.calle, dir.ciudad, dir.estado, dir.zip].filter(Boolean).join(", ");
     doc.text(`Address: ${dirTxt}`, 14, 67);
-    doc.text(`Phone: ${clienteSeleccionado.telefono || ""}`, 14, 74);
+    // ✅ Mostrar teléfono sin asteriscos, formateado
+    doc.text(`Phone: ${formatPhoneForInput(clienteSeleccionado.telefono) || ""}`, 14, 74);
 
     doc.setLineWidth(0.5);
     doc.line(14, 78, 196, 78);
@@ -704,6 +728,7 @@ export default function Clientes() {
               <button
                 onClick={() => { abrirNuevoCliente(); navigate("/clientes/nuevo"); }}
                 className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base"
+                title="New Client (⌘/Ctrl+N)"
               >
                 <Plus size={20} />
                 New Client
@@ -760,10 +785,12 @@ export default function Clientes() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input
+                ref={searchRef}
                 className="w-full pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white shadow-sm text-sm sm:text-base"
                 placeholder="Search clients by name, phone, email or business..."
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value ?? "")}
+                title="Focus Search (⌘/Ctrl+K)"
               />
             </div>
           </div>
@@ -807,7 +834,7 @@ export default function Clientes() {
                   )}
                   {c.telefono && (
                     <div className="text-[10px] text-gray-500 truncate">
-                      {c.telefono}
+                      {formatPhoneForInput(c.telefono)}
                     </div>
                   )}
                 </div>
@@ -917,7 +944,7 @@ export default function Clientes() {
                               {c.telefono && (
                                 <div className="text-sm text-gray-900 flex items-center gap-2">
                                   <Phone size={12} className="text-gray-400" />
-                                  {c.telefono}
+                                  {formatPhoneForInput(c.telefono)}
                                 </div>
                               )}
                               {c.email && (
@@ -1257,16 +1284,13 @@ export default function Clientes() {
         </div>
       )}
 
-      {/* Modal Abono (visual mejorado / botones siempre visibles) */}
+      {/* Modal Abono */}
       {mostrarAbono && clienteSeleccionado && (
         <ModalAbonar
           cliente={clienteSeleccionado}
           resumen={resumen}
           onClose={() => setMostrarAbono(false)}
-          refresh={async () => {
-            await fetchPage({ p: page, ps: pageSize, q: debounced });
-            await cargarTotales();
-          }}
+          refresh={async () => { await fetchPage({ p: page, ps: pageSize, q: debounced }); await cargarTotales(); }}
           setResumen={setResumen}
         />
       )}
@@ -1296,13 +1320,8 @@ function ClienteStatsModal({
     const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     mesesGrafico.unshift(label);
   }
-  const dataChart = mesesGrafico.map(mes => ({
-    mes: mes.slice(5),
-    fullMes: mes,
-    compras: comprasPorMes[mes] || 0
-  }));
+  const dataChart = mesesGrafico.map(mes => ({ mes: mes.slice(5), fullMes: mes, compras: comprasPorMes[mes] || 0 }));
 
-  const mesesUnicos = Object.keys(comprasPorMes).sort().reverse();
   const ventasFiltradas = mesSeleccionado
     ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado))
     : (resumen.ventas || []);
@@ -1314,12 +1333,9 @@ function ClienteStatsModal({
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
-        {/* Header (pegajoso) */}
+        {/* Header */}
         <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white relative sticky top-0 z-20">
-          <button
-            className="absolute right-4 top-4 text-white/80 hover:text-white transition-colors p-1"
-            onClick={onClose}
-          >
+          <button className="absolute right-4 top-4 text-white/80 hover:text-white transition-colors p-1" onClick={onClose}>
             <X size={24} />
           </button>
 
@@ -1348,15 +1364,11 @@ function ClienteStatsModal({
                 </div>
                 <div className="bg-white/10 rounded-lg p-3">
                   <div className="uppercase tracking-wide text-xs text-white/70">Available</div>
-                  <div className={`text-xl font-bold ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>
-                    ${disponible.toFixed(2)}
-                  </div>
+                  <div className={`text-xl font-bold ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>${disponible.toFixed(2)}</div>
                 </div>
               </div>
               {resumen?.cxc?.limite_manual_aplicado && (
-                <div className="mt-2 text-[11px] uppercase tracking-wide text-yellow-200">
-                  Manual limit applied for this client
-                </div>
+                <div className="mt-2 text-[11px] uppercase tracking-wide text-yellow-200">Manual limit applied for this client</div>
               )}
 
               <div className="mt-3 text-blue-100 flex items-center gap-3 flex-wrap">
@@ -1369,7 +1381,7 @@ function ClienteStatsModal({
                 {cliente.telefono && (
                   <div className="flex items-center gap-2">
                     <Phone size={14} />
-                    {cliente.telefono}
+                    {formatPhoneForInput(cliente.telefono)}
                   </div>
                 )}
                 {cliente.negocio && (
@@ -1397,15 +1409,14 @@ function ClienteStatsModal({
           </div>
         </div>
 
-        {/* Body con scroll */}
+        {/* Body */}
         <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-          {/* Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-green-600 text-sm font-medium">Lifetime Sales</p>
-                  <p className="text-2xl font-bold text-green-700">${lifetimeTotal.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-green-700">${(resumen.ventas || []).reduce((s,v)=>s+Number(v.total_venta||0),0).toFixed(2)}</p>
                 </div>
                 <TrendingUp className="text-green-600" size={20} />
               </div>
@@ -1421,13 +1432,13 @@ function ClienteStatsModal({
               </div>
             </div>
 
-            <div className={`bg-gradient-to-br ${lifetimeTotal > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
+            <div className={`bg-gradient-to-br ${(resumen?.balance ?? 0) > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className={`${lifetimeTotal > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
-                  <p className={`text-2xl font-bold ${lifetimeTotal > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
+                  <p className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
+                  <p className={`text-2xl font-bold ${(resumen?.balance ?? 0) > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
                 </div>
-                <DollarSign className={`${lifetimeTotal > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
+                <DollarSign className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
               </div>
             </div>
           </div>
@@ -1482,7 +1493,7 @@ function ClienteStatsModal({
               <FileText size={20} />
               Sales History {mesSeleccionado ? `for ${mesSeleccionado}` : "(all)"}
             </h4>
-            {ventasFiltradas.length === 0 ? (
+            {(mesSeleccionado ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado)) : (resumen.ventas || [])).length === 0 ? (
               <div className="text-center py-8">
                 <div className="bg-gray-200 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
                   <FileText className="text-gray-400" size={24} />
@@ -1503,12 +1514,10 @@ function ClienteStatsModal({
                     </tr>
                   </thead>
                   <tbody>
-                    {ventasFiltradas.map((v) => (
+                    {(mesSeleccionado ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado)) : (resumen.ventas || [])).map((v) => (
                       <tr key={v.id} className="border-b border-gray-100 hover:bg-white transition-colors">
                         <td className="py-3 px-4">
-                          <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">
-                            {v.id.slice(0, 8)}…
-                          </span>
+                          <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">{v.id.slice(0, 8)}…</span>
                         </td>
                         <td className="py-3 px-4 text-sm text-gray-700">{v.fecha?.slice(0, 10)}</td>
                         <td className="py-3 px-4 text-right font-semibold">${(v.total_venta || 0).toFixed(2)}</td>
@@ -1536,16 +1545,10 @@ function ClienteStatsModal({
 
           {/* Acciones secundarias */}
           <div className="flex items-center justify-end gap-3 mt-6">
-            <button
-              onClick={generatePDF}
-              className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
-            >
+            <button onClick={generatePDF} className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium">
               Export PDF
             </button>
-            <button
-              onClick={() => onDelete?.(cliente)}
-              className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium"
-            >
+            <button onClick={() => onDelete?.(cliente)} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium">
               Delete Client
             </button>
           </div>
@@ -1555,21 +1558,17 @@ function ClienteStatsModal({
   );
 }
 
-//* -------------------- MODAL: ABONO (área de pagos mejorada) -------------------- */
+//* -------------------- MODAL: ABONO -------------------- */
 function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { van } = useVan();
 
-  // ✅ Helper usado en cálculos y validaciones (debe ir ANTES de usarse)
-  function round2(n) {
-    return Math.round((Number(n) || 0) * 100) / 100;
-  }
+  function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
   const [monto, setMonto] = useState("");
   const [metodo, setMetodo] = useState("Cash");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
-  // Refrescar saldo y crédito al abrir el modal
   useEffect(() => {
     (async () => {
       const info = await safeGetCxc(cliente.id);
@@ -1619,15 +1618,14 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       return;
     }
 
-    // Solo aplicamos hasta el saldo; el resto es devuelta
-    const pagoAplicado   = round2(Math.min(montoIngresado, saldo));
+    const pagoAplicado = round2(Math.min(montoIngresado, saldo));
     const cambioDevuelto = round2(montoIngresado - pagoAplicado);
 
     let rpcOk = false;
     try {
       const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
         p_cliente_id: cliente.id,
-        p_monto: pagoAplicado,      // nunca más que el saldo
+        p_monto: pagoAplicado,
         p_metodo: metodo,
         p_van_id: van.id,
       });
@@ -1637,7 +1635,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
     if (!rpcOk) {
       const dbRow = {
         cliente_id: cliente.id,
-        monto: pagoAplicado,        // nunca más que el saldo
+        monto: pagoAplicado,
         metodo_pago: metodo,
         fecha_pago: new Date().toISOString(),
       };
@@ -1649,19 +1647,13 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       }
     }
 
-    // Refrescamos CxC para ver saldo en 0.00
     const info = await safeGetCxc(cliente.id);
     if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
     if (typeof refresh === "function") await refresh();
 
-    // Mensaje final: si hubo exceso, indicamos devuelta (no se registra como crédito)
-    if (cambioDevuelto > 0) {
-      setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
-    } else {
-      setMensaje("Payment registered!");
-    }
+    if (cambioDevuelto > 0) setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
+    else setMensaje("Payment registered!");
 
-    // Recibo solo por el monto aplicado (no por el exceso)
     const receiptPayload = {
       clientName: cliente?.nombre || "",
       creditNumber: getCreditNumber(cliente),
@@ -1680,7 +1672,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md sm:max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header pegajoso */}
         <div className="p-4 sm:p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20">
           <h3 className="text-lg sm:text-xl font-bold flex items-center gap-2">
             <DollarSign size={20} />
@@ -1689,16 +1680,12 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
           <p className="text-green-100 mt-1 text-sm">Record a new payment from this client</p>
         </div>
 
-        {/* Form + contenido scrollable */}
         <form onSubmit={guardarAbono} className="flex-1 flex flex-col min-h-0">
           <div className="p-4 sm:p-6 overflow-y-auto flex-1">
-            {/* Panel crédito */}
             <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4 sm:mb-6">
               <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
                 <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Balance</div>
-                <div className={`text-lg sm:text-xl font-bold ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>
-                  ${saldoActual.toFixed(2)}
-                </div>
+                <div className={`text-lg sm:text-xl font-bold ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>${saldoActual.toFixed(2)}</div>
               </div>
               <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
                 <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Effective Limit</div>
@@ -1706,9 +1693,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
               <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
                 <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Available</div>
-                <div className={`text-lg sm:text-xl font-bold ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  ${disponible.toFixed(2)}
-                </div>
+                <div className={`text-lg sm:text-xl font-bold ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${disponible.toFixed(2)}</div>
               </div>
             </div>
 
@@ -1739,31 +1724,22 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
             </div>
 
-            {/* Detalle de cambio */}
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 sm:p-4 mb-4">
               {montoNum <= 0 ? (
                 <span className="text-sm">Enter a payment amount to see details.</span>
               ) : excedente > 0 ? (
                 <div className="text-sm">
-                  The payment exceeds the current balance by{" "}
-                  <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
+                  The payment exceeds the current balance by <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
                 </div>
               ) : (
                 <div className="text-sm">
-                  Payment will reduce balance to{" "}
-                  <span className="font-bold">
-                    ${round2(Math.max(0, saldoActual - montoNum)).toFixed(2)}
-                  </span>.
+                  Payment will reduce balance to <span className="font-bold">${round2(Math.max(0, saldoActual - montoNum)).toFixed(2)}</span>.
                 </div>
               )}
             </div>
 
             {mensaje && (
-              <div className={`mb-4 p-4 rounded-xl ${
-                mensaje.includes("Error") || mensaje.includes("invalid")
-                  ? "bg-red-50 text-red-700 border border-red-200"
-                  : "bg-green-50 text-green-700 border border-green-200"
-              }`}>
+              <div className={`mb-4 p-4 rounded-xl ${mensaje.includes("Error") || mensaje.includes("invalid") ? "bg-red-50 text-red-700 border border-red-200" : "bg-green-50 text-green-700 border border-green-200"}`}>
                 <div className="flex items-center gap-2">
                   {mensaje.includes("Error") ? <X size={16} /> : <Check size={16} />}
                   <span className="text-sm font-medium">{mensaje}</span>
@@ -1771,7 +1747,6 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
             )}
 
-            {/* Resumen + separador para que no lo tape el footer */}
             <div className="bg-gray-50 rounded-xl p-4">
               <h4 className="font-bold mb-3 text-gray-800 flex items-center gap-2">
                 <TrendingUp size={16} />
@@ -1820,40 +1795,18 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
             </div>
 
-            {/* Espaciador para la barra fija */}
             <div className="h-[140px] sm:h-[120px]" />
           </div>
 
-          {/* Barra de acciones FIJA */}
           <div
             className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
             style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
           >
             <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={guardando}
-                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
-              >
-                {guardando ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Check size={16} />
-                    Record Payment
-                  </>
-                )}
+              <button type="submit" disabled={guardando} className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2">
+                {guardando ? (<><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Processing...</>) : (<><Check size={16} />Record Payment</>)}
               </button>
-
-              <button
-                type="button"
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
-                onClick={onClose}
-                disabled={guardando}
-              >
+              <button type="button" className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2" onClick={onClose} disabled={guardando}>
                 <X size={16} />
                 Cancel
               </button>

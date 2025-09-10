@@ -150,8 +150,8 @@ function CrearSuplidor({ onCreate }) {
   );
 }
 
-function BuscadorSuplidor({ value, onChange, disabled }) {
-  const [busqueda, setBusqueda] = useState("");
+function BuscadorSuplidor({ value, name, onChange, disabled }) {
+  const [busqueda, setBusqueda] = useState(name || "");
   const [suplidores, setSuplidores] = useState([]);
   const [showCrear, setShowCrear] = useState(false);
 
@@ -160,6 +160,25 @@ function BuscadorSuplidor({ value, onChange, disabled }) {
   useEffect(() => {
     if (hl >= 0) document.getElementById(`sup-opt-${hl}`)?.scrollIntoView({ block: "nearest" });
   }, [hl]);
+
+  // 🔄 Mantener el input sincronizado con el ID/nombre actual
+  useEffect(() => {
+    if (name && name !== busqueda) {
+      setBusqueda(name);
+      return;
+    }
+    if (value && !name) {
+      (async () => {
+        const { data } = await supabase
+          .from("suplidores")
+          .select("nombre")
+          .eq("id", value)
+          .maybeSingle();
+        if (data?.nombre) setBusqueda(data.nombre);
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, name]);
 
   useEffect(() => {
     if (!busqueda.trim()) {
@@ -752,7 +771,8 @@ export default function Productos() {
       costo: productoActual.costo ? Number(productoActual.costo) : null,
       precio: Number(productoActual.precio),
       size: isCustomSize ? sizeCustom : productoActual.size,
-      suplidor_id: suplidorId ?? null,
+      // ✅ usa el que esté realmente actualizado
+      suplidor_id: (productoActual.suplidor_id ?? suplidorId) || null,
       notas: productoActual.notas || "",
       descuento_pct: productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
       bulk_min_qty: productoActual.bulk_min_qty !== "" ? Number(productoActual.bulk_min_qty) : null,
@@ -765,6 +785,7 @@ export default function Productos() {
     }
 
     let productoId = productoActual.id;
+    let savedMessage = "";
 
     if (productoActual.id) {
       const { error } = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
@@ -772,8 +793,7 @@ export default function Productos() {
         setMensaje(error.message?.toLowerCase().includes("unique") ? "Error: This code/UPC is already in use. Please use another one." : "Error: " + error.message);
         return;
       }
-      setMensaje("Product updated.");
-      setEditMode(false); // vuelve a solo vista
+      savedMessage = "Product updated successfully.";
     } else {
       const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
       if (error) {
@@ -781,7 +801,7 @@ export default function Productos() {
         return;
       }
       productoId = data.id;
-      setMensaje("Product added.");
+      savedMessage = "Product added successfully.";
     }
 
     try {
@@ -796,8 +816,10 @@ export default function Productos() {
         : prev
     );
 
+    // 🔔 Alerta visible y cerrar el modal
     await cargarProductos();
-    if (!productoActual.id) cerrarModal();
+    window.alert(savedMessage);
+    cerrarModal();
   }
 
   async function eliminarProducto() {
@@ -1148,6 +1170,7 @@ export default function Productos() {
                     <label className="font-bold">Supplier</label>
                     <BuscadorSuplidor
                       value={suplidorId}
+                      name={suplidorNombre}
                       disabled={disabled}
                       onChange={(id, nombre) => {
                         setSuplidorId(id);
