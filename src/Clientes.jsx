@@ -386,12 +386,12 @@ export default function Clientes() {
     const { name, value } = e.target;
     if (["calle", "ciudad", "estado", "zip"].includes(name)) {
       setForm((f) => {
-        let newDireccion = { ...f.direccion, [name]: value };
+        let newDireccion = { ...f.direccion, [name]: value ?? "" };
         if (name === "estado") {
-          setEstadoInput(value.toUpperCase());
-          setEstadoOpciones(estadosUSA.filter(s => s.startsWith(value.toUpperCase())));
+          setEstadoInput((value ?? "").toUpperCase());
+          setEstadoOpciones(estadosUSA.filter(s => s.startsWith((value ?? "").toUpperCase())));
         }
-        if (name === "zip" && value.length === 5) {
+        if (name === "zip" && (value ?? "").length === 5) {
           const { ciudad, estado } = zipToCiudadEstado(value);
           if (ciudad || estado) {
             newDireccion.ciudad = ciudad;
@@ -403,7 +403,7 @@ export default function Clientes() {
         return { ...f, direccion: newDireccion };
       });
     } else {
-      setForm((f) => ({ ...f, [name]: value }));
+      setForm((f) => ({ ...f, [name]: value ?? "" }));
     }
   }
 
@@ -763,7 +763,7 @@ export default function Clientes() {
                 className="w-full pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white shadow-sm text-sm sm:text-base"
                 placeholder="Search clients by name, phone, email or business..."
                 value={busqueda}
-                onChange={e => setBusqueda(e.target.value)}
+                onChange={e => setBusqueda(e.target.value ?? "")}
               />
             </div>
           </div>
@@ -774,6 +774,90 @@ export default function Clientes() {
               <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
             </div>
           )}
+{/* --- PANEL STICKY DE BALANCES EN MÓVIL MIENTRAS SE BUSCA (con botón de abono) --- */}
+{busqueda.trim() !== "" && !isLoading && clientes.length > 0 && (
+  <div className="md:hidden sticky top-0 z-20 bg-white border-b border-gray-200">
+    <div className="px-4 py-2">
+      <div className="text-[11px] text-gray-500 mb-1">
+        Resultados: {clientes.length} • Balances rápidos
+      </div>
+
+      {/* Carrusel horizontal de chips con info clave */}
+      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+        {clientes.slice(0, 10).map((c) => {
+          const cxc = cxcByClient[c.id];
+          const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
+
+          return (
+            <div
+              key={c.id}
+              className={`shrink-0 min-w-[240px] max-w-[280px] p-3 rounded-xl border
+                ${saldo > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}
+            >
+              {/* Header: Nombre + botón Payment */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-gray-800 truncate">
+                    {c.nombre || "—"}
+                  </div>
+                  {c.negocio && (
+                    <div className="text-[10px] text-gray-600 truncate">
+                      {c.negocio}
+                    </div>
+                  )}
+                  {c.telefono && (
+                    <div className="text-[10px] text-gray-500 truncate">
+                      {c.telefono}
+                    </div>
+                  )}
+                </div>
+
+                {/* Botón directo a Abono */}
+                <button
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
+                             bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const info = await safeGetCxc(c.id);
+                    setClienteSeleccionado(c);
+                    setResumen((r) => ({
+                      ...r,
+                      balance: typeof info?.saldo === "number" ? info.saldo : (c.balance || 0),
+                      cxc: info || null,
+                    }));
+                    setMostrarAbono(true);
+                  }}
+                  title="Registrar pago"
+                >
+                  <DollarSign size={14} />
+                  Payment
+                </button>
+              </div>
+
+              {/* Balance y abrir Stats tocando el cuerpo */}
+              <button
+                className="mt-2 w-full text-left"
+                onClick={() => {
+                  setClienteSeleccionado(c);
+                  setMostrarStats(true);
+                }}
+              >
+                <div
+                  className={`text-sm font-bold ${
+                    saldo > 0 ? "text-rose-600" : "text-emerald-600"
+                  }`}
+                >
+                  {fmtSafe(saldo)}
+                </div>
+                <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  </div>
+)}
 
           {/* Table */}
           {!isLoading && (
@@ -1027,7 +1111,7 @@ export default function Clientes() {
                   <input
                     name="nombre"
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                    value={form.nombre}
+                    value={form.nombre ?? ""}
                     onChange={handleChange}
                     required
                     placeholder="Enter full name"
@@ -1042,7 +1126,7 @@ export default function Clientes() {
                   <input
                     name="telefono"
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                    value={form.telefono}
+                    value={form.telefono ?? ""}
                     onChange={handleChange}
                     placeholder="(555) 123-4567"
                   />
@@ -1057,7 +1141,7 @@ export default function Clientes() {
                     name="email"
                     type="email"
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                    value={form.email}
+                    value={form.email ?? ""}
                     onChange={handleChange}
                     placeholder="email@example.com"
                   />
@@ -1071,7 +1155,7 @@ export default function Clientes() {
                   <input
                     name="negocio"
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                    value={form.negocio}
+                    value={form.negocio ?? ""}
                     onChange={handleChange}
                     placeholder="Business name"
                   />
@@ -1088,7 +1172,7 @@ export default function Clientes() {
                       <input
                         name="zip"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                        value={form.direccion.zip}
+                        value={form.direccion?.zip ?? ""}
                         onChange={handleChange}
                         maxLength={5}
                         placeholder="02118"
@@ -1101,7 +1185,7 @@ export default function Clientes() {
                         name="estado"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                         placeholder="MA"
-                        value={estadoInput}
+                        value={estadoInput ?? ""}
                         onChange={handleChange}
                         list="estados-lista"
                         autoComplete="off"
@@ -1120,7 +1204,7 @@ export default function Clientes() {
                       <input
                         name="ciudad"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                        value={form.direccion.ciudad}
+                        value={form.direccion?.ciudad ?? ""}
                         onChange={handleChange}
                         placeholder="Boston"
                       />
@@ -1131,7 +1215,7 @@ export default function Clientes() {
                       <input
                         name="calle"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                        value={form.direccion.calle}
+                        value={form.direccion?.calle ?? ""}
                         onChange={handleChange}
                         placeholder="123 Main St"
                       />
@@ -1337,13 +1421,13 @@ function ClienteStatsModal({
               </div>
             </div>
 
-            <div className={`bg-gradient-to-br ${saldo > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
+            <div className={`bg-gradient-to-br ${lifetimeTotal > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className={`${saldo > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
-                  <p className={`text-2xl font-bold ${saldo > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(saldo).toFixed(2)}</p>
+                  <p className={`${lifetimeTotal > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
+                  <p className={`text-2xl font-bold ${lifetimeTotal > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
                 </div>
-                <DollarSign className={`${saldo > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
+                <DollarSign className={`${lifetimeTotal > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
               </div>
             </div>
           </div>
@@ -1474,6 +1558,12 @@ function ClienteStatsModal({
 //* -------------------- MODAL: ABONO (área de pagos mejorada) -------------------- */
 function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { van } = useVan();
+
+  // ✅ Helper usado en cálculos y validaciones (debe ir ANTES de usarse)
+  function round2(n) {
+    return Math.round((Number(n) || 0) * 100) / 100;
+  }
+
   const [monto, setMonto] = useState("");
   const [metodo, setMetodo] = useState("Cash");
   const [guardando, setGuardando] = useState(false);
@@ -1502,95 +1592,90 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const montoNum = Number(monto || 0);
   const excedente = round2(Math.max(0, montoNum - saldoActual));
 
-  // util local para evitar residuales tipo -0.0000001
-const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-
-
   async function guardarAbono(e) {
-  e.preventDefault();
-  if (guardando) return;
-  setGuardando(true);
-  setMensaje("");
+    e.preventDefault();
+    if (guardando) return;
+    setGuardando(true);
+    setMensaje("");
 
-  if (!van || !van.id) {
-    setMensaje("You must select a VAN before adding a payment.");
-    setGuardando(false);
-    return;
-  }
-
-  const saldo = round2(Number(resumen?.balance ?? cliente?.balance ?? 0) || 0);
-  const montoIngresado = round2(Number(monto || 0));
-
-  if (!montoIngresado || montoIngresado <= 0) {
-    setMensaje("Invalid amount. Must be greater than 0.");
-    setGuardando(false);
-    return;
-  }
-
-  if (saldo <= 0) {
-    setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`);
-    setGuardando(false);
-    return;
-  }
-
-  // Solo aplicamos hasta el saldo; el resto es devuelta
-  const pagoAplicado   = round2(Math.min(montoIngresado, saldo));
-  const cambioDevuelto = round2(montoIngresado - pagoAplicado);
-
-  let rpcOk = false;
-  try {
-    const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
-      p_cliente_id: cliente.id,
-      p_monto: pagoAplicado,      // nunca más que el saldo
-      p_metodo: metodo,
-      p_van_id: van.id,
-    });
-    if (!rpcErr) rpcOk = true;
-  } catch {}
-
-  if (!rpcOk) {
-    const dbRow = {
-      cliente_id: cliente.id,
-      monto: pagoAplicado,        // nunca más que el saldo
-      metodo_pago: metodo,
-      fecha_pago: new Date().toISOString(),
-    };
-    const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
-    if (insErr) {
+    if (!van || !van.id) {
+      setMensaje("You must select a VAN before adding a payment.");
       setGuardando(false);
-      setMensaje("Error saving payment: " + (insErr?.message || "unknown"));
       return;
     }
+
+    const saldo = round2(Number(resumen?.balance ?? cliente?.balance ?? 0) || 0);
+    const montoIngresado = round2(Number(monto || 0));
+
+    if (!montoIngresado || montoIngresado <= 0) {
+      setMensaje("Invalid amount. Must be greater than 0.");
+      setGuardando(false);
+      return;
+    }
+
+    if (saldo <= 0) {
+      setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`);
+      setGuardando(false);
+      return;
+    }
+
+    // Solo aplicamos hasta el saldo; el resto es devuelta
+    const pagoAplicado   = round2(Math.min(montoIngresado, saldo));
+    const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+
+    let rpcOk = false;
+    try {
+      const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
+        p_cliente_id: cliente.id,
+        p_monto: pagoAplicado,      // nunca más que el saldo
+        p_metodo: metodo,
+        p_van_id: van.id,
+      });
+      if (!rpcErr) rpcOk = true;
+    } catch {}
+
+    if (!rpcOk) {
+      const dbRow = {
+        cliente_id: cliente.id,
+        monto: pagoAplicado,        // nunca más que el saldo
+        metodo_pago: metodo,
+        fecha_pago: new Date().toISOString(),
+      };
+      const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
+      if (insErr) {
+        setGuardando(false);
+        setMensaje("Error saving payment: " + (insErr?.message || "unknown"));
+        return;
+      }
+    }
+
+    // Refrescamos CxC para ver saldo en 0.00
+    const info = await safeGetCxc(cliente.id);
+    if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
+    if (typeof refresh === "function") await refresh();
+
+    // Mensaje final: si hubo exceso, indicamos devuelta (no se registra como crédito)
+    if (cambioDevuelto > 0) {
+      setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
+    } else {
+      setMensaje("Payment registered!");
+    }
+
+    // Recibo solo por el monto aplicado (no por el exceso)
+    const receiptPayload = {
+      clientName: cliente?.nombre || "",
+      creditNumber: getCreditNumber(cliente),
+      dateStr: new Date().toLocaleString(),
+      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+      amount: pagoAplicado,
+      prevBalance: saldo,
+      newBalance: round2(Math.max(0, saldo - pagoAplicado)),
+    };
+    try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
+
+    setGuardando(false);
+    setTimeout(() => setMensaje(""), 1200);
   }
-
-  // Refrescamos CxC para ver saldo en 0.00
-  const info = await safeGetCxc(cliente.id);
-  if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
-  if (typeof refresh === "function") await refresh();
-
-  // Mensaje final: si hubo exceso, indicamos devuelta (no se registra como crédito)
-  if (cambioDevuelto > 0) {
-    setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
-  } else {
-    setMensaje("Payment registered!");
-  }
-
-  // Recibo solo por el monto aplicado (no por el exceso)
-  const receiptPayload = {
-    clientName: cliente?.nombre || "",
-    creditNumber: getCreditNumber(cliente),
-    dateStr: new Date().toLocaleString(),
-    pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-    amount: pagoAplicado,
-    prevBalance: saldo,
-    newBalance: round2(Math.max(0, saldo - pagoAplicado)),
-  };
-  try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
-
-  setGuardando(false);
-  setTimeout(() => setMensaje(""), 1200);
-}
-
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
@@ -1736,16 +1821,14 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
             </div>
 
             {/* Espaciador para la barra fija */}
-         <div className="h-[140px] sm:h-[120px]" />
-
+            <div className="h-[140px] sm:h-[120px]" />
           </div>
 
-          {/* Barra de acciones FIJA (siempre visible) */}
+          {/* Barra de acciones FIJA */}
           <div
-  className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
-  style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}  // ~24px arriba del borde
->
-
+            className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
+          >
             <div className="flex gap-3">
               <button
                 type="submit"

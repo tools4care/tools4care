@@ -2,10 +2,12 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
-// ⚠️ Eliminado: import PricingRulesEditor from "./components/PricingRulesEditor";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-// --- Suplidor Modal & Buscador ---
+/* ============================================================
+   ===============  Crear / Buscar SUPLIDORES  ================
+   ============================================================ */
+
 function CrearSuplidor({ onCreate }) {
   const [form, setForm] = useState({ nombre: "", contacto: "", telefono: "", direccion: "", email: "" });
   const [cargando, setCargando] = useState(false);
@@ -60,49 +62,30 @@ function CrearSuplidor({ onCreate }) {
         return;
       }
 
-      // Opcional: crear deuda inicial (cuentas por pagar)
+      // (opcional) side-effects silenciosos
       try {
         const monto = Number(cxpMonto);
         if (finanzasOpen && monto > 0) {
           await supabase.from("cuentas_por_pagar").insert([
-            {
-              suplidor_id: data.id,
-              monto,
-              estado: "pendiente",
-              fecha: cxpFecha || hoy,
-              notas: cxpNotas || null,
-            },
+            { suplidor_id: data.id, monto, estado: "pendiente", fecha: cxpFecha || hoy, notas: cxpNotas || null },
           ]);
         }
-      } catch (_) {
-        // Silencioso si la tabla no existe o no hay permisos; no rompe el flujo
-      }
-
-      // Opcional: crear orden de compra
+      } catch {}
       try {
         const total = Number(ocMonto);
         if (finanzasOpen && total > 0) {
           await supabase.from("ordenes_compra").insert([
-            {
-              suplidor_id: data.id,
-              total,
-              estado: "abierta",
-              fecha: ocFecha || hoy,
-              notas: ocNotas || null,
-            },
+            { suplidor_id: data.id, total, estado: "abierta", fecha: ocFecha || hoy, notas: ocNotas || null },
           ]);
         }
-      } catch (_) {
-        // Silencioso si la tabla no existe; no rompe el flujo
-      }
+      } catch {}
 
-      if (onCreate) onCreate(data);
+      onCreate?.(data);
     } finally {
       setCargando(false);
     }
   }
 
-  // ⚠️ Importante: NO usamos <form> aquí para evitar anidar formularios.
   return (
     <div className="p-2 bg-gray-50 rounded mt-2" onKeyDown={preventEnterSubmit}>
       {["nombre", "contacto", "telefono", "direccion", "email"].map((f) => (
@@ -112,17 +95,12 @@ function CrearSuplidor({ onCreate }) {
           placeholder={f.charAt(0).toUpperCase() + f.slice(1)}
           value={form[f]}
           onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
-          // validación visual mínima
           required={f === "nombre"}
         />
       ))}
 
       <div className="mt-2">
-        <button
-          type="button"
-          className="text-xs text-blue-700"
-          onClick={() => setFinanzasOpen((v) => !v)}
-        >
+        <button type="button" className="text-xs text-blue-700" onClick={() => setFinanzasOpen((v) => !v)}>
           {finanzasOpen ? "Ocultar" : "+ Deuda u Orden con este suplidor (opcional)"}
         </button>
 
@@ -132,31 +110,15 @@ function CrearSuplidor({ onCreate }) {
               <b className="text-sm">Deuda / CXP</b>
               <div className="mt-1">
                 <label className="text-xs">Monto</label>
-                <input
-                  className="border rounded p-2 w-full"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={cxpMonto}
-                  onChange={(e) => setCxpMonto(e.target.value)}
-                />
+                <input className="border rounded p-2 w-full" type="number" step="0.01" min="0" value={cxpMonto} onChange={(e) => setCxpMonto(e.target.value)} />
               </div>
               <div className="mt-1">
                 <label className="text-xs">Fecha</label>
-                <input
-                  className="border rounded p-2 w-full"
-                  type="date"
-                  value={cxpFecha}
-                  onChange={(e) => setCxpFecha(e.target.value)}
-                />
+                <input className="border rounded p-2 w-full" type="date" value={cxpFecha} onChange={(e) => setCxpFecha(e.target.value)} />
               </div>
               <div className="mt-1">
                 <label className="text-xs">Notas</label>
-                <input
-                  className="border rounded p-2 w-full"
-                  value={cxpNotas}
-                  onChange={(e) => setCxpNotas(e.target.value)}
-                />
+                <input className="border rounded p-2 w-full" value={cxpNotas} onChange={(e) => setCxpNotas(e.target.value)} />
               </div>
             </div>
 
@@ -164,31 +126,15 @@ function CrearSuplidor({ onCreate }) {
               <b className="text-sm">Orden de compra</b>
               <div className="mt-1">
                 <label className="text-xs">Total</label>
-                <input
-                  className="border rounded p-2 w-full"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={ocMonto}
-                  onChange={(e) => setOcMonto(e.target.value)}
-                />
+                <input className="border rounded p-2 w-full" type="number" step="0.01" min="0" value={ocMonto} onChange={(e) => setOcMonto(e.target.value)} />
               </div>
               <div className="mt-1">
                 <label className="text-xs">Fecha</label>
-                <input
-                  className="border rounded p-2 w-full"
-                  type="date"
-                  value={ocFecha}
-                  onChange={(e) => setOcFecha(e.target.value)}
-                />
+                <input className="border rounded p-2 w-full" type="date" value={ocFecha} onChange={(e) => setOcFecha(e.target.value)} />
               </div>
               <div className="mt-1">
                 <label className="text-xs">Notas</label>
-                <input
-                  className="border rounded p-2 w-full"
-                  value={ocNotas}
-                  onChange={(e) => setOcNotas(e.target.value)}
-                />
+                <input className="border rounded p-2 w-full" value={ocNotas} onChange={(e) => setOcNotas(e.target.value)} />
               </div>
             </div>
           </div>
@@ -197,31 +143,22 @@ function CrearSuplidor({ onCreate }) {
 
       {err && <div className="text-red-600 text-xs mt-1">{err}</div>}
 
-      <button
-        type="button"
-        className="bg-green-600 text-white rounded px-3 py-1 mt-2 w-full disabled:opacity-50"
-        onClick={guardarSuplidor}
-        disabled={cargando}
-      >
+      <button type="button" className="bg-green-600 text-white rounded px-3 py-1 mt-2 w-full disabled:opacity-50" onClick={guardarSuplidor} disabled={cargando}>
         Save supplier
       </button>
     </div>
   );
 }
 
-function BuscadorSuplidor({ value, onChange }) {
+function BuscadorSuplidor({ value, onChange, disabled }) {
   const [busqueda, setBusqueda] = useState("");
   const [suplidores, setSuplidores] = useState([]);
   const [showCrear, setShowCrear] = useState(false);
 
-  // 👇 navegación con teclado para suplidores
   const [hl, setHl] = useState(-1);
   useEffect(() => setHl(-1), [busqueda, suplidores.length]);
   useEffect(() => {
-    if (hl >= 0) {
-      const el = document.getElementById(`sup-opt-${hl}`);
-      el?.scrollIntoView({ block: "nearest" });
-    }
+    if (hl >= 0) document.getElementById(`sup-opt-${hl}`)?.scrollIntoView({ block: "nearest" });
   }, [hl]);
 
   useEffect(() => {
@@ -229,14 +166,10 @@ function BuscadorSuplidor({ value, onChange }) {
       setSuplidores([]);
       return;
     }
-    async function buscar() {
-      const { data } = await supabase
-        .from("suplidores")
-        .select("*")
-        .ilike("nombre", `%${busqueda}%`);
+    (async () => {
+      const { data } = await supabase.from("suplidores").select("*").ilike("nombre", `%${busqueda}%`);
       setSuplidores(data || []);
-    }
-    buscar();
+    })();
   }, [busqueda]);
 
   function pickSupplier(idx) {
@@ -247,12 +180,13 @@ function BuscadorSuplidor({ value, onChange }) {
   }
 
   return (
-    <div>
+    <div className={`${disabled ? "opacity-60 pointer-events-none" : ""}`}>
       <input
         className="border rounded p-2 w-full"
         value={busqueda}
         placeholder="Search supplier..."
         onChange={(e) => setBusqueda(e.target.value)}
+        disabled={disabled}
         onKeyDown={(e) => {
           const list = suplidores || [];
           if (e.key === "ArrowDown") {
@@ -262,11 +196,8 @@ function BuscadorSuplidor({ value, onChange }) {
             e.preventDefault();
             setHl((i) => Math.max(i - 1, 0));
           } else if (e.key === "Enter") {
-            if (hl >= 0 && list[hl]) {
-              pickSupplier(hl);
-            } else if (list.length > 0) {
-              pickSupplier(0);
-            }
+            if (hl >= 0 && list[hl]) pickSupplier(hl);
+            else if (list.length > 0) pickSupplier(0);
           } else if (e.key === "Escape") {
             setHl(-1);
           }
@@ -277,9 +208,7 @@ function BuscadorSuplidor({ value, onChange }) {
           <div
             id={`sup-opt-${idx}`}
             key={s.id}
-            className={`p-2 cursor-pointer ${
-              value === s.id ? "bg-blue-50" : ""
-            } ${idx === hl ? "bg-blue-100 ring-1 ring-blue-300" : "hover:bg-blue-100"}`}
+            className={`p-2 cursor-pointer ${value === s.id ? "bg-blue-50" : ""} ${idx === hl ? "bg-blue-100 ring-1 ring-blue-300" : "hover:bg-blue-100"}`}
             onMouseEnter={() => setHl(idx)}
             onClick={() => pickSupplier(idx)}
           >
@@ -287,11 +216,7 @@ function BuscadorSuplidor({ value, onChange }) {
           </div>
         ))}
       </div>
-      <button
-        type="button"
-        className="text-xs text-blue-700 mt-1"
-        onClick={() => setShowCrear(!showCrear)}
-      >
+      <button type="button" className="text-xs text-blue-700 mt-1" onClick={() => setShowCrear(!showCrear)} disabled={disabled}>
         {showCrear ? "Cancel" : "+ New supplier"}
       </button>
       {showCrear && (
@@ -307,67 +232,36 @@ function BuscadorSuplidor({ value, onChange }) {
   );
 }
 
-const SIZES_COMUNES = [
-  ".05L",
-  ".100ML",
-  "5.25 OZ",
-  "PACK",
-  "TUB",
-  "UNIT",
-  "500ML",
-  "1L",
-  "BOX",
-  "SACK",
-  "BAG",
-];
+/* ============================================================
+   ===================  PESTAÑA DE VENTAS  ====================
+   ============================================================ */
 
-// --------------- COMPONENTE DE PESTAÑA DE VENTAS --------------
+const SIZES_COMUNES = [".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "BOX", "SACK", "BAG"];
+
 function PestañaVentas({ productoId, nombre }) {
   const [ventasMes, setVentasMes] = useState([]);
   const [meses, setMeses] = useState([]);
   const [mesSeleccionado, setMesSeleccionado] = useState("");
   const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(false);
-
-  // NUEVO: ventas por día (últimos 30)
   const [porDia, setPorDia] = useState([]);
 
-  // Utilidad: YYYY-MM desde ISO/string
-  function yyyymm(d) {
-    if (!d) return "";
-    const s = typeof d === "string" ? d : new Date(d).toISOString();
-    return s.slice(0, 7);
-  }
+  const yyyymm = (d) => (d ? (typeof d === "string" ? d : new Date(d).toISOString()).slice(0, 7) : "");
 
   useEffect(() => {
     if (!productoId) return;
     (async () => {
       setLoading(true);
-      // 1) detalle_ventas del producto
-      const { data: det, error: errDet } = await supabase
-        .from("detalle_ventas")
-        .select("venta_id,cantidad")
-        .eq("producto_id", productoId);
+      const { data: det, error: errDet } = await supabase.from("detalle_ventas").select("venta_id,cantidad").eq("producto_id", productoId);
 
       if (errDet || !det || det.length === 0) {
-        setVentasMes([]);
-        setMeses([]);
-        setMesSeleccionado("");
-        setFacturas([]);
-        setPorDia([]);
-        setLoading(false);
-        return;
+        setVentasMes([]); setMeses([]); setMesSeleccionado(""); setFacturas([]); setPorDia([]); setLoading(false); return;
       }
 
-      // 2) ventas para esos IDs
       const ventaIds = Array.from(new Set(det.map((d) => d.venta_id).filter(Boolean)));
-      const { data: ventasRows } = await supabase
-        .from("ventas")
-        .select("id,fecha,cliente_id")
-        .in("id", ventaIds);
+      const { data: ventasRows } = await supabase.from("ventas").select("id,fecha,cliente_id").in("id", ventaIds);
 
       const mapVenta = new Map((ventasRows || []).map((v) => [v.id, v]));
-      // Enriquecer
       const enriquecido = det
         .map((d) => {
           const v = mapVenta.get(d.venta_id);
@@ -376,41 +270,27 @@ function PestañaVentas({ productoId, nombre }) {
         })
         .filter(Boolean);
 
-      // 3) Agrupar por mes
       const agg = {};
       for (const r of enriquecido) {
         const key = yyyymm(r.fecha);
         if (!key) continue;
         agg[key] = (agg[key] || 0) + Number(r.cantidad || 0);
       }
-      const lista = Object.keys(agg)
-        .sort((a, b) => b.localeCompare(a))
-        .map((m) => ({ mes: m, cantidad: agg[m] }));
-
+      const lista = Object.keys(agg).sort((a, b) => b.localeCompare(a)).map((m) => ({ mes: m, cantidad: agg[m] }));
       setVentasMes(lista);
       setMeses(lista.map((x) => x.mes));
       setMesSeleccionado(lista[0]?.mes || "");
 
-      // 4) Facturas del primer mes seleccionado
-      if (lista[0]) {
-        await cargarFacturasMes(enriquecido, lista[0].mes);
-      } else {
-        setFacturas([]);
-      }
+      if (lista[0]) await cargarFacturasMes(enriquecido, lista[0].mes);
+      else setFacturas([]);
 
-      // 5) Ventas por día (últimos 30)
       const byDay = {};
       (ventasRows || []).forEach((v) => {
         const d = (v.fecha || "").slice(0, 10);
-        const cant = (det || [])
-          .filter((x) => x.venta_id === v.id)
-          .reduce((t, x) => t + Number(x.cantidad || 0), 0);
+        const cant = (det || []).filter((x) => x.venta_id === v.id).reduce((t, x) => t + Number(x.cantidad || 0), 0);
         byDay[d] = (byDay[d] || 0) + cant;
       });
-      const rows = Object.entries(byDay)
-        .sort((a, b) => b[0].localeCompare(a[0]))
-        .slice(0, 30)
-        .map(([dia, qty]) => ({ dia, qty }));
+      const rows = Object.entries(byDay).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 30).map(([dia, qty]) => ({ dia, qty }));
       setPorDia(rows);
 
       setLoading(false);
@@ -420,46 +300,23 @@ function PestañaVentas({ productoId, nombre }) {
 
   async function cargarFacturasMes(detallesEnriquecidos, mes) {
     const filtrado = (detallesEnriquecidos || []).filter((d) => yyyymm(d.fecha) === mes);
-
-    // Traer nombres de clientes en un solo query
     const idsClientes = Array.from(new Set(filtrado.map((f) => f.cliente_id).filter(Boolean)));
     const nombres = {};
     if (idsClientes.length > 0) {
-      const { data: clientesData } = await supabase
-        .from("clientes")
-        .select("id,nombre")
-        .in("id", idsClientes);
-      (clientesData || []).forEach((c) => {
-        nombres[c.id] = c.nombre;
-      });
+      const { data: clientesData } = await supabase.from("clientes").select("id,nombre").in("id", idsClientes);
+      (clientesData || []).forEach((c) => (nombres[c.id] = c.nombre));
     }
-
-    // Formatear lista
-    const lista = filtrado.map((f) => ({
-      venta_id: f.venta_id,
-      cantidad: f.cantidad,
-      fecha: f.fecha,
-      cliente: nombres[f.cliente_id] || f.cliente_id || "",
-    }));
+    const lista = filtrado.map((f) => ({ venta_id: f.venta_id, cantidad: f.cantidad, fecha: f.fecha, cliente: nombres[f.cliente_id] || f.cliente_id || "" }));
     setFacturas(lista);
   }
 
-  // Cuando cambia el mes, recargar facturas usando los datos ya traídos
   useEffect(() => {
     if (!productoId || !mesSeleccionado) return;
     (async () => {
       setLoading(true);
-      // Reusar el pipeline: traemos de nuevo los enriquecidos (barato & simple)
-      const { data: det } = await supabase
-        .from("detalle_ventas")
-        .select("venta_id,cantidad")
-        .eq("producto_id", productoId);
-
+      const { data: det } = await supabase.from("detalle_ventas").select("venta_id,cantidad").eq("producto_id", productoId);
       const ventaIds = Array.from(new Set((det || []).map((d) => d.venta_id).filter(Boolean)));
-      const { data: ventasRows } = await supabase
-        .from("ventas")
-        .select("id,fecha,cliente_id")
-        .in("id", ventaIds);
+      const { data: ventasRows } = await supabase.from("ventas").select("id,fecha,cliente_id").in("id", ventaIds);
 
       const mapVenta = new Map((ventasRows || []).map((v) => [v.id, v]));
       const enriquecido = (det || [])
@@ -500,11 +357,7 @@ function PestañaVentas({ productoId, nombre }) {
 
       <div className="my-4">
         <label className="font-bold">Select month:</label>
-        <select
-          className="border rounded p-2 ml-2"
-          value={mesSeleccionado}
-          onChange={(e) => setMesSeleccionado(e.target.value)}
-        >
+        <select className="border rounded p-2 ml-2" value={mesSeleccionado} onChange={(e) => setMesSeleccionado(e.target.value)}>
           {meses.map((m) => (
             <option key={m} value={m}>
               {m}
@@ -545,7 +398,6 @@ function PestañaVentas({ productoId, nombre }) {
         )}
       </div>
 
-      {/* NUEVO: Ventas diarias (últimos 30 días) */}
       <div className="mt-4 border rounded-lg">
         <div className="px-3 py-2 font-bold bg-gray-50 border-b">Daily sales (last 30 days)</div>
         {porDia.length === 0 ? (
@@ -575,7 +427,10 @@ function PestañaVentas({ productoId, nombre }) {
   );
 }
 
-// --------- HELPER: sumar stock en ubicación seleccionada (incremental) ---------
+/* ============================================================
+   ====================  HELPERS DE STOCK  ====================
+   ============================================================ */
+
 async function addStockSeleccionado(productoId, productoActual) {
   const qty = Number(productoActual.cantidad_inicial || 0);
   if (!qty || qty <= 0) return;
@@ -583,7 +438,6 @@ async function addStockSeleccionado(productoId, productoActual) {
   const esAlmacen = productoActual.ubicacion_inicial === "almacen";
 
   if (esAlmacen) {
-    // ALMACÉN: incrementa si existe, crea si no
     const { data: existente } = await supabase
       .from("stock_almacen")
       .select("id, cantidad")
@@ -591,30 +445,17 @@ async function addStockSeleccionado(productoId, productoActual) {
       .maybeSingle();
 
     if (existente?.id) {
-      await supabase
-        .from("stock_almacen")
-        .update({ cantidad: Number(existente.cantidad || 0) + qty })
-        .eq("id", existente.id);
+      await supabase.from("stock_almacen").update({ cantidad: Number(existente.cantidad || 0) + qty }).eq("id", existente.id);
     } else {
       await supabase.from("stock_almacen").insert([{ producto_id: productoId, cantidad: qty }]);
     }
 
-    // Log de movimiento (si la tabla existe)
     try {
       await supabase.from("movimientos_stock").insert([
-        {
-          producto_id: productoId,
-          tipo: "AJUSTE_POSITIVO",
-          cantidad: qty,
-          ubicacion: "almacen",
-          van_id: null,
-          motivo: "Alta desde formulario de producto",
-          fecha: new Date().toISOString(),
-        },
+        { producto_id: productoId, tipo: "AJUSTE_POSITIVO", cantidad: qty, ubicacion: "almacen", van_id: null, motivo: "Alta desde formulario de producto", fecha: new Date().toISOString() },
       ]);
-    } catch (_) {}
+    } catch {}
   } else {
-    // VAN: requiere van_id
     const vanId = productoActual.van_id_inicial;
     if (!vanId) return;
 
@@ -626,32 +467,23 @@ async function addStockSeleccionado(productoId, productoActual) {
       .maybeSingle();
 
     if (existente?.id) {
-      await supabase
-        .from("stock_van")
-        .update({ cantidad: Number(existente.cantidad || 0) + qty })
-        .eq("id", existente.id);
+      await supabase.from("stock_van").update({ cantidad: Number(existente.cantidad || 0) + qty }).eq("id", existente.id);
     } else {
       await supabase.from("stock_van").insert([{ producto_id: productoId, van_id: vanId, cantidad: qty }]);
     }
 
-    // Log de movimiento (si la tabla existe)
     try {
       await supabase.from("movimientos_stock").insert([
-        {
-          producto_id: productoId,
-          tipo: "AJUSTE_POSITIVO",
-          cantidad: qty,
-          ubicacion: "van",
-          van_id: vanId,
-          motivo: "Alta desde formulario de producto",
-          fecha: new Date().toISOString(),
-        },
+        { producto_id: productoId, tipo: "AJUSTE_POSITIVO", cantidad: qty, ubicacion: "van", van_id: vanId, motivo: "Alta desde formulario de producto", fecha: new Date().toISOString() },
       ]);
-    } catch (_) {}
+    } catch {}
   }
 }
 
-// --------- MAIN COMPONENT ---------
+/* ============================================================
+   ===================  COMPONENTE PRINCIPAL  =================
+   ============================================================ */
+
 export default function Productos() {
   const PAGE_SIZE = 50;
   const [productos, setProductos] = useState([]);
@@ -660,44 +492,36 @@ export default function Productos() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // Modal edición/métricas
   const [modalAbierto, setModalAbierto] = useState(false);
   const [productoActual, setProductoActual] = useState(null);
   const [mensaje, setMensaje] = useState("");
   const [tabActivo, setTabActivo] = useState("editar");
 
-  // NUEVO: KPIs de stock y última venta
+  // 👇 SOLO VISTA por defecto al abrir un producto existente (misma visual, inputs deshabilitados)
+  const [editMode, setEditMode] = useState(true);
+
   const [stockResumen, setStockResumen] = useState({ unidades: 0, valor: 0 });
   const [ultimaVenta, setUltimaVenta] = useState(null);
 
-  // Size/Custom size
   const [sizeCustom, setSizeCustom] = useState("");
   const [isCustomSize, setIsCustomSize] = useState(false);
 
-  // Suplidor
+  // Suplidor (FK correcta)
   const [suplidorId, setSuplidorId] = useState(null);
   const [suplidorNombre, setSuplidorNombre] = useState("");
 
-  // Ubicaciones
   const [ubicaciones, setUbicaciones] = useState([{ key: "almacen", nombre: "Central warehouse" }]);
-  const [ubicacionInicial, setUbicacionInicial] = useState("almacen");
 
-  // URL helpers
   const location = useLocation();
   const navigate = useNavigate();
   const modalAutoOpenRef = useRef(false);
 
-  // 👇 navegación con teclado para la lista de productos
-  const [hl, setHl] = useState(-1); // índice resaltado
+  const [hl, setHl] = useState(-1);
   useEffect(() => setHl(-1), [productos.length, pagina, busqueda]);
   useEffect(() => {
-    if (hl >= 0) {
-      const el = document.getElementById(`prod-row-${hl}`);
-      el?.scrollIntoView({ block: "nearest" });
-    }
+    if (hl >= 0) document.getElementById(`prod-row-${hl}`)?.scrollIntoView({ block: "nearest" });
   }, [hl]);
 
-  // 🔹 NUEVO: debounce + antirace para la búsqueda
   const [debounced, setDebounced] = useState("");
   const searchSeq = useRef(0);
   useEffect(() => {
@@ -706,24 +530,18 @@ export default function Productos() {
   }, [busqueda]);
 
   useEffect(() => {
-    cargarUbicaciones();
+    (async () => {
+      const { data: vansData } = await supabase.from("vans").select("id, nombre_van");
+      const vans = (vansData || []).map((v) => ({ key: `van_${v.id}`, nombre: v.nombre_van, van_id: v.id }));
+      setUbicaciones([{ key: "almacen", nombre: "Central warehouse" }, ...vans]);
+    })();
   }, []);
-
-  async function cargarUbicaciones() {
-    const { data: vansData } = await supabase.from("vans").select("id, nombre_van");
-    const vans = (vansData || []).map((v) => ({
-      key: `van_${v.id}`,
-      nombre: v.nombre_van,
-      van_id: v.id,
-    }));
-    setUbicaciones([{ key: "almacen", nombre: "Central warehouse" }, ...vans]);
-  }
 
   useEffect(() => {
     cargarProductos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced, pagina]);
 
-  // ✅ MEJORADO: búsqueda por código exacto con antirace y fallback difuso
   async function cargarProductos() {
     setLoading(true);
     const mySeq = ++searchSeq.current;
@@ -732,14 +550,13 @@ export default function Productos() {
     const term = termRaw.trim();
     const termNoSpaces = term.replace(/\s+/g, "");
     const digitsOnly = term.replace(/\D/g, "");
-    const isBarcode = digitsOnly.length >= 8; // flexible para UPC/EAN
+    const isBarcode = digitsOnly.length >= 8;
 
     const baseSelect = "*, suplidor:suplidor_id(nombre)";
     const desde = (pagina - 1) * PAGE_SIZE;
     const hasta = desde + PAGE_SIZE - 1;
 
     try {
-      // 1) EXACTA robusta cuando parece escáner
       if (isBarcode) {
         const needles = Array.from(new Set([digitsOnly, termNoSpaces].filter(Boolean)));
         if (needles.length > 0) {
@@ -756,28 +573,20 @@ export default function Productos() {
             setProductos(exactData || []);
             setTotal(exactCount || exactData.length || 0);
             setLoading(false);
-            return; // mostramos SOLO el producto escaneado
+            return;
           }
         }
       }
 
-      // 2) Difusa (acotada si venimos de escáner)
-      let query = supabase
-        .from("productos")
-        .select(baseSelect, { count: "exact" })
-        .order("nombre", { ascending: true });
+      let query = supabase.from("productos").select(baseSelect, { count: "exact" }).order("nombre", { ascending: true });
 
       if (term) {
         if (isBarcode) {
           query = query.ilike("codigo", `${digitsOnly || termNoSpaces}%`);
         } else if (/^\d+$/.test(termNoSpaces)) {
-          query = query.or(
-            `codigo.ilike.${termNoSpaces}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`
-          );
+          query = query.or(`codigo.ilike.${termNoSpaces}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`);
         } else {
-          query = query.or(
-            `codigo.ilike.%${term}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`
-          );
+          query = query.or(`codigo.ilike.%${term}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`);
         }
       }
 
@@ -785,7 +594,6 @@ export default function Productos() {
       if (error) throw error;
 
       if (mySeq !== searchSeq.current) return;
-
       setProductos(data || []);
       setTotal(count || 0);
     } catch (err) {
@@ -800,56 +608,25 @@ export default function Productos() {
 
   function handleBuscar(e) {
     setPagina(1);
-    // Limpia espacios “fantasma” que a veces agregan los escáneres
     setBusqueda((e.target.value || "").replace(/\s+/g, ""));
     setHl(-1);
   }
+  const handleSiguiente = () => { if (pagina * PAGE_SIZE < total) setPagina(pagina + 1); };
+  const handleAnterior = () => { if (pagina > 1) setPagina(pagina - 1); };
 
-  function handleSiguiente() {
-    if (pagina * PAGE_SIZE < total) setPagina(pagina + 1);
-  }
-  function handleAnterior() {
-    if (pagina > 1) setPagina(pagina - 1);
-  }
-
-  // NUEVO: KPIs del producto
   async function cargarKpisProducto(prodId, costoUnit = 0) {
     try {
-      // stock almacén
-      const { data: sa } = await supabase
-        .from("stock_almacen")
-        .select("cantidad")
-        .eq("producto_id", prodId);
+      const { data: sa } = await supabase.from("stock_almacen").select("cantidad").eq("producto_id", prodId);
       const sumAlmacen = (sa || []).reduce((t, r) => t + Number(r.cantidad || 0), 0);
-
-      // stock vans
-      const { data: sv } = await supabase
-        .from("stock_van")
-        .select("cantidad")
-        .eq("producto_id", prodId);
+      const { data: sv } = await supabase.from("stock_van").select("cantidad").eq("producto_id", prodId);
       const sumVans = (sv || []).reduce((t, r) => t + Number(r.cantidad || 0), 0);
-
       const total = sumAlmacen + sumVans;
+      setStockResumen({ unidades: total, valor: total * Number(costoUnit || 0) });
 
-      setStockResumen({
-        unidades: total,
-        valor: total * Number(costoUnit || 0),
-      });
-
-      // última venta
-      const { data: dv } = await supabase
-        .from("detalle_ventas")
-        .select("venta_id")
-        .eq("producto_id", prodId);
-
+      const { data: dv } = await supabase.from("detalle_ventas").select("venta_id").eq("producto_id", prodId);
       const ventaIds = Array.from(new Set((dv || []).map((d) => d.venta_id).filter(Boolean)));
       if (ventaIds.length > 0) {
-        const { data: v } = await supabase
-          .from("ventas")
-          .select("fecha")
-          .in("id", ventaIds)
-          .order("fecha", { ascending: false })
-          .limit(1);
+        const { data: v } = await supabase.from("ventas").select("fecha").in("id", ventaIds).order("fecha", { ascending: false }).limit(1);
         setUltimaVenta(v?.[0]?.fecha || null);
       } else {
         setUltimaVenta(null);
@@ -863,25 +640,26 @@ export default function Productos() {
   function abrirModal(prod) {
     setProductoActual({
       ...prod,
-      // campos de "add stock now"
       cantidad_inicial: "",
       ubicacion_inicial: "almacen",
       van_id_inicial: null,
-      // asegurar campos nuevos existan en estado
       descuento_pct: prod.descuento_pct ?? "",
       bulk_min_qty: prod.bulk_min_qty ?? "",
       bulk_unit_price: prod.bulk_unit_price ?? "",
     });
+
+    // EXISTENTE => SOLO VISTA; NUEVO => EDICIÓN
+    setEditMode(!prod?.id ? true : false);
+
     setTabActivo("editar");
     setMensaje("");
     setIsCustomSize(prod.size && !SIZES_COMUNES.includes(prod.size));
     setSizeCustom("");
-    setSuplidorId(prod.proveedor || "");
+    setSuplidorId(prod.suplidor_id ?? null);
     setSuplidorNombre(prod.suplidor?.nombre || "");
     setModalAbierto(true);
 
     if (prod?.id) {
-      // Cargar KPIs basado en el costo actual del producto
       setTimeout(() => cargarKpisProducto(prod.id, Number(prod.costo || 0)), 0);
     } else {
       setStockResumen({ unidades: 0, valor: 0 });
@@ -890,9 +668,7 @@ export default function Productos() {
   }
 
   function cerrarModal() {
-    if (location.pathname.endsWith("/productos/nuevo")) {
-      navigate("/productos");
-    }
+    if (location.pathname.endsWith("/productos/nuevo")) navigate("/productos");
     setModalAbierto(false);
     setProductoActual(null);
     setMensaje("");
@@ -900,9 +676,9 @@ export default function Productos() {
     setSizeCustom("");
     setSuplidorId(null);
     setSuplidorNombre("");
-    setUbicacionInicial("almacen");
     setStockResumen({ unidades: 0, valor: 0 });
     setUltimaVenta(null);
+    setEditMode(true);
   }
 
   function agregarProductoNuevo(codigoForzado = "") {
@@ -921,12 +697,10 @@ export default function Productos() {
       precio: "",
       notas: "",
       size: "",
-      proveedor: null,
-      // pricing nuevos
+      suplidor_id: null,
       descuento_pct: "",
       bulk_min_qty: "",
       bulk_unit_price: "",
-      // add stock now
       cantidad_inicial: "",
       ubicacion_inicial: "almacen",
       van_id_inicial: null,
@@ -940,6 +714,7 @@ export default function Productos() {
     setModalAbierto(true);
     setStockResumen({ unidades: 0, valor: 0 });
     setUltimaVenta(null);
+    setEditMode(true); // nuevo => edit
   }
 
   useEffect(() => {
@@ -947,56 +722,43 @@ export default function Productos() {
       modalAutoOpenRef.current = true;
       agregarProductoNuevo();
     }
-    if (!location.pathname.endsWith("/productos/nuevo")) {
-      modalAutoOpenRef.current = false;
-    }
+    if (!location.pathname.endsWith("/productos/nuevo")) modalAutoOpenRef.current = false;
   }, [location.pathname, modalAbierto]);
 
-  // --- GUARDAR/ELIMINAR PRODUCTO + SIEMPRE POSIBLE AGREGAR STOCK ---
   async function guardarProducto(e) {
     e.preventDefault();
     setMensaje("");
+
     if (!productoActual.codigo || !productoActual.nombre || !productoActual.precio) {
       setMensaje("Complete all required fields.");
       return;
     }
 
-    // Duplicado de código
-    const { data: existentes, error: errorExistente } = await supabase
-      .from("productos")
-      .select("id")
-      .eq("codigo", productoActual.codigo);
-
+    const { data: existentes, error: errorExistente } = await supabase.from("productos").select("id").eq("codigo", productoActual.codigo);
     if (errorExistente) {
       setMensaje("Error checking for duplicate code: " + errorExistente.message);
       return;
     }
-
     if (existentes && existentes.length > 0 && (!productoActual.id || existentes[0].id !== productoActual.id)) {
       setMensaje("Error: There is already a product with this code/UPC.");
       return;
     }
 
     const dataProducto = {
-      codigo: productoActual.codigo, // ahora puede ser alfanumérico
+      codigo: productoActual.codigo,
       nombre: productoActual.nombre,
       marca: productoActual.marca,
       categoria: productoActual.categoria,
       costo: productoActual.costo ? Number(productoActual.costo) : null,
       precio: Number(productoActual.precio),
       size: isCustomSize ? sizeCustom : productoActual.size,
-      proveedor: suplidorId,
+      suplidor_id: suplidorId ?? null,
       notas: productoActual.notas || "",
-      // NUEVO: pricing por producto
-      descuento_pct:
-        productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
-      bulk_min_qty:
-        productoActual.bulk_min_qty !== "" ? Number(productoActual.bulk_min_qty) : null,
-      bulk_unit_price:
-        productoActual.bulk_unit_price !== "" ? Number(productoActual.bulk_unit_price) : null,
+      descuento_pct: productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
+      bulk_min_qty: productoActual.bulk_min_qty !== "" ? Number(productoActual.bulk_min_qty) : null,
+      bulk_unit_price: productoActual.bulk_unit_price !== "" ? Number(productoActual.bulk_unit_price) : null,
     };
 
-    // (opcional) validación suave: bulk por debajo del costo
     if (dataProducto.bulk_unit_price != null && dataProducto.costo != null && dataProducto.bulk_unit_price < dataProducto.costo) {
       const ok = window.confirm("⚠️ The bulk unit price is below cost. Do you still want to save?");
       if (!ok) return;
@@ -1005,61 +767,39 @@ export default function Productos() {
     let productoId = productoActual.id;
 
     if (productoActual.id) {
-      // update
       const { error } = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
       if (error) {
-        setMensaje(
-          error.message?.toLowerCase().includes("unique")
-            ? "Error: This code/UPC is already in use. Please use another one."
-            : "Error: " + error.message
-        );
+        setMensaje(error.message?.toLowerCase().includes("unique") ? "Error: This code/UPC is already in use. Please use another one." : "Error: " + error.message);
         return;
       }
       setMensaje("Product updated.");
+      setEditMode(false); // vuelve a solo vista
     } else {
-      // insert
-      const { data, error } = await supabase
-        .from("productos")
-        .insert([dataProducto])
-        .select()
-        .maybeSingle();
+      const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
       if (error) {
-        setMensaje(
-          error.message?.toLowerCase().includes("unique")
-            ? "Error: This code/UPC is already in use. Please use another one."
-            : "Error: " + error.message
-        );
+        setMensaje(error.message?.toLowerCase().includes("unique") ? "Error: This code/UPC is already in use. Please use another one." : "Error: " + error.message);
         return;
       }
       productoId = data.id;
       setMensaje("Product added.");
     }
 
-    // --- SIEMPRE: sumar stock en la ubicación seleccionada (incremental) ---
     try {
       await addStockSeleccionado(productoId, productoActual);
     } catch (e2) {
       setMensaje((prev) => (prev ? prev + " " : "") + "Error adding stock: " + (e2?.message || e2));
     }
 
-    // limpiar campos de add stock para evitar doble inserción en futuros guardados
     setProductoActual((prev) =>
       prev
-        ? {
-            ...prev,
-            id: productoId,
-            cantidad_inicial: "",
-            ubicacion_inicial: "almacen",
-            van_id_inicial: null,
-          }
+        ? { ...prev, id: productoId, cantidad_inicial: "", ubicacion_inicial: "almacen", van_id_inicial: null }
         : prev
     );
 
     await cargarProductos();
-    cerrarModal();
+    if (!productoActual.id) cerrarModal();
   }
 
-  // Borrado seguro sin 409
   async function eliminarProducto() {
     if (!productoActual?.id) return;
     const id = productoActual.id;
@@ -1100,22 +840,14 @@ export default function Productos() {
     cerrarModal();
   }
 
-  // === Etiqueta escaneable (Code128 / UPC / EAN13 / Code39) ===
-  // Incluye: Nombre, MARCA - TAMAÑO, Precio grande, código de barras real y dígitos.
-  // Mantiene una sola página para evitar hojas en blanco.
   function imprimirEtiqueta(prod, opts = {}) {
     if (!prod) return;
 
-    // Tamaño de tu etiqueta física (ajústalo si tu rollo es distinto)
     const LABEL_W = opts.widthMm || "100mm";
     const LABEL_H = opts.heightMm || "60mm";
     const MARGIN = opts.marginMm || "6mm";
 
-    const fmtMoney = (n) =>
-      `$${Number(n || 0).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })}`;
+    const fmtMoney = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     const name = String(prod.nombre || "").toUpperCase();
     const brand = String(prod.marca || "").toUpperCase();
@@ -1128,11 +860,6 @@ export default function Productos() {
       return;
     }
 
-    // Elegimos automáticamente el tipo de código más conveniente
-    // - 12 dígitos -> UPC-A
-    // - 13 dígitos -> EAN-13
-    // - Alfanumérico compatible -> Code39
-    // - En cualquier otro caso -> Code128
     let format = "CODE128";
     if (/^\d{12}$/.test(code)) format = "UPC";
     else if (/^\d{13}$/.test(code)) format = "EAN13";
@@ -1149,36 +876,16 @@ export default function Productos() {
     @page { size: ${LABEL_W} ${LABEL_H}; margin: ${MARGIN}; }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      color: #111;
-    }
-    .label {
-      width: ${LABEL_W};
-      height: calc(${LABEL_H} - 0mm);
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-start;
-      gap: 6px;
-      overflow: hidden;
-    }
-    .row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: start;
-      gap: 10px;
-    }
-    .name   { font-weight: 800; font-size: 18px; line-height: 1.1; }
-    .meta   { font-size: 11px; color: #555; margin-top: 2px; }
-    .price  { font-weight: 900; font-size: 30px; line-height: 1; white-space: nowrap; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #111; }
+    .label { width: ${LABEL_W}; height: calc(${LABEL_H} - 0mm); display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+    .name { font-weight: 800; font-size: 18px; line-height: 1.1; }
+    .meta { font-size: 11px; color: #555; margin-top: 2px; }
+    .price { font-weight: 900; font-size: 30px; line-height: 1; white-space: nowrap; }
     .barcode-wrap { display: flex; justify-content: center; align-items: center; margin-top: 4px; }
     #barcode { width: 100%; max-width: 100%; }
-    .upc { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-           font-size: 12px; text-align: center; margin-top: 2px; }
-    .footer {
-      display: flex; justify-content: space-between; align-items: center;
-      margin-top: 2px; font-size: 10px; color: #6b7280;
-    }
+    .upc { font-family: ui-monospace; font-size: 12px; text-align: center; margin-top: 2px; }
+    .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 2px; font-size: 10px; color: #6b7280; }
   </style>
 </head>
 <body>
@@ -1191,37 +898,18 @@ export default function Productos() {
       <div class="price">${safe(price)}</div>
     </div>
 
-    <div class="barcode-wrap">
-      <svg id="barcode"></svg>
-    </div>
+    <div class="barcode-wrap"><svg id="barcode"></svg></div>
     <div class="upc">${safe(code)}</div>
 
-    <div class="footer">
-      <div>Printed: ${safe(new Date().toLocaleString())}</div>
-      <div>${safe(brand || "")}</div>
-    </div>
+    <div class="footer"><div>Printed: ${safe(new Date().toLocaleString())}</div><div>${safe(brand || "")}</div></div>
   </div>
-
-  <!-- JsBarcode para generar barras reales escaneables -->
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <script>
     (function () {
       const value  = ${JSON.stringify(code)};
       const format = ${JSON.stringify(format)};
       const svg = document.getElementById('barcode');
-
-      // Ajustes equilibrados para etiqueta pequeña
-      JsBarcode(svg, value, {
-        format,
-        displayValue: false,
-        lineColor: "#111",
-        margin: 0,
-        marginTop: 0,
-        marginBottom: 0,
-        width: 2,
-        height: 46
-      });
-
+      JsBarcode(svg, value, { format, displayValue: false, lineColor: "#111", margin: 0, marginTop: 0, marginBottom: 0, width: 2, height: 46 });
       setTimeout(() => { try { window.print(); } catch(e) {} }, 150);
     })();
   </script>
@@ -1239,12 +927,17 @@ export default function Productos() {
     w.focus();
   }
 
-  // ------ RENDER ---------
+  /* ========================== RENDER =========================== */
+
+  const disabled = !editMode; // <- una sola bandera para bloquear/desbloquear inputs
+
+  // helper: a mayúsculas
+  const toUpper = (v) => (v ?? "").toString().toUpperCase();
+
   return (
     <div className="px-2 sm:px-4">
       <h2 className="text-2xl font-bold mb-4 text-center">Product Inventory</h2>
 
-      {/* Buscador + botón: apilados en móvil, lado a lado en pantallas amplias */}
       <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
         <input
           type="text"
@@ -1253,31 +946,16 @@ export default function Productos() {
           onChange={handleBuscar}
           onKeyDown={(e) => {
             const list = productos || [];
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              setHl((i) => Math.min((i < 0 ? 0 : i + 1), list.length - 1));
-            } else if (e.key === "ArrowUp") {
-              e.preventDefault();
-              setHl((i) => Math.max(i - 1, 0));
-            } else if (e.key === "PageDown") {
-              e.preventDefault();
-              if (pagina * 50 < total) setPagina(pagina + 1);
-            } else if (e.key === "PageUp") {
-              e.preventDefault();
-              if (pagina > 1) setPagina(pagina - 1);
-            } else if (e.key === "Enter") {
-              if (hl >= 0 && list[hl]) abrirModal(list[hl]);
-              else if (list.length > 0) abrirModal(list[0]);
-            } else if (e.key === "Escape") {
-              setHl(-1);
-            }
+            if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1)); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
+            else if (e.key === "PageDown") { e.preventDefault(); if (pagina * 50 < total) setPagina(pagina + 1); }
+            else if (e.key === "PageUp") { e.preventDefault(); if (pagina > 1) setPagina(pagina - 1); }
+            else if (e.key === "Enter") { if (hl >= 0 && list[hl]) abrirModal(list[hl]); else if (list.length > 0) abrirModal(list[0]); }
+            else if (e.key === "Escape") { setHl(-1); }
           }}
           className="border rounded p-2 w-full"
         />
-        <button
-          onClick={() => agregarProductoNuevo()}
-          className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap"
-        >
+        <button onClick={() => agregarProductoNuevo()} className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap">
           + Add product
         </button>
       </div>
@@ -1312,9 +990,7 @@ export default function Productos() {
                     <tr
                       id={`prod-row-${idx}`}
                       key={p.id}
-                      className={`cursor-pointer border-t ${
-                        idx === hl ? "bg-blue-50 ring-2 ring-blue-200" : "hover:bg-blue-50"
-                      }`}
+                      className={`cursor-pointer border-t ${idx === hl ? "bg-blue-50 ring-2 ring-blue-200" : "hover:bg-blue-50"}`}
                       onMouseEnter={() => setHl(idx)}
                       onClick={() => abrirModal(p)}
                     >
@@ -1336,44 +1012,26 @@ export default function Productos() {
 
         {/* PAGINATION */}
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-between items-center mt-4">
-          <button
-            className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50"
-            onClick={handleAnterior}
-            disabled={pagina === 1}
-          >
+          <button className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50" onClick={handleAnterior} disabled={pagina === 1}>
             Previous
           </button>
-          <span className="text-sm">
-            Page {pagina} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
-          </span>
-          <button
-            className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50"
-            onClick={handleSiguiente}
-            disabled={pagina * PAGE_SIZE >= total}
-          >
+          <span className="text-sm">Page {pagina} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+          <button className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50" onClick={handleSiguiente} disabled={pagina * PAGE_SIZE >= total}>
             Next
           </button>
         </div>
-        <div className="text-xs text-gray-400 mt-2 text-center mb-10">
-          Showing {productos.length} of {total} products.
-        </div>
+        <div className="text-xs text-gray-400 mt-2 text-center mb-10">Showing {productos.length} of {total} products.</div>
       </div>
 
-      {/* --- MODAL EDIT / METRICS --- */}
+      {/* MODAL (misma VISUAL; inputs deshabilitados hasta pulsar Edit) */}
       {modalAbierto && productoActual && (
         <div className="fixed inset-0 bg-black/40 flex justify-center items-end sm:items-center z-50 p-0 sm:p-6">
           <div className="bg-white w-full h-[100vh] sm:h-auto sm:max-h-[90vh] sm:rounded-xl shadow-xl max-w-2xl relative p-4 sm:p-8 overflow-y-auto">
-            <button
-              type="button"
-              className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black"
-              onClick={cerrarModal}
-              title="Close"
-              style={{ zIndex: 100 }}
-            >
+            <button type="button" className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black" onClick={cerrarModal} title="Close" style={{ zIndex: 100 }}>
               ×
             </button>
 
-            {/* NUEVO: KPIs arriba del modal */}
+            {/* KPIs arriba */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
                 <div className="text-xs text-blue-700 uppercase font-semibold">On Hand</div>
@@ -1381,35 +1039,33 @@ export default function Productos() {
               </div>
               <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-center">
                 <div className="text-xs text-emerald-700 uppercase font-semibold">On Hand $</div>
-                <div className="text-lg font-bold text-emerald-900">
-                  ${Number(stockResumen.valor || 0).toFixed(2)}
-                </div>
+                <div className="text-lg font-bold text-emerald-900">${Number(stockResumen.valor || 0).toFixed(2)}</div>
               </div>
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 text-center">
                 <div className="text-xs text-gray-600 uppercase font-semibold">Last Sold</div>
-                <div className="text-sm font-bold text-gray-800">
-                  {ultimaVenta ? new Date(ultimaVenta).toLocaleDateString() : "—"}
-                </div>
+                <div className="text-sm font-bold text-gray-800">{ultimaVenta ? new Date(ultimaVenta).toLocaleDateString() : "—"}</div>
               </div>
             </div>
 
-            <div className="flex mb-4 border-b mt-6 sm:mt-2">
+            <div className="flex mb-4 border-b mt-6 sm:mt-2 items-center">
               <button
-                className={`px-4 sm:px-6 py-2 font-bold ${
-                  tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"
-                }`}
+                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
                 onClick={() => setTabActivo("editar")}
               >
                 Edit product
               </button>
               <button
-                className={`px-4 sm:px-6 py-2 font-bold ${
-                  tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"
-                }`}
+                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
                 onClick={() => setTabActivo("ventas")}
               >
                 Sales
               </button>
+
+              {!editMode && productoActual?.id && tabActivo === "editar" && (
+                <button className="ml-auto bg-blue-600 text-white rounded px-3 py-1.5" onClick={() => setEditMode(true)}>
+                  Edit
+                </button>
+              )}
             </div>
 
             {tabActivo === "editar" ? (
@@ -1418,41 +1074,40 @@ export default function Productos() {
                   <div>
                     <label className="font-bold">Code/UPC*</label>
                     <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.codigo}
-                      autoComplete="off"
-                      // ACEPTA ALFANUMÉRICO (quitamos pattern y modo numérico)
-                      onChange={(e) => setProductoActual({ ...productoActual, codigo: e.target.value })}
+                      className="border rounded p-2 w-full uppercase"
+                      value={productoActual.codigo ?? ""}
+                      onChange={(e) => setProductoActual({ ...productoActual, codigo: toUpper(e.target.value) })}
                       required
                       autoFocus
+                      disabled={disabled}
                     />
                   </div>
                   <div>
                     <label className="font-bold">Name*</label>
                     <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.nombre}
-                      autoComplete="off"
-                      onChange={(e) => setProductoActual({ ...productoActual, nombre: e.target.value })}
+                      className="border rounded p-2 w-full uppercase"
+                      value={productoActual.nombre ?? ""}
+                      onChange={(e) => setProductoActual({ ...productoActual, nombre: toUpper(e.target.value) })}
                       required
+                      disabled={disabled}
                     />
                   </div>
                   <div>
                     <label className="font-bold">Brand</label>
                     <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.marca}
-                      autoComplete="off"
-                      onChange={(e) => setProductoActual({ ...productoActual, marca: e.target.value })}
+                      className="border rounded p-2 w-full uppercase"
+                      value={productoActual.marca ?? ""}
+                      onChange={(e) => setProductoActual({ ...productoActual, marca: toUpper(e.target.value) })}
+                      disabled={disabled}
                     />
                   </div>
                   <div>
                     <label className="font-bold">Category</label>
                     <input
-                      className="border rounded p-2 w-full"
-                      value={productoActual.categoria}
-                      autoComplete="off"
-                      onChange={(e) => setProductoActual({ ...productoActual, categoria: e.target.value })}
+                      className="border rounded p-2 w-full uppercase"
+                      value={productoActual.categoria ?? ""}
+                      onChange={(e) => setProductoActual({ ...productoActual, categoria: toUpper(e.target.value) })}
+                      disabled={disabled}
                     />
                   </div>
                   <div>
@@ -1461,16 +1116,14 @@ export default function Productos() {
                       className="border rounded p-2 w-full"
                       value={isCustomSize ? "custom" : productoActual.size || ""}
                       onChange={(e) => {
-                        if (e.target.value === "custom") {
-                          setIsCustomSize(true);
-                        } else {
+                        if (disabled) return;
+                        if (e.target.value === "custom") setIsCustomSize(true);
+                        else {
                           setIsCustomSize(false);
-                          setProductoActual((prev) => ({
-                            ...prev,
-                            size: e.target.value,
-                          }));
+                          setProductoActual((prev) => ({ ...prev, size: e.target.value }));
                         }
                       }}
+                      disabled={disabled}
                     >
                       <option value="">Select size</option>
                       {SIZES_COMUNES.map((sz) => (
@@ -1482,62 +1135,60 @@ export default function Productos() {
                     </select>
                     {isCustomSize && (
                       <input
-                        className="border rounded p-2 mt-1 w-full"
+                        className="border rounded p-2 mt-1 w-full uppercase"
                         value={sizeCustom}
                         placeholder="Enter custom size"
-                        onChange={(e) => setSizeCustom(e.target.value)}
+                        onChange={(e) => setSizeCustom(toUpper(e.target.value))}
+                        disabled={disabled}
                       />
                     )}
                   </div>
+
                   <div>
                     <label className="font-bold">Supplier</label>
                     <BuscadorSuplidor
                       value={suplidorId}
+                      disabled={disabled}
                       onChange={(id, nombre) => {
                         setSuplidorId(id);
                         setSuplidorNombre(nombre);
-                        setProductoActual((prev) => ({
-                          ...prev,
-                          proveedor: id,
-                        }));
+                        setProductoActual((prev) => ({ ...prev, suplidor_id: id }));
                       }}
                     />
                   </div>
+
                   <div>
                     <label className="font-bold">Cost</label>
                     <input
                       className="border rounded p-2 w-full"
-                      value={productoActual.costo}
+                      value={productoActual.costo ?? ""}
                       type="number"
                       step="0.01"
-                      inputMode="numeric"
                       min="0"
-                      autoComplete="off"
                       onChange={(e) => setProductoActual({ ...productoActual, costo: e.target.value })}
+                      disabled={disabled}
                     />
                   </div>
                   <div>
                     <label className="font-bold">Price*</label>
                     <input
                       className="border rounded p-2 w-full"
-                      value={productoActual.precio}
+                      value={productoActual.precio ?? ""}
                       type="number"
                       step="0.01"
-                      inputMode="numeric"
                       min="0"
-                      autoComplete="off"
                       onChange={(e) => setProductoActual({ ...productoActual, precio: e.target.value })}
                       required
+                      disabled={disabled}
                     />
                   </div>
 
-                  {/* NUEVO: Margen y Markup en vivo */}
                   <div className="md:col-span-2">
                     {(() => {
                       const c = Number(productoActual?.costo || 0);
                       const p = Number(productoActual?.precio || 0);
-                      const margin = p > 0 ? ((p - c) / p) * 100 : 0; // margen sobre venta
-                      const markup = c > 0 ? ((p - c) / c) * 100 : 0; // sobre costo
+                      const margin = p > 0 ? ((p - c) / p) * 100 : 0;
+                      const markup = c > 0 ? ((p - c) / c) * 100 : 0;
                       return (
                         <div className="mt-1 flex flex-wrap gap-2 text-sm">
                           <span className="inline-flex items-center rounded-full bg-blue-50 text-blue-800 px-3 py-1">
@@ -1551,7 +1202,6 @@ export default function Productos() {
                     })()}
                   </div>
 
-                  {/* --- NUEVO: % descuento auto y bulk pricing --- */}
                   <div>
                     <label className="font-bold">% Off (auto-applied)</label>
                     <input
@@ -1563,10 +1213,9 @@ export default function Productos() {
                       value={productoActual.descuento_pct ?? ""}
                       onChange={(e) => setProductoActual({ ...productoActual, descuento_pct: e.target.value })}
                       placeholder="e.g. 10"
+                      disabled={disabled}
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                      It automatically applies in sales if bulk pricing does not apply.
-                    </p>
+                    <p className="text-xs text-gray-500 mt-1">It automatically applies in sales if bulk pricing does not apply.</p>
                   </div>
 
                   <div className="md:col-span-2 border rounded p-3">
@@ -1579,10 +1228,9 @@ export default function Productos() {
                           type="number"
                           min="1"
                           value={productoActual.bulk_min_qty ?? ""}
-                          onChange={(e) =>
-                            setProductoActual((prev) => ({ ...prev, bulk_min_qty: e.target.value }))
-                          }
+                          onChange={(e) => setProductoActual((prev) => ({ ...prev, bulk_min_qty: e.target.value }))}
                           placeholder="e.g. 10"
+                          disabled={disabled}
                         />
                       </div>
                       <div>
@@ -1593,19 +1241,16 @@ export default function Productos() {
                           step="0.01"
                           min="0"
                           value={productoActual.bulk_unit_price ?? ""}
-                          onChange={(e) =>
-                            setProductoActual((prev) => ({ ...prev, bulk_unit_price: e.target.value }))
-                          }
+                          onChange={(e) => setProductoActual((prev) => ({ ...prev, bulk_unit_price: e.target.value }))}
                           placeholder="e.g. 9.60"
+                          disabled={disabled}
                         />
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      If qty ≥ Min. qty, this unit price overrides base/% off in Sales.
-                    </p>
+                    <p className="text-xs text-gray-500 mt-1">If qty ≥ Min. qty, this unit price overrides base/% off in Sales.</p>
                   </div>
 
-                  {/* --- SIEMPRE disponible: agregar stock ahora --- */}
+                  {/* Add stock now */}
                   <div className="md:col-span-2 border-t pt-2 mt-2">
                     <b>Add stock now (optional)</b>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1616,10 +1261,9 @@ export default function Productos() {
                           type="number"
                           min="0"
                           value={productoActual.cantidad_inicial || ""}
-                          onChange={(e) =>
-                            setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })
-                          }
+                          onChange={(e) => setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })}
                           placeholder="0"
+                          disabled={disabled}
                         />
                       </div>
                       <div>
@@ -1628,6 +1272,7 @@ export default function Productos() {
                           className="border rounded p-2 w-full"
                           value={productoActual.ubicacion_inicial}
                           onChange={(e) => {
+                            if (disabled) return;
                             const value = e.target.value;
                             setProductoActual((prev) => ({
                               ...prev,
@@ -1637,6 +1282,7 @@ export default function Productos() {
                                 : null,
                             }));
                           }}
+                          disabled={disabled}
                         >
                           {ubicaciones.map((u) => (
                             <option key={u.key} value={u.key}>
@@ -1646,18 +1292,17 @@ export default function Productos() {
                         </select>
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      If you set a quantity & location, stock will be added when you save.
-                    </p>
+                    <p className="text-xs text-gray-500 mt-1">If you set a quantity & location, stock will be added when you save.</p>
                   </div>
 
                   <div className="md:col-span-2">
                     <label className="font-bold">Product notes</label>
                     <textarea
-                      className="border rounded p-2 w-full min-h-[60px]"
+                      className="border rounded p-2 w-full min-h-[60px] uppercase"
                       value={productoActual.notas || ""}
                       placeholder="Special notes, important details, etc."
-                      onChange={(e) => setProductoActual({ ...productoActual, notas: e.target.value })}
+                      onChange={(e) => setProductoActual({ ...productoActual, notas: toUpper(e.target.value) })}
+                      disabled={disabled}
                     />
                   </div>
                 </div>
@@ -1665,25 +1310,14 @@ export default function Productos() {
                 {mensaje && <div className="text-blue-700 text-center mt-2">{mensaje}</div>}
 
                 <div className="flex flex-col sm:flex-row gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
-                  <button type="submit" className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2">
+                  <button type="submit" className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2" disabled={disabled}>
                     {productoActual.id ? "Save changes" : "Add product"}
                   </button>
-
-                  {/* EXTRA: imprimir etiqueta */}
-                  <button
-                    type="button"
-                    className="sm:flex-1 bg-gray-200 text-gray-800 rounded px-5 py-2"
-                    onClick={() => imprimirEtiqueta(productoActual)}
-                  >
+                  <button type="button" className="sm:flex-1 bg-gray-200 text-gray-800 rounded px-5 py-2" onClick={() => imprimirEtiqueta(productoActual)}>
                     🖨️ Print label
                   </button>
-
                   {productoActual.id && (
-                    <button
-                      type="button"
-                      className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2"
-                      onClick={eliminarProducto}
-                    >
+                    <button type="button" className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2" onClick={eliminarProducto} disabled={disabled}>
                       Delete
                     </button>
                   )}
