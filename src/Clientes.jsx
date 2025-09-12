@@ -385,11 +385,27 @@ export default function Clientes() {
     const c = cArg || clienteSeleccionado;
     if (!c) return;
 
+    // ⬇️ Dirección: soportar string u objeto
     let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
     const raw = c.direccion;
 
     if (typeof raw === "string" && raw) {
-      try { direccion = JSON.parse(raw); } catch {}
+      try {
+        const j = JSON.parse(raw);
+        if (j && typeof j === "object") {
+          direccion = {
+            calle: j.calle || "",
+            ciudad: j.ciudad || "",
+            estado: j.estado || "",
+            zip: j.zip || "",
+          };
+        } else {
+          direccion = { calle: raw, ciudad: "", estado: "", zip: "" };
+        }
+      } catch {
+        // string plano -> lo colocamos en "calle"
+        direccion = { calle: raw, ciudad: "", estado: "", zip: "" };
+      }
     } else if (typeof raw === "object" && raw !== null) {
       direccion = {
         calle: raw.calle || "",
@@ -659,8 +675,14 @@ export default function Clientes() {
     doc.setFontSize(12);
     doc.text(`Full Name: ${clienteSeleccionado.nombre || ""}`, 14, 53);
     doc.text(`Business Name: ${clienteSeleccionado.negocio || ""}`, 14, 60);
-    const dir = clienteSeleccionado.direccion || {};
-    const dirTxt = [dir.calle, dir.ciudad, dir.estado, dir.zip].filter(Boolean).join(", ");
+    // ⬇️ Dirección: soportar string u objeto
+    const dirRaw = clienteSeleccionado.direccion;
+    let dirTxt = "No address";
+    if (typeof dirRaw === "string") {
+      dirTxt = dirRaw || "No address";
+    } else if (dirRaw && typeof dirRaw === "object") {
+      dirTxt = [dirRaw.calle, dirRaw.ciudad, dirRaw.estado, dirRaw.zip].filter(Boolean).join(", ") || "No address";
+    }
     doc.text(`Address: ${dirTxt}`, 14, 67);
     // ✅ Mostrar teléfono sin asteriscos, formateado
     doc.text(`Phone: ${formatPhoneForInput(clienteSeleccionado.telefono) || ""}`, 14, 74);
@@ -818,7 +840,7 @@ export default function Clientes() {
           return (
             <div
               key={c.id}
-              className={`shrink-0 min-w-[240px] max-w-[280px] p-3 rounded-xl border
+              className={`shrink-0 min-w[240px] max-w[280px] p-3 rounded-xl border
                 ${saldo > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}
             >
               {/* Header: Nombre + botón Payment */}
@@ -903,13 +925,16 @@ export default function Clientes() {
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {clientes.map((c) => {
-                      let d = { calle: "", ciudad: "", estado: "", zip: "" };
-                      if (typeof c.direccion === "string" && c.direccion) {
-                        try { d = JSON.parse(c.direccion); } catch {}
+                      // ⬇️ Dirección: aceptar string u objeto
+                      const dRaw = c.direccion;
+                      let dObj = null;
+                      if (typeof dRaw === "string" && dRaw) {
+                        try { dObj = JSON.parse(dRaw); } catch { dObj = null; }
+                      } else if (dRaw && typeof dRaw === "object") {
+                        dObj = dRaw;
                       }
-                      if (typeof c.direccion === "object" && c.direccion !== null) {
-                        d = c.direccion;
-                      }
+                      const d = dObj || { calle: "", ciudad: "", estado: "", zip: "" };
+
                       const cxc = cxcByClient[c.id];
                       const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
                       const disp = typeof cxc?.disponible === "number" ? cxc.disponible : null;
@@ -919,7 +944,9 @@ export default function Clientes() {
                           key={c.id}
                           className="hover:bg-blue-50 cursor-pointer transition-colors duration-150"
                           onClick={() => {
-                            setClienteSeleccionado({ ...c, direccion: d });
+                            // Si era string plano, preservamos el string en el seleccionado;
+                            // si era objeto, pasamos el objeto normalizado.
+                            setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
                             setMostrarStats(true);
                           }}
                         >
@@ -959,7 +986,13 @@ export default function Clientes() {
                             <div className="text-sm text-gray-900 flex items-start gap-2">
                               <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
                               <div>
-                                {[d.calle, d.ciudad, d.estado, d.zip].filter(Boolean).join(", ") || "No address"}
+                                {(() => {
+                                  if (!dRaw) return "No address";
+                                  if (typeof dRaw === "string") {
+                                    return dRaw.trim() || "No address";
+                                  }
+                                  return [d.calle, d.ciudad, d.estado, d.zip].filter(Boolean).join(", ") || "No address";
+                                })()}
                               </div>
                             </div>
                           </td>
@@ -994,7 +1027,7 @@ export default function Clientes() {
                               onClick={async (e) => {
                                 e.stopPropagation();
                                 const info = await safeGetCxc(c.id);
-                                setClienteSeleccionado({ ...c, direccion: d });
+                                setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
                                 setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info || null }));
                                 setMostrarAbono(true);
                               }}
@@ -1210,7 +1243,7 @@ export default function Clientes() {
                       <label className="font-medium text-gray-600 mb-1 block">State</label>
                       <input
                         name="estado"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                         placeholder="MA"
                         value={estadoInput ?? ""}
                         onChange={handleChange}
@@ -1230,7 +1263,7 @@ export default function Clientes() {
                       <label className="font-medium text-gray-600 mb-1 block">City</label>
                       <input
                         name="ciudad"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                         value={form.direccion?.ciudad ?? ""}
                         onChange={handleChange}
                         placeholder="Boston"
@@ -1241,7 +1274,7 @@ export default function Clientes() {
                       <label className="font-medium text-gray-600 mb-1 block">Street</label>
                       <input
                         name="calle"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                         value={form.direccion?.calle ?? ""}
                         onChange={handleChange}
                         placeholder="123 Main St"
@@ -1393,7 +1426,10 @@ function ClienteStatsModal({
                 {cliente.direccion && (
                   <div className="flex items-center gap-2">
                     <MapPin size={14} />
-                    {[cliente.direccion.calle, cliente.direccion.ciudad, cliente.direccion.estado, cliente.direccion.zip].filter(Boolean).join(", ")}
+                    {typeof cliente.direccion === "string"
+                      ? (cliente.direccion || "No address")
+                      : [cliente.direccion?.calle, cliente.direccion?.ciudad, cliente.direccion?.estado, cliente.direccion?.zip]
+                          .filter(Boolean).join(", ") || "No address"}
                   </div>
                 )}
                 <button
@@ -1450,7 +1486,7 @@ function ClienteStatsModal({
               Filter by Month
             </label>
             <select
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200 bg-white"
               value={mesSeleccionado || ""}
               onChange={e => setMesSeleccionado(e.target.value || null)}
             >
@@ -1565,7 +1601,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
   const [monto, setMonto] = useState("");
-  const [metodo, setMetodo] = useState("Cash");
+   const [metodo, setMetodo] = useState("Cash");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
@@ -1803,10 +1839,10 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
           >
             <div className="flex gap-3">
-              <button type="submit" disabled={guardando} className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2">
+              <button type="submit" disabled={guardando} className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2">
                 {guardando ? (<><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Processing...</>) : (<><Check size={16} />Record Payment</>)}
               </button>
-              <button type="button" className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2" onClick={onClose} disabled={guardando}>
+              <button type="button" className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2" onClick={onClose} disabled={guardando}>
                 <X size={16} />
                 Cancel
               </button>
