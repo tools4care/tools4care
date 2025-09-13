@@ -287,18 +287,48 @@ export default function Clientes() {
     setMensaje("");
     const from = (p - 1) * ps;
     const to = from + ps - 1;
-    let query = supabase.from("clientes_balance").select("*", { count: "exact" }).range(from, to);
-    if (q) {
-      const like = `%${q}%`;
-      query = query.or(
-        [
-          `nombre.ilike.${like}`,
-          `email.ilike.${like}`,
-          `negocio.ilike.${like}`,
-          `telefono.ilike.${like}`,
-        ].join(",")
-      );
-    }
+  let query = supabase
+  .from("clientes_balance") // o tu vista actual
+  .select("*", { count: "exact" })
+  .range(from, to);
+
+if (q) {
+  const like = `%${q}%`;
+  const qDigits = (q || "").replace(/\D/g, "");
+
+  const filtros = [
+    // Básicos
+    `nombre.ilike.${like}`,
+    `email.ilike.${like}`,
+    `negocio.ilike.${like}`,
+
+    // Teléfono tal cual se guardó
+    `telefono.ilike.${like}`,
+
+    // Dirección en texto (para migrados como string)
+    `direccion.ilike.${like}`,
+
+    // Dirección desglosada cuando llegó como JSON (de la vista)
+    `dir_calle.ilike.${like}`,
+    `dir_ciudad.ilike.${like}`,
+    `dir_estado.ilike.${like}`,
+    `dir_zip.ilike.${like}`,
+  ];
+
+  // Búsqueda por dígitos (ideal cuando el usuario teclea 978594 o 1978…)
+  if (qDigits.length >= 3) {
+    const likeDigits = `%${qDigits}%`;
+    filtros.push(
+      `tel_norm.ilike.${likeDigits}`,
+      // por si el usuario incluye/omite el 1 de US
+      `tel_norm.ilike.%1${qDigits}%`
+    );
+  }
+
+  query = query.or(filtros.join(","));
+}
+
+
     const { data, error, count } = await query;
     if (error) {
       setMensaje("Error loading clients");
@@ -381,56 +411,141 @@ export default function Clientes() {
   }, []);
 
   // --- acepta cliente opcional ---
-  function handleEditCliente(cArg) {
-    const c = cArg || clienteSeleccionado;
-    if (!c) return;
-
-    // ⬇️ Dirección: soportar string u objeto
-    let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
-    const raw = c.direccion;
-
-    if (typeof raw === "string" && raw) {
-      try {
-        const j = JSON.parse(raw);
-        if (j && typeof j === "object") {
-          direccion = {
-            calle: j.calle || "",
-            ciudad: j.ciudad || "",
-            estado: j.estado || "",
-            zip: j.zip || "",
-          };
-        } else {
-          direccion = { calle: raw, ciudad: "", estado: "", zip: "" };
-        }
-      } catch {
-        // string plano -> lo colocamos en "calle"
-        direccion = { calle: raw, ciudad: "", estado: "", zip: "" };
-      }
-    } else if (typeof raw === "object" && raw !== null) {
-      direccion = {
-        calle: raw.calle || "",
-        ciudad: raw.ciudad || "",
-        estado: raw.estado || "",
-        zip: raw.zip || "",
-      };
-    }
-
-    // 👉 formateamos teléfono guardado (+1XXXXXXXXXX → (XXX) XXX-XXXX) sólo para mostrar en input
-    const telFmt = formatPhoneForInput(c.telefono);
-
-    setForm({
-      nombre: c.nombre || "",
-      telefono: telFmt || "",
-      email: c.email || "",
-      negocio: c.negocio || "",
-      direccion,
-    });
-    setEstadoInput(direccion.estado || "");
-    setEstadoOpciones(estadosUSA);
-    setClienteSeleccionado(c);
-    setMostrarEdicion(true);
-    setMensaje("");
+/** ================== HELPERS DIRECCIÓN ================== */
+/** Parseo robusto para direcciones migradas en string.
+ * Soporta variantes como:
+ *  - "128 BROAD ST, LYNN, MA, 01902"
+ *  - "128 BROAD ST, LYNN, 1902"
+ *  - "128 BROAD ST None, LYNN, 1902"
+ *  - "128 BROAD ST LYNN MA 01902"
+ */
+function parseDireccionString(raw) {
+  if (!raw || typeof raw !== "string") {
+    return { calle: "", ciudad: "", estado: "", zip: "" };
   }
+
+  // Normalizar: espacios, quitar "None", comas sueltas
+  let s = raw
+    .replace(/\s+/g, " ")
+    .replace(/\bNone\b/gi, "")
+    .replace(/\s+,/g, ",")
+    .trim();
+
+  // ZIP (5 dígitos o 4 -> MA leading zero)
+  let zip = "";
+  const zipMatch = s.match(/(\d{5}|\d{4})\s*$/);
+  if (zipMatch) {
+    zip = zipMatch[1];
+    if (zip.length === 4) zip = "0" + zip; // ej: 1902 -> 01902
+    s = s.replace(new RegExp(`[,\\s]*${zipMatch[1]}\\s*$`), "").trim();
+  }
+
+  // Estado (2 letras al final)
+  let estado = "";
+  const stateMatch = s.match(/(?:,|\s)([A-Z]{2})\s*$/);
+  if (stateMatch) {
+    estado = (stateMatch[1] || "").toUpperCase();
+    s = s.replace(new RegExp(`[,\\s]*${estado}\\s*$`), "").trim();
+  }
+
+  // Separar calle / ciudad
+  let calle = "";
+  let ciudad = "";
+  if (s.includes(",")) {
+    const parts = s.split(",").map(t => t.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      ciudad = parts.pop() || "";
+      calle = parts.join(", ");
+    } else {
+      calle = parts[0] || "";
+    }
+  } else {
+    const tokens = s.split(" ").filter(Boolean);
+    if (tokens.length >= 2) {
+      ciudad = tokens.slice(-1)[0];
+      calle  = tokens.slice(0, -1).join(" ");
+    } else {
+      calle = s;
+    }
+  }
+
+  // Intento opcional de inferir ciudad/estado desde ZIP conocido
+  if (zip && (!estado || !ciudad)) {
+    const z = zipToCiudadEstado(zip);
+    if (!estado && z.estado) estado = z.estado;
+    if (!ciudad && z.ciudad) ciudad = z.ciudad;
+  }
+
+  return {
+    calle: calle.trim(),
+    ciudad: ciudad.trim(),
+    estado: (estado || "").toUpperCase(),
+    zip: zip
+  };
+}
+
+/** ================== EDITAR CLIENTE ================== */
+function handleEditCliente(cArg) {
+  const c = cArg || clienteSeleccionado;
+  if (!c) return;
+
+  // Log para verificar qué llega desde la tabla/vista
+  console.log("Editando cliente:", {
+    id: c?.id,
+    telefono_original: c?.telefono ?? c?.phone,
+    email: c?.email,
+    direccion_original: c?.direccion
+  });
+
+  // ⬇️ Dirección: soportar string “migrado” u objeto normal
+  let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
+  const raw = c?.direccion;
+
+  if (typeof raw === "string" && raw) {
+    // Parseo robusto cuando viene en texto libre
+    direccion = parseDireccionString(raw);
+  } else if (raw && typeof raw === "object") {
+    direccion = {
+      calle: raw.calle || "",
+      ciudad: raw.ciudad || "",
+      estado: (raw.estado || "").toUpperCase(),
+      zip: raw.zip || ""
+    };
+    // Si hay ZIP pero falta estado/ciudad, intentamos completar
+    if (direccion.zip && (!direccion.estado || !direccion.ciudad)) {
+      const z = zipToCiudadEstado(direccion.zip);
+      if (!direccion.estado && z.estado) direccion.estado = z.estado;
+      if (!direccion.ciudad && z.ciudad) direccion.ciudad = z.ciudad;
+    }
+  } else if (typeof raw === "string") {
+    // String vacío → lo dejamos en "calle" vacío
+    direccion = { calle: raw || "", ciudad: "", estado: "", zip: "" };
+  }
+
+  // 👉 Teléfono: formateo para INPUT (no cambia cómo se guarda)
+  const telFmt = formatPhoneForInput(c?.telefono ?? c?.phone ?? "");
+
+  // 4) Poblar el form
+  setForm({
+    nombre:  c?.nombre  || "",
+    telefono: telFmt     || "",
+    email:   c?.email    || "",
+    negocio: c?.negocio  || "",
+    direccion
+  });
+
+  // Autocompletar estado y opciones
+  const estadoUpper = (direccion.estado || "").toUpperCase();
+  setEstadoInput(estadoUpper);
+  const filtradas = estadosUSA.filter(s => s.startsWith(estadoUpper));
+  setEstadoOpciones(filtradas.length ? filtradas : estadosUSA);
+
+  // Seleccionado y abrir modal
+  setClienteSeleccionado({ ...c, direccion });
+  setMostrarEdicion(true);
+  setMensaje("");
+}
+
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -968,12 +1083,12 @@ export default function Clientes() {
                           </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <div className="space-y-1">
-                              {c.telefono && (
-                                <div className="text-sm text-gray-900 flex items-center gap-2">
-                                  <Phone size={12} className="text-gray-400" />
-                                  {formatPhoneForInput(c.telefono)}
-                                </div>
-                              )}
+                             { c.telefono && (
+    <div className="text-sm text-gray-900 flex items-center gap-2">
+      <Phone size={12} className="text-gray-400" />
+   {formatPhoneForInput(c.telefono)}
+    </div>
+  )}
                               {c.email && (
                                 <div className="text-[12px] sm:text-sm text-gray-500 flex items-center gap-2">
                                   <Mail size={12} className="text-gray-400" />
@@ -1128,21 +1243,22 @@ export default function Clientes() {
 
       {/* Modal Stats */}
       {mostrarStats && clienteSeleccionado && (
-        <ClienteStatsModal
-          open={mostrarStats}
-          cliente={clienteSeleccionado}
-          resumen={resumen}
-          mesSeleccionado={mesSeleccionado}
-          setMesSeleccionado={setMesSeleccionado}
-          onClose={() => setMostrarStats(false)}
-          onEdit={() => { setMostrarStats(false); handleEditCliente(); }}
-          onDelete={handleEliminar}
-          generatePDF={generatePDF}
-          onRefreshCredito={async () => {
-            const info = await safeGetCxc(clienteSeleccionado.id);
-            if (info) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
-          }}
-        />
+      <ClienteStatsModal
+  open={mostrarStats}
+  cliente={clienteSeleccionado}
+  resumen={resumen}
+  mesSeleccionado={mesSeleccionado}
+  setMesSeleccionado={setMesSeleccionado}
+  onClose={() => setMostrarStats(false)}
+  onEdit={() => { setMostrarStats(false); handleEditCliente(clienteSeleccionado); }}
+  onDelete={handleEliminar}
+  generatePDF={generatePDF}
+  onRefreshCredito={async () => {
+    const info = await safeGetCxc(clienteSeleccionado.id);
+    if (info) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
+  }}
+/>
+
       )}
 
       {/* Modal edición */}
@@ -1412,11 +1528,11 @@ function ClienteStatsModal({
                   </div>
                 )}
                 {cliente.telefono && (
-                  <div className="flex items-center gap-2">
-                    <Phone size={14} />
-                    {formatPhoneForInput(cliente.telefono)}
-                  </div>
-                )}
+    <div className="flex items-center gap-2">
+      <Phone size={14} />
+                   {formatPhoneForInput(cliente.telefono)}
+    </div>
+  )}
                 {cliente.negocio && (
                   <div className="flex items-center gap-2">
                     <Building2 size={14} />
