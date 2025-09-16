@@ -1131,269 +1131,282 @@ export default function Sales() {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
 
-  /* ===================== Guardar venta (RPC con fallback INSERT) ===================== */
-  async function saveSale() {
-    setSaving(true);
-    setPaymentError("");
+/* ===================== Guardar venta (RPC con fallback INSERT) ===================== */
+async function saveSale() {
+  setSaving(true);
+  setPaymentError("");
 
-    const currentPendingId = window.pendingSaleId;
+  const currentPendingId = window.pendingSaleId;
 
-    try {
-      if (!usuario?.id) throw new Error("User not synced, please re-login.");
-      if (!van?.id) throw new Error("Select a VAN first.");
-      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
-      if (cartSafe.length === 0) throw new Error("Add at least one product.");
+  try {
+    if (!usuario?.id) throw new Error("User not synced, please re-login.");
+    if (!van?.id) throw new Error("Select a VAN first.");
+    if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
+    if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
-      if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
-        setPaymentError(
-          `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
-        );
+    if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
+      setPaymentError(
+        `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (amountToCredit > 0) {
+      const ok = window.confirm(
+        `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
+          (selectedClient
+            ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
+                creditAvailable
+              )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
+            : `\n(No credit history yet)\n\n`) +
+          `Do you want to continue?`
+      );
+      if (!ok) {
         setSaving(false);
         return;
       }
+    }
 
-      if (amountToCredit > 0) {
-        const ok = window.confirm(
-          `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
-            (selectedClient
-              ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
-                  creditAvailable
-                )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
-              : `\n(No credit history yet)\n\n`) +
-            `Do you want to continue?`
-        );
-        if (!ok) {
-          setSaving(false);
-          return;
-        }
+    // ===== Recalcular al guardar (idéntico a tu lógica) =====
+    const existingCreditNow = Math.max(0, -balanceBefore);
+    const oldDebtNow = Math.max(0, balanceBefore);
+    const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
+    const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+
+    const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
+    const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
+    const changeNow = Math.max(0, paid - totalAPagarNow);
+
+    // Pendiente que nace de esta venta
+    const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
+
+    // Estado de pago de la VENTA (no de la deuda)
+    const estadoPago =
+      pendingFromThisSale === 0
+        ? "pagado"
+        : paidForSaleNow > 0
+        ? "parcial"
+        : "pendiente";
+
+    // ===== Desglose de pagos APLICADOS (capados a lo necesario; sin cambio) =====
+    const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
+    const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2)); // total que realmente se aplica (venta + deuda)
+    let remainingToApply = paidApplied;
+
+    const metodosAplicados = [];
+    for (const p of nonZeroPayments) {
+      if (remainingToApply <= 0) break;
+      const original = Number(p.monto || 0);
+      const usar = Math.min(original, remainingToApply);
+      if (usar > 0) {
+        metodosAplicados.push({ ...p, monto: Number(usar.toFixed(2)) });
+        remainingToApply = Number((remainingToApply - usar).toFixed(2));
+      }
+    }
+
+    // Map por forma solo con lo aplicado (venta + deuda); NO incluye cambio
+    const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+    for (const p of metodosAplicados) {
+      if (paymentMap[p.forma] !== undefined) {
+        paymentMap[p.forma] += Number(p.monto || 0);
+      }
+    }
+
+    // === NUEVO: totales por método (aplicado) + método principal normalizado ===
+    const pagoEfectivo = Number((paymentMap.efectivo || 0).toFixed(2));
+    const pagoTarjeta  = Number((paymentMap.tarjeta  || 0).toFixed(2));
+    const pagoTransf   = Number((paymentMap.transferencia || 0).toFixed(2));
+    const pagoOtro     = Number((paymentMap.otro || 0).toFixed(2));
+
+    const metodoPrincipal =
+      metodosAplicados.length === 1 ? (metodosAplicados[0].forma || "mix") : "mix";
+
+    // ===== Items para DB/RPC (idéntico a tu lógica, con defensas) =====
+    const itemsForDb = cartSafe.map((p) => {
+      const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
+      const qty = Number(p.cantidad);
+      let base = Number(meta.base || p.precio_unitario) || 0;
+      let descuento_pct = 0;
+
+      const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
+      if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
+        descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
+      } else if (Number(meta.pct) > 0) {
+        descuento_pct = Number(meta.pct);
       }
 
-      // Recalcular al guardar
-      const existingCreditNow = Math.max(0, -balanceBefore);
-      const oldDebtNow = Math.max(0, balanceBefore);
-      const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
-      const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+      if (!base || !Number.isFinite(base)) {
+        base = Number(p.precio_unitario) || 0;
+        descuento_pct = 0;
+      }
 
-      const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
-      const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
-      const changeNow = Math.max(0, paid - totalAPagarNow);
+      return {
+        producto_id: p.producto_id,
+        cantidad: qty,
+        precio_unit: Number(base.toFixed(2)),
+        descuento_pct: Number(descuento_pct.toFixed(4)),
+      };
+    });
 
-      // Pendiente que nace de ESTA venta
-      const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
+    // ===== Pago JSON enriquecido (se mantiene tu estructura, con aplicado/cambio) =====
+    const pagoJson = {
+      metodos: metodosAplicados, // <— aplicado (capado)
+      map: paymentMap,
+      total_ingresado: Number(paid.toFixed(2)),
+      aplicado_venta: Number(paidForSaleNow.toFixed(2)),
+      aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
+      cambio: Number(changeNow.toFixed(2)),
+      ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
+    };
 
-      // Estado de pago (NECESARIO para la columna NOT NULL)
-      const estadoPago =
-        pendingFromThisSale === 0
-          ? "pagado"
-          : paidForSaleNow > 0
-          ? "parcial"
-          : "pendiente";
-
-// Desglose de pagos > 0 (capados a lo realmente aplicado)
-const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
-
-// Total aplicable (venta + deuda vieja) — no incluye cambio
-const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2));
-
-let remainingToApply = paidApplied;
-const metodosAplicados = [];
-for (const p of nonZeroPayments) {
-  if (remainingToApply <= 0) break;
-  const original = Number(p.monto || 0);
-  const usar = Math.min(original, remainingToApply);
-  if (usar > 0) {
-    metodosAplicados.push({ ...p, monto: Number(usar.toFixed(2)) });
-    remainingToApply = Number((remainingToApply - usar).toFixed(2));
-  }
-}
-
-// Map por forma solo con lo aplicado
-const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
-for (const p of metodosAplicados) {
-  if (paymentMap[p.forma] !== undefined) {
-    paymentMap[p.forma] += Number(p.monto || 0);
-  }
-}
-
-
-
-      // Items para DB/RPC
-      const itemsForDb = cartSafe.map((p) => {
-        const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
-        const qty = Number(p.cantidad);
-        let base = Number(meta.base || p.precio_unitario) || 0;
-        let descuento_pct = 0;
-
-        const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
-        if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
-          descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
-        } else if (Number(meta.pct) > 0) {
-          descuento_pct = Number(meta.pct);
-        }
-
-        if (!base || !Number.isFinite(base)) {
-          base = Number(p.precio_unitario) || 0;
-          descuento_pct = 0;
-        }
-
-        return {
-          producto_id: p.producto_id,
-          cantidad: qty,
-          precio_unit: Number(base.toFixed(2)),
-          descuento_pct: Number(descuento_pct.toFixed(4)),
-        };
+    // ---------- 1) RPC preferida ----------
+    let ventaId = null;
+    let rpcError = null;
+    try {
+      const { data, error } = await supabase.rpc("create_venta", {
+        p_cliente_id: selectedClient?.id || null,
+        p_van_id: van.id || null,
+        p_usuario: usuario.id,
+        p_items: itemsForDb,
+        p_pago: pagoJson,
+        p_notas: notes || null,
+        p_estado_pago: estadoPago,
+        p_total: Number(saleTotal.toFixed(2)),
+        p_total_venta: Number(saleTotal.toFixed(2)),
+        // ⬇⬇⬇ SOLO lo aplicado a ESTA venta (no incluye pago a deuda)
+        p_total_pagado: Number(paidForSaleNow.toFixed(2)),
       });
+      if (error) throw error;
+      ventaId = data?.venta_id || data?.id || data?.[0]?.id || null;
+    } catch (e) {
+      rpcError = e;
+      console.warn("RPC create_venta falló, probando INSERT directo:", e?.message || e);
+    }
 
-   const pagoJson = {
-  metodos: metodosAplicados,              // ← antes: nonZeroPayments
-  map: paymentMap,
-  total_ingresado: Number(paid.toFixed(2)),
-  aplicado_venta: Number(paidForSaleNow.toFixed(2)),
-  aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
-  cambio: Number(changeNow.toFixed(2)),
-  ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
-};
+    // ---------- 2) Fallback INSERT directo ----------
+    if (!ventaId) {
+      const payloadVenta = {
+        cliente_id: selectedClient?.id ?? null,
+        van_id: van.id ?? null,
+        usuario_id: usuario.id,
+        total: Number(saleTotal.toFixed(2)),
+        total_venta: Number(saleTotal.toFixed(2)),
+        // ⬇⬇⬇ SOLO lo aplicado a ESTA venta
+        total_pagado: Number(paidForSaleNow.toFixed(2)),
+        estado_pago: estadoPago,
+        pago: pagoJson,
+        productos: itemsForDb,
+        notas: notes || null,
 
-      // ---------- 1) RPC preferida (si falla, seguimos a INSERT) ----------
-      let ventaId = null;
-      let rpcError = null;
-      try {
-        const { data, error } = await supabase.rpc("create_venta", {
-          p_cliente_id: selectedClient?.id || null,
-          p_van_id: van.id || null,
-          p_usuario: usuario.id,
-          p_items: itemsForDb,
-          p_pago: pagoJson,
-          p_notas: notes || null,
-          // Si tu RPC soporta este parámetro lo usará; si no, lo ignora:
-          p_estado_pago: estadoPago,
-          p_total: Number(saleTotal.toFixed(2)),
-          p_total_venta: Number(saleTotal.toFixed(2)),
-          p_total_pagado: paidApplied,
-        });
-        if (error) throw error;
-        ventaId = data?.venta_id || data?.id || data?.[0]?.id || null;
-      } catch (e) {
-        rpcError = e;
-        console.warn("RPC create_venta falló, probando INSERT directo:", e?.message || e);
-      }
+        // ⬇⬇⬇ NUEVO: columnas por método *aplicado* (venta+deuda). Si quieres SOLO venta, calcula por separado.
+        pago_efectivo: pagoEfectivo,
+        pago_tarjeta:  pagoTarjeta,
+        pago_transferencia: pagoTransf,
+        pago_otro: pagoOtro,
 
-      // ---------- 2) Fallback INSERT directo cumpliendo NOT NULL ----------
-      if (!ventaId) {
-        const payloadVenta = {
-          cliente_id: selectedClient?.id ?? null,
-          van_id: van.id ?? null,
-          usuario_id: usuario.id,
-          total: Number(saleTotal.toFixed(2)),
-          total_venta: Number(saleTotal.toFixed(2)),
-          total_pagado: Number((paidForSaleNow + payOldDebtNow).toFixed(2)),
-          estado_pago: estadoPago, // <-- clave NOT NULL
-          pago: pagoJson,
-          productos: itemsForDb,
-          notas: notes || null,
-        };
-
-        const { data: ins, error: insErr } = await supabase
-          .from("ventas")
-          .insert([payloadVenta])
-          .select()
-          .single();
-
-        if (insErr) {
-          throw new Error(
-            `RPC & INSERT failed. RPC: ${rpcError?.message || "N/A"} | INSERT: ${insErr.message}`
-          );
-        }
-        ventaId = ins?.id || null;
-
-        /* ⬇️ AJUSTE CLAVE: si usamos fallback, también insertamos las líneas.
-           Esto asegura que tus triggers en detalle_ventas/ventas puedan
-           descontar stock y que los reportes muestren los productos. */
-        if (ventaId && itemsForDb.length > 0) {
-          await supabase
-            .from("detalle_ventas")
-            .insert(
-              itemsForDb.map((it) => ({
-                venta_id: ventaId,
-                producto_id: it.producto_id,
-                cantidad: it.cantidad,
-                precio_unit: it.precio_unit,
-                descuento_pct: it.descuento_pct,
-              }))
-            );
-
-          // (Opcional) si tienes un RPC explícito para aplicar stock:
-          // await supabase.rpc("apply_sale_stock", { p_sale_id: ventaId }).catch(() => {});
-        }
-      }
-
-      // (Opcional) registrar ajuste/pago de deuda si usas funciones aparte
-      await Promise.all([
-        pendingFromThisSale > 0 && selectedClient?.id && ventaId
-          ? supabase
-              .rpc("cxc_crear_ajuste_por_venta", {
-                p_cliente_id: selectedClient.id,
-                p_venta_id: ventaId,
-                p_monto: Number(pendingFromThisSale),
-                p_van_id: van.id,
-                p_usuario_id: usuario.id,
-                p_nota: "Saldo de venta no pagado",
-              })
-              .catch((e) => console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e))
-          : Promise.resolve(),
-        payOldDebtNow > 0 && selectedClient?.id
-          ? supabase.rpc("cxc_registrar_pago", {
-              p_cliente_id: selectedClient.id,
-              p_monto: Number(payOldDebtNow),
-              p_metodo: "mix",
-              p_van_id: van.id,
-            })
-          : Promise.resolve({}),
-      ]);
-
-      // ===== Recibo (payload con NUEVOS CAMPOS) =====
-      const prevDue = Math.max(0, balanceBefore);
-      const newDue = Math.max(0, balanceAfter); // ← saldo anterior + restante de la venta − pagos a deuda
-      const payload = {
-        clientName: selectedClient?.nombre || "",
-        creditNumber: getCreditNumber(selectedClient),
-        dateStr: new Date().toLocaleString(),
-        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-        items: cartSafe.map((p) => ({
-          name: p.nombre,
-          qty: p.cantidad,
-          unit: p.precio_unitario,
-          subtotal: p.cantidad * p.precio_unitario,
-        })),
-        saleTotal,
-        paid: paidForSaleNow + payOldDebtNow,
-        change: changeNow,
-        prevBalance: prevDue,
-        saleRemaining: pendingFromThisSale, // restante SOLO de esta venta
-        newDue, // 🔥 este es el “Balance due (new)” correcto
-        creditLimit,
-        availableBefore: creditAvailable,
-        availableAfter: Math.max(0, creditLimit - Math.max(0, balanceAfter)),
+        // ⬇⬇⬇ NUEVO: método/forma normalizados
+        metodo_pago: metodoPrincipal,
+        forma_pago: metodoPrincipal,
       };
 
-      removePendingFromLSById(currentPendingId);
-      await requestAndSendNotifications({ client: selectedClient, payload });
+      const { data: ins, error: insErr } = await supabase
+        .from("ventas")
+        .insert([payloadVenta])
+        .select()
+        .single();
 
-      alert(
-        `✅ Sale saved successfully` +
-          (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
-          (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
-      );
+      if (insErr) {
+        throw new Error(
+          `RPC & INSERT failed. RPC: ${rpcError?.message || "N/A"} | INSERT: ${insErr.message}`
+        );
+      }
+      ventaId = ins?.id || null;
 
-      reloadInventory(); // PATCH: refrescar inventario tras guardar
-      clearSale();
-    } catch (err) {
-      setPaymentError("❌ Error saving sale: " + (err?.message || ""));
-      console.error(err);
-    } finally {
-      setSaving(false);
+      // Insert de detalle (como ya tenías)
+      if (ventaId && itemsForDb.length > 0) {
+        await supabase.from("detalle_ventas").insert(
+          itemsForDb.map((it) => ({
+            venta_id: ventaId,
+            producto_id: it.producto_id,
+            cantidad: it.cantidad,
+            precio_unit: it.precio_unit,
+            descuento_pct: it.descuento_pct,
+          }))
+        );
+      }
     }
+
+    // ---------- (Opcional) registrar CxC por fuera (igual que lo tenías) ----------
+    await Promise.all([
+      pendingFromThisSale > 0 && selectedClient?.id && ventaId
+        ? supabase
+            .rpc("cxc_crear_ajuste_por_venta", {
+              p_cliente_id: selectedClient.id,
+              p_venta_id: ventaId,
+              p_monto: Number(pendingFromThisSale),
+              p_van_id: van.id,
+              p_usuario_id: usuario.id,
+              p_nota: "Saldo de venta no pagado",
+            })
+            .catch((e) => console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e))
+        : Promise.resolve(),
+      payOldDebtNow > 0 && selectedClient?.id
+        ? supabase.rpc("cxc_registrar_pago", {
+            p_cliente_id: selectedClient.id,
+            p_monto: Number(payOldDebtNow),
+            p_metodo: "mix",
+            p_van_id: van.id,
+          })
+        : Promise.resolve({}),
+    ]);
+
+    // ===== Recibo (sin cambios de negocio) =====
+    const prevDue = Math.max(0, balanceBefore);
+    const balanceAfter = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
+    const newDue = Math.max(0, balanceAfter);
+    const payload = {
+      clientName: selectedClient?.nombre || "",
+      creditNumber: getCreditNumber(selectedClient),
+      dateStr: new Date().toLocaleString(),
+      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+      items: cartSafe.map((p) => ({
+        name: p.nombre,
+        qty: p.cantidad,
+        unit: p.precio_unitario,
+        subtotal: p.cantidad * p.precio_unitario,
+      })),
+      saleTotal,
+      // mostramos lo pagado total (venta+deuda) en el recibo para transparencia
+      paid: paidForSaleNow + payOldDebtNow,
+      change: changeNow,
+      prevBalance: prevDue,
+      saleRemaining: pendingFromThisSale,
+      newDue,
+      creditLimit,
+      availableBefore: creditAvailable,
+      availableAfter: Math.max(0, creditLimit - Math.max(0, balanceAfter)),
+    };
+
+    removePendingFromLSById(currentPendingId);
+    await requestAndSendNotifications({ client: selectedClient, payload });
+
+    alert(
+      `✅ Sale saved successfully` +
+        (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
+        (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
+    );
+
+    reloadInventory(); // refrescar inventario tras guardar
+    clearSale();
+  } catch (err) {
+    setPaymentError("❌ Error saving sale: " + (err?.message || ""));
+    console.error(err);
+  } finally {
+    setSaving(false);
   }
+}
+
 
   /* ======================== Modal: ventas pendientes ======================== */
   function handleSelectPendingSale(sale) {
