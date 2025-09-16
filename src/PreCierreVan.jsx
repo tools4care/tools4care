@@ -6,15 +6,10 @@ import { useVan } from "./hooks/VanContext";
 
 /* ========================= Helpers ========================= */
 
-/** Devuelve límites YYYY-MM-DDT00:00:00 → YYYY-MM-DDT23:59:59 */
 function dayBounds(dia) {
-  return {
-    start: `${dia}T00:00:00`,
-    end: `${dia}T23:59:59`,
-  };
+  return { start: `${dia}T00:00:00`, end: `${dia}T23:59:59` };
 }
 
-/** Formato visual MM-DD-YYYY para fechas tipo 'YYYY-MM-DD' (o con tiempo). */
 function formatUS(d) {
   if (!d) return "—";
   const s = String(d).slice(0, 10);
@@ -23,13 +18,10 @@ function formatUS(d) {
   return `${m}-${day}-${y}`;
 }
 
-/** Cuenta ventas del día por van usando solo tablas (sin RPC).
- *  Intenta primero cierre_id IS NULL; si falla, usa cerrado = false.
- */
+/** Conteos vía tablas */
 async function contarVentasDia(van_id, dia) {
   const { start, end } = dayBounds(dia);
-
-  // Intento 1: cierre_id IS NULL
+  // 1) cierre_id IS NULL
   {
     const { count, error } = await supabase
       .from("ventas")
@@ -38,11 +30,9 @@ async function contarVentasDia(van_id, dia) {
       .gte("fecha", start)
       .lte("fecha", end)
       .is("cierre_id", null);
-
     if (!error) return count || 0;
   }
-
-  // Intento 2: cerrado = false (por si no existe cierre_id)
+  // 2) cerrado = false (fallback)
   {
     const { count, error } = await supabase
       .from("ventas")
@@ -51,21 +41,14 @@ async function contarVentasDia(van_id, dia) {
       .gte("fecha", start)
       .lte("fecha", end)
       .eq("cerrado", false);
-
     if (!error) return count || 0;
   }
-
-  // Fallback defensivo
   return 0;
 }
 
-/** Cuenta pagos del día por van usando solo tablas (sin RPC).
- *  Igual estrategia que ventas.
- */
 async function contarPagosDia(van_id, dia) {
   const { start, end } = dayBounds(dia);
-
-  // Intento 1: cierre_id IS NULL
+  // 1) cierre_id IS NULL
   {
     const { count, error } = await supabase
       .from("pagos")
@@ -74,11 +57,9 @@ async function contarPagosDia(van_id, dia) {
       .gte("fecha_pago", start)
       .lte("fecha_pago", end)
       .is("cierre_id", null);
-
     if (!error) return count || 0;
   }
-
-  // Intento 2: cerrado = false
+  // 2) cerrado = false (fallback)
   {
     const { count, error } = await supabase
       .from("pagos")
@@ -87,42 +68,41 @@ async function contarPagosDia(van_id, dia) {
       .gte("fecha_pago", start)
       .lte("fecha_pago", end)
       .eq("cerrado", false);
-
     if (!error) return count || 0;
   }
-
   return 0;
 }
 
-/** Cuenta ventas/pagos del día (ligero) */
 async function contarPorFecha(van_id, fecha) {
   try {
     const [ventas, pagos] = await Promise.all([
       contarVentasDia(van_id, fecha),
       contarPagosDia(van_id, fecha),
     ]);
-    return { ventas, pagos, total: ventas + pagos };
+    return { ventas, pagos, total: (ventas || 0) + (pagos || 0) };
   } catch {
     return { ventas: 0, pagos: 0, total: 0 };
   }
 }
 
-/** Devuelve set de días (YYYY-MM-DD) que ya tienen cierre registrado (start==end) */
+/** Días YA cerrados (por rango, robusto) */
 async function diasYaCerrados(van_id, dias) {
   if (!van_id || dias.length === 0) return new Set();
+  const sorted = [...dias].sort();
+  const desde = `${sorted[0]}T00:00:00`;
+  const hasta = `${sorted[sorted.length - 1]}T23:59:59`;
   const { data, error } = await supabase
     .from("cierres_van")
     .select("fecha_inicio, fecha_fin")
     .eq("van_id", van_id)
-    .in("fecha_inicio", dias)
-    .in("fecha_fin", dias);
-
+    .gte("fecha_inicio", desde)
+    .lte("fecha_fin", hasta);
   if (error) return new Set();
   const set = new Set(
     (data || [])
       .map((c) => {
-        const ini = (c.fecha_inicio || "").slice(0, 10);
-        const fin = (c.fecha_fin || "").slice(0, 10);
+        const ini = String(c.fecha_inicio || "").slice(0, 10);
+        const fin = String(c.fecha_fin || "").slice(0, 10);
         return ini === fin ? ini : null;
       })
       .filter(Boolean)
@@ -130,7 +110,7 @@ async function diasYaCerrados(van_id, dias) {
   return set;
 }
 
-/** Lista de fechas con pendientes (solo tablas, sin RPC) */
+/* =============== Hook principal: SIEMPRE filtra cerrados y total>0 =============== */
 function useFechasPendientes(van_id) {
   const [fechas, setFechas] = useState([]);
 
@@ -141,32 +121,55 @@ function useFechasPendientes(van_id) {
     }
 
     (async () => {
-      // Escaneamos últimos 21 días
       const pad = (n) => String(n).padStart(2, "0");
-      const hoyDate = new Date();
-      const dias = [];
-      for (let i = 0; i < 21; i++) {
-        const d = new Date(hoyDate);
-        d.setDate(d.getDate() - i);
-        dias.push(
-          `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+      const hoy = new Date();
+
+      // 1) Intentamos con RPC
+      let list = [];
+      try {
+        const { data, error } = await supabase.rpc(
+          "fechas_pendientes_cierre_van",
+          { van_id_param: van_id }
         );
-      }
-
-      // Conteo real por día
-      const encontrados = [];
-      for (const dia of dias) {
-        try {
-          const { total } = await contarPorFecha(van_id, dia);
-          if (total > 0) encontrados.push(dia);
-        } catch {
-          /* noop */
+        if (!error && Array.isArray(data)) {
+          list = (data || [])
+            .map((x) => String(x).slice(0, 10))
+            .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s));
         }
+      } catch {
+        /* noop */
       }
 
-      let list = encontrados;
+      // 2) Fallback: escanear últimos 21 días
+      if (list.length === 0) {
+        const dias = [];
+        for (let i = 0; i < 21; i++) {
+          const d = new Date(hoy);
+          d.setDate(d.getDate() - i);
+          dias.push(
+            `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+          );
+        }
+        list = [...dias]; // todavía sin filtrar
+      }
 
-      // Preferencia: conservarla solo si realmente tiene pendientes
+      // 3) QUITAR días YA cerrados (fuente de verdad)
+      try {
+        const setCerrados = await diasYaCerrados(van_id, list);
+        if (setCerrados.size) list = list.filter((f) => !setCerrados.has(f));
+      } catch {
+        /* noop */
+      }
+
+      // 4) Re-conteo real y QUITAR días con TOTAL==0 (aunque el RPC los haya devuelto)
+      const entradas = await Promise.all(
+        list.map(async (f) => [f, await contarPorFecha(van_id, f)])
+      );
+      list = entradas
+        .filter(([, c]) => (c?.total || 0) > 0)
+        .map(([f]) => f);
+
+      // 5) Respetar preferencia solo si aún tiene pendientes
       try {
         const pref = localStorage.getItem("pre_cierre_fecha");
         if (pref && !list.includes(pref)) {
@@ -177,22 +180,12 @@ function useFechasPendientes(van_id) {
         /* noop */
       }
 
-      // Quitar el último día cerrado (optimista, desde localStorage)
+      // 6) Quitar "último cerrado" guardado al volver del cierre
       try {
         const lastClosed = localStorage.getItem("pre_cierre_last_closed");
         if (lastClosed) {
           list = list.filter((f) => f !== lastClosed);
           localStorage.removeItem("pre_cierre_last_closed");
-        }
-      } catch {
-        /* noop */
-      }
-
-      // Quitar días que YA tengan un cierre registrado (fuente de verdad)
-      try {
-        const setCerrados = await diasYaCerrados(van_id, list);
-        if (setCerrados.size > 0) {
-          list = list.filter((f) => !setCerrados.has(f));
         }
       } catch {
         /* noop */
@@ -213,20 +206,17 @@ export default function PreCierreVan() {
   const fechas = useFechasPendientes(van?.id);
 
   const [seleccion, setSeleccion] = useState("");
-  const [cargando, setCargando] = useState(false);
   const [conteos, setConteos] = useState({}); // { 'YYYY-MM-DD': {ventas, pagos, total} }
 
-  // Prefetch de conteos para las fechas listadas
+  // Prefetch conteos (para panel derecho)
   useEffect(() => {
     if (!van?.id || fechas.length === 0) return;
     let cancel = false;
-
     (async () => {
-      const pendientes = fechas.filter((f) => !conteos[f]);
-      if (pendientes.length === 0) return;
-
+      const faltantes = fechas.filter((f) => !conteos[f]);
+      if (faltantes.length === 0) return;
       const entradas = await Promise.all(
-        pendientes.map(async (f) => [f, await contarPorFecha(van.id, f)])
+        faltantes.map(async (f) => [f, await contarPorFecha(van.id, f)])
       );
       if (!cancel) {
         setConteos((prev) => {
@@ -236,19 +226,18 @@ export default function PreCierreVan() {
         });
       }
     })();
-
     return () => {
       cancel = true;
     };
   }, [van?.id, fechas, conteos]);
 
-  // Filtrar definitivamente las fechas con total > 0 (si aún no hay conteo, la dejamos)
-  const fechasVisibles = useMemo(() => {
-    if (!fechas?.length) return [];
-    return fechas.filter((f) => (conteos[f]?.total ?? 1) > 0);
-  }, [fechas, conteos]);
+  // Asegurar que NO se muestre nada con total 0 (si por alguna razón entró)
+  const fechasVisibles = useMemo(
+    () => fechas.filter((f) => (conteos[f]?.total ?? 1) > 0),
+    [fechas, conteos]
+  );
 
-  // Selección inicial (respeta preferencia, cae al primer visible)
+  // Selección inicial
   useEffect(() => {
     if (fechasVisibles.length === 0) {
       setSeleccion("");
@@ -262,7 +251,7 @@ export default function PreCierreVan() {
     else setSeleccion(fechasVisibles[0]);
   }, [fechasVisibles]);
 
-  // Si el seleccionado deja de estar visible (porque total quedó 0), mover la selección
+  // Si el seleccionado deja de estar visible
   useEffect(() => {
     if (seleccion && !fechasVisibles.includes(seleccion)) {
       setSeleccion(fechasVisibles[0] || "");
@@ -270,16 +259,16 @@ export default function PreCierreVan() {
   }, [fechasVisibles, seleccion]);
 
   const hoy = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const puedeProcesar = Boolean(seleccion) && (conteos[seleccion]?.total ?? 0) > 0;
+  const puedeProcesar =
+    Boolean(seleccion) && (conteos[seleccion]?.total ?? 0) > 0;
 
   const onProcesar = async () => {
-    if (!puedeProcesar || cargando) return;
+    if (!puedeProcesar) return;
     try {
       localStorage.setItem("pre_cierre_fecha", seleccion);
-      // Optimista: marcamos como “último cerrado” para que desaparezca al volver
-      localStorage.setItem("pre_cierre_last_closed", seleccion);
+      localStorage.setItem("pre_cierre_last_closed", seleccion); // optimista
     } catch {}
-    navigate("/cierres/van"); // Ruta del cierre real
+    navigate("/cierres/van");
   };
 
   return (
@@ -297,7 +286,7 @@ export default function PreCierreVan() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Lista de fechas */}
+          {/* Lista */}
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -322,9 +311,7 @@ export default function PreCierreVan() {
                       }`}
                       onClick={() => {
                         setSeleccion(f);
-                        try {
-                          localStorage.setItem("pre_cierre_fecha", f);
-                        } catch {}
+                        try { localStorage.setItem("pre_cierre_fecha", f); } catch {}
                       }}
                     >
                       <td className="p-2">
@@ -347,15 +334,9 @@ export default function PreCierreVan() {
               <b>Selected:</b> {seleccion ? formatUS(seleccion) : "—"}
             </div>
             <div className="text-sm space-y-1 mb-3">
-              <div>
-                <b>Sales pending:</b> {conteos[seleccion]?.ventas ?? 0}
-              </div>
-              <div>
-                <b>Payments pending:</b> {conteos[seleccion]?.pagos ?? 0}
-              </div>
-              <div>
-                <b>Total movements:</b> {conteos[seleccion]?.total ?? 0}
-              </div>
+              <div><b>Sales pending:</b> {conteos[seleccion]?.ventas ?? 0}</div>
+              <div><b>Payments pending:</b> {conteos[seleccion]?.pagos ?? 0}</div>
+              <div><b>Total movements:</b> {conteos[seleccion]?.total ?? 0}</div>
             </div>
             <div className="flex gap-2">
               <button
@@ -368,7 +349,7 @@ export default function PreCierreVan() {
               <button
                 type="button"
                 className="bg-blue-700 text-white px-4 py-2 rounded font-bold disabled:opacity-50"
-                disabled={!puedeProcesar || cargando}
+                disabled={!puedeProcesar}
                 onClick={onProcesar}
               >
                 Process
