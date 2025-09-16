@@ -15,7 +15,10 @@
   <div id="root" class="max-w-7xl mx-auto p-4"></div>
 
   <script type="text/babel">
-    const API = 'http://127.0.0.1:8000';
+  // 👇 Lee ?api= de la URL o usa tu túnel actual como fallback
+  const API = new URLSearchParams(location.search).get('api')
+    || 'https://nominations-himself-broadband-speeches.trycloudflare.com';
+
 
 
     const currency = (n) =>
@@ -143,167 +146,168 @@
       );
     }
 
+    // Helpers para WhatsApp
+    const normalizePhone = (raw) => {
+      if (!raw) return "";
+      const digits = String(raw).replace(/\D/g, "");
+      if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`; // US con 1
+      if (digits.length === 10) return `+1${digits}`; // asume US si 10 dígitos
+      return digits.startsWith("+") ? digits : `+${digits}`;
+    };
+    const openWhatsAppWith = (telefono, texto) => {
+      const to = normalizePhone(telefono);
+      if (!to) { alert("Este cliente no tiene teléfono válido."); return; }
+      const url = `https://wa.me/${to.replace("+","")}?text=${encodeURIComponent(texto || "")}`;
+      window.open(url, "_blank");
+    };
+
     function DetalleCliente({ cliente, onClose }) {
-  const { data: detalle, loading, error, run } = useFetch();
-  const { data: recData, run: runRec } = useFetch();
-  const [mensaje, setMensaje] = React.useState("");
+      const { data: detalle, loading, error, run } = useFetch();
+      const { data: recData, run: runRec } = useFetch();
+      const [mensaje, setMensaje] = React.useState("");
 
-  React.useEffect(()=>{
-    if (cliente?.cliente_id) {
-      run(`${API}/cxc/clientes/${cliente.cliente_id}/pendientes`);
-      // limpiamos posibles mensajes anteriores
-      setMensaje("");
-    }
-  }, [cliente?.cliente_id]);
+      React.useEffect(()=>{
+        if (cliente?.cliente_id) {
+          run(`${API}/cxc/clientes/${cliente.cliente_id}/pendientes`);
+          setMensaje("");
+        }
+      }, [cliente?.cliente_id]);
 
-  const enviarRecordatorio = async () => {
-    await runRec(`${API}/cxc/clientes/${cliente.cliente_id}/recordatorio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}) // puedes pasar { plantilla: "Hola {cliente}..." } si quieres personalizar
-    });
-  };
+      const generarSugerencia = async () => {
+        await runRec(`${API}/cxc/clientes/${cliente.cliente_id}/recordatorio`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}) // opcional: { plantilla: "Hi {cliente}, ..." }
+        });
+      };
 
-  // cada vez que llegue el payload del backend, precargamos el textarea
-  React.useEffect(()=>{
-    if (recData?.mensaje_sugerido) {
-      setMensaje(recData.mensaje_sugerido);
-    }
-  }, [recData]);
+      React.useEffect(()=>{
+        if (recData?.mensaje_sugerido) setMensaje(recData.mensaje_sugerido);
+      }, [recData]);
 
-  const copyToClipboard = async () => {
-    try {
-      await navigator.clipboard.writeText(mensaje || "");
-      alert("Mensaje copiado al portapapeles ✅");
-    } catch {
-      alert("No pude copiar automáticamente. Selecciona y copia el texto manualmente.");
-    }
-  };
+      const copyToClipboard = async () => {
+        try {
+          await navigator.clipboard.writeText(mensaje || "");
+          alert("Message copied ✅");
+        } catch {
+          alert("Couldn't copy automatically. Please select and copy manually.");
+        }
+      };
 
-  const toPlainPhone = (t) => (t || "").replace(/[^\d]/g, "");
-  const openWhatsApp = () => {
-    const phone = toPlainPhone(recData?.telefono);
-    if (!phone) { alert("Este cliente no tiene teléfono válido."); return; }
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(mensaje || "")}`;
-    window.open(url, "_blank");
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/30 flex items-end md:items-center justify-center p-3 z-50">
-      <div className="bg-white w-full md:max-w-3xl rounded-2xl shadow-lg">
-        <div className="p-4 border-b flex items-center justify-between">
-          <div>
-            <div className="font-bold text-lg">{cliente.cliente}</div>
-            <div className="text-sm text-slate-500">{cliente.telefono || 'Sin teléfono'}</div>
-          </div>
-          <button onClick={onClose} className="text-slate-600 hover:text-slate-900">✕</button>
-        </div>
-
-        <div className="p-4 space-y-4">
-          {/* Detalle de facturas */}
-          <div>
-            {loading && <div className="text-sm text-slate-500">Cargando detalle…</div>}
-            {error && <div className="text-sm text-red-600">Error: {error}</div>}
-            {!loading && !error && (
-              <div className="overflow-auto rounded border">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-100">
-                    <tr>
-                      <th className="text-left p-2">Factura</th>
-                      <th className="text-left p-2">Fecha</th>
-                      <th className="text-right p-2">Pendiente</th>
-                      <th className="text-right p-2">Días</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detalle?.map((d) => (
-                      <tr key={d.numero_factura} className="border-t">
-                        <td className="p-2">{d.numero_factura}</td>
-                        <td className="p-2">{d.fecha?.slice(0,10)}</td>
-                        <td className="p-2 text-right">
-                          {new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(d.pendiente||0)}
-                        </td>
-                        <td className="p-2 text-right">{d.dias}</td>
-                      </tr>
-                    ))}
-                    {(!detalle || detalle.length===0) && (
-                      <tr><td colSpan="4" className="p-3 text-center text-slate-500">Sin pendientes</td></tr>
-                    )}
-                  </tbody>
-                </table>
+      return (
+        <div className="fixed inset-0 bg-black/30 flex items-end md:items-center justify-center p-3 z-50">
+          <div className="bg-white w-full md:max-w-3xl rounded-2xl shadow-lg">
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <div className="font-bold text-lg">{cliente.cliente}</div>
+                <div className="text-sm text-slate-500">{cliente.telefono || 'No phone'}</div>
               </div>
-            )}
-          </div>
-
-          {/* Zona de recordatorio */}
-          <div className="border rounded-xl p-3 bg-slate-50">
-            <div className="flex items-center justify-between mb-2">
-              <div className="font-semibold">Mensaje de recordatorio</div>
-              {!recData && (
-                <button
-                  onClick={enviarRecordatorio}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm"
-                >
-                  Generar sugerencia
-                </button>
-              )}
+              <button onClick={onClose} className="text-slate-600 hover:text-slate-900">✕</button>
             </div>
 
-            {/* Si ya tenemos el payload del backend, mostramos textarea + acciones */}
-            {recData && (
-              <>
-                <textarea
-                  className="w-full border rounded-lg p-2 text-sm h-28"
-                  value={mensaje}
-                  onChange={e=>setMensaje(e.target.value)}
-                />
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button onClick={copyToClipboard}
-                          className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">
-                    Copiar
-                  </button>
-                  <button onClick={openWhatsApp}
-                          className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm">
-                    WhatsApp
-                  </button>
-                </div>
-                <div className="mt-2 text-xs text-slate-500">
-                  Total: {new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'})
-                    .format(recData?.saldo_total||0)} • Tel: {recData?.telefono || '—'}
-                </div>
-              </>
-            )}
-
-            {!recData && (
-              <div className="text-xs text-slate-500">
-                Pulsa “Generar sugerencia” para crear el texto con el total y el detalle.
+            <div className="p-4 space-y-4">
+              {/* Detalle de facturas */}
+              <div>
+                {loading && <div className="text-sm text-slate-500">Loading detail…</div>}
+                {error && <div className="text-sm text-red-600">Error: {error}</div>}
+                {!loading && !error && (
+                  <div className="overflow-auto rounded border">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-100">
+                        <tr>
+                          <th className="text-left p-2">Factura</th>
+                          <th className="text-left p-2">Fecha</th>
+                          <th className="text-right p-2">Pendiente</th>
+                          <th className="text-right p-2">Días</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detalle?.map((d) => (
+                          <tr key={d.numero_factura} className="border-t">
+                            <td className="p-2">{d.numero_factura}</td>
+                            <td className="p-2">{d.fecha?.slice(0,10)}</td>
+                            <td className="p-2 text-right">
+                              {new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(d.pendiente||0)}
+                            </td>
+                            <td className="p-2 text-right">{d.dias}</td>
+                          </tr>
+                        ))}
+                        {(!detalle || detalle.length===0) && (
+                          <tr><td colSpan="4" className="p-3 text-center text-slate-500">Sin pendientes</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* Botonera inferior */}
-          <div className="flex gap-2 justify-end">
-            {!recData && (
-              <button
-                onClick={enviarRecordatorio}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"
-              >
-                Generar recordatorio
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded-lg"
-            >
-              Cerrar
-            </button>
+              {/* Zona de recordatorio */}
+              <div className="border rounded-xl p-3 bg-slate-50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold">Reminder message</div>
+                  {!recData && (
+                    <button
+                      onClick={generarSugerencia}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm"
+                    >
+                      Generate suggestion
+                    </button>
+                  )}
+                </div>
+
+                {recData && (
+                  <>
+                    <textarea
+                      className="w-full border rounded-lg p-2 text-sm h-28"
+                      value={mensaje}
+                      onChange={e=>setMensaje(e.target.value)}
+                    />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button onClick={copyToClipboard}
+                              className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">
+                        Copy
+                      </button>
+                      <button onClick={() => openWhatsAppWith(recData?.telefono, mensaje)}
+                              className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm">
+                        WhatsApp
+                      </button>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">
+                      Total: {new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'})
+                        .format(recData?.saldo_total||0)} • Tel: {recData?.telefono || '—'}
+                    </div>
+                  </>
+                )}
+
+                {!recData && (
+                  <div className="text-xs text-slate-500">
+                    Click “Generate suggestion” to create the message with the total and detail.
+                  </div>
+                )}
+              </div>
+
+              {/* Botonera inferior */}
+              <div className="flex gap-2 justify-end">
+                {!recData && (
+                  <button
+                    onClick={generarSugerencia}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"
+                  >
+                    Generate reminder
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded-lg"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
+      );
+    }
 
     function App() {
       const [minSaldo, setMinSaldo] = React.useState(0.05);
