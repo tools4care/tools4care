@@ -7,10 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-
 import psycopg
 from psycopg.rows import dict_row
-
 from dotenv import load_dotenv
 
 # --- Cargar variables de entorno (.env) ---
@@ -42,7 +40,7 @@ app = FastAPI(title="CxC Reporting API", version="1.0")
 # --- CORS para permitir llamadas desde el mini frontend ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],      # en producción reemplaza con tu dominio
+    allow_origins=["*"],  # en producción reemplaza con tu dominio
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -67,7 +65,7 @@ def health():
             status_code=500,
         )
 
-# -------------- ENDPOINTS --------------
+# ---------------- ENDPOINTS ----------------
 
 @app.get("/cxc/resumen")
 def cxc_resumen(
@@ -104,19 +102,18 @@ def cxc_aging(
 @app.get("/cxc/clientes/{cliente_id}/pendientes")
 def cxc_pendientes_cliente(cliente_id: str):
     """
-    Detalle de facturas pendientes por cliente (usando la vista).
+    Detalle de facturas pendientes por cliente (usando la vista disponible).
     """
     sql = """
-  SELECT
-    numero_factura,
-    fecha::date AS fecha,
-    pendiente,
-    dias
-  FROM reporting.v_cxc_pendientes_detalle
-  WHERE cliente_id = %s
-  ORDER BY fecha
-"""
-
+      SELECT
+        numero_factura,
+        fecha::date AS fecha,
+        pendiente,
+        dias
+      FROM reporting.v_cxc_pendientes_detalle
+      WHERE cliente_id = %s
+      ORDER BY fecha
+    """
     try:
         return q(sql, (cliente_id,))
     except Exception as e:
@@ -135,8 +132,50 @@ def cxc_top(limit: int = Query(10, ge=1, le=1000)):
     except Exception as e:
         raise HTTPException(500, f"Error consultando top: {e}")
 
+# -------- Recordatorio / Mensaje sugerido --------
+
 class RecordatorioReq(BaseModel):
     plantilla: Optional[str] = None  # permite personalizar el mensaje
+
+def _armar_mensaje(cliente: str, total: float, plantilla: Optional[str]) -> str:
+    if plantilla:
+        # You can use {cliente} and {total} placeholders in the template
+        return plantilla.format(cliente=cliente, total=total)
+    # Default (English)
+    return (
+        f"Hi {cliente}, we show an outstanding balance of ${total:.2f}. "
+        f"Can we help you settle it today?"
+    )
+
+
+
+@app.get("/cxc/clientes/{cliente_id}/mensaje")
+def cxc_mensaje_sugerido(cliente_id: str, plantilla: Optional[str] = None):
+    """
+    Genera SOLO el texto del recordatorio (sin el detalle).
+    Útil para previsualizar/cambiar la plantilla.
+    """
+    info_sql = """
+      SELECT cliente, saldo_cliente
+      FROM reporting.v_cxc_resumen_clientes
+      WHERE cliente_id = %s
+    """
+    try:
+        info = q(info_sql, (cliente_id,))
+        if not info:
+            raise HTTPException(404, "Cliente no encontrado o sin saldo.")
+
+        cliente = info[0]["cliente"]
+        total = float(info[0]["saldo_cliente"])
+        return {
+            "cliente": cliente,
+            "saldo_total": total,
+            "mensaje_sugerido": _armar_mensaje(cliente, total, plantilla),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Error generando mensaje: {e}")
 
 @app.post("/cxc/clientes/{cliente_id}/recordatorio")
 def cxc_recordatorio(cliente_id: str, body: RecordatorioReq):
@@ -162,23 +201,19 @@ def cxc_recordatorio(cliente_id: str, body: RecordatorioReq):
         detalle = q(det_sql, (cliente_id,))
         cliente = info[0]["cliente"]
         telefono = info[0]["telefono"]
-        total = info[0]["saldo_cliente"]
+        total = float(info[0]["saldo_cliente"])
 
-        if body and body.plantilla:
-            msg = body.plantilla.format(cliente=cliente, total=total)
-        else:
-            msg = (
-                f"Hola {cliente}, tenemos registrado un saldo pendiente de ${total}. "
-                f"¿Podemos ayudarle a regularizarlo hoy?"
-            )
+        msg = _armar_mensaje(cliente, total, body.plantilla if body else None)
 
-        return JSONResponse({
+        payload = {
             "cliente": cliente,
             "telefono": telefono,
-            "saldo_total": float(total),
+            "saldo_total": total,
             "mensaje_sugerido": msg,
             "detalle": detalle,
-        })
+        }
+        # Devolvemos dict directo (JSON estándar)
+        return payload
 
     except HTTPException:
         raise
