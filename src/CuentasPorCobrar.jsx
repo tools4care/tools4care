@@ -5,13 +5,195 @@ import { supabase } from "./supabaseClient";
 const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = "#cxcadmin2025"; // cambia el código si quieres
 
+/* ====================== Helpers NUEVOS (no rompen nada) ====================== */
+function currency(n) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n || 0));
+}
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 }
+function useFetch(initialUrl = null, initialData = null) {
+  const [data, setData] = useState(initialData);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
+  const run = async (url, options) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(url, options);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setData(json);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { if (initialUrl) run(initialUrl); }, [initialUrl]);
+  return { data, loading, error, run, setData };
+}
+const normalizePhone = (raw) => {
+  if (!raw) return "";
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`; // US con 1
+  if (digits.length === 10) return `+1${digits}`; // asume US si 10 dígitos
+  return digits.startsWith("+") ? digits : `+${digits}`;
+};
+const openWhatsAppWith = (telefono, texto) => {
+  const to = normalizePhone(telefono);
+  if (!to) { alert("Este cliente no tiene teléfono válido."); return; }
+  const url = `https://wa.me/${to.replace("+","")}?text=${encodeURIComponent(texto || "")}`;
+  window.open(url, "_blank");
+};
+
+/* ====================== Modal Detalle + Recordatorio (API) ====================== */
+function DetalleClienteModal({ api, cliente, onClose }) {
+  const { data: detalle, loading, error, run } = useFetch();
+  const { data: recData, run: runRec } = useFetch();
+  const [mensaje, setMensaje] = useState("");
+
+  useEffect(() => {
+    if (cliente?.cliente_id) {
+      run(`${api}/cxc/clientes/${cliente.cliente_id}/pendientes`);
+      setMensaje("");
+    }
+  }, [cliente?.cliente_id]);
+
+  const generarSugerencia = async () => {
+    await runRec(`${api}/cxc/clientes/${cliente.cliente_id}/recordatorio`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}) // podrías pasar { plantilla: "Hi {cliente}, ..." }
+    });
+  };
+
+  useEffect(() => {
+    if (recData?.mensaje_sugerido) setMensaje(recData.mensaje_sugerido);
+  }, [recData]);
+
+  const copyToClipboard = async () => {
+    try { await navigator.clipboard.writeText(mensaje || ""); alert("Message copied ✅"); }
+    catch { alert("No se pudo copiar automáticamente."); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end md:items-center justify-center p-3">
+      <div className="bg-white w-full md:max-w-3xl rounded-2xl shadow-lg">
+        <div className="p-4 border-b flex items-center justify-between">
+          <div>
+            <div className="font-bold text-lg">{cliente?.cliente_nombre || cliente?.cliente}</div>
+            {recData?.telefono && <div className="text-sm text-slate-500">{recData.telefono}</div>}
+          </div>
+          <button onClick={onClose} className="text-slate-600 hover:text-slate-900">✕</button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Detalle de facturas */}
+          <div>
+            {loading && <div className="text-sm text-slate-500">Cargando detalle…</div>}
+            {error && <div className="text-sm text-red-600">Error: {error}</div>}
+            {!loading && !error && (
+              <div className="overflow-auto rounded border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-100">
+                    <tr>
+                      <th className="text-left p-2">Factura</th>
+                      <th className="text-left p-2">Fecha</th>
+                      <th className="text-right p-2">Pendiente</th>
+                      <th className="text-right p-2">Días</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalle?.map((d) => (
+                      <tr key={d.numero_factura} className="border-t">
+                        <td className="p-2">{d.numero_factura}</td>
+                        <td className="p-2">{d.fecha?.slice?.(0,10)}</td>
+                        <td className="p-2 text-right">{currency(d.pendiente)}</td>
+                        <td className="p-2 text-right">{d.dias}</td>
+                      </tr>
+                    ))}
+                    {(!detalle || detalle.length === 0) && (
+                      <tr><td colSpan="4" className="p-3 text-center text-slate-500">Sin pendientes</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Zona de recordatorio */}
+          <div className="border rounded-xl p-3 bg-slate-50">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold">Mensaje de recordatorio</div>
+              {!recData && (
+                <button
+                  onClick={generarSugerencia}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm"
+                >
+                  Generar sugerencia
+                </button>
+              )}
+            </div>
+
+            {recData && (
+              <>
+                <textarea
+                  className="w-full border rounded-lg p-2 text-sm h-28"
+                  value={mensaje}
+                  onChange={e=>setMensaje(e.target.value)}
+                />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button onClick={copyToClipboard}
+                          className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">
+                    Copiar
+                  </button>
+                  <button onClick={() => openWhatsAppWith(recData?.telefono, mensaje)}
+                          className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm">
+                    WhatsApp
+                  </button>
+                </div>
+                <div className="mt-2 text-xs text-slate-500">
+                  Total: {currency(recData?.saldo_total || 0)} • Tel: {recData?.telefono || "—"}
+                </div>
+              </>
+            )}
+
+            {!recData && (
+              <div className="text-xs text-slate-500">
+                Haz clic en “Generar sugerencia” para crear el mensaje con el total y el detalle.
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2 justify-end">
+            {!recData && (
+              <button
+                onClick={generarSugerencia}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"
+              >
+                Generar recordatorio
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded-lg"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ====================== Página principal (tu código + integración) ====================== */
 export default function CuentasPorCobrar() {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState([]);
@@ -41,6 +223,13 @@ export default function CuentasPorCobrar() {
     manual: null,
     input: "",
   });
+
+  // ------- NUEVO: modal de detalle/recordatorio (API) -------
+  const apiBase = "http://127.0.0.1:8000";
+
+
+  const [selected, setSelected] = useState(null); // {cliente_id, cliente_nombre, ...}
+  const [openReminder, setOpenReminder] = useState(false);
 
   function tryUnlockBySecret(value) {
     const typed = (value || "").trim();
@@ -93,11 +282,11 @@ export default function CuentasPorCobrar() {
       setLoading(true);
       try {
         let query = supabase
-  .from("v_cxc_cliente_detalle_ext")
-    .select(
-      "cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual",
-      { count: "exact" }
-    );
+          .from("v_cxc_cliente_detalle_ext")
+          .select(
+            "cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual",
+            { count: "exact" }
+          );
 
         if (q?.trim()) {
           query = query.ilike("cliente_nombre", `%${q.trim()}%`);
@@ -135,9 +324,7 @@ export default function CuentasPorCobrar() {
       }
     }
     load();
-    return () => {
-      ignore = true;
-    };
+    return () => { ignore = true; };
     // NUEVO: depende de reloadTick para forzar recarga cuando guardamos
   }, [q, page, pageSize, scoreFilter, reloadTick]);
 
@@ -215,9 +402,7 @@ export default function CuentasPorCobrar() {
             className="border rounded-lg px-2 py-1"
           >
             {[10, 25, 50, 100].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
+              <option key={n} value={n}>{n}</option>
             ))}
           </select>
           <button
@@ -255,19 +440,20 @@ export default function CuentasPorCobrar() {
               <th className="text-center px-4 py-3 text-xs font-semibold text-gray-600">Score base</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-gray-600">Límite (política)</th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-gray-600">Crédito disp.</th>
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {loading && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                   Cargando…
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                   Sin resultados
                 </td>
               </tr>
@@ -302,6 +488,16 @@ export default function CuentasPorCobrar() {
                   <td className="px-4 py-3 text-right font-semibold text-emerald-600">
                     {fmt(r.credito_disponible)}
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    {/* NUEVO: botón que abre modal de recordatorio (API) */}
+                    <button
+                      className="text-xs px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                      onClick={() => { setSelected(r); setOpenReminder(true); }}
+                      title="Detalle y recordatorio (API)"
+                    >
+                      Recordatorio
+                    </button>
+                  </td>
                 </tr>
               ))}
           </tbody>
@@ -329,7 +525,7 @@ export default function CuentasPorCobrar() {
         </button>
       </div>
 
-      {/* NUEVO: Modal de edición de límite */}
+      {/* Modal de edición de límite (tu lógica existente) */}
       {edit.open && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
@@ -395,6 +591,15 @@ export default function CuentasPorCobrar() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* NUEVO: Modal de detalle + recordatorio (API) */}
+      {openReminder && selected && (
+        <DetalleClienteModal
+          api={apiBase}
+          cliente={selected}
+          onClose={() => { setOpenReminder(false); setSelected(null); }}
+        />
       )}
     </div>
   );
