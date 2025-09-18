@@ -324,14 +324,13 @@ async function getStockMapForVan(vanId, ids = []) {
 }
 
 /* ===== CxC helpers: lectura + suscripción a limite_manual ===== */
+/* ===== CxC helpers: lectura + suscripción a limite_manual ===== */
 async function getCxcCliente(clienteId) {
   if (!clienteId) return null;
 
-  // 1) Intento: vista oficial (traigo todo por compatibilidad con diferentes esquemas)
   let saldo = 0;
   let limitePolitica = 0;
   let limiteManual = null;
-  let disponibleVista = null;
 
   try {
     const { data } = await supabase
@@ -342,19 +341,15 @@ async function getCxcCliente(clienteId) {
 
     if (data) {
       saldo = Number(data.saldo ?? data.balance ?? 0);
-      // Algunas vistas lo exponen como limite, otras como limite_politica
       limitePolitica = Number(
         data.limite_politica ?? data.limite ?? data.credit_limit ?? 0
       );
-      // Si la vista no trae limite_manual, lo busco abajo
       limiteManual = data.limite_manual != null ? Number(data.limite_manual) : null;
-      disponibleVista = data.credito_disponible != null ? Number(data.credito_disponible) : null;
     }
   } catch (e) {
-    // noop: pasamos al fallback
+    console.warn("Error loading CxC data:", e.message || e);
   }
 
-  // 2) Fallback para limite_manual directo desde clientes
   if (limiteManual == null) {
     try {
       const { data: cli } = await supabase
@@ -371,27 +366,42 @@ async function getCxcCliente(clienteId) {
       ? limiteManual
       : limitePolitica;
 
-  const disponibleCalc = Math.max(0, limite - Math.max(0, saldo));
-  const disponible = Number.isFinite(disponibleVista) ? disponibleVista : disponibleCalc;
+  // ✅ Siempre calcular disponible en base a limite y saldo
+  const disponible = Math.max(0, limite - Math.max(0, saldo));
 
   return { saldo, limite, limitePolitica, limiteManual, disponible };
 }
-function subscribeClienteLimiteManual(clienteId, onChange) {
+
+function subscribeClienteCxC(clienteId, onChange) {
   if (!clienteId) return { unsubscribe() {} };
-  const channel = supabase
-    .channel(`cxc-limite-manual-${clienteId}`)
-    .on(
+
+  const tables = [
+    { table: "clientes", event: "UPDATE" },
+    { table: "cxc_movimientos", event: "*" },
+    { table: "ventas", event: "*" },
+    { table: "pagos", event: "*" },
+  ];
+
+  const channels = tables.map(({ table, event }) =>
+    supabase.channel(`cxc-${table}-${clienteId}`).on(
       "postgres_changes",
-      { event: "UPDATE", schema: "public", table: "clientes", filter: `id=eq.${clienteId}` },
+      { event, schema: "public", table, filter: `cliente_id=eq.${clienteId}` },
       () => onChange?.()
-    )
-    .subscribe();
+    ).subscribe()
+  );
+
   return {
     unsubscribe() {
-      try { supabase.removeChannel(channel); } catch {}
+      try {
+        channels.forEach(ch => supabase.removeChannel(ch));
+      } catch (err) {
+        console.warn("Error unsubscribing:", err.message || err);
+      }
     },
   };
 }
+
+
 
 /* === Last activity (read-only) === */
 async function tryMaxDate(table, cols, clienteId) {
@@ -588,46 +598,47 @@ export default function Sales() {
   }, [selectedClient?.id]);
 
   /* ---------- Traer límite/disponible/saldo (con auto refresh + realtime) ---------- */
-  useEffect(() => {
-    let disposed = false;
-    let sub = null;
-    let timer = null;
+useEffect(() => {
+  let disposed = false;
+  let sub = null;
+  let timer = null;
 
-    async function refreshCxC() {
-      const id = selectedClient?.id;
-      if (!id) {
-        setCxcLimit(null);
-        setCxcAvailable(null);
-        setCxcBalance(null);
-        return;
-      }
-      const info = await getCxcCliente(id);
-      if (disposed || !info) return;
-      setCxcLimit(info.limite);
-      setCxcAvailable(info.disponible);
-      setCxcBalance(info.saldo);
+  async function refreshCxC() {
+    const id = selectedClient?.id;
+    if (!id) {
+      setCxcLimit(null);
+      setCxcAvailable(null);
+      setCxcBalance(null);
+      return;
     }
+    const info = await getCxcCliente(id);
+    if (disposed || !info) return;
+    setCxcLimit(info.limite);
+    setCxcAvailable(info.disponible);
+    setCxcBalance(info.saldo);
+  }
 
-    function onFocus() { refreshCxC(); }
-    function onVisible() { if (!document.hidden) refreshCxC(); }
+  function onFocus() { refreshCxC(); }
+  function onVisible() { if (!document.hidden) refreshCxC(); }
 
-    refreshCxC();
+  refreshCxC();
 
-    if (selectedClient?.id) {
-      sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
-      window.addEventListener("focus", onFocus);
-      document.addEventListener("visibilitychange", onVisible);
-      timer = setInterval(refreshCxC, 20000);
-    }
+  if (selectedClient?.id) {
+    sub = subscribeClienteCxC(selectedClient.id, refreshCxC);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    timer = setInterval(refreshCxC, 20000);
+  }
 
-    return () => {
-      disposed = true;
-      sub?.unsubscribe?.();
-      if (timer) clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [selectedClient?.id]);
+  return () => {
+    disposed = true;
+    sub?.unsubscribe?.();
+    if (timer) clearInterval(timer);
+    window.removeEventListener("focus", onFocus);
+    document.removeEventListener("visibilitychange", onVisible);
+  };
+}, [selectedClient?.id]);
+
 
   /* ========== TOP productos (si falta code/brand/price los enriquezco desde catálogo) ========== */
 
