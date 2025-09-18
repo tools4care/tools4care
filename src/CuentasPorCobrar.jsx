@@ -5,7 +5,7 @@ import { supabase } from "./supabaseClient";
 const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = "#cxcadmin2025"; // cambia el código si quieres
 
-/* ====================== Helpers NUEVOS (no rompen nada) ====================== */
+/* ====================== Helpers ====================== */
 function currency(n) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n || 0));
 }
@@ -52,29 +52,117 @@ const openWhatsAppWith = (telefono, texto) => {
   window.open(url, "_blank");
 };
 
+/* ========= base del API para /reminder ========= */
+const CXC_API_BASE = import.meta.env?.VITE_CXC_API_BASE || "https://cxc-api.onrender.com";
+
+/* ========= helper para llamar /reminder ========= */
+async function makeReminderAPI({ base = CXC_API_BASE, payload, signal }) {
+  const res = await fetch(`${base}/reminder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.detail || "API error");
+  return json.message; // backend devuelve { ok, message }
+}
+
 /* ====================== Modal Detalle + Recordatorio (API) ====================== */
 function DetalleClienteModal({ api, cliente, onClose }) {
   const { data: detalle, loading, error, run } = useFetch();
-  const { data: recData, run: runRec } = useFetch();
+  const { data: recData, run: runRec, setData: setRecData } = useFetch();
   const [mensaje, setMensaje] = useState("");
+
+  // NUEVO: idioma, tono, teléfono
+  const [lang, setLang] = useState("en");                  // "en" | "es"
+  const [tone, setTone] = useState("professional");        // "professional" | "friendly" | "short"
+  const [tel, setTel]   = useState("");
 
   useEffect(() => {
     if (cliente?.cliente_id) {
-      run(`${api}/cxc/clientes/${cliente.cliente_id}/pendientes`);
+      if (api && api.includes("/cxc")) {
+        run(`${api}/cxc/clientes/${cliente.cliente_id}/pendientes`);
+      }
       setMensaje("");
     }
+  }, [cliente?.cliente_id, api]);
+
+  // NUEVO: traer teléfono desde Supabase (con fallback al dato del row)
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      if (!cliente?.cliente_id) { setTel(cliente?.telefono || ""); return; }
+      try {
+        const { data } = await supabase
+          .from("clientes")
+          .select("telefono")
+          .eq("id", cliente.cliente_id)
+          .maybeSingle();
+        if (!ignore) setTel(data?.telefono || cliente?.telefono || "");
+      } catch {
+        if (!ignore) setTel(cliente?.telefono || "");
+      }
+    })();
+    return () => { ignore = true; };
   }, [cliente?.cliente_id]);
 
   const generarSugerencia = async () => {
-    await runRec(`${api}/cxc/clientes/${cliente.cliente_id}/recordatorio`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}) // podrías pasar { plantilla: "Hi {cliente}, ..." }
-    });
+    try {
+      // 1) Datos base
+      const nombre =
+        cliente?.cliente_nombre ||
+        cliente?.cliente ||
+        "Cliente";
+      const saldoRow = Number(cliente?.saldo || 0);
+
+      const totalCxc =
+        Array.isArray(detalle) && detalle.length > 0
+          ? detalle.reduce((t, d) => t + Number(d?.pendiente || 0), 0)
+          : saldoRow;
+
+      const limite = Number(
+        cliente?.limite_manual != null
+          ? cliente?.limite_manual
+          : cliente?.limite_politica || 0
+      );
+
+      const disponible = Number(
+        cliente?.credito_disponible != null
+          ? cliente?.credito_disponible
+          : Math.max(0, limite - Math.max(0, saldoRow))
+      );
+
+      const payload = {
+        cliente: nombre,
+        saldo: saldoRow,
+        limite,
+        disponible,
+        total_cxc: Number(totalCxc),
+        lang,   // 👈 idioma
+        tone,   // 👈 tono
+      };
+
+      // 2) Llamada a /reminder
+      const msg = await makeReminderAPI({ base: CXC_API_BASE, payload });
+      setMensaje(msg);
+
+      // 3) Mantener compatibilidad con tu UI previa
+      setRecData({
+        message: msg,                    // soporta nueva clave
+        mensaje_sugerido: msg,           // compatibilidad con la vieja
+        telefono: tel || cliente?.telefono || null,
+        saldo_total: totalCxc,
+      });
+    } catch (e) {
+      alert("Error generando la sugerencia: " + (e.message || "desconocido"));
+    }
   };
 
+  // Aceptar message o mensaje_sugerido
   useEffect(() => {
-    if (recData?.mensaje_sugerido) setMensaje(recData.mensaje_sugerido);
+    if (recData?.message) setMensaje(recData.message);
+    else if (recData?.mensaje_sugerido) setMensaje(recData.mensaje_sugerido);
   }, [recData]);
 
   const copyToClipboard = async () => {
@@ -88,7 +176,9 @@ function DetalleClienteModal({ api, cliente, onClose }) {
         <div className="p-4 border-b flex items-center justify-between">
           <div>
             <div className="font-bold text-lg">{cliente?.cliente_nombre || cliente?.cliente}</div>
-            {recData?.telefono && <div className="text-sm text-slate-500">{recData.telefono}</div>}
+            {(tel || recData?.telefono) && (
+              <div className="text-sm text-slate-500">{tel || recData?.telefono}</div>
+            )}
           </div>
           <button onClick={onClose} className="text-slate-600 hover:text-slate-900">✕</button>
         </div>
@@ -98,7 +188,7 @@ function DetalleClienteModal({ api, cliente, onClose }) {
           <div>
             {loading && <div className="text-sm text-slate-500">Cargando detalle…</div>}
             {error && <div className="text-sm text-red-600">Error: {error}</div>}
-            {!loading && !error && (
+            {!loading && !error && api && api.includes("/cxc") && (
               <div className="overflow-auto rounded border">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-100">
@@ -130,7 +220,31 @@ function DetalleClienteModal({ api, cliente, onClose }) {
           {/* Zona de recordatorio */}
           <div className="border rounded-xl p-3 bg-slate-50">
             <div className="flex items-center justify-between mb-2">
-              <div className="font-semibold">Mensaje de recordatorio</div>
+              <div className="flex items-center gap-2">
+                <div className="font-semibold">Mensaje de recordatorio</div>
+                {/* NUEVO: selects de idioma y tono */}
+                <select
+                  value={lang}
+                  onChange={(e) => setLang(e.target.value)}
+                  className="border rounded px-2 py-1 text-sm"
+                  title="Language"
+                >
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
+                </select>
+
+                <select
+                  value={tone}
+                  onChange={(e) => setTone(e.target.value)}
+                  className="border rounded px-2 py-1 text-sm"
+                  title="Tone"
+                >
+                  <option value="professional">Professional</option>
+                  <option value="friendly">Friendly</option>
+                  <option value="short">Short (SMS)</option>
+                </select>
+              </div>
+
               {!recData && (
                 <button
                   onClick={generarSugerencia}
@@ -153,13 +267,13 @@ function DetalleClienteModal({ api, cliente, onClose }) {
                           className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">
                     Copiar
                   </button>
-                  <button onClick={() => openWhatsAppWith(recData?.telefono, mensaje)}
+                  <button onClick={() => openWhatsAppWith(tel || recData?.telefono, mensaje)}
                           className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm">
                     WhatsApp
                   </button>
                 </div>
                 <div className="mt-2 text-xs text-slate-500">
-                  Total: {currency(recData?.saldo_total || 0)} • Tel: {recData?.telefono || "—"}
+                  Total: {currency(recData?.saldo_total || 0)} • Tel: {tel || recData?.telefono || "—"}
                 </div>
               </>
             )}
@@ -225,8 +339,9 @@ export default function CuentasPorCobrar() {
   });
 
   // ------- NUEVO: modal de detalle/recordatorio (API) -------
-  const apiBase = "http://127.0.0.1:8000";
-
+  // Si usas otro backend para /cxc/clientes/... deja esto vacío.
+  // La API de recordatorios usa CXC_API_BASE directamente dentro del modal.
+  const apiBase = ""; 
 
   const [selected, setSelected] = useState(null); // {cliente_id, cliente_nombre, ...}
   const [openReminder, setOpenReminder] = useState(false);
@@ -325,7 +440,6 @@ export default function CuentasPorCobrar() {
     }
     load();
     return () => { ignore = true; };
-    // NUEVO: depende de reloadTick para forzar recarga cuando guardamos
   }, [q, page, pageSize, scoreFilter, reloadTick]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -355,7 +469,6 @@ export default function CuentasPorCobrar() {
               if (e.key === "Enter") {
                 tryUnlockBySecret(e.currentTarget.value);
                 if (e.currentTarget.value.trim() === CXC_SECRET) {
-                  // si era el código, limpia el input visible también
                   e.currentTarget.value = "";
                   e.preventDefault();
                   e.stopPropagation();
@@ -406,7 +519,7 @@ export default function CuentasPorCobrar() {
             ))}
           </select>
           <button
-            onClick={() => setReloadTick((t) => t + 1)} // NUEVO: recarga real
+            onClick={() => setReloadTick((t) => t + 1)}
             className="border rounded-lg px-3 py-2 text-sm bg-white hover:bg-gray-50"
           >
             Recargar
@@ -525,7 +638,7 @@ export default function CuentasPorCobrar() {
         </button>
       </div>
 
-      {/* Modal de edición de límite (tu lógica existente) */}
+      {/* Modal de edición de límite */}
       {edit.open && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
@@ -593,7 +706,7 @@ export default function CuentasPorCobrar() {
         </div>
       )}
 
-      {/* NUEVO: Modal de detalle + recordatorio (API) */}
+      {/* Modal de detalle + recordatorio (API) */}
       {openReminder && selected && (
         <DetalleClienteModal
           api={apiBase}
