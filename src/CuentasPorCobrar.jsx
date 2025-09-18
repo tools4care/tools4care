@@ -52,8 +52,12 @@ const openWhatsAppWith = (telefono, texto) => {
   window.open(url, "_blank");
 };
 
-/* ========= base del API para /reminder ========= */
-const CXC_API_BASE = import.meta.env?.VITE_CXC_API_BASE || "https://cxc-api.onrender.com";
+/* ========= Config FRONT (API y marca) ========= */
+const CXC_API_BASE     = import.meta.env?.VITE_CXC_API_BASE     || "https://cxc-api.onrender.com";
+const COMPANY_NAME     = import.meta.env?.VITE_COMPANY_NAME     || "Care Beauty Supply";
+const PAY_URL          = import.meta.env?.VITE_PAY_URL          || "https://carebeautysupply.carrd.co/";
+const CONTACT_EMAIL    = import.meta.env?.VITE_CONTACT_EMAIL    || "tools4care@gmail.com";
+const CONTACT_PHONE    = import.meta.env?.VITE_CONTACT_PHONE    || "+1 (781) 953-1475 & +1 (857) 856-0030";
 
 /* ========= helper para llamar /reminder ========= */
 async function makeReminderAPI({ base = CXC_API_BASE, payload, signal }) {
@@ -68,16 +72,115 @@ async function makeReminderAPI({ base = CXC_API_BASE, payload, signal }) {
   return json.message; // backend devuelve { ok, message }
 }
 
+/* ========= Plantillas rápidas y utilidades ========= */
+const DEFAULT_TEMPLATES = [
+  {
+    key: "en_professional",
+    name: "English · Professional",
+    lang: "en",
+    body:
+`Hello {cliente}, this is {company}.
+This is a friendly reminder about your account.
+Outstanding balance: {saldo}.
+{total_line}
+You can choose a payment option here: {pay_url}
+If you have any questions, reply here or contact us at {email} or {phone}.
+Thank you for your business!
+— {company}`.trim()
+  },
+  {
+    key: "en_friendly",
+    name: "English · Friendly",
+    lang: "en",
+    body:
+`Hi {cliente}! {company} here 👋
+Your balance is {saldo}.
+{total_line}
+Pay here: {pay_url}
+Questions? {email} or {phone}. Thanks!`.trim()
+  },
+  {
+    key: "en_short",
+    name: "English · Short (SMS)",
+    lang: "en",
+    body: `{company} — Balance {saldo}. Pay: {pay_url} • Help: {phone} / {email}`
+  },
+  {
+    key: "es_profesional",
+    name: "Español · Profesional",
+    lang: "es",
+    body:
+`Hola {cliente}, le escribe {company}.
+Este es un recordatorio sobre su cuenta.
+Saldo pendiente: {saldo}.
+{total_line}
+Opciones de pago: {pay_url}
+Consultas: {email} | {phone}
+Gracias por su preferencia.
+— {company}`.trim()
+  },
+  {
+    key: "es_amigable",
+    name: "Español · Amigable",
+    lang: "es",
+    body:
+`¡Hola {cliente}! {company} por aquí 👋
+Su saldo pendiente es {saldo}.
+{total_line}
+Puede pagar aquí: {pay_url}
+¿Dudas? {email} o {phone}. ¡Gracias!`.trim()
+  },
+  {
+    key: "es_corto",
+    name: "Español · Corto (SMS)",
+    lang: "es",
+    body: `{company} — Saldo {saldo}. Pagar: {pay_url} • Ayuda: {phone} / {email}`
+  }
+];
+
+function loadUserTemplates() {
+  try {
+    const raw = localStorage.getItem("cxcTemplatesV1");
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function saveUserTemplates(list) {
+  try { localStorage.setItem("cxcTemplatesV1", JSON.stringify(list)); } catch {}
+}
+
+function renderTemplate(tplBody, ctx) {
+  const replace = (s, k, v) => s.replaceAll(`{${k}}`, v ?? "");
+  let out = tplBody;
+  const map = {
+    cliente: ctx.cliente,
+    saldo: currency(ctx.saldo),
+    total: currency(ctx.total_cxc ?? 0),
+    total_line: ctx.total_cxc != null && isFinite(ctx.total_cxc) ? `${ctx.lang === "es" ? "Total por cobrar" : "Total A/R"}: ${currency(ctx.total_cxc)}.` : "",
+    company: ctx.company,
+    pay_url: ctx.pay_url,
+    email: ctx.email,
+    phone: ctx.phone,
+  };
+  Object.entries(map).forEach(([k, v]) => { out = replace(out, k, String(v ?? "")); });
+  return out.trim();
+}
+
 /* ====================== Modal Detalle + Recordatorio (API) ====================== */
 function DetalleClienteModal({ api, cliente, onClose }) {
   const { data: detalle, loading, error, run } = useFetch();
-  const { data: recData, run: runRec, setData: setRecData } = useFetch();
+  const { data: recData, setData: setRecData } = useFetch();
   const [mensaje, setMensaje] = useState("");
 
-  // NUEVO: idioma, tono, teléfono
+  // idioma, tono, teléfono
   const [lang, setLang] = useState("en");                  // "en" | "es"
   const [tone, setTone] = useState("professional");        // "professional" | "friendly" | "short"
   const [tel, setTel]   = useState("");
+
+  // plantillas
+  const [templates, setTemplates] = useState([...DEFAULT_TEMPLATES, ...loadUserTemplates()]);
+  const [tplKey, setTplKey] = useState("en_professional");
 
   useEffect(() => {
     if (cliente?.cliente_id) {
@@ -88,7 +191,7 @@ function DetalleClienteModal({ api, cliente, onClose }) {
     }
   }, [cliente?.cliente_id, api]);
 
-  // NUEVO: traer teléfono desde Supabase (con fallback al dato del row)
+  // traer teléfono desde Supabase (con fallback)
   useEffect(() => {
     let ignore = false;
     (async () => {
@@ -107,67 +210,103 @@ function DetalleClienteModal({ api, cliente, onClose }) {
     return () => { ignore = true; };
   }, [cliente?.cliente_id]);
 
+  const currentContext = () => {
+    // datos que usamos para renderizar plantilla
+    const nombre =
+      cliente?.cliente_nombre ||
+      cliente?.cliente ||
+      "Cliente";
+    const saldoRow = Number(cliente?.saldo || 0);
+
+    const totalCxc =
+      Array.isArray(detalle) && detalle.length > 0
+        ? detalle.reduce((t, d) => t + Number(d?.pendiente || 0), 0)
+        : saldoRow;
+
+    // limite/disponible no se muestran, pero igual los calculamos para la API
+    const limite = Number(
+      cliente?.limite_manual != null
+        ? cliente?.limite_manual
+        : cliente?.limite_politica || 0
+    );
+    const disponible = Number(
+      cliente?.credito_disponible != null
+        ? cliente?.credito_disponible
+        : Math.max(0, limite - Math.max(0, saldoRow))
+    );
+
+    return {
+      cliente: nombre,
+      saldo: saldoRow,
+      total_cxc: Number(totalCxc),
+      limite,
+      disponible,
+      lang,
+      tone,
+      company: COMPANY_NAME,
+      pay_url: PAY_URL,
+      email: CONTACT_EMAIL,
+      phone: CONTACT_PHONE,
+    };
+  };
+
   const generarSugerencia = async () => {
+    const ctx = currentContext();
     try {
-      // 1) Datos base
-      const nombre =
-        cliente?.cliente_nombre ||
-        cliente?.cliente ||
-        "Cliente";
-      const saldoRow = Number(cliente?.saldo || 0);
-
-      const totalCxc =
-        Array.isArray(detalle) && detalle.length > 0
-          ? detalle.reduce((t, d) => t + Number(d?.pendiente || 0), 0)
-          : saldoRow;
-
-      const limite = Number(
-        cliente?.limite_manual != null
-          ? cliente?.limite_manual
-          : cliente?.limite_politica || 0
-      );
-
-      const disponible = Number(
-        cliente?.credito_disponible != null
-          ? cliente?.credito_disponible
-          : Math.max(0, limite - Math.max(0, saldoRow))
-      );
-
-      const payload = {
-        cliente: nombre,
-        saldo: saldoRow,
-        limite,
-        disponible,
-        total_cxc: Number(totalCxc),
-        lang,   // 👈 idioma
-        tone,   // 👈 tono
-      };
-
-      // 2) Llamada a /reminder
-      const msg = await makeReminderAPI({ base: CXC_API_BASE, payload });
+      // 1) Intento por API
+      const msg = await makeReminderAPI({ base: CXC_API_BASE, payload: ctx });
       setMensaje(msg);
-
-      // 3) Mantener compatibilidad con tu UI previa
       setRecData({
-        message: msg,                    // soporta nueva clave
-        mensaje_sugerido: msg,           // compatibilidad con la vieja
+        message: msg,
+        mensaje_sugerido: msg,
         telefono: tel || cliente?.telefono || null,
-        saldo_total: totalCxc,
+        saldo_total: ctx.total_cxc,
       });
-    } catch (e) {
-      alert("Error generando la sugerencia: " + (e.message || "desconocido"));
+    } catch (_e) {
+      // 2) Fallback local con plantilla
+      const choice =
+        (lang === "es" && tone === "professional") ? "es_profesional" :
+        (lang === "es" && tone === "friendly")     ? "es_amigable"   :
+        (lang === "es" && tone === "short")        ? "es_corto"      :
+        (lang === "en" && tone === "friendly")     ? "en_friendly"   :
+        (lang === "en" && tone === "short")        ? "en_short"      :
+                                                     "en_professional";
+      const tpl = templates.find(t => t.key === choice) || DEFAULT_TEMPLATES[0];
+      const msg = renderTemplate(tpl.body, { ...ctx });
+      setMensaje(msg);
+      setRecData({
+        message: msg,
+        mensaje_sugerido: msg,
+        telefono: tel || cliente?.telefono || null,
+        saldo_total: ctx.total_cxc,
+      });
     }
   };
 
-  // Aceptar message o mensaje_sugerido
-  useEffect(() => {
-    if (recData?.message) setMensaje(recData.message);
-    else if (recData?.mensaje_sugerido) setMensaje(recData.mensaje_sugerido);
-  }, [recData]);
+  const applyTemplate = () => {
+    const ctx = currentContext();
+    const tpl = templates.find(t => t.key === tplKey);
+    if (!tpl) return;
+    const msg = renderTemplate(tpl.body, { ...ctx });
+    setMensaje(msg);
+    setRecData({
+      message: msg,
+      mensaje_sugerido: msg,
+      telefono: tel || cliente?.telefono || null,
+      saldo_total: ctx.total_cxc,
+    });
+  };
 
-  const copyToClipboard = async () => {
-    try { await navigator.clipboard.writeText(mensaje || ""); alert("Message copied ✅"); }
-    catch { alert("No se pudo copiar automáticamente."); }
+  const saveCurrentAsTemplate = () => {
+    const name = prompt("Nombre para la plantilla:", "Mi plantilla");
+    if (!name) return;
+    const item = { key: `user_${Date.now()}`, name, lang, body: mensaje || "" };
+    const user = loadUserTemplates();
+    user.push(item);
+    saveUserTemplates(user);
+    setTemplates([...DEFAULT_TEMPLATES, ...user]);
+    setTplKey(item.key);
+    alert("Plantilla guardada ✅");
   };
 
   return (
@@ -219,10 +358,11 @@ function DetalleClienteModal({ api, cliente, onClose }) {
 
           {/* Zona de recordatorio */}
           <div className="border rounded-xl p-3 bg-slate-50">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2">
                 <div className="font-semibold">Mensaje de recordatorio</div>
-                {/* NUEVO: selects de idioma y tono */}
+
+                {/* idioma y tono */}
                 <select
                   value={lang}
                   onChange={(e) => setLang(e.target.value)}
@@ -243,6 +383,35 @@ function DetalleClienteModal({ api, cliente, onClose }) {
                   <option value="friendly">Friendly</option>
                   <option value="short">Short (SMS)</option>
                 </select>
+
+                {/* plantillas */}
+                <select
+                  value={tplKey}
+                  onChange={(e) => setTplKey(e.target.value)}
+                  className="border rounded px-2 py-1 text-sm"
+                  title="Templates"
+                >
+                  {templates
+                    .filter(t => t.lang === lang || !t.lang)
+                    .map(t => (
+                      <option key={t.key} value={t.key}>{t.name}</option>
+                    ))}
+                </select>
+
+                <button
+                  onClick={applyTemplate}
+                  className="border rounded px-2 py-1 text-sm bg-white hover:bg-gray-50"
+                >
+                  Aplicar
+                </button>
+
+                <button
+                  onClick={saveCurrentAsTemplate}
+                  className="border rounded px-2 py-1 text-sm bg-white hover:bg-gray-50"
+                  title="Guardar el texto actual como una plantilla mía"
+                >
+                  Guardar como plantilla
+                </button>
               </div>
 
               {!recData && (
@@ -263,8 +432,11 @@ function DetalleClienteModal({ api, cliente, onClose }) {
                   onChange={e=>setMensaje(e.target.value)}
                 />
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button onClick={copyToClipboard}
-                          className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">
+                  <button onClick={async () => {
+                    try { await navigator.clipboard.writeText(mensaje || ""); alert("Message copied ✅"); }
+                    catch { alert("No se pudo copiar automáticamente."); }
+                  }}
+                    className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">
                     Copiar
                   </button>
                   <button onClick={() => openWhatsAppWith(tel || recData?.telefono, mensaje)}
@@ -280,7 +452,7 @@ function DetalleClienteModal({ api, cliente, onClose }) {
 
             {!recData && (
               <div className="text-xs text-slate-500">
-                Haz clic en “Generar sugerencia” para crear el mensaje con el total y el detalle.
+                Haz clic en “Generar sugerencia” para crear el mensaje (intenta API y tiene fallback local).
               </div>
             )}
           </div>
@@ -578,7 +750,7 @@ export default function CuentasPorCobrar() {
                     <div className="font-semibold text-gray-900">{r.cliente_nombre}</div>
                     <div className="text-xs text-gray-500">#{r.cliente_id?.slice?.(0, 8)}…</div>
 
-                    {/* NUEVO: controles admin */}
+                    {/* controles admin */}
                     <div className="mt-1 flex items-center gap-2">
                       {adminMode && (
                         <button
@@ -602,7 +774,6 @@ export default function CuentasPorCobrar() {
                     {fmt(r.credito_disponible)}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {/* NUEVO: botón que abre modal de recordatorio (API) */}
                     <button
                       className="text-xs px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700"
                       onClick={() => { setSelected(r); setOpenReminder(true); }}
