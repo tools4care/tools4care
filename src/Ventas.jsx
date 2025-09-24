@@ -1,4 +1,4 @@
-// src/Ventas.jsx
+// src/Ventas.jsx - PARTE 1
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
@@ -18,7 +18,6 @@ const SECRET_CODE = "#ajuste2025";
 
 const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4CareMovil";
 const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
-/** "mailto" = abre cliente del usuario; "edge" = usa Supabase Edge Function "send-receipt" */
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
 /* ========================= Helpers de negocio ========================= */
@@ -33,16 +32,18 @@ function policyLimit(score) {
   if (s < 800) return 500;
   return 800; // >= 800
 }
+
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 }
+
 function r2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
 }
-/** 1) bulk si qty>=bulkMin; 2) % descuento; 3) base */
+
 function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
   const q = Number(qty || 0);
   const hasBulk = bulkMin != null && bulkPrice != null && q >= Number(bulkMin);
@@ -52,7 +53,7 @@ function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
   return r2(base);
 }
 
-/** ================== PRICING HELPERS (NUEVOS) ================== **/
+/* =================== PRICING HELPERS =================== */
 const firstNumber = (arr, def = 0, acceptZero = false) => {
   for (const v of arr) {
     const n = Number(v);
@@ -61,7 +62,6 @@ const firstNumber = (arr, def = 0, acceptZero = false) => {
   return def;
 };
 
-/** Extrae metadatos de precio desde la fila (venga del join, RPC o fallback) */
 function extractPricingFromRow(row) {
   const p = row?.productos ?? row ?? {};
   const base = firstNumber(
@@ -69,7 +69,6 @@ function extractPricingFromRow(row) {
       p.precio, row?.precio,
       p.precio_unit, row?.precio_unit,
       p.price, row?.price,
-      // último recurso: si solo hay bulk válido, lo usamos como base
       p.bulk_unit_price, row?.bulk_unit_price,
     ],
     0,
@@ -90,12 +89,10 @@ function extractPricingFromRow(row) {
   return { base, pct, bulkMin, bulkPrice };
 }
 
-/** Calcula el precio unitario final para una fila dada y qty */
 function computeUnitPriceFromRow(row, qty = 1) {
   const pr = extractPricingFromRow(row);
   let base = Number(pr.base || 0);
 
-  // Si no hay base pero sí hay precio por mayoreo válido, úsalo como base
   if ((!base || base <= 0) && pr.bulkPrice && (!pr.bulkMin || qty >= Number(pr.bulkMin))) {
     base = Number(pr.bulkPrice);
   }
@@ -111,19 +108,10 @@ function getClientBalance(c) {
   if (!c) return 0;
   return Number(c._saldo_real ?? c.balance ?? c.saldo_total ?? c.saldo ?? 0);
 }
+
 function getCreditNumber(c) {
   return c?.credito_id || c?.id || "—";
 }
-
-/* ── Helpers de normalización ────────────────────────────────────────── */
-const num = (v, d = 0) => {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : d;
-};
-const numOrNull = (v) => {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : null;
-};
 
 /* =================== localStorage / SMS / Email =================== */
 function safeParseJSON(str, fallback) {
@@ -134,20 +122,24 @@ function safeParseJSON(str, fallback) {
     return fallback;
   }
 }
+
 function readPendingLS() {
   return safeParseJSON(localStorage.getItem(STORAGE_KEY) || "[]", []);
 }
+
 function writePendingLS(arr) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(arr.slice(0, 10)));
   } catch {}
 }
+
 function removePendingFromLSById(id) {
   const cur = readPendingLS();
   const filtered = id ? cur.filter((x) => x.id !== id) : cur;
   writePendingLS(filtered);
   return filtered;
 }
+
 function upsertPendingInLS(newPending) {
   const cur = readPendingLS();
   const filtered = cur.filter((x) => x.id !== newPending.id);
@@ -156,175 +148,43 @@ function upsertPendingInLS(newPending) {
   return next;
 }
 
-function isIOS() {
-  const ua = navigator.userAgent || navigator.vendor || "";
-  return /iPad|iPhone|iPod|Macintosh/.test(ua);
-}
-function normalizePhoneE164ish(raw, defaultCountry = "1") {
-  const digits = String(raw || "").replace(/\D/g, "");
-  if (!digits) return "";
-  const withCc = digits.length === 10 ? defaultCountry + digits : digits;
-  return withCc.startsWith("+") ? withCc : `+${withCc}`;
-}
-function buildSmsUrl(phone, message) {
-  const target = normalizePhoneE164ish(phone, "1");
-  if (!target) return null;
-  const body = encodeURIComponent(String(message || ""));
-  const sep = isIOS() ? "&" : "?";
-  return `sms:${target}${sep}body=${body}`;
-}
-async function sendSmsIfPossible({ phone, text }) {
-  if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
-  const href = buildSmsUrl(phone, text);
-  if (!href) return { ok: false, reason: "invalid_sms_url" };
+/* ===== CxC helpers: lectura + suscripción ===== */
+const makeUUID = () =>
+  (crypto?.randomUUID?.()) ||
+  "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+
+async function registrarPagoCxC({ cliente_id, monto, metodo, van_id }) {
+  const idem = makeUUID();
   try {
-    const a = document.createElement("a");
-    a.href = href;
-    a.rel = "noopener";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    return { ok: true, opened: true };
-  } catch {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert("SMS preparado. Abre tu app de Mensajes y pega el texto.");
-      return { ok: true, copied: true };
-    } catch {
-      return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
+    const { error } = await supabase.rpc("cxc_registrar_pago", {
+      p_cliente_id: cliente_id,
+      p_monto: Number(monto),
+      p_metodo: metodo || "mix",
+      p_van_id: van_id || null,
+      p_idem: idem,
+    });
+    if (error) throw error;
+    return { ok: true };
+  } catch (err) {
+    if (err?.code === "42883") {
+      const { error: e2 } = await supabase.from("pagos").insert([{
+        cliente_id,
+        monto: Number(monto),
+        metodo_pago: metodo || "mix",
+        fecha_pago: new Date().toISOString(),
+        van_id: van_id || null,
+      }]);
+      if (e2) throw e2;
+      return { ok: true, fallback: true };
     }
+    throw err;
   }
 }
-function buildMailtoUrl(to, subject, body) {
-  if (!to) return null;
-  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
-async function sendEmailSmart({ to, subject, html, text }) {
-  if (!to) return { ok: false, reason: "missing_email" };
 
-  if (EMAIL_MODE === "edge") {
-    try {
-      const { data, error } = await supabase.functions.invoke("send-receipt", {
-        body: { to, subject, html, text, from: COMPANY_EMAIL, company: COMPANY_NAME },
-      });
-      if (error) throw error;
-      return { ok: true, via: "edge", data };
-    } catch (e) {
-      console.warn("Edge email failed, fallback a mailto:", e?.message || e);
-    }
-  }
-
-  const mailto = buildMailtoUrl(to, subject, text);
-  const w = mailto ? window.open(mailto, "_blank") : null;
-  if (!w && text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert("Email copiado. Abre tu correo y pega el contenido.");
-      return { ok: true, via: "mailto-copy" };
-    } catch {
-      return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
-    }
-  }
-  return { ok: true, via: "mailto" };
-}
-
-/* ======= Recibo (ACTUALIZADO) ======= */
-function composeReceiptMessageEN(payload) {
-  const {
-    clientName,
-    creditNumber,
-    dateStr,
-    pointOfSaleName,
-    items,
-    saleTotal,
-    paid,
-    change,
-    prevBalance,
-    // nuevo: incluir restante de esta venta + balance nuevo total
-    saleRemaining,
-    newDue,
-    // compat: se sigue aceptando "toCredit" si lo pasan con ese nombre
-    toCredit,
-    creditLimit,
-    availableBefore,
-    availableAfter,
-  } = payload;
-
-  const remainingThisSale = Number.isFinite(Number(saleRemaining))
-    ? Number(saleRemaining)
-    : Number(toCredit || 0);
-
-  const lines = [];
-  lines.push(`${COMPANY_NAME} — Receipt`);
-  lines.push(`Date: ${dateStr}`);
-  if (pointOfSaleName) lines.push(`Point of sale: ${pointOfSaleName}`);
-  if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
-  lines.push("");
-  lines.push("Items:");
-  for (const it of items) lines.push(`• ${it.name} — ${it.qty} x ${fmt(it.unit)} = ${fmt(it.subtotal)}`);
-  lines.push("");
-  lines.push(`Sale total: ${fmt(saleTotal)}`);
-  lines.push(`Paid now:   ${fmt(paid)}`);
-  if (change > 0) lines.push(`Change:      ${fmt(change)}`);
-  lines.push(`Previous balance: ${fmt(prevBalance)}`);
-  if (remainingThisSale > 0) lines.push(`Remaining (this sale): ${fmt(remainingThisSale)}`);
-  // *** Aquí va el cálculo correcto: saldo anterior + restante de esta venta - pagos a deuda ***
-  lines.push(`*** Balance due (new): ${fmt(Number(newDue || 0))} ***`);
-  if (creditLimit > 0) {
-    lines.push("");
-    lines.push(`Credit limit:       ${fmt(creditLimit)}`);
-    lines.push(`Available before:   ${fmt(availableBefore)}`);
-    lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
-  }
-  lines.push("");
-  lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
-  return lines.join("\n");
-}
-async function askChannel({ hasPhone, hasEmail }) {
-  if (!hasPhone && !hasEmail) return null;
-  if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
-  if (!hasEmail && hasPhone === false) return null;
-  if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
-  const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "")
-    .trim()
-    .toLowerCase();
-  if (ans === "sms" && hasPhone) return "sms";
-  if (ans === "email" && hasEmail) return "email";
-  return null;
-}
-async function requestAndSendNotifications({ client, payload }) {
-  const hasPhone = !!client?.telefono;
-  const hasEmail = !!client?.email;
-  if (!hasPhone && !hasEmail) return;
-
-  const wants = await askChannel({ hasPhone, hasEmail });
-  if (!wants) return;
-
-  const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
-  const text = composeReceiptMessageEN(payload);
-  const html = text;
-
-  if (wants === "sms") await sendSmsIfPossible({ phone: client.telefono, text });
-  else if (wants === "email") await sendEmailSmart({ to: client.email, subject, html, text });
-}
-
-/* ===== Helper agregado: stock map para TOP ===== */
-async function getStockMapForVan(vanId, ids = []) {
-  const map = new Map();
-  if (!vanId || !Array.isArray(ids) || ids.length === 0) return map;
-  const { data, error } = await supabase
-    .from("stock_van")
-    .select("producto_id,cantidad")
-    .eq("van_id", vanId)
-    .in("producto_id", ids);
-  if (error || !data) return map;
-  data.forEach(r => map.set(r.producto_id, Number(r.cantidad || 0)));
-  return map;
-}
-
-/* ===== CxC helpers: lectura + suscripción a limite_manual ===== */
-/* ===== CxC helpers: lectura + suscripción a limite_manual ===== */
 async function getCxcCliente(clienteId) {
   if (!clienteId) return null;
 
@@ -366,7 +226,6 @@ async function getCxcCliente(clienteId) {
       ? limiteManual
       : limitePolitica;
 
-  // ✅ Siempre calcular disponible en base a limite y saldo
   const disponible = Math.max(0, limite - Math.max(0, saldo));
 
   return { saldo, limite, limitePolitica, limiteManual, disponible };
@@ -401,36 +260,70 @@ function subscribeClienteCxC(clienteId, onChange) {
   };
 }
 
+/* ===== Helper para stock map ===== */
+async function getStockMapForVan(vanId, ids = []) {
+  const map = new Map();
+  if (!vanId || !Array.isArray(ids) || ids.length === 0) return map;
+  const { data, error } = await supabase
+    .from("stock_van")
+    .select("producto_id,cantidad")
+    .eq("van_id", vanId)
+    .in("producto_id", ids);
+  if (error || !data) return map;
+  data.forEach(r => map.set(r.producto_id, Number(r.cantidad || 0)));
+  return map;
+}
 
+/* ===== Recibo ===== */
+function composeReceiptMessageEN(payload) {
+  const {
+    clientName,
+    creditNumber,
+    dateStr,
+    pointOfSaleName,
+    items,
+    saleTotal,
+    paid,
+    change,
+    prevBalance,
+    saleRemaining,
+    newDue,
+    creditLimit,
+    availableBefore,
+    availableAfter,
+  } = payload;
 
-/* === Last activity (read-only) === */
-async function tryMaxDate(table, cols, clienteId) {
-  for (const col of cols) {
-    try {
-      const { data, error } = await supabase
-        .from(table)
-        .select(col)
-        .eq("cliente_id", clienteId)
-        .not(col, "is", null)
-        .order(col, { ascending: false })
-        .limit(1);
-      if (!error && data && data[0] && data[0][col]) return new Date(data[0][col]).toISOString();
-    } catch {}
+  const remainingThisSale = Number.isFinite(Number(saleRemaining))
+    ? Number(saleRemaining)
+    : 0;
+
+  const lines = [];
+  lines.push(`${COMPANY_NAME} — Receipt`);
+  lines.push(`Date: ${dateStr}`);
+  if (pointOfSaleName) lines.push(`Point of sale: ${pointOfSaleName}`);
+  if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
+  lines.push("");
+  lines.push("Items:");
+  for (const it of items) lines.push(`• ${it.name} — ${it.qty} x ${fmt(it.unit)} = ${fmt(it.subtotal)}`);
+  lines.push("");
+  lines.push(`Sale total: ${fmt(saleTotal)}`);
+  lines.push(`Paid now:   ${fmt(paid)}`);
+  if (change > 0) lines.push(`Change:      ${fmt(change)}`);
+  lines.push(`Previous balance: ${fmt(prevBalance)}`);
+  if (remainingThisSale > 0) lines.push(`Remaining (this sale): ${fmt(remainingThisSale)}`);
+  lines.push(`*** Balance due (new): ${fmt(Number(newDue || 0))} ***`);
+  if (creditLimit > 0) {
+    lines.push("");
+    lines.push(`Credit limit:       ${fmt(creditLimit)}`);
+    lines.push(`Available before:   ${fmt(availableBefore)}`);
+    lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
   }
-  return null;
-}
-async function getLastActivityAt(clienteId) {
-  if (!clienteId) return null;
-  const candidates = [
-    await tryMaxDate("ventas", ["fecha", "created_at", "fecha_venta"], clienteId),
-    await tryMaxDate("pagos", ["fecha", "created_at"], clienteId),
-    await tryMaxDate("cxc_movimientos", ["fecha", "created_at"], clienteId), // si no existe, no rompe
-  ].filter(Boolean);
-  if (candidates.length === 0) return null;
-  return new Date(Math.max(...candidates.map((d) => Date.parse(d)))).toISOString();
+  lines.push("");
+  lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
+  return lines.join("\n");
 }
 
-/* ========================= Componente ========================= */
+/* ========================= Componente Principal ========================= */
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
@@ -444,9 +337,9 @@ export default function Sales() {
   const [selectedClient, setSelectedClient] = useState(null);
 
   const [productSearch, setProductSearch] = useState("");
-  const [products, setProducts] = useState([]); // lista para buscador
-  const [topProducts, setTopProducts] = useState([]); // top 10
-  const [allProducts, setAllProducts] = useState([]); // inventario completo
+  const [products, setProducts] = useState([]);
+  const [topProducts, setTopProducts] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
   const [allProductsLoading, setAllProductsLoading] = useState(false);
   const [productError, setProductError] = useState("");
   const [cart, setCart] = useState([]);
@@ -469,27 +362,21 @@ export default function Sales() {
     loading: false,
   });
 
-  // ---- CxC de cliente actual (vista oficial)
+  // ---- CxC de cliente actual
   const [cxcLimit, setCxcLimit] = useState(null);
   const [cxcAvailable, setCxcAvailable] = useState(null);
   const [cxcBalance, setCxcBalance] = useState(null);
 
-  // ---- Modo Migración (secreto)
+  // ---- Modo Migración
   const [migrationMode, setMigrationMode] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState("");
   const [adjustNote, setAdjustNote] = useState("Saldo viejo importado");
 
-  // ---- UI: detalles de pago (mobile simplificado por default)
+  // ---- UI
   const [showPaymentDetails, setShowPaymentDetails] = useState(false);
-
-  // PATCH: tick para forzar recarga de inventario sin cambiar de ruta
-  const [invTick, setInvTick] = useState(0);           // PATCH
-  const reloadInventory = () => setInvTick(n => n + 1); // PATCH
-
-  // === Last activity state ===
-  const [lastActivityAt, setLastActivityAt] = useState(null);
-  const [lastActivityLoading, setLastActivityLoading] = useState(false);
+  const [invTick, setInvTick] = useState(0);
+  const reloadInventory = () => setInvTick(n => n + 1);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
@@ -576,7 +463,7 @@ export default function Sales() {
       }
     }
     loadClients();
-  }, [debouncedClientSearch]);
+  }, [debouncedClientSearch]);// src/Ventas.jsx - PARTE 2 (CONTINUACIÓN)
 
   /* ---------- Historial al seleccionar cliente ---------- */
   useEffect(() => {
@@ -598,60 +485,57 @@ export default function Sales() {
   }, [selectedClient?.id]);
 
   /* ---------- Traer límite/disponible/saldo (con auto refresh + realtime) ---------- */
-useEffect(() => {
-  let disposed = false;
-  let sub = null;
-  let timer = null;
+  useEffect(() => {
+    let disposed = false;
+    let sub = null;
+    let timer = null;
 
-  async function refreshCxC() {
-    const id = selectedClient?.id;
-    if (!id) {
-      setCxcLimit(null);
-      setCxcAvailable(null);
-      setCxcBalance(null);
-      return;
+    async function refreshCxC() {
+      const id = selectedClient?.id;
+      if (!id) {
+        setCxcLimit(null);
+        setCxcAvailable(null);
+        setCxcBalance(null);
+        return;
+      }
+      const info = await getCxcCliente(id);
+      if (disposed || !info) return;
+      setCxcLimit(info.limite);
+      setCxcAvailable(info.disponible);
+      setCxcBalance(info.saldo);
     }
-    const info = await getCxcCliente(id);
-    if (disposed || !info) return;
-    setCxcLimit(info.limite);
-    setCxcAvailable(info.disponible);
-    setCxcBalance(info.saldo);
-  }
 
-  function onFocus() { refreshCxC(); }
-  function onVisible() { if (!document.hidden) refreshCxC(); }
+    function onFocus() { refreshCxC(); }
+    function onVisible() { if (!document.hidden) refreshCxC(); }
 
-  refreshCxC();
+    refreshCxC();
 
-  if (selectedClient?.id) {
-    sub = subscribeClienteCxC(selectedClient.id, refreshCxC);
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    timer = setInterval(refreshCxC, 20000);
-  }
+    if (selectedClient?.id) {
+      sub = subscribeClienteCxC(selectedClient.id, refreshCxC);
+      window.addEventListener("focus", onFocus);
+      document.addEventListener("visibilitychange", onVisible);
+      timer = setInterval(refreshCxC, 20000);
+    }
 
-  return () => {
-    disposed = true;
-    sub?.unsubscribe?.();
-    if (timer) clearInterval(timer);
-    window.removeEventListener("focus", onFocus);
-    document.removeEventListener("visibilitychange", onVisible);
-  };
-}, [selectedClient?.id]);
+    return () => {
+      disposed = true;
+      sub?.unsubscribe?.();
+      if (timer) clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [selectedClient?.id]);
 
-
-  /* ========== TOP productos (si falta code/brand/price los enriquezco desde catálogo) ========== */
-
-  // Helper para uniformar la forma del RPC
+  /* ========== TOP productos ========== */
   function normalizeFromRpc(arr = []) {
     return arr.slice(0, 10).map((p) => {
       const producto_id = p.producto_id ?? p.id ?? p.prod_id ?? null;
       const nombre =
         p.nombre ?? p.producto_nombre ?? p.nombre_producto ?? p.producto ?? "";
-      const precio = num(p.precio ?? p.precio_unit ?? p.price ?? p.unit_price);
+      const precio = Number(p.precio ?? p.precio_unit ?? p.price ?? p.unit_price) || 0;
       const codigo = p.codigo ?? p.sku ?? p.codigobarra ?? p.barcode ?? null;
       const marca = p.marca ?? p.brand ?? null;
-      const cantidad = num(p.cantidad_disponible ?? p.cantidad ?? p.stock);
+      const cantidad = Number(p.cantidad_disponible ?? p.cantidad ?? p.stock) || 0;
       return {
         producto_id,
         cantidad,
@@ -661,11 +545,10 @@ useEffect(() => {
           precio,
           codigo,
           marca,
-          descuento_pct: numOrNull(p.descuento_pct ?? p.discount_pct),
-          bulk_min_qty: numOrNull(p.bulk_min_qty ?? p.bulk_min),
-          bulk_unit_price: numOrNull(p.bulk_unit_price ?? p.bulk_price),
+          descuento_pct: p.descuento_pct ?? p.discount_pct ?? null,
+          bulk_min_qty: p.bulk_min_qty ?? p.bulk_min ?? null,
+          bulk_unit_price: p.bulk_unit_price ?? p.bulk_price ?? null,
         },
-        // copias planas por compatibilidad
         nombre,
         precio,
         codigo,
@@ -674,7 +557,6 @@ useEffect(() => {
     });
   }
 
-  // Enriquecer filas con datos de la tabla productos
   async function enrichTopWithCatalog(rows) {
     const ids = rows.map((r) => r.producto_id).filter(Boolean);
     if (ids.length === 0) return rows;
@@ -699,17 +581,16 @@ useEffect(() => {
           nombre: row.productos?.nombre ?? p.nombre,
           precio:
             Number.isFinite(Number(row.productos?.precio)) && Number(row.productos?.precio) > 0
-              ? num(row.productos?.precio)
-              : num(p.precio),
+              ? Number(row.productos?.precio)
+              : Number(p.precio) || 0,
           codigo: row.productos?.codigo ?? p.codigo ?? null,
           marca: row.productos?.marca ?? p.marca ?? null,
-          descuento_pct: row.productos?.descuento_pct ?? numOrNull(p.descuento_pct),
-          bulk_min_qty: row.productos?.bulk_min_qty ?? numOrNull(p.bulk_min_qty),
-          bulk_unit_price: row.productos?.bulk_unit_price ?? numOrNull(p.bulk_unit_price),
+          descuento_pct: row.productos?.descuento_pct ?? p.descuento_pct ?? null,
+          bulk_min_qty: row.productos?.bulk_min_qty ?? p.bulk_min_qty ?? null,
+          bulk_unit_price: row.productos?.bulk_unit_price ?? p.bulk_unit_price ?? null,
         },
       };
 
-      // Copias planas para UI/filtros
       merged.nombre = merged.productos.nombre;
       merged.precio = merged.productos.precio;
       merged.codigo = merged.productos.codigo;
@@ -725,25 +606,22 @@ useEffect(() => {
       setTopProducts([]);
       if (!van?.id) return;
 
-      // 1) RPC original
       try {
         const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
           van_id_param: van.id,
-          dias: 30,     // ajusta si quieres otra ventana
-          limite: 10,   // top N
+          dias: 30,
+          limite: 10,
         });
         if (error) throw error;
 
         if (Array.isArray(data) && data.length > 0) {
-          // Normalizo y enriquezco con catálogo
           let rows = normalizeFromRpc(data);
           rows = await enrichTopWithCatalog(rows);
 
-          // 🚩 AQUÍ: ignoramos cualquier "cantidad" del RPC y usamos stock real
           const ids = rows.map(r => r.producto_id).filter(Boolean);
           const stockMap = await getStockMapForVan(van.id, ids);
           rows = rows.map(r => ({ ...r, cantidad: stockMap.get(r.producto_id) ?? 0 }));
-          rows = rows.filter(r => Number(r.cantidad) > 0); // PATCH: no mostrar TOP sin stock
+          rows = rows.filter(r => Number(r.cantidad) > 0);
 
           setTopProducts(rows);
           return;
@@ -753,7 +631,6 @@ useEffect(() => {
         console.warn("RPC productos_mas_vendidos_por_van falló. Fallback a join.", err?.message || err);
       }
 
-      // 2) join directo a stock_van -> productos
       try {
         const { data, error } = await supabase
           .from("stock_van")
@@ -780,9 +657,9 @@ useEffect(() => {
                 precio: Number(p.precio || 0),
                 codigo: p.codigo ?? null,
                 marca: p.marca ?? null,
-                descuento_pct: numOrNull(p.descuento_pct),
-                bulk_min_qty: numOrNull(p.bulk_min_qty),
-                bulk_unit_price: numOrNull(p.bulk_unit_price),
+                descuento_pct: p.descuento_pct ?? null,
+                bulk_min_qty: p.bulk_min_qty ?? null,
+                bulk_unit_price: p.bulk_unit_price ?? null,
               },
               nombre: p.nombre ?? "",
               precio: Number(p.precio || 0),
@@ -798,7 +675,6 @@ useEffect(() => {
         console.warn("Join stock_van→productos falló. Fallback a 2 pasos.", err?.message || err);
       }
 
-      // 3) Fallback 2 pasos
       try {
         const { data: stock, error: e1 } = await supabase
           .from("stock_van")
@@ -835,9 +711,9 @@ useEffect(() => {
               precio: Number(p.precio || 0),
               codigo: p.codigo ?? null,
               marca: p.marca ?? null,
-              descuento_pct: numOrNull(p.descuento_pct),
-              bulk_min_qty: numOrNull(p.bulk_min_qty),
-              bulk_unit_price: numOrNull(p.bulk_unit_price),
+              descuento_pct: p.descuento_pct ?? null,
+              bulk_min_qty: p.bulk_min_qty ?? null,
+              bulk_unit_price: p.bulk_unit_price ?? null,
             },
             nombre: p.nombre ?? "",
             precio: Number(p.precio || 0),
@@ -855,7 +731,7 @@ useEffect(() => {
     }
 
     loadTopProducts();
-  }, [van?.id, invTick]); // PATCH: antes solo [van?.id]
+  }, [van?.id, invTick]);
 
   /* ---------- INVENTARIO COMPLETO para búsqueda ---------- */
   useEffect(() => {
@@ -864,7 +740,6 @@ useEffect(() => {
       setAllProductsLoading(true);
       if (!van?.id) return setAllProductsLoading(false);
 
-      // A) Join directo
       try {
         const { data, error } = await supabase
           .from("stock_van")
@@ -879,15 +754,15 @@ useEffect(() => {
 
         const rows = (data || []).map((row) => ({
           producto_id: row.producto_id,
-          cantidad: num(row.cantidad),
+          cantidad: Number(row.cantidad) || 0,
           productos: {
             id: row.productos?.id,
             nombre: row.productos?.nombre,
-            precio: num(row.productos?.precio),
+            precio: Number(row.productos?.precio) || 0,
             codigo: row.productos?.codigo,
-            descuento_pct: numOrNull(row.productos?.descuento_pct),
-            bulk_min_qty: numOrNull(row.productos?.bulk_min_qty),
-            bulk_unit_price: numOrNull(row.productos?.bulk_unit_price),
+            descuento_pct: row.productos?.descuento_pct ?? null,
+            bulk_min_qty: row.productos?.bulk_min_qty ?? null,
+            bulk_unit_price: row.productos?.bulk_unit_price ?? null,
             marca: row.productos?.marca ?? "",
           },
         }));
@@ -898,7 +773,6 @@ useEffect(() => {
         console.warn("Inventario completo (join) falló. Fallback a 2 pasos.", err?.message || err);
       }
 
-      // B) 2 pasos
       try {
         const { data: stock, error: e1 } = await supabase
           .from("stock_van")
@@ -925,15 +799,15 @@ useEffect(() => {
           const p = map.get(s.producto_id) || {};
           return {
             producto_id: s.producto_id,
-            cantidad: num(s.cantidad),
+            cantidad: Number(s.cantidad) || 0,
             productos: {
               id: p.id,
               nombre: p.nombre,
-              precio: num(p.precio),
+              precio: Number(p.precio) || 0,
               codigo: p.codigo,
-              descuento_pct: numOrNull(p.descuento_pct),
-              bulk_min_qty: numOrNull(p.bulk_min_qty),
-              bulk_unit_price: numOrNull(p.bulk_unit_price),
+              descuento_pct: p.descuento_pct ?? null,
+              bulk_min_qty: p.bulk_min_qty ?? null,
+              bulk_unit_price: p.bulk_unit_price ?? null,
               marca: p.marca ?? "",
             },
           };
@@ -953,32 +827,11 @@ useEffect(() => {
     }
 
     loadAllProducts();
-  }, [van?.id, invTick]); // PATCH: antes solo [van?.id]
+  }, [van?.id, invTick]);
 
-  // PATCH: Recarga al entrar al Paso 2 (evita salir a otra ruta)
   useEffect(() => {
     if (step === 2) reloadInventory();
-  }, [step]); // PATCH
-
-  /* === Last activity loader === */
-  useEffect(() => {
-    let disposed = false;
-    (async () => {
-      if (!selectedClient?.id) {
-        setLastActivityAt(null);
-        return;
-      }
-      setLastActivityLoading(true);
-      const d = await getLastActivityAt(selectedClient.id);
-      if (!disposed) {
-        setLastActivityAt(d);
-        setLastActivityLoading(false);
-      }
-    })();
-    return () => {
-      disposed = true;
-    };
-  }, [selectedClient?.id]);
+  }, [step]);
 
   /* ---------- Filtro del buscador ---------- */
   useEffect(() => {
@@ -995,14 +848,13 @@ useEffect(() => {
           return n.includes(filter) || c.includes(filter) || m.includes(filter);
         });
 
-    // PATCH: asegurar que jamás se muestren productos con stock 0
-    filtered = filtered.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0); // PATCH
+    filtered = filtered.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0);
 
     setProducts(filtered);
     setNoProductFound(searchActive && filtered.length === 0 ? productSearch.trim() : "");
   }, [productSearch, topProducts, allProducts]);
 
-  /* ---------- Totales & crédito ---------- */
+  /* ---------- Totales & crédito (SIN BALANCE A FAVOR) ---------- */
   const cartSafe = Array.isArray(cart) ? cart : [];
 
   const saleTotal = cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
@@ -1012,23 +864,23 @@ useEffect(() => {
     cxcBalance != null && !Number.isNaN(Number(cxcBalance))
       ? Number(cxcBalance)
       : Number(getClientBalance(selectedClient));
-  const balanceBefore = Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0;
+  
+  // ✅ SOLO PERMITIR DEUDA POSITIVA - NUNCA BALANCE A FAVOR
+  const balanceBefore = Math.max(0, Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0);
 
-  const existingCredit = Math.max(0, -balanceBefore);
-  const oldDebt = Math.max(0, balanceBefore);
+  const oldDebt = balanceBefore; // Solo deuda existente, nunca crédito a favor
+  const totalAPagar = oldDebt + saleTotal; // Deuda anterior + venta nueva
 
-  const saleAfterApplyingCredit = Math.max(0, saleTotal - existingCredit);
-  const totalAPagar = oldDebt + saleAfterApplyingCredit;
-
-  const paidForSale = Math.min(paid, saleAfterApplyingCredit);
+  const paidForSale = Math.min(paid, saleTotal);
   const paidToOldDebt = Math.min(oldDebt, Math.max(0, paid - paidForSale));
   const paidApplied = paidForSale + paidToOldDebt;
 
   const change = Math.max(0, paid - totalAPagar);
   const mostrarAdvertencia = paid > totalAPagar;
 
-  const balanceAfter = balanceBefore + saleTotal - paidApplied;
-  const amountToCredit = Math.max(0, balanceAfter) - Math.max(0, balanceBefore);
+  // ✅ BALANCE FINAL: Solo puede ser 0 o positivo (deuda)
+  const balanceAfter = Math.max(0, balanceBefore + saleTotal - paidApplied);
+  const amountToCredit = Math.max(0, balanceAfter - balanceBefore);
 
   // Panel crédito
   const clientScore = Number(selectedClient?.score_credito ?? 600);
@@ -1041,11 +893,11 @@ useEffect(() => {
     ? Number(
         cxcAvailable != null && !Number.isNaN(Number(cxcAvailable))
           ? cxcAvailable
-          : Math.max(0, creditLimit - Math.max(0, balanceBefore))
+          : Math.max(0, creditLimit - balanceBefore)
       )
     : 0;
 
-  const creditAvailableAfter = Math.max(0, creditLimit - Math.max(0, balanceAfter));
+  const creditAvailableAfter = Math.max(0, creditLimit - balanceAfter);
   const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
   /* ---------- Guardar venta pendiente local ---------- */
@@ -1083,13 +935,18 @@ useEffect(() => {
   }
 
   /* ======================== Handlers de productos ======================== */
+  // --- Stub temporal para no bloquear la venta ---
+async function requestAndSendNotifications({ client, payload }) {
+  // Aquí luego conectamos SMS/Email. Por ahora no hace nada.
+  return;
+}
+
   function handleAddProduct(p) {
-    // PATCH: bloquear click si no hay stock
-    const stockNow = Number(p.cantidad ?? p.stock ?? 0); // PATCH
-    if (!Number.isFinite(stockNow) || stockNow <= 0) {   // PATCH
-      setProductError("🚫 Sin stock disponible para este producto."); // PATCH
-      return; // PATCH
-    } // PATCH
+    const stockNow = Number(p.cantidad ?? p.stock ?? 0);
+    if (!Number.isFinite(stockNow) || stockNow <= 0) {
+      setProductError("Sin stock disponible para este producto.");
+      return;
+    }
 
     const exists = cartSafe.find((x) => x.producto_id === p.producto_id);
     const qty = 1;
@@ -1105,7 +962,7 @@ useEffect(() => {
         {
           producto_id: p.producto_id,
           nombre: safeName,
-          _pricing: { ...meta, base: meta.base || unit || 0 }, // guarda lo que realmente se usó
+          _pricing: { ...meta, base: meta.base || unit || 0 },
           precio_unitario: unit,
           cantidad: qty,
         },
@@ -1120,7 +977,6 @@ useEffect(() => {
         if (item.producto_id !== producto_id) return item;
         const qty = Math.max(1, Number(cantidad));
 
-        // Si el item ya trae _pricing úsalo; si no, extrae de nuevo desde el item
         const meta = item._pricing ?? extractPricingFromRow(item);
         const unit =
           unitPriceFromProduct(
@@ -1131,7 +987,7 @@ useEffect(() => {
               bulkPrice: meta.bulkPrice != null ? Number(meta.bulkPrice) : null,
             },
             qty
-          ) || computeUnitPriceFromRow(item, qty); // fallback extra seguro
+          ) || computeUnitPriceFromRow(item, qty);
 
         return { ...item, cantidad: qty, precio_unitario: unit };
       })
@@ -1142,7 +998,7 @@ useEffect(() => {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
 
-/* ===================== Guardar venta (RPC con fallback INSERT) ===================== */
+/* ===================== Guardar venta ===================== */
 async function saveSale() {
   setSaving(true);
   setPaymentError("");
@@ -1150,16 +1006,17 @@ async function saveSale() {
   const currentPendingId = window.pendingSaleId;
 
   try {
+    // --- Validaciones básicas ---
     if (!usuario?.id) throw new Error("User not synced, please re-login.");
     if (!van?.id) throw new Error("Select a VAN first.");
     if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
     if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
+    // --- Tope de crédito ---
     if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
       setPaymentError(
         `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
       );
-      setSaving(false);
       return;
     }
 
@@ -1173,38 +1030,31 @@ async function saveSale() {
             : `\n(No credit history yet)\n\n`) +
           `Do you want to continue?`
       );
-      if (!ok) {
-        setSaving(false);
-        return;
-      }
+      if (!ok) return;
     }
 
-    // ===== Recalcular al guardar (idéntico a tu lógica) =====
-    const existingCreditNow = Math.max(0, -balanceBefore);
-    const oldDebtNow = Math.max(0, balanceBefore);
-    const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
-    const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+    // ===== Recalcular al guardar (consistente) =====
+    const existingCreditNow   = Math.max(0, -balanceBefore);
+    const oldDebtNow          = Math.max(0, balanceBefore);
+    const saleAfterCreditNow  = Math.max(0, saleTotal - existingCreditNow);
+    const totalAPagarNow      = oldDebtNow + saleAfterCreditNow;
 
     const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
-    const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
-    const changeNow = Math.max(0, paid - totalAPagarNow);
+    const payOldDebtNow  = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
+    const changeNow      = Math.max(0, paid - totalAPagarNow);
 
-    // Pendiente que nace de esta venta
+    // Pendiente nuevo que nace en esta venta
     const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
 
-    // Estado de pago de la VENTA (no de la deuda)
+    // Estado del pago de LA VENTA (no de la deuda previa)
     const estadoPago =
-      pendingFromThisSale === 0
-        ? "pagado"
-        : paidForSaleNow > 0
-        ? "parcial"
-        : "pendiente";
+      pendingFromThisSale === 0 ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente";
 
-    // ===== Desglose de pagos APLICADOS (capados a lo necesario; sin cambio) =====
+    // ===== Desglose de pagos aplicados (capado; sin cambio) =====
     const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
-    const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2)); // total que realmente se aplica (venta + deuda)
-    let remainingToApply = paidApplied;
+    const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2)); // aplicado total
 
+    let remainingToApply = paidApplied;
     const metodosAplicados = [];
     for (const p of nonZeroPayments) {
       if (remainingToApply <= 0) break;
@@ -1216,7 +1066,10 @@ async function saveSale() {
       }
     }
 
-    // Map por forma solo con lo aplicado (venta + deuda); NO incluye cambio
+    // ✅ definir método principal ANTES de cualquier uso
+    const metodoPrincipal =
+      metodosAplicados.length === 1 ? (metodosAplicados[0].forma || "mix") : "mix";
+
     const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
     for (const p of metodosAplicados) {
       if (paymentMap[p.forma] !== undefined) {
@@ -1224,16 +1077,12 @@ async function saveSale() {
       }
     }
 
-    // === NUEVO: totales por método (aplicado) + método principal normalizado ===
     const pagoEfectivo = Number((paymentMap.efectivo || 0).toFixed(2));
     const pagoTarjeta  = Number((paymentMap.tarjeta  || 0).toFixed(2));
     const pagoTransf   = Number((paymentMap.transferencia || 0).toFixed(2));
     const pagoOtro     = Number((paymentMap.otro || 0).toFixed(2));
 
-    const metodoPrincipal =
-      metodosAplicados.length === 1 ? (metodosAplicados[0].forma || "mix") : "mix";
-
-    // ===== Items para DB/RPC (idéntico a tu lógica, con defensas) =====
+    // ===== Items =====
     const itemsForDb = cartSafe.map((p) => {
       const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
       const qty = Number(p.cantidad);
@@ -1260,9 +1109,9 @@ async function saveSale() {
       };
     });
 
-    // ===== Pago JSON enriquecido (se mantiene tu estructura, con aplicado/cambio) =====
+    // ===== Pago JSON =====
     const pagoJson = {
-      metodos: metodosAplicados, // <— aplicado (capado)
+      metodos: metodosAplicados, // aplicado (venta + deuda)
       map: paymentMap,
       total_ingresado: Number(paid.toFixed(2)),
       aplicado_venta: Number(paidForSaleNow.toFixed(2)),
@@ -1271,111 +1120,61 @@ async function saveSale() {
       ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
     };
 
-    // ---------- 1) RPC preferida ----------
+    // ---------- Guardar venta via RPC simple ----------
     let ventaId = null;
-    let rpcError = null;
-    try {
-      const { data, error } = await supabase.rpc("create_venta", {
-        p_cliente_id: selectedClient?.id || null,
-        p_van_id: van.id || null,
-        p_usuario: usuario.id,
-        p_items: itemsForDb,
-        p_pago: pagoJson,
-        p_notas: notes || null,
-        p_estado_pago: estadoPago,
-        p_total: Number(saleTotal.toFixed(2)),
-        p_total_venta: Number(saleTotal.toFixed(2)),
-        // ⬇⬇⬇ SOLO lo aplicado a ESTA venta (no incluye pago a deuda)
-        p_total_pagado: Number(paidForSaleNow.toFixed(2)),
+    const { data: rpcId, error: rpcErr } = await supabase.rpc('ventas_insert_simple', {
+      p_cliente_id: selectedClient?.id ?? null,
+      p_van_id: van.id ?? null,
+      p_usuario_id: usuario.id,
+      p_total: Number(saleTotal.toFixed(2)),
+      p_total_pagado: Number(paidForSaleNow.toFixed(2)),
+      p_estado_pago: estadoPago,
+      p_pago: pagoJson,
+      p_productos: itemsForDb,        // [{producto_id, cantidad, precio_unit, descuento_pct}]
+      p_notas: notes || null,
+      p_pago_efectivo: pagoEfectivo,
+      p_pago_tarjeta: pagoTarjeta,
+      p_pago_transferencia: pagoTransf,
+      p_pago_otro: pagoOtro,
+      p_metodo: metodoPrincipal,      // ✅ ya inicializado
+    });
+    if (rpcErr) throw new Error(`ventas_insert_simple: ${rpcErr.message}`);
+    ventaId = rpcId;
+    if (!ventaId) throw new Error('No se obtuvo ventaId del RPC ventas_insert_simple');
+
+    // ---------- CxC ----------
+    // (1) Ajuste por la parte no pagada de ESTA venta
+    if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {
+      await supabase
+        .rpc("cxc_crear_ajuste_por_venta", {
+          p_cliente_id: selectedClient.id,
+          p_venta_id: ventaId,
+          p_monto: Number(pendingFromThisSale),
+          p_van_id: van.id,
+          p_usuario_id: usuario.id,
+          p_nota: "Saldo de venta no pagado",
+        })
+        .catch((e) =>
+          console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e)
+        );
+    }
+
+    // (2) Registrar pago SOLO por lo aplicado a deuda previa (no lo de la venta)
+    const montoParaCxC = Number(payOldDebtNow.toFixed(2));
+    if (montoParaCxC > 0 && selectedClient?.id) {
+      await registrarPagoCxC({
+        cliente_id: selectedClient.id,
+        monto: montoParaCxC,             // ✅ consistente
+        metodo: metodoPrincipal,
+        van_id: van.id,
       });
-      if (error) throw error;
-      ventaId = data?.venta_id || data?.id || data?.[0]?.id || null;
-    } catch (e) {
-      rpcError = e;
-      console.warn("RPC create_venta falló, probando INSERT directo:", e?.message || e);
     }
 
-    // ---------- 2) Fallback INSERT directo ----------
-    if (!ventaId) {
-      const payloadVenta = {
-        cliente_id: selectedClient?.id ?? null,
-        van_id: van.id ?? null,
-        usuario_id: usuario.id,
-        total: Number(saleTotal.toFixed(2)),
-        total_venta: Number(saleTotal.toFixed(2)),
-        // ⬇⬇⬇ SOLO lo aplicado a ESTA venta
-        total_pagado: Number(paidForSaleNow.toFixed(2)),
-        estado_pago: estadoPago,
-        pago: pagoJson,
-        productos: itemsForDb,
-        notas: notes || null,
+    // ===== Recibo =====
+    const prevDue     = Math.max(0, balanceBefore);
+    const balancePost = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
+    const newDue      = Math.max(0, balancePost);
 
-        // ⬇⬇⬇ NUEVO: columnas por método *aplicado* (venta+deuda). Si quieres SOLO venta, calcula por separado.
-        pago_efectivo: pagoEfectivo,
-        pago_tarjeta:  pagoTarjeta,
-        pago_transferencia: pagoTransf,
-        pago_otro: pagoOtro,
-
-        // ⬇⬇⬇ NUEVO: método/forma normalizados
-        metodo_pago: metodoPrincipal,
-        forma_pago: metodoPrincipal,
-      };
-
-      const { data: ins, error: insErr } = await supabase
-        .from("ventas")
-        .insert([payloadVenta])
-        .select()
-        .single();
-
-      if (insErr) {
-        throw new Error(
-          `RPC & INSERT failed. RPC: ${rpcError?.message || "N/A"} | INSERT: ${insErr.message}`
-        );
-      }
-      ventaId = ins?.id || null;
-
-      // Insert de detalle (como ya tenías)
-      if (ventaId && itemsForDb.length > 0) {
-        await supabase.from("detalle_ventas").insert(
-          itemsForDb.map((it) => ({
-            venta_id: ventaId,
-            producto_id: it.producto_id,
-            cantidad: it.cantidad,
-            precio_unit: it.precio_unit,
-            descuento_pct: it.descuento_pct,
-          }))
-        );
-      }
-    }
-
-    // ---------- (Opcional) registrar CxC por fuera (igual que lo tenías) ----------
-    await Promise.all([
-      pendingFromThisSale > 0 && selectedClient?.id && ventaId
-        ? supabase
-            .rpc("cxc_crear_ajuste_por_venta", {
-              p_cliente_id: selectedClient.id,
-              p_venta_id: ventaId,
-              p_monto: Number(pendingFromThisSale),
-              p_van_id: van.id,
-              p_usuario_id: usuario.id,
-              p_nota: "Saldo de venta no pagado",
-            })
-            .catch((e) => console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e))
-        : Promise.resolve(),
-      payOldDebtNow > 0 && selectedClient?.id
-        ? supabase.rpc("cxc_registrar_pago", {
-            p_cliente_id: selectedClient.id,
-            p_monto: Number(payOldDebtNow),
-            p_metodo: "mix",
-            p_van_id: van.id,
-          })
-        : Promise.resolve({}),
-    ]);
-
-    // ===== Recibo (sin cambios de negocio) =====
-    const prevDue = Math.max(0, balanceBefore);
-    const balanceAfter = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
-    const newDue = Math.max(0, balanceAfter);
     const payload = {
       clientName: selectedClient?.nombre || "",
       creditNumber: getCreditNumber(selectedClient),
@@ -1388,7 +1187,6 @@ async function saveSale() {
         subtotal: p.cantidad * p.precio_unitario,
       })),
       saleTotal,
-      // mostramos lo pagado total (venta+deuda) en el recibo para transparencia
       paid: paidForSaleNow + payOldDebtNow,
       change: changeNow,
       prevBalance: prevDue,
@@ -1396,7 +1194,7 @@ async function saveSale() {
       newDue,
       creditLimit,
       availableBefore: creditAvailable,
-      availableAfter: Math.max(0, creditLimit - Math.max(0, balanceAfter)),
+      availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
     };
 
     removePendingFromLSById(currentPendingId);
@@ -1408,8 +1206,9 @@ async function saveSale() {
         (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
     );
 
-    reloadInventory(); // refrescar inventario tras guardar
+    reloadInventory();
     clearSale();
+
   } catch (err) {
     setPaymentError("❌ Error saving sale: " + (err?.message || ""));
     console.error(err);
@@ -1418,6 +1217,8 @@ async function saveSale() {
   }
 }
 
+
+  // src/Ventas.jsx - PARTE 3 FINAL (Componentes de UI)
 
   /* ======================== Modal: ventas pendientes ======================== */
   function handleSelectPendingSale(sale) {
@@ -1429,11 +1230,13 @@ async function saveSale() {
     window.pendingSaleId = sale.id;
     setModalPendingSales(false);
   }
+
   function handleDeletePendingSale(id) {
     const updated = removePendingFromLSById(id);
     setPendingSales(updated);
     if (window.pendingSaleId === id) window.pendingSaleId = null;
   }
+
   function renderPendingSalesModal() {
     return (
       <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
@@ -1490,11 +1293,9 @@ async function saveSale() {
 
   /* ======================== Paso 1: Cliente ======================== */
   function renderStepClient() {
-    // safety
     const clientsSafe = Array.isArray(clients) ? clients : [];
     const creditNum = getCreditNumber(selectedClient);
 
-    // Ya seleccionado ⇒ ficha + panel crédito
     if (selectedClient) {
       return (
         <div className="space-y-4">
@@ -1561,18 +1362,6 @@ async function saveSale() {
                       Credit #: <span className="font-mono font-semibold">{creditNum}</span>
                     </span>
                   </div>
-                  {/* === Last activity UI === */}
-                  <div className="flex items-center gap-2">
-                    <span>🕒</span>
-                    <span className="text-xs text-gray-600">
-                      Last activity:{" "}
-                      {lastActivityLoading
-                        ? "Loading…"
-                        : lastActivityAt
-                        ? new Date(lastActivityAt).toLocaleString()
-                        : "No records"}
-                    </span>
-                  </div>
                 </div>
 
                 {migrationMode && selectedClient?.id && (
@@ -1580,7 +1369,6 @@ async function saveSale() {
                     <button
                       type="button"
                       onClick={async () => {
-                        // refresco inmediato de CxC
                         const info = await getCxcCliente(selectedClient.id);
                         if (info) {
                           setCxcLimit(info.limite);
@@ -1607,7 +1395,7 @@ async function saveSale() {
                 )}
               </div>
 
-              {/* Panel crédito compacto */}
+              {/* Panel crédito */}
               <div className="bg-white rounded-lg border shadow-sm p-4 min-w-0 lg:min-w-[280px]">
                 <div className="grid grid-cols-1 gap-3">
                   <div>
@@ -1641,25 +1429,13 @@ async function saveSale() {
                     </div>
                   </div>
 
-                  {balanceBefore !== 0 && (
-                    <div
-                      className={`rounded-lg p-2 border ${
-                        balanceBefore > 0 ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
-                      }`}
-                    >
-                      <div
-                        className={`text-xs font-semibold ${
-                          balanceBefore > 0 ? "text-red-700" : "text-green-700"
-                        }`}
-                      >
-                        {balanceBefore > 0 ? "Outstanding Balance" : "Credit in Favor"}
+                  {balanceBefore > 0 && (
+                    <div className="rounded-lg p-2 border bg-red-50 border-red-200">
+                      <div className="text-xs font-semibold text-red-700">
+                        Outstanding Balance
                       </div>
-                      <div
-                        className={`text-lg font-bold ${
-                          balanceBefore > 0 ? "text-red-700" : "text-green-700"
-                        }`}
-                      >
-                        {fmt(Math.abs(balanceBefore))}
+                      <div className="text-lg font-bold text-red-700">
+                        {fmt(balanceBefore)}
                       </div>
                     </div>
                   )}
@@ -1704,7 +1480,7 @@ async function saveSale() {
       );
     }
 
-    // === Sin cliente seleccionado: SIEMPRE RENDERIZA BUSCADOR ===
+    // Sin cliente seleccionado: BUSCADOR
     return (
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
@@ -2034,15 +1810,10 @@ async function saveSale() {
         {/* Resumen crédito */}
         {selectedClient && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {balanceBefore >= 0 ? (
+            {balanceBefore > 0 && (
               <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
                 <div className="text-xs text-red-600 uppercase font-semibold">Outstanding Balance</div>
                 <div className="text-xl font-bold text-red-700">{fmt(balanceBefore)}</div>
-              </div>
-            ) : (
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
-                <div className="text-xs text-green-600 uppercase font-semibold">Credit in Favor</div>
-                <div className="text-xl font-bold text-green-700">{fmt(Math.abs(balanceBefore))}</div>
               </div>
             )}
 
@@ -2076,9 +1847,7 @@ async function saveSale() {
         </div>
       </div>
     );
-  }
-
-  /* ======================== Paso 3: Pago (SIMPLE/MOBILE) ======================== */
+  }/* ======================== Paso 3: Pago ======================== */
   function renderStepPayment() {
     function handleChangePayment(index, field, value) {
       setPayments((arr) => arr.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
@@ -2173,7 +1942,7 @@ async function saveSale() {
             ))}
           </div>
 
-          {/* Toggle para ver más (sin hooks dentro) */}
+          {/* Toggle para ver más */}
           <button
             type="button"
             className="mt-3 text-sm text-blue-700 underline"

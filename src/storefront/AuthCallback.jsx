@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
+
 export default function AuthCallback() {
   const navigate = useNavigate();
   const [msg, setMsg] = useState("Procesando autenticación…");
