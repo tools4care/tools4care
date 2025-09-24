@@ -1,14 +1,9 @@
-// src/PreCierreVan.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 
-/* ========================= Helpers ========================= */
-
-function dayBounds(dia) {
-  return { start: `${dia}T00:00:00`, end: `${dia}T23:59:59` };
-}
+/* ============ Helpers ============ */
 
 function formatUS(d) {
   if (!d) return "—";
@@ -17,258 +12,111 @@ function formatUS(d) {
   if (!y || !m || !day) return d;
   return `${m}-${day}-${y}`;
 }
+const isIsoDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-/** Conteos vía tablas */
-async function contarVentasDia(van_id, dia) {
-  const { start, end } = dayBounds(dia);
-  // 1) cierre_id IS NULL
-  {
-    const { count, error } = await supabase
-      .from("ventas")
-      .select("id", { count: "exact", head: true })
-      .eq("van_id", van_id)
-      .gte("fecha", start)
-      .lte("fecha", end)
-      .is("cierre_id", null);
-    if (!error) return count || 0;
-  }
-  // 2) cerrado = false (fallback)
-  {
-    const { count, error } = await supabase
-      .from("ventas")
-      .select("id", { count: "exact", head: true })
-      .eq("van_id", van_id)
-      .gte("fecha", start)
-      .lte("fecha", end)
-      .eq("cerrado", false);
-    if (!error) return count || 0;
-  }
-  return 0;
-}
-
-async function contarPagosDia(van_id, dia) {
-  const { start, end } = dayBounds(dia);
-  // 1) cierre_id IS NULL
-  {
-    const { count, error } = await supabase
-      .from("pagos")
-      .select("id", { count: "exact", head: true })
-      .eq("van_id", van_id)
-      .gte("fecha_pago", start)
-      .lte("fecha_pago", end)
-      .is("cierre_id", null);
-    if (!error) return count || 0;
-  }
-  // 2) cerrado = false (fallback)
-  {
-    const { count, error } = await supabase
-      .from("pagos")
-      .select("id", { count: "exact", head: true })
-      .eq("van_id", van_id)
-      .gte("fecha_pago", start)
-      .lte("fecha_pago", end)
-      .eq("cerrado", false);
-    if (!error) return count || 0;
-  }
-  return 0;
-}
-
-async function contarPorFecha(van_id, fecha) {
-  try {
-    const [ventas, pagos] = await Promise.all([
-      contarVentasDia(van_id, fecha),
-      contarPagosDia(van_id, fecha),
-    ]);
-    return { ventas, pagos, total: (ventas || 0) + (pagos || 0) };
-  } catch {
-    return { ventas: 0, pagos: 0, total: 0 };
-  }
-}
-
-/** Días YA cerrados (por rango, robusto) */
-async function diasYaCerrados(van_id, dias) {
-  if (!van_id || dias.length === 0) return new Set();
-  const sorted = [...dias].sort();
-  const desde = `${sorted[0]}T00:00:00`;
-  const hasta = `${sorted[sorted.length - 1]}T23:59:59`;
-  const { data, error } = await supabase
-    .from("cierres_van")
-    .select("fecha_inicio, fecha_fin")
+async function countVentasDia(van_id, dia) {
+  const start = `${dia}T00:00:00`, end = `${dia}T23:59:59`;
+  const { count, error } = await supabase
+    .from("ventas")
+    .select("id", { count: "exact", head: true })
     .eq("van_id", van_id)
-    .gte("fecha_inicio", desde)
-    .lte("fecha_fin", hasta);
-  if (error) return new Set();
-  const set = new Set(
-    (data || [])
-      .map((c) => {
-        const ini = String(c.fecha_inicio || "").slice(0, 10);
-        const fin = String(c.fecha_fin || "").slice(0, 10);
-        return ini === fin ? ini : null;
-      })
-      .filter(Boolean)
-  );
-  return set;
+    .gte("fecha", start)
+    .lte("fecha", end)
+    .is("cierre_id", null);
+  if (error) return 0;
+  return count || 0;
 }
 
-/* =============== Hook principal: SIEMPRE filtra cerrados y total>0 =============== */
-function useFechasPendientes(van_id) {
-  const [fechas, setFechas] = useState([]);
-
+/* ============ Datos desde la vista (expected por día/van) ============ */
+function useExpectedPendientes(van_id, diasAtras = 21) {
+  const [rows, setRows] = useState([]); // [{dia, cash_expected, card_expected, transfer_expected, mix_unallocated}]
   useEffect(() => {
-    if (!van_id) {
-      setFechas([]);
-      return;
-    }
-
+    if (!van_id) { setRows([]); return; }
     (async () => {
-      const pad = (n) => String(n).padStart(2, "0");
+      // Rango últimos N días
       const hoy = new Date();
+      const desde = new Date(hoy);
+      desde.setDate(hoy.getDate() - (diasAtras - 1));
+      const toISO = (d) => d.toISOString().slice(0, 10);
 
-      // 1) Intentamos con RPC
-      let list = [];
-      try {
-        const { data, error } = await supabase.rpc(
-          "fechas_pendientes_cierre_van",
-          { van_id_param: van_id }
-        );
-        if (!error && Array.isArray(data)) {
-          list = (data || [])
-            .map((x) => String(x).slice(0, 10))
-            .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s));
-        }
-      } catch {
-        /* noop */
-      }
+      const { data, error } = await supabase
+        .from("vw_expected_por_dia_van")
+        .select("*")
+        .eq("van_id", van_id)
+        .gte("dia", toISO(desde))
+        .lte("dia", toISO(hoy))
+        .order("dia", { ascending: false });
 
-      // 2) Fallback: escanear últimos 21 días
-      if (list.length === 0) {
-        const dias = [];
-        for (let i = 0; i < 21; i++) {
-          const d = new Date(hoy);
-          d.setDate(d.getDate() - i);
-          dias.push(
-            `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-          );
-        }
-        list = [...dias]; // todavía sin filtrar
-      }
+      if (error) { setRows([]); return; }
 
-      // 3) QUITAR días YA cerrados (fuente de verdad)
-      try {
-        const setCerrados = await diasYaCerrados(van_id, list);
-        if (setCerrados.size) list = list.filter((f) => !setCerrados.has(f));
-      } catch {
-        /* noop */
-      }
+      const clean = (data || []).filter(r => {
+        const tot = Number(r.cash_expected || 0) + Number(r.card_expected || 0) + Number(r.transfer_expected || 0) + Number(r.mix_unallocated || 0);
+        return isIsoDate(r.dia) && tot > 0;
+      });
 
-      // 4) Re-conteo real y QUITAR días con TOTAL==0 (aunque el RPC los haya devuelto)
-      const entradas = await Promise.all(
-        list.map(async (f) => [f, await contarPorFecha(van_id, f)])
-      );
-      list = entradas
-        .filter(([, c]) => (c?.total || 0) > 0)
-        .map(([f]) => f);
-
-      // 5) Respetar preferencia solo si aún tiene pendientes
-      try {
-        const pref = localStorage.getItem("pre_cierre_fecha");
-        if (pref && !list.includes(pref)) {
-          const c = await contarPorFecha(van_id, pref);
-          if ((c?.total || 0) > 0) list.unshift(pref);
-        }
-      } catch {
-        /* noop */
-      }
-
-      // 6) Quitar "último cerrado" guardado al volver del cierre
-      try {
-        const lastClosed = localStorage.getItem("pre_cierre_last_closed");
-        if (lastClosed) {
-          list = list.filter((f) => f !== lastClosed);
-          localStorage.removeItem("pre_cierre_last_closed");
-        }
-      } catch {
-        /* noop */
-      }
-
-      setFechas(Array.from(new Set(list)));
+      setRows(clean);
     })();
-  }, [van_id]);
-
-  return fechas;
+  }, [van_id, diasAtras]);
+  return rows;
 }
 
-/* ========================= Componente ========================= */
-
+/* ============ Componente ============ */
 export default function PreCierreVan() {
   const { van } = useVan();
   const navigate = useNavigate();
-  const fechas = useFechasPendientes(van?.id);
 
-  const [seleccion, setSeleccion] = useState("");
-  const [conteos, setConteos] = useState({}); // { 'YYYY-MM-DD': {ventas, pagos, total} }
+  // Lee expected por día/van (solo días con actividad, ya excluye lo cerrado)
+  const expectedRows = useExpectedPendientes(van?.id, 21);
 
-  // Prefetch conteos (para panel derecho)
+  // Prefetch: contar facturas por día (opcional, solo para columna “Invoices”)
+  const [invoices, setInvoices] = useState({}); // { YYYY-MM-DD: number }
   useEffect(() => {
-    if (!van?.id || fechas.length === 0) return;
-    let cancel = false;
+    if (!van?.id || expectedRows.length === 0) return;
+    let alive = true;
     (async () => {
-      const faltantes = fechas.filter((f) => !conteos[f]);
-      if (faltantes.length === 0) return;
-      const entradas = await Promise.all(
-        faltantes.map(async (f) => [f, await contarPorFecha(van.id, f)])
+      const faltan = expectedRows.filter(r => invoices[r.dia] == null);
+      if (faltan.length === 0) return;
+      const out = {};
+      await Promise.all(
+        faltan.map(async (r) => {
+          const c = await countVentasDia(van.id, r.dia);
+          out[r.dia] = c;
+        })
       );
-      if (!cancel) {
-        setConteos((prev) => {
-          const next = { ...prev };
-          for (const [f, val] of entradas) next[f] = val;
-          return next;
-        });
-      }
+      if (alive) setInvoices(prev => ({ ...prev, ...out }));
     })();
-    return () => {
-      cancel = true;
-    };
-  }, [van?.id, fechas, conteos]);
+    return () => { alive = false; };
+  }, [van?.id, expectedRows, invoices]);
 
-  // Asegurar que NO se muestre nada con total 0 (si por alguna razón entró)
-  const fechasVisibles = useMemo(
-    () => fechas.filter((f) => (conteos[f]?.total ?? 1) > 0),
-    [fechas, conteos]
-  );
+  // Fechas visibles ordenadas (ya vienen ordenadas desc desde el hook)
+  const fechas = useMemo(() => expectedRows.map(r => r.dia), [expectedRows]);
+  const [seleccion, setSeleccion] = useState("");
 
-  // Selección inicial
+  // selección inicial (recupera preferencia si aplica)
   useEffect(() => {
-    if (fechasVisibles.length === 0) {
-      setSeleccion("");
-      return;
-    }
+    if (!fechas.length) { setSeleccion(""); return; }
     let pref = "";
-    try {
-      pref = localStorage.getItem("pre_cierre_fecha") || "";
-    } catch {}
-    if (pref && fechasVisibles.includes(pref)) setSeleccion(pref);
-    else setSeleccion(fechasVisibles[0]);
-  }, [fechasVisibles]);
-
-  // Si el seleccionado deja de estar visible
-  useEffect(() => {
-    if (seleccion && !fechasVisibles.includes(seleccion)) {
-      setSeleccion(fechasVisibles[0] || "");
-    }
-  }, [fechasVisibles, seleccion]);
+    try { pref = localStorage.getItem("pre_cierre_fecha") || ""; } catch {}
+    if (pref && fechas.includes(pref)) setSeleccion(pref);
+    else setSeleccion(fechas[0]);
+  }, [fechas]);
 
   const hoy = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const puedeProcesar =
-    Boolean(seleccion) && (conteos[seleccion]?.total ?? 0) > 0;
+  const filaSeleccion = expectedRows.find(r => r.dia === seleccion);
+  const totalSeleccion = (filaSeleccion
+    ? Number(filaSeleccion.cash_expected || 0) + Number(filaSeleccion.card_expected || 0) + Number(filaSeleccion.transfer_expected || 0) + Number(filaSeleccion.mix_unallocated || 0)
+    : 0);
 
-  const onProcesar = async () => {
+  const puedeProcesar = Boolean(seleccion) && totalSeleccion > 0;
+
+  const onProcesar = () => {
     if (!puedeProcesar) return;
     try {
       localStorage.setItem("pre_cierre_fecha", seleccion);
-      localStorage.setItem("pre_cierre_last_closed", seleccion); // optimista
+      // hint para que la pantalla de cierre refresque
+      localStorage.setItem("pre_cierre_refresh", String(Date.now()));
     } catch {}
-    navigate("/cierres/van");
+    navigate("/cierres/van"); // tu ruta de cierre
   };
 
   return (
@@ -286,7 +134,7 @@ export default function PreCierreVan() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Lista */}
+          {/* Lista de fechas */}
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -296,30 +144,27 @@ export default function PreCierreVan() {
                 </tr>
               </thead>
               <tbody>
-                {fechasVisibles.length === 0 ? (
+                {fechas.length === 0 ? (
                   <tr>
                     <td colSpan={2} className="p-3 text-center text-gray-400">
                       ✅ No pending days
                     </td>
                   </tr>
                 ) : (
-                  fechasVisibles.map((f) => (
+                  fechas.map((f) => (
                     <tr
                       key={f}
-                      className={`cursor-pointer hover:bg-blue-50 ${
-                        seleccion === f ? "bg-blue-50" : ""
-                      }`}
+                      className={`cursor-pointer hover:bg-blue-50 ${seleccion === f ? "bg-blue-50" : ""}`}
                       onClick={() => {
                         setSeleccion(f);
                         try { localStorage.setItem("pre_cierre_fecha", f); } catch {}
                       }}
                     >
                       <td className="p-2">
-                        {formatUS(f)}
-                        {f === hoy ? " (Today)" : ""}
+                        {formatUS(f)}{f === hoy ? " (Today)" : ""}
                       </td>
                       <td className="p-2 text-right">
-                        {conteos[f]?.ventas ?? 0}
+                        {invoices[f] ?? "—"}
                       </td>
                     </tr>
                   ))
@@ -333,11 +178,21 @@ export default function PreCierreVan() {
             <div className="text-sm mb-2">
               <b>Selected:</b> {seleccion ? formatUS(seleccion) : "—"}
             </div>
+
             <div className="text-sm space-y-1 mb-3">
-              <div><b>Sales pending:</b> {conteos[seleccion]?.ventas ?? 0}</div>
-              <div><b>Payments pending:</b> {conteos[seleccion]?.pagos ?? 0}</div>
-              <div><b>Total movements:</b> {conteos[seleccion]?.total ?? 0}</div>
+              <div><b>Cash expected:</b> ${Number(filaSeleccion?.cash_expected || 0).toFixed(2)}</div>
+              <div><b>Card expected:</b> ${Number(filaSeleccion?.card_expected || 0).toFixed(2)}</div>
+              <div><b>Transfer expected:</b> ${Number(filaSeleccion?.transfer_expected || 0).toFixed(2)}</div>
+              {Number(filaSeleccion?.mix_unallocated || 0) > 0 && (
+                <div className="text-xs text-amber-700">
+                  <b>Mix (unallocated):</b> ${Number(filaSeleccion?.mix_unallocated || 0).toFixed(2)}
+                </div>
+              )}
+              <div className="pt-2 border-t">
+                <b>Total expected:</b> ${totalSeleccion.toFixed(2)}
+              </div>
             </div>
+
             <div className="flex gap-2">
               <button
                 type="button"
@@ -355,9 +210,9 @@ export default function PreCierreVan() {
                 Process
               </button>
             </div>
+
             <p className="mt-3 text-xs text-blue-700">
-              Select date(s) to close out and press <b>Process</b> to begin
-              closeout.
+              Select date to close out and press <b>Process</b> to begin closeout.
             </p>
           </div>
         </div>

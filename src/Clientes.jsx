@@ -15,6 +15,9 @@ import {
 /* === CxC centralizado === */
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 
+/* === Leer desde la vista === */
+const CLIENTS_VIEW = "clientes_balance_v2";
+
 /* -------------------- Utilidades -------------------- */
 const estadosUSA = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
@@ -65,6 +68,14 @@ function formatPhoneForInput(raw) {
   return `(${a}) ${b}-${c}`;
 }
 
+// UUID para idempotencia (y para desambiguar la sobrecarga del RPC)
+const makeUUID = () =>
+  (globalThis.crypto?.randomUUID?.()) ||
+  "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0, v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+
 // Wrapper por si no existiera la lib (fallback seguro)
 async function safeGetCxc(clienteId) {
   try {
@@ -96,7 +107,7 @@ async function safeGetCxc(clienteId) {
 }
 
 /* ===================================================================
-   ======  MÓDULO DE MENSAJES / RECIBOS (SMS / Email)  ===============
+   ======  Mensajes / Recibos (SMS / Email)  =========================
    =================================================================== */
 
 const COMPANY_NAME  = import.meta?.env?.VITE_COMPANY_NAME  || "Tools4CareMovil";
@@ -270,14 +281,30 @@ export default function Clientes() {
 
   /* -------------------- Totales globales (cards) -------------------- */
   async function cargarTotales() {
-    const { count: totalClients } = await supabase.from("clientes").select("*", { count: "exact", head: true });
+    // Todo desde la vista
+    const { count: totalClients } = await supabase
+      .from(CLIENTS_VIEW)
+      .select("*", { count: "exact", head: true });
+
     const { count: withDebt } = await supabase
-      .from("v_cxc_cliente_detalle")
+      .from(CLIENTS_VIEW)
       .select("*", { count: "exact", head: true })
-      .gt("saldo", 0);
-    const { data: saldosRows } = await supabase.from("v_cxc_cliente_detalle").select("saldo");
-    const totalOutstanding = (saldosRows || []).reduce((s, r) => s + Math.max(0, Number(r.saldo || 0)), 0);
-    setTotales({ totalClients: totalClients || 0, withDebt: withDebt || 0, totalOutstanding });
+      .gt("balance", 0);
+
+    const { data: saldosRows } = await supabase
+      .from(CLIENTS_VIEW)
+      .select("balance");
+
+    const totalOutstanding = (saldosRows || []).reduce(
+      (s, r) => s + Math.max(0, Number(r.balance || 0)),
+      0
+    );
+
+    setTotales({
+      totalClients: totalClients || 0,
+      withDebt: withDebt || 0,
+      totalOutstanding
+    });
   }
 
   /* -------------------- Cargar página -------------------- */
@@ -287,47 +314,39 @@ export default function Clientes() {
     setMensaje("");
     const from = (p - 1) * ps;
     const to = from + ps - 1;
-  let query = supabase
-  .from("clientes_balance") // o tu vista actual
-  .select("*", { count: "exact" })
-  .range(from, to);
 
-if (q) {
-  const like = `%${q}%`;
-  const qDigits = (q || "").replace(/\D/g, "");
+    let query = supabase
+      .from(CLIENTS_VIEW)
+      .select("*", { count: "exact" })
+      .order("nombre", { ascending: true })
+      .range(from, to);
 
-  const filtros = [
-    // Básicos
-    `nombre.ilike.${like}`,
-    `email.ilike.${like}`,
-    `negocio.ilike.${like}`,
+    if (q) {
+      const like = `%${q}%`;
+      const qDigits = (q || "").replace(/\D/g, "");
 
-    // Teléfono tal cual se guardó
-    `telefono.ilike.${like}`,
+      const filtros = [
+        `nombre.ilike.${like}`,
+        `email.ilike.${like}`,
+        `negocio.ilike.${like}`,
+        `telefono.ilike.${like}`,
+        `direccion.ilike.${like}`,
+        `dir_calle.ilike.${like}`,
+        `dir_ciudad.ilike.${like}`,
+        `dir_estado.ilike.${like}`,
+        `dir_zip.ilike.${like}`,
+      ];
 
-    // Dirección en texto (para migrados como string)
-    `direccion.ilike.${like}`,
+      if (qDigits.length >= 3) {
+        const likeDigits = `%${qDigits}%`;
+        filtros.push(
+          `tel_norm.ilike.${likeDigits}`,
+          `tel_norm.ilike.%1${qDigits}%`
+        );
+      }
 
-    // Dirección desglosada cuando llegó como JSON (de la vista)
-    `dir_calle.ilike.${like}`,
-    `dir_ciudad.ilike.${like}`,
-    `dir_estado.ilike.${like}`,
-    `dir_zip.ilike.${like}`,
-  ];
-
-  // Búsqueda por dígitos (ideal cuando el usuario teclea 978594 o 1978…)
-  if (qDigits.length >= 3) {
-    const likeDigits = `%${qDigits}%`;
-    filtros.push(
-      `tel_norm.ilike.${likeDigits}`,
-      // por si el usuario incluye/omite el 1 de US
-      `tel_norm.ilike.%1${qDigits}%`
-    );
-  }
-
-  query = query.or(filtros.join(","));
-}
-
+      query = query.or(filtros.join(","));
+    }
 
     const { data, error, count } = await query;
     if (error) {
@@ -410,148 +429,127 @@ if (q) {
     // eslint-disable-next-line
   }, []);
 
-  // --- acepta cliente opcional ---
-/** ================== HELPERS DIRECCIÓN ================== */
-/** Parseo robusto para direcciones migradas en string.
- * Soporta variantes como:
- *  - "128 BROAD ST, LYNN, MA, 01902"
- *  - "128 BROAD ST, LYNN, 1902"
- *  - "128 BROAD ST None, LYNN, 1902"
- *  - "128 BROAD ST LYNN MA 01902"
- */
-function parseDireccionString(raw) {
-  if (!raw || typeof raw !== "string") {
-    return { calle: "", ciudad: "", estado: "", zip: "" };
-  }
-
-  // Normalizar: espacios, quitar "None", comas sueltas
-  let s = raw
-    .replace(/\s+/g, " ")
-    .replace(/\bNone\b/gi, "")
-    .replace(/\s+,/g, ",")
-    .trim();
-
-  // ZIP (5 dígitos o 4 -> MA leading zero)
-  let zip = "";
-  const zipMatch = s.match(/(\d{5}|\d{4})\s*$/);
-  if (zipMatch) {
-    zip = zipMatch[1];
-    if (zip.length === 4) zip = "0" + zip; // ej: 1902 -> 01902
-    s = s.replace(new RegExp(`[,\\s]*${zipMatch[1]}\\s*$`), "").trim();
-  }
-
-  // Estado (2 letras al final)
-  let estado = "";
-  const stateMatch = s.match(/(?:,|\s)([A-Z]{2})\s*$/);
-  if (stateMatch) {
-    estado = (stateMatch[1] || "").toUpperCase();
-    s = s.replace(new RegExp(`[,\\s]*${estado}\\s*$`), "").trim();
-  }
-
-  // Separar calle / ciudad
-  let calle = "";
-  let ciudad = "";
-  if (s.includes(",")) {
-    const parts = s.split(",").map(t => t.trim()).filter(Boolean);
-    if (parts.length >= 2) {
-      ciudad = parts.pop() || "";
-      calle = parts.join(", ");
-    } else {
-      calle = parts[0] || "";
+  /** ================== HELPERS DIRECCIÓN ================== */
+  function parseDireccionString(raw) {
+    if (!raw || typeof raw !== "string") {
+      return { calle: "", ciudad: "", estado: "", zip: "" };
     }
-  } else {
-    const tokens = s.split(" ").filter(Boolean);
-    if (tokens.length >= 2) {
-      ciudad = tokens.slice(-1)[0];
-      calle  = tokens.slice(0, -1).join(" ");
-    } else {
-      calle = s;
+
+    let s = raw
+      .replace(/\s+/g, " ")
+      .replace(/\bNone\b/gi, "")
+      .replace(/\s+,/g, ",")
+      .trim();
+
+    // ZIP
+    let zip = "";
+    const zipMatch = s.match(/(\d{5}|\d{4})\s*$/);
+    if (zipMatch) {
+      zip = zipMatch[1];
+      if (zip.length === 4) zip = "0" + zip;
+      s = s.replace(new RegExp(`[,\\s]*${zipMatch[1]}\\s*$`), "").trim();
     }
-  }
 
-  // Intento opcional de inferir ciudad/estado desde ZIP conocido
-  if (zip && (!estado || !ciudad)) {
-    const z = zipToCiudadEstado(zip);
-    if (!estado && z.estado) estado = z.estado;
-    if (!ciudad && z.ciudad) ciudad = z.ciudad;
-  }
+    // Estado
+    let estado = "";
+    const stateMatch = s.match(/(?:,|\s)([A-Z]{2})\s*$/);
+    if (stateMatch) {
+      estado = (stateMatch[1] || "").toUpperCase();
+      s = s.replace(new RegExp(`[,\\s]*${estado}\\s*$`), "").trim();
+    }
 
-  return {
-    calle: calle.trim(),
-    ciudad: ciudad.trim(),
-    estado: (estado || "").toUpperCase(),
-    zip: zip
-  };
-}
+    // Calle / ciudad
+    let calle = "";
+    let ciudad = "";
+    if (s.includes(",")) {
+      const parts = s.split(",").map(t => t.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        ciudad = parts.pop() || "";
+        calle = parts.join(", ");
+      } else {
+        calle = parts[0] || "";
+      }
+    } else {
+      const tokens = s.split(" ").filter(Boolean);
+      if (tokens.length >= 2) {
+        ciudad = tokens.slice(-1)[0];
+        calle  = tokens.slice(0, -1).join(" ");
+      } else {
+        calle = s;
+      }
+    }
 
-/** ================== EDITAR CLIENTE ================== */
-function handleEditCliente(cArg) {
-  const c = cArg || clienteSeleccionado;
-  if (!c) return;
+    if (zip && (!estado || !ciudad)) {
+      const z = zipToCiudadEstado(zip);
+      if (!estado && z.estado) estado = z.estado;
+      if (!ciudad && z.ciudad) ciudad = z.ciudad;
+    }
 
-  // Log para verificar qué llega desde la tabla/vista
-  console.log("Editando cliente:", {
-    id: c?.id,
-    telefono_original: c?.telefono ?? c?.phone,
-    email: c?.email,
-    direccion_original: c?.direccion
-  });
-
-  // ⬇️ Dirección: soportar string “migrado” u objeto normal
-  let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
-  const raw = c?.direccion;
-
-  if (typeof raw === "string" && raw) {
-    // Parseo robusto cuando viene en texto libre
-    direccion = parseDireccionString(raw);
-  } else if (raw && typeof raw === "object") {
-    direccion = {
-      calle: raw.calle || "",
-      ciudad: raw.ciudad || "",
-      estado: (raw.estado || "").toUpperCase(),
-      zip: raw.zip || ""
+    return {
+      calle: calle.trim(),
+      ciudad: ciudad.trim(),
+      estado: (estado || "").toUpperCase(),
+      zip
     };
-    // Si hay ZIP pero falta estado/ciudad, intentamos completar
-    if (direccion.zip && (!direccion.estado || !direccion.ciudad)) {
-      const z = zipToCiudadEstado(direccion.zip);
-      if (!direccion.estado && z.estado) direccion.estado = z.estado;
-      if (!direccion.ciudad && z.ciudad) direccion.ciudad = z.ciudad;
-    }
-  } else if (typeof raw === "string") {
-    // String vacío → lo dejamos en "calle" vacío
-    direccion = { calle: raw || "", ciudad: "", estado: "", zip: "" };
   }
 
-  // 👉 Teléfono: formateo para INPUT (no cambia cómo se guarda)
-  const telFmt = formatPhoneForInput(c?.telefono ?? c?.phone ?? "");
+  /** ================== EDITAR CLIENTE ================== */
+  function handleEditCliente(cArg) {
+    const c = cArg || clienteSeleccionado;
+    if (!c) return;
 
-  // 4) Poblar el form
-  setForm({
-    nombre:  c?.nombre  || "",
-    telefono: telFmt     || "",
-    email:   c?.email    || "",
-    negocio: c?.negocio  || "",
-    direccion
-  });
+    console.log("Editando cliente:", {
+      id: c?.id,
+      telefono_original: c?.telefono ?? c?.phone,
+      email: c?.email,
+      direccion_original: c?.direccion
+    });
 
-  // Autocompletar estado y opciones
-  const estadoUpper = (direccion.estado || "").toUpperCase();
-  setEstadoInput(estadoUpper);
-  const filtradas = estadosUSA.filter(s => s.startsWith(estadoUpper));
-  setEstadoOpciones(filtradas.length ? filtradas : estadosUSA);
+    let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
+    const raw = c?.direccion;
 
-  // Seleccionado y abrir modal
-  setClienteSeleccionado({ ...c, direccion });
-  setMostrarEdicion(true);
-  setMensaje("");
-}
+    if (typeof raw === "string" && raw) {
+      direccion = parseDireccionString(raw);
+    } else if (raw && typeof raw === "object") {
+      direccion = {
+        calle: raw.calle || "",
+        ciudad: raw.ciudad || "",
+        estado: (raw.estado || "").toUpperCase(),
+        zip: raw.zip || ""
+      };
+      if (direccion.zip && (!direccion.estado || !direccion.ciudad)) {
+        const z = zipToCiudadEstado(direccion.zip);
+        if (!direccion.estado && z.estado) direccion.estado = z.estado;
+        if (!direccion.ciudad && z.ciudad) direccion.ciudad = z.ciudad;
+      }
+    } else if (typeof raw === "string") {
+      direccion = { calle: raw || "", ciudad: "", estado: "", zip: "" };
+    }
 
+    const telFmt = formatPhoneForInput(c?.telefono ?? c?.phone ?? "");
+
+    setForm({
+      nombre:  c?.nombre  || "",
+      telefono: telFmt     || "",
+      email:   c?.email    || "",
+      negocio: c?.negocio  || "",
+      direccion
+    });
+
+    const estadoUpper = (direccion.estado || "").toUpperCase();
+    setEstadoInput(estadoUpper);
+    const filtradas = estadosUSA.filter(s => s.startsWith(estadoUpper));
+    setEstadoOpciones(filtradas.length ? filtradas : estadosUSA);
+
+    setClienteSeleccionado({ ...c, direccion });
+    setMostrarEdicion(true);
+    setMensaje("");
+  }
 
   function handleChange(e) {
     const { name, value } = e.target;
 
     if (name === "telefono") {
-      // 👉 Formateo en tiempo real para el input
       const pretty = formatPhoneForInput(value);
       setForm((f) => ({ ...f, telefono: pretty }));
       return;
@@ -938,90 +936,90 @@ function handleEditCliente(cArg) {
               <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
             </div>
           )}
-{/* --- PANEL STICKY DE BALANCES EN MÓVIL MIENTRAS SE BUSCA (con botón de abono) --- */}
-{busqueda.trim() !== "" && !isLoading && clientes.length > 0 && (
-  <div className="md:hidden sticky top-0 z-20 bg-white border-b border-gray-200">
-    <div className="px-4 py-2">
-      <div className="text-[11px] text-gray-500 mb-1">
-        Resultados: {clientes.length} • Balances rápidos
-      </div>
 
-      {/* Carrusel horizontal de chips con info clave */}
-      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-        {clientes.slice(0, 10).map((c) => {
-          const cxc = cxcByClient[c.id];
-          const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
+          {/* --- PANEL STICKY DE BALANCES EN MÓVIL --- */}
+          {busqueda.trim() !== "" && !isLoading && clientes.length > 0 && (
+            <div className="md:hidden sticky top-0 z-20 bg-white border-b border-gray-200">
+              <div className="px-4 py-2">
+                <div className="text-[11px] text-gray-500 mb-1">
+                  Resultados: {clientes.length} • Balances rápidos
+                </div>
 
-          return (
-            <div
-              key={c.id}
-              className={`shrink-0 min-w[240px] max-w[280px] p-3 rounded-xl border
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                  {clientes.slice(0, 10).map((c) => {
+                    const cxc = cxcByClient[c.id];
+                    const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
+
+                    return (
+                      <div
+                        key={c.id}
+                        className={`shrink-0 min-w-[240px] max-w-[280px] p-3 rounded-xl border
                 ${saldo > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}
-            >
-              {/* Header: Nombre + botón Payment */}
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-[11px] font-semibold text-gray-800 truncate">
-                    {c.nombre || "—"}
-                  </div>
-                  {c.negocio && (
-                    <div className="text-[10px] text-gray-600 truncate">
-                      {c.negocio}
-                    </div>
-                  )}
-                  {c.telefono && (
-                    <div className="text-[10px] text-gray-500 truncate">
-                      {formatPhoneForInput(c.telefono)}
-                    </div>
-                  )}
-                </div>
+                      >
+                        {/* Header: Nombre + botón Payment */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold text-gray-800 truncate">
+                              {c.nombre || "—"}
+                            </div>
+                            {c.negocio && (
+                              <div className="text-[10px] text-gray-600 truncate">
+                                {c.negocio}
+                              </div>
+                            )}
+                            {c.telefono && (
+                              <div className="text-[10px] text-gray-500 truncate">
+                                {formatPhoneForInput(c.telefono)}
+                              </div>
+                            )}
+                          </div>
 
-                {/* Botón directo a Abono */}
-                <button
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
+                          {/* Botón directo a Abono */}
+                          <button
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
                              bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    const info = await safeGetCxc(c.id);
-                    setClienteSeleccionado(c);
-                    setResumen((r) => ({
-                      ...r,
-                      balance: typeof info?.saldo === "number" ? info.saldo : (c.balance || 0),
-                      cxc: info || null,
-                    }));
-                    setMostrarAbono(true);
-                  }}
-                  title="Registrar pago"
-                >
-                  <DollarSign size={14} />
-                  Payment
-                </button>
-              </div>
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const info = await safeGetCxc(c.id);
+                              setClienteSeleccionado(c);
+                              setResumen((r) => ({
+                                ...r,
+                                balance: typeof info?.saldo === "number" ? info.saldo : (c.balance || 0),
+                                cxc: info || null,
+                              }));
+                              setMostrarAbono(true);
+                            }}
+                            title="Registrar pago"
+                          >
+                            <DollarSign size={14} />
+                            Payment
+                          </button>
+                        </div>
 
-              {/* Balance y abrir Stats tocando el cuerpo */}
-              <button
-                className="mt-2 w-full text-left"
-                onClick={() => {
-                  setClienteSeleccionado(c);
-                  setMostrarStats(true);
-                }}
-              >
-                <div
-                  className={`text-sm font-bold ${
-                    saldo > 0 ? "text-rose-600" : "text-emerald-600"
-                  }`}
-                >
-                  {fmtSafe(saldo)}
+                        {/* Balance y abrir Stats tocando el cuerpo */}
+                        <button
+                          className="mt-2 w-full text-left"
+                          onClick={() => {
+                            setClienteSeleccionado(c);
+                            setMostrarStats(true);
+                          }}
+                        >
+                          <div
+                            className={`text-sm font-bold ${
+                              saldo > 0 ? "text-rose-600" : "text-emerald-600"
+                            }`}
+                          >
+                            {fmtSafe(saldo)}
+                          </div>
+                          <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
-              </button>
+              </div>
             </div>
-          );
-        })}
-      </div>
-    </div>
-  </div>
-)}
+          )}
 
           {/* Table */}
           {!isLoading && (
@@ -1083,12 +1081,12 @@ function handleEditCliente(cArg) {
                           </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <div className="space-y-1">
-                             { c.telefono && (
-    <div className="text-sm text-gray-900 flex items-center gap-2">
-      <Phone size={12} className="text-gray-400" />
-   {formatPhoneForInput(c.telefono)}
-    </div>
-  )}
+                              { c.telefono && (
+                                <div className="text-sm text-gray-900 flex items-center gap-2">
+                                  <Phone size={12} className="text-gray-400" />
+                                  {formatPhoneForInput(c.telefono)}
+                                </div>
+                              )}
                               {c.email && (
                                 <div className="text-[12px] sm:text-sm text-gray-500 flex items-center gap-2">
                                   <Mail size={12} className="text-gray-400" />
@@ -1138,7 +1136,7 @@ function handleEditCliente(cArg) {
                           </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <button
-                              className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duration-150"
+                              className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duración-150"
                               onClick={async (e) => {
                                 e.stopPropagation();
                                 const info = await safeGetCxc(c.id);
@@ -1243,22 +1241,21 @@ function handleEditCliente(cArg) {
 
       {/* Modal Stats */}
       {mostrarStats && clienteSeleccionado && (
-      <ClienteStatsModal
-  open={mostrarStats}
-  cliente={clienteSeleccionado}
-  resumen={resumen}
-  mesSeleccionado={mesSeleccionado}
-  setMesSeleccionado={setMesSeleccionado}
-  onClose={() => setMostrarStats(false)}
-  onEdit={() => { setMostrarStats(false); handleEditCliente(clienteSeleccionado); }}
-  onDelete={handleEliminar}
-  generatePDF={generatePDF}
-  onRefreshCredito={async () => {
-    const info = await safeGetCxc(clienteSeleccionado.id);
-    if (info) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
-  }}
-/>
-
+        <ClienteStatsModal
+          open={mostrarStats}
+          cliente={clienteSeleccionado}
+          resumen={resumen}
+          mesSeleccionado={mesSeleccionado}
+          setMesSeleccionado={setMesSeleccionado}
+          onClose={() => setMostrarStats(false)}
+          onEdit={() => { setMostrarStats(false); handleEditCliente(clienteSeleccionado); }}
+          onDelete={handleEliminar}
+          generatePDF={generatePDF}
+          onRefreshCredito={async () => {
+            const info = await safeGetCxc(clienteSeleccionado.id);
+            if (info) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
+          }}
+        />
       )}
 
       {/* Modal edición */}
@@ -1266,7 +1263,7 @@ function handleEditCliente(cArg) {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
           <form
             onSubmit={handleGuardar}
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h[90vh] sm:max-h-[90vh] overflow-hidden"
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[90vh] overflow-hidden"
           >
             <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
               <h3 className="text-xl sm:text-2xl font-bold">
@@ -1286,7 +1283,7 @@ function handleEditCliente(cArg) {
                   </label>
                   <input
                     name="nombre"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                     value={form.nombre ?? ""}
                     onChange={handleChange}
                     required
@@ -1301,7 +1298,7 @@ function handleEditCliente(cArg) {
                   </label>
                   <input
                     name="telefono"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                     value={form.telefono ?? ""}
                     onChange={handleChange}
                     placeholder="(555) 123-4567"
@@ -1316,7 +1313,7 @@ function handleEditCliente(cArg) {
                   <input
                     name="email"
                     type="email"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                     value={form.email ?? ""}
                     onChange={handleChange}
                     placeholder="email@example.com"
@@ -1330,7 +1327,7 @@ function handleEditCliente(cArg) {
                   </label>
                   <input
                     name="negocio"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                     value={form.negocio ?? ""}
                     onChange={handleChange}
                     placeholder="Business name"
@@ -1347,7 +1344,7 @@ function handleEditCliente(cArg) {
                       <label className="font-medium text-gray-600 mb-1 block">ZIP Code</label>
                       <input
                         name="zip"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
                         value={form.direccion?.zip ?? ""}
                         onChange={handleChange}
                         maxLength={5}
@@ -1405,7 +1402,7 @@ function handleEditCliente(cArg) {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>
@@ -1421,7 +1418,7 @@ function handleEditCliente(cArg) {
               </button>
               <button
                 type="button"
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
                 onClick={() => { setMostrarEdicion(false); navigate("/clientes"); }}
                 disabled={isLoading}
               >
@@ -1470,10 +1467,6 @@ function ClienteStatsModal({
     mesesGrafico.unshift(label);
   }
   const dataChart = mesesGrafico.map(mes => ({ mes: mes.slice(5), fullMes: mes, compras: comprasPorMes[mes] || 0 }));
-
-  const ventasFiltradas = mesSeleccionado
-    ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado))
-    : (resumen.ventas || []);
 
   const limite = Number(resumen?.cxc?.limite ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
@@ -1528,11 +1521,11 @@ function ClienteStatsModal({
                   </div>
                 )}
                 {cliente.telefono && (
-    <div className="flex items-center gap-2">
-      <Phone size={14} />
-                   {formatPhoneForInput(cliente.telefono)}
-    </div>
-  )}
+                  <div className="flex items-center gap-2">
+                    <Phone size={14} />
+                    {formatPhoneForInput(cliente.telefono)}
+                  </div>
+                )}
                 {cliente.negocio && (
                   <div className="flex items-center gap-2">
                     <Building2 size={14} />
@@ -1710,14 +1703,37 @@ function ClienteStatsModal({
   );
 }
 
-//* -------------------- MODAL: ABONO -------------------- */
+/* -------------------- MODAL: ABONO -------------------- */
 function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { van } = useVan();
+
+  // Snapshot de saldo al abrir (evita saltos)
+  const [saldoBase, setSaldoBase] = useState(Number(resumen?.balance ?? cliente?.balance ?? 0));
+  const [cargandoSaldo, setCargandoSaldo] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setCargandoSaldo(true);
+      try {
+        const info = await safeGetCxc(cliente.id);
+        if (alive && info && typeof info.saldo === "number") {
+          setSaldoBase(Number(info.saldo));
+        }
+      } finally {
+        if (alive) setCargandoSaldo(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [cliente.id]);
+
+  // 🔒 Candado anti doble submit (inmediato, no depende de setState)
+  const submitLockRef = useRef(false);
 
   function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
   const [monto, setMonto] = useState("");
-   const [metodo, setMetodo] = useState("Cash");
+  const [metodo, setMetodo] = useState("Cash");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
@@ -1737,7 +1753,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
     totalLifetime += Number(v.total_venta || 0);
   });
 
-  const saldoActual = Number(resumen?.balance ?? cliente?.balance ?? 0);
+  const saldoActual = Number(saldoBase ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const limite = Number(resumen?.cxc?.limite ?? 0);
   const montoNum = Number(monto || 0);
@@ -1745,80 +1761,108 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
   async function guardarAbono(e) {
     e.preventDefault();
-    if (guardando) return;
+
+    // 🔒 Bloqueo inmediato contra doble click / doble submit
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setGuardando(true);
     setMensaje("");
 
-    if (!van || !van.id) {
-      setMensaje("You must select a VAN before adding a payment.");
-      setGuardando(false);
-      return;
-    }
-
-    const saldo = round2(Number(resumen?.balance ?? cliente?.balance ?? 0) || 0);
-    const montoIngresado = round2(Number(monto || 0));
-
-    if (!montoIngresado || montoIngresado <= 0) {
-      setMensaje("Invalid amount. Must be greater than 0.");
-      setGuardando(false);
-      return;
-    }
-
-    if (saldo <= 0) {
-      setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`);
-      setGuardando(false);
-      return;
-    }
-
-    const pagoAplicado = round2(Math.min(montoIngresado, saldo));
-    const cambioDevuelto = round2(montoIngresado - pagoAplicado);
-
-    let rpcOk = false;
     try {
-      const { error: rpcErr } = await supabase.rpc("cxc_registrar_pago", {
-        p_cliente_id: cliente.id,
-        p_monto: pagoAplicado,
-        p_metodo: metodo,
-        p_van_id: van.id,
-      });
-      if (!rpcErr) rpcOk = true;
-    } catch {}
+      if (!van || !van.id) {
+        throw new Error("You must select a VAN before adding a payment.");
+      }
 
-    if (!rpcOk) {
-      const dbRow = {
-        cliente_id: cliente.id,
-        monto: pagoAplicado,
-        metodo_pago: metodo,
-        fecha_pago: new Date().toISOString(),
-      };
-      const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
-      if (insErr) {
-        setGuardando(false);
-        setMensaje("Error saving payment: " + (insErr?.message || "unknown"));
+      const saldo = round2(Number(resumen?.balance ?? cliente?.balance ?? 0) || 0);
+      const montoIngresado = round2(Number(monto || 0));
+
+      if (!montoIngresado || montoIngresado <= 0) {
+        throw new Error("Invalid amount. Must be greater than 0.");
+      }
+      if (saldo <= 0) {
+        setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`);
         return;
       }
+
+      const pagoAplicado = round2(Math.min(montoIngresado, saldo));
+      const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+
+      // 1) Intentar RPC con p_idem para desambiguar la sobrecarga
+      let rpcOk = false;
+      try {
+        const { error } = await supabase.rpc("cxc_registrar_pago", {
+          p_cliente_id: cliente.id,
+          p_monto: pagoAplicado,
+          p_metodo: metodo,
+          p_van_id: van.id,
+          p_idem: makeUUID(),
+        });
+        if (!error) rpcOk = true;
+      } catch (err) {
+        const msg = String(err?.message || "");
+        // Si dice "best candidate…" probamos variante con p_fecha
+        if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
+          const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
+            p_cliente_id: cliente.id,
+            p_monto: pagoAplicado,
+            p_metodo: metodo,
+            p_van_id: van.id,
+            p_fecha: new Date().toISOString(),
+          });
+          if (!e2) rpcOk = true;
+          else if (e2.code && e2.code !== "42883") throw e2;
+        } else if (err?.code && err.code !== "42883") {
+          // Error real distinto a "función no existe"
+          throw err;
+        }
+      }
+
+      // 2) Fallback SOLO si el RPC NO existe (42883)
+      if (!rpcOk) {
+        const dbRow = {
+          cliente_id: cliente.id,
+          monto: pagoAplicado,
+          metodo_pago: metodo,
+          fecha_pago: new Date().toISOString(),
+        };
+        const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
+        if (insErr) throw insErr;
+      }
+
+      // Feedback instantáneo en UI
+      setSaldoBase(s => round2(Math.max(0, s - pagoAplicado)));
+
+      // Refrescar CxC y tabla
+      const info = await safeGetCxc(cliente.id);
+      if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
+      if (typeof refresh === "function") await refresh();
+
+      // Mensaje
+      if (cambioDevuelto > 0) {
+        setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
+      } else {
+        setMensaje("Payment registered!");
+      }
+
+      // Recibo (no afecta montos)
+      const receiptPayload = {
+        clientName: cliente?.nombre || "",
+        creditNumber: getCreditNumber(cliente),
+        dateStr: new Date().toLocaleString(),
+        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+        amount: pagoAplicado,
+        prevBalance: saldo,
+        newBalance: round2(Math.max(0, saldo - pagoAplicado)),
+      };
+      try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
+
+    } catch (err) {
+      setMensaje("Error saving payment: " + (err?.message || "unknown"));
+    } finally {
+      setGuardando(false);
+      submitLockRef.current = false;
+      setTimeout(() => setMensaje(""), 1200);
     }
-
-    const info = await safeGetCxc(cliente.id);
-    if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
-    if (typeof refresh === "function") await refresh();
-
-    if (cambioDevuelto > 0) setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
-    else setMensaje("Payment registered!");
-
-    const receiptPayload = {
-      clientName: cliente?.nombre || "",
-      creditNumber: getCreditNumber(cliente),
-      dateStr: new Date().toLocaleString(),
-      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-      amount: pagoAplicado,
-      prevBalance: saldo,
-      newBalance: round2(Math.max(0, saldo - pagoAplicado)),
-    };
-    try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
-
-    setGuardando(false);
-    setTimeout(() => setMensaje(""), 1200);
   }
 
   return (
@@ -1853,7 +1897,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               <div>
                 <label className="font-semibold text-gray-700 mb-2 block text-sm">Payment Amount</label>
                 <input
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 text-lg"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duración-200 text-lg"
                   placeholder="0.00"
                   type="number" min="0.01" step="0.01"
                   value={monto}
@@ -1865,7 +1909,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               <div>
                 <label className="font-semibold text-gray-700 mb-2 block text-sm">Payment Method</label>
                 <select
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 bg-white"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transición-all duración-200 bg-white"
                   value={metodo}
                   onChange={e => setMetodo(e.target.value)}
                 >
@@ -1899,6 +1943,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
             )}
 
+            {/* Resumen de compras/pagos */}
             <div className="bg-gray-50 rounded-xl p-4">
               <h4 className="font-bold mb-3 text-gray-800 flex items-center gap-2">
                 <TrendingUp size={16} />
@@ -1955,10 +2000,29 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
           >
             <div className="flex gap-3">
-              <button type="submit" disabled={guardando} className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2">
-                {guardando ? (<><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Processing...</>) : (<><Check size={16} />Record Payment</>)}
+              <button
+                type="submit"
+                disabled={guardando}
+                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
+              >
+                {guardando ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Check size={16} />
+                    Record Payment
+                  </>
+                )}
               </button>
-              <button type="button" className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2" onClick={onClose} disabled={guardando}>
+              <button
+                type="button"
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
+                onClick={onClose}
+                disabled={guardando}
+              >
                 <X size={16} />
                 Cancel
               </button>

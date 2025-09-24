@@ -37,8 +37,6 @@ export default function BottomNav() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUsuario(null);
-    // 👇 OJO: no hagas localStorage.clear() aquí si no es necesario,
-    // podría borrar el token de Supabase en ciertos setups.
     navigate("/login");
   };
 
@@ -96,7 +94,12 @@ export default function BottomNav() {
                 <CreditCard size={18} color="#0ea5e9" /> Accounts Receivable
               </button>
 
-              {/* ✅ Igual a OnlineSidebar: solo navegar a /van */}
+              {/* ✅ NUEVO: acceso a Suplidores */}
+              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/suplidores")}>
+                <UserCircle2 size={18} color="#4f46e5" /> Suppliers
+              </button>
+
+              {/* Igual a OnlineSidebar: solo navegar a /van */}
               <NavLink
                 to="/van"
                 onClick={() => setShowMore(false)}
