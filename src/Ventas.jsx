@@ -1142,33 +1142,53 @@ async function saveSale() {
     ventaId = rpcId;
     if (!ventaId) throw new Error('No se obtuvo ventaId del RPC ventas_insert_simple');
 
-    // ---------- CxC ----------
-    // (1) Ajuste por la parte no pagada de ESTA venta
-    if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {
-      await supabase
-        .rpc("cxc_crear_ajuste_por_venta", {
-          p_cliente_id: selectedClient.id,
-          p_venta_id: ventaId,
-          p_monto: Number(pendingFromThisSale),
-          p_van_id: van.id,
-          p_usuario_id: usuario.id,
-          p_nota: "Saldo de venta no pagado",
-        })
-        .catch((e) =>
-          console.warn("cxc_crear_ajuste_por_venta no disponible:", e?.message || e)
-        );
-    }
+// ---------- CxC ----------
+// (1) Ajuste por la parte no pagada de ESTA venta -> crea saldo a favor del negocio (deuda del cliente)
+if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {
+  try {
+    // Preferido: RPC si existe
+    await supabase.rpc("cxc_crear_ajuste_por_venta", {
+      p_cliente_id: selectedClient.id,
+      p_venta_id: ventaId,
+      p_monto: Number(pendingFromThisSale.toFixed(2)),
+      p_van_id: van.id,
+      p_usuario_id: usuario.id,
+      p_nota: "Saldo de venta no pagado",
+    });
+  } catch (e) {
+    console.warn("RPC cxc_crear_ajuste_por_venta no disponible, uso fallback directo:", e?.message || e);
+    // Fallback robusto: insert/upsert directo al libro CxC
+    // Requiere UNIQUE(venta_id) ya creado (cxc_movimientos_venta_unique)
+    const { error: e2 } = await supabase
+      .from("cxc_movimientos")
+      .upsert(
+        [
+          {
+            cliente_id: selectedClient.id,
+            tipo: "venta", // <-- identifica que es saldo generado por una venta
+            monto: Number(pendingFromThisSale.toFixed(2)), // deuda creada por esta venta
+            usuario_id: usuario.id ?? null,
+            fecha: new Date().toISOString(),
+            venta_id: ventaId,
+          },
+        ],
+        { onConflict: "venta_id" }
+      );
+    if (e2) console.error("Fallback CxC upsert error:", e2.message || e2);
+  }
+}
 
-    // (2) Registrar pago SOLO por lo aplicado a deuda previa (no lo de la venta)
-    const montoParaCxC = Number(payOldDebtNow.toFixed(2));
-    if (montoParaCxC > 0 && selectedClient?.id) {
-      await registrarPagoCxC({
-        cliente_id: selectedClient.id,
-        monto: montoParaCxC,             // ✅ consistente
-        metodo: metodoPrincipal,
-        van_id: van.id,
-      });
-    }
+// (2) Registrar pago SOLO por lo aplicado a deuda previa (no lo de la venta)
+const montoParaCxC = Number(payOldDebtNow.toFixed(2));
+if (montoParaCxC > 0 && selectedClient?.id) {
+  await registrarPagoCxC({
+    cliente_id: selectedClient.id,
+    monto: montoParaCxC,             // solo lo aplicado a deuda antigua
+    metodo: metodoPrincipal,
+    van_id: van.id,
+  });
+}
+
 
     // ===== Recibo =====
     const prevDue     = Math.max(0, balanceBefore);
