@@ -259,6 +259,88 @@ function subscribeClienteCxC(clienteId, onChange) {
     },
   };
 }
+/* ========================= SMS / Email helpers ========================= */
+function isIOS() {
+  const ua = navigator.userAgent || navigator.vendor || "";
+  return /iPad|iPhone|iPod|Macintosh/.test(ua);
+}
+function normalizePhoneE164ish(raw, defaultCountry = "1") {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (!digits) return "";
+  const withCc = digits.length === 10 ? defaultCountry + digits : digits;
+  return withCc.startsWith("+") ? withCc : `+${withCc}`;
+}
+function buildSmsUrl(phone, message) {
+  const target = normalizePhoneE164ish(phone, "1");
+  if (!target) return null;
+  const body = encodeURIComponent(String(message || ""));
+  const sep = isIOS() ? "&" : "?"; // iOS usa sms:+1...&body= ; Android ?body=
+  return `sms:${target}${sep}body=${body}`;
+}
+async function sendSmsIfPossible({ phone, text }) {
+  if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
+  const href = buildSmsUrl(phone, text);
+  if (!href) return { ok: false, reason: "invalid_sms_url" };
+  try {
+    const a = document.createElement("a");
+    a.href = href;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return { ok: true, opened: true };
+  } catch {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("SMS preparado. Abre tu app de Mensajes y pega el texto.");
+      return { ok: true, copied: true };
+    } catch {
+      return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
+    }
+  }
+}
+function buildMailtoUrl(to, subject, body) {
+  if (!to) return null;
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+async function sendEmailSmart({ to, subject, html, text }) {
+  if (!to) return { ok: false, reason: "missing_email" };
+
+  if (EMAIL_MODE === "edge") {
+    try {
+      const { data, error } = await supabase.functions.invoke("send-receipt", {
+        body: { to, subject, html, text, from: COMPANY_EMAIL, company: COMPANY_NAME },
+      });
+      if (error) throw error;
+      return { ok: true, via: "edge", data };
+    } catch (e) {
+      console.warn("Edge email failed, fallback a mailto:", e?.message || e);
+    }
+  }
+
+  const mailto = buildMailtoUrl(to, subject, text);
+  const w = mailto ? window.open(mailto, "_blank") : null;
+  if (!w && text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("Email copiado. Abre tu correo y pega el contenido.");
+      return { ok: true, via: "mailto-copy" };
+    } catch {
+      return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
+    }
+  }
+  return { ok: true, via: "mailto" };
+}
+async function askChannel({ hasPhone, hasEmail }) {
+  if (!hasPhone && !hasEmail) return null;
+  if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
+  if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
+  const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "").trim().toLowerCase();
+  if (ans === "sms" && hasPhone) return "sms";
+  if (ans === "email" && hasEmail) return "email";
+  return null;
+}
 
 /* ===== Helper para stock map ===== */
 async function getStockMapForVan(vanId, ids = []) {
@@ -934,12 +1016,32 @@ export default function Sales() {
     window.pendingSaleId = null;
   }
 
-  /* ======================== Handlers de productos ======================== */
-  // --- Stub temporal para no bloquear la venta ---
+// ✅ Enviar recibo por SMS/Email al terminar la venta
 async function requestAndSendNotifications({ client, payload }) {
-  // Aquí luego conectamos SMS/Email. Por ahora no hace nada.
-  return;
+  if (!client) return;
+
+  const hasPhone = !!client.telefono;
+  const hasEmail = !!client.email;
+
+  // Construir mensaje de recibo (texto plano)
+  const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
+  const text = composeReceiptMessageEN(payload);
+  const html = text; // si tu función edge acepta HTML, aquí podrías formatearlo
+
+  const wants = await askChannel({ hasPhone, hasEmail });
+  if (!wants) return;
+
+  try {
+    if (wants === "sms" && hasPhone) {
+      await sendSmsIfPossible({ phone: client.telefono, text });
+    } else if (wants === "email" && hasEmail) {
+      await sendEmailSmart({ to: client.email, subject, html, text });
+    }
+  } catch (e) {
+    console.warn("Receipt send error:", e?.message || e);
+  }
 }
+
 
   function handleAddProduct(p) {
     const stockNow = Number(p.cantidad ?? p.stock ?? 0);
