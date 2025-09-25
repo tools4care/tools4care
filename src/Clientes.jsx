@@ -26,15 +26,151 @@ const estadosUSA = [
   "VA","WA","WV","WI","WY"
 ];
 
-const zipToCiudadEstado = (zip) => {
-  const mapa = {
-    "02118": { ciudad: "Boston", estado: "MA" },
-    "02139": { ciudad: "Cambridge", estado: "MA" },
-    "01960": { ciudad: "Peabody", estado: "MA" },
-    "01915": { ciudad: "Beverly", estado: "MA" },
-  };
-  return mapa[zip] || { ciudad: "", estado: "" };
+// ZIPs más comunes de MA (puedes ampliar libremente)
+const ZIP_MA_LOCAL = {
+  // Boston y barrios/PO
+  "02108": { ciudad: "Boston", estado: "MA" },
+  "02109": { ciudad: "Boston", estado: "MA" },
+  "02110": { ciudad: "Boston", estado: "MA" },
+  "02111": { ciudad: "Boston", estado: "MA" },
+  "02113": { ciudad: "Boston", estado: "MA" },
+  "02114": { ciudad: "Boston", estado: "MA" },
+  "02115": { ciudad: "Boston", estado: "MA" },
+  "02116": { ciudad: "Boston", estado: "MA" },
+  "02118": { ciudad: "Boston", estado: "MA" },
+  "02119": { ciudad: "Roxbury", estado: "MA" },
+  "02120": { ciudad: "Mission Hill", estado: "MA" },
+  "02121": { ciudad: "Dorchester", estado: "MA" },
+  "02122": { ciudad: "Dorchester", estado: "MA" },
+  "02124": { ciudad: "Dorchester", estado: "MA" },
+  "02125": { ciudad: "Dorchester", estado: "MA" },
+  "02126": { ciudad: "Mattapan", estado: "MA" },
+  "02127": { ciudad: "South Boston", estado: "MA" },
+  "02128": { ciudad: "East Boston", estado: "MA" },
+  "02129": { ciudad: "Charlestown", estado: "MA" },
+  "02130": { ciudad: "Jamaica Plain", estado: "MA" },
+  "02131": { ciudad: "Roslindale", estado: "MA" },
+  "02132": { ciudad: "West Roxbury", estado: "MA" },
+  "02134": { ciudad: "Allston", estado: "MA" },
+  "02135": { ciudad: "Brighton", estado: "MA" },
+  "02136": { ciudad: "Hyde Park", estado: "MA" },
+
+  // Cambridge / Somerville / Brookline
+  "02138": { ciudad: "Cambridge", estado: "MA" },
+  "02139": { ciudad: "Cambridge", estado: "MA" },
+  "02140": { ciudad: "Cambridge", estado: "MA" },
+  "02141": { ciudad: "Cambridge", estado: "MA" },
+  "02142": { ciudad: "Cambridge", estado: "MA" },
+  "02143": { ciudad: "Somerville", estado: "MA" },
+  "02144": { ciudad: "Somerville", estado: "MA" },
+  "02145": { ciudad: "Somerville", estado: "MA" },
+  "02445": { ciudad: "Brookline", estado: "MA" },
+  "02446": { ciudad: "Brookline", estado: "MA" },
+
+  // North Shore
+  "01901": { ciudad: "Lynn", estado: "MA" },
+  "01902": { ciudad: "Lynn", estado: "MA" },
+  "01905": { ciudad: "Lynn", estado: "MA" },
+  "01915": { ciudad: "Beverly", estado: "MA" },
+  "01923": { ciudad: "Danvers", estado: "MA" },
+  "01930": { ciudad: "Gloucester", estado: "MA" },
+  "01940": { ciudad: "Lynnfield", estado: "MA" },
+  "01945": { ciudad: "Marblehead", estado: "MA" },
+  "01950": { ciudad: "Newburyport", estado: "MA" },
+  "01960": { ciudad: "Peabody", estado: "MA" },
+  "01970": { ciudad: "Salem", estado: "MA" },
+  "01984": { ciudad: "Wenham", estado: "MA" },
+
+  // MetroWest / Middlesex
+  "01701": { ciudad: "Framingham", estado: "MA" },
+  "01702": { ciudad: "Framingham", estado: "MA" },
+  "01760": { ciudad: "Natick", estado: "MA" },
+  "01801": { ciudad: "Woburn", estado: "MA" },
+  "01810": { ciudad: "Andover", estado: "MA" },
+  "01821": { ciudad: "Billerica", estado: "MA" },
+  "01824": { ciudad: "Chelmsford", estado: "MA" },
+  "01826": { ciudad: "Dracut", estado: "MA" },
+  "01844": { ciudad: "Methuen", estado: "MA" },
+  "01850": { ciudad: "Lowell", estado: "MA" },
+  "01852": { ciudad: "Lowell", estado: "MA" },
+  "01854": { ciudad: "Lowell", estado: "MA" },
+
+  // Worcester y centro
+  "01602": { ciudad: "Worcester", estado: "MA" },
+  "01603": { ciudad: "Worcester", estado: "MA" },
+  "01604": { ciudad: "Worcester", estado: "MA" },
+  "01545": { ciudad: "Shrewsbury", estado: "MA" },
+  "01581": { ciudad: "Westborough", estado: "MA" },
+
+  // South Shore / South Coast
+  "02301": { ciudad: "Brockton", estado: "MA" },
+  "02302": { ciudad: "Brockton", estado: "MA" },
+  "02368": { ciudad: "Randolph", estado: "MA" },
+  "02370": { ciudad: "Rockland", estado: "MA" },
+  "02375": { ciudad: "Easton", estado: "MA" },
+  "02720": { ciudad: "Fall River", estado: "MA" },
+  "02740": { ciudad: "New Bedford", estado: "MA" },
+  "02780": { ciudad: "Taunton", estado: "MA" },
+
+  // Cape & Islands
+  "02601": { ciudad: "Hyannis", estado: "MA" },
+  "02641": { ciudad: "Eastham", estado: "MA" },
+  "02657": { ciudad: "Provincetown", estado: "MA" },
+  "02664": { ciudad: "South Yarmouth", estado: "MA" },
+  "02532": { ciudad: "Buzzards Bay", estado: "MA" },
+  "02540": { ciudad: "Falmouth", estado: "MA" },
+  "02554": { ciudad: "Nantucket", estado: "MA" },
+
+  // Western MA
+  "01002": { ciudad: "Amherst", estado: "MA" },
+  "01020": { ciudad: "Chicopee", estado: "MA" },
+  "01089": { ciudad: "West Springfield", estado: "MA" },
+  "01103": { ciudad: "Springfield", estado: "MA" },
+  "01201": { ciudad: "Pittsfield", estado: "MA" },
 };
+
+// Lookup rápido en el mapa local
+function zipToCiudadEstado(zip) {
+  return ZIP_MA_LOCAL[zip] || { ciudad: "", estado: "" };
+}
+
+// Detecta si un ZIP pertenece a MA (010–027 y 055xx)
+function isMA(zip) {
+  const s = String(zip || "").replace(/\D/g, "");
+  if (s.length !== 5) return false;
+  const p = Number(s.slice(0, 3));
+  return (p >= 10 && p <= 27) || p === 55;
+}
+
+
+async function lookupZipOnline(zip) {
+  // caché simple en localStorage
+  try {
+    const cacheKey = `zip:${zip}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      const obj = JSON.parse(cached);
+      if (obj?.ciudad || obj?.estado) return obj;
+    }
+  } catch {}
+
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const place = data?.places?.[0];
+    if (!place) return null;
+    const out = {
+      ciudad: String(place["place name"] || "").trim(),
+      estado: String(place["state abbreviation"] || "").trim().toUpperCase(),
+    };
+    try { localStorage.setItem(`zip:${zip}`, JSON.stringify(out)); } catch {}
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 
 // === Helpers numéricos (evitan mostrar "-0.00")
 const safe2 = (n) => {
@@ -43,7 +179,128 @@ const safe2 = (n) => {
 };
 const fmtSafe = (n) =>
   `$${safe2(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** ================== HELPERS DIRECCIÓN ================== */
+/**
+ * Acepta un string de dirección libre (ej: "11 Winthrop Ave, Beverly MA 01915")
+ * y devuelve un objeto normalizado {calle, ciudad, estado, zip}.
+ */
+function parseDireccionString(raw) {
+  if (!raw || typeof raw !== "string") {
+    return { calle: "", ciudad: "", estado: "", zip: "" };
+  }
 
+  // normaliza espacios y comas "raras"
+  let s = raw
+    .replace(/\s+/g, " ")
+    .replace(/\bNone\b/gi, "")
+    .replace(/\s+,/g, ",")
+    .trim();
+
+  // ZIP (5 o 4 dígitos al final; si tiene 4, asumimos leading zero)
+  let zip = "";
+  const zipMatch = s.match(/(\d{5}|\d{4})\s*$/);
+  if (zipMatch) {
+    zip = zipMatch[1];
+    if (zip.length === 4) zip = "0" + zip;
+    s = s.replace(new RegExp(`[,\\s]*${zipMatch[1]}\\s*$`), "").trim();
+  }
+
+  // ESTADO (dos letras al final, con o sin coma)
+  let estado = "";
+  const stateMatch = s.match(/(?:,|\s)([A-Z]{2})\s*$/i);
+  if (stateMatch) {
+    estado = (stateMatch[1] || "").toUpperCase();
+    s = s.replace(new RegExp(`[,\\s]*${estado}\\s*$`, "i"), "").trim();
+  }
+
+  // CALLE / CIUDAD
+  let calle = "";
+  let ciudad = "";
+  if (s.includes(",")) {
+    const parts = s.split(",").map(t => t.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      ciudad = parts.pop() || "";
+      calle = parts.join(", ");
+    } else {
+      calle = parts[0] || "";
+    }
+  } else {
+    const tokens = s.split(" ").filter(Boolean);
+    if (tokens.length >= 2) {
+      ciudad = tokens.slice(-1)[0];
+      calle  = tokens.slice(0, -1).join(" ");
+    } else {
+      calle = s;
+    }
+  }
+
+  // Si tenemos ZIP pero falta ciudad/estado, intenta inferir (ajusta tu mapa en zipToCiudadEstado)
+  if (zip && (!estado || !ciudad)) {
+    const z = zipToCiudadEstado(zip);
+    if (!estado && z.estado) estado = z.estado;
+    if (!ciudad && z.ciudad) ciudad = z.ciudad;
+  }
+
+  return {
+    calle: calle.trim(),
+    ciudad: ciudad.trim(),
+    estado: (estado || "").toUpperCase(),
+    zip
+  };
+}
+
+/**
+ * Normaliza cualquier forma de "direccion":
+ *  - objeto {calle, ciudad, estado, zip}
+ *  - string JSON con esas llaves
+ *  - string libre (ej: "11 Winthrop Ave, Beverly MA 01915")
+ */
+function normalizeDireccion(raw) {
+  if (!raw) return { calle: "", ciudad: "", estado: "", zip: "" };
+
+  if (typeof raw === "string") {
+    const s = raw.trim();
+
+    // Si parece JSON, intenta parsear como objeto
+    if (s.startsWith("{") && s.endsWith("}")) {
+      try {
+        const o = JSON.parse(s);
+        return {
+          calle:  o.calle  || "",
+          ciudad: o.ciudad || "",
+          estado: (o.estado || "").toUpperCase(),
+          zip:    o.zip    || "",
+        };
+      } catch {
+        // si falla, cae a parseo de texto libre
+      }
+    }
+
+    // Texto libre
+    return parseDireccionString(s);
+  }
+
+  if (typeof raw === "object") {
+    return {
+      calle:  raw.calle  || "",
+      ciudad: raw.ciudad || "",
+      estado: (raw.estado || "").toUpperCase(),
+      zip:    raw.zip    || "",
+    };
+  }
+
+  return { calle: "", ciudad: "", estado: "", zip: "" };
+}
+
+/**
+ * Devuelve un string presentable para UI siempre en formato:
+ * "calle, ciudad, estado, zip" o "No address" si no hay datos.
+ */
+function prettyAddress(raw) {
+  const d = normalizeDireccion(raw);
+  const parts = [d.calle, d.ciudad, d.estado, d.zip].filter(Boolean);
+  return parts.length ? parts.join(", ") : "No address";
+}
 /** (opcional) Enmascarado anterior, ya no usado para mostrar */
 function maskPhoneForDisplay(raw) {
   let d = String(raw || "").replace(/\D/g, "");
@@ -429,70 +686,6 @@ export default function Clientes() {
     // eslint-disable-next-line
   }, []);
 
-  /** ================== HELPERS DIRECCIÓN ================== */
-  function parseDireccionString(raw) {
-    if (!raw || typeof raw !== "string") {
-      return { calle: "", ciudad: "", estado: "", zip: "" };
-    }
-
-    let s = raw
-      .replace(/\s+/g, " ")
-      .replace(/\bNone\b/gi, "")
-      .replace(/\s+,/g, ",")
-      .trim();
-
-    // ZIP
-    let zip = "";
-    const zipMatch = s.match(/(\d{5}|\d{4})\s*$/);
-    if (zipMatch) {
-      zip = zipMatch[1];
-      if (zip.length === 4) zip = "0" + zip;
-      s = s.replace(new RegExp(`[,\\s]*${zipMatch[1]}\\s*$`), "").trim();
-    }
-
-    // Estado
-    let estado = "";
-    const stateMatch = s.match(/(?:,|\s)([A-Z]{2})\s*$/);
-    if (stateMatch) {
-      estado = (stateMatch[1] || "").toUpperCase();
-      s = s.replace(new RegExp(`[,\\s]*${estado}\\s*$`), "").trim();
-    }
-
-    // Calle / ciudad
-    let calle = "";
-    let ciudad = "";
-    if (s.includes(",")) {
-      const parts = s.split(",").map(t => t.trim()).filter(Boolean);
-      if (parts.length >= 2) {
-        ciudad = parts.pop() || "";
-        calle = parts.join(", ");
-      } else {
-        calle = parts[0] || "";
-      }
-    } else {
-      const tokens = s.split(" ").filter(Boolean);
-      if (tokens.length >= 2) {
-        ciudad = tokens.slice(-1)[0];
-        calle  = tokens.slice(0, -1).join(" ");
-      } else {
-        calle = s;
-      }
-    }
-
-    if (zip && (!estado || !ciudad)) {
-      const z = zipToCiudadEstado(zip);
-      if (!estado && z.estado) estado = z.estado;
-      if (!ciudad && z.ciudad) ciudad = z.ciudad;
-    }
-
-    return {
-      calle: calle.trim(),
-      ciudad: ciudad.trim(),
-      estado: (estado || "").toUpperCase(),
-      zip
-    };
-  }
-
   /** ================== EDITAR CLIENTE ================== */
   function handleEditCliente(cArg) {
     const c = cArg || clienteSeleccionado;
@@ -547,36 +740,85 @@ export default function Clientes() {
   }
 
   function handleChange(e) {
-    const { name, value } = e.target;
+  const { name, value } = e.target;
 
-    if (name === "telefono") {
-      const pretty = formatPhoneForInput(value);
-      setForm((f) => ({ ...f, telefono: pretty }));
-      return;
-    }
-
-    if (["calle", "ciudad", "estado", "zip"].includes(name)) {
-      setForm((f) => {
-        let newDireccion = { ...f.direccion, [name]: value ?? "" };
-        if (name === "estado") {
-          setEstadoInput((value ?? "").toUpperCase());
-          setEstadoOpciones(estadosUSA.filter(s => s.startsWith((value ?? "").toUpperCase())));
-        }
-        if (name === "zip" && (value ?? "").length === 5) {
-          const { ciudad, estado } = zipToCiudadEstado(value);
-          if (ciudad || estado) {
-            newDireccion.ciudad = ciudad;
-            newDireccion.estado = estado;
-            setEstadoInput(estado);
-            setEstadoOpciones(estadosUSA.filter(s => s.startsWith(estado)));
-          }
-        }
-        return { ...f, direccion: newDireccion };
-      });
-    } else {
-      setForm((f) => ({ ...f, [name]: value ?? "" }));
-    }
+  // Teléfono → formateo en vivo
+  if (name === "telefono") {
+    const pretty = formatPhoneForInput(value);
+    setForm((f) => ({ ...f, telefono: pretty }));
+    return;
   }
+
+  // Campos de dirección
+  if (["calle", "ciudad", "estado", "zip"].includes(name)) {
+    setForm((f) => {
+      const dir = { ...(f.direccion || { calle: "", ciudad: "", estado: "", zip: "" }) };
+      const v = value ?? "";
+
+      // STATE: siempre 2 letras mayúsculas + afinamos datalist
+      if (name === "estado") {
+        dir.estado = v.toUpperCase().slice(0, 2);
+        setEstadoInput(dir.estado);
+        setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(dir.estado)));
+        return { ...f, direccion: dir };
+      }
+
+     // ZIP: al tener 5 dígitos → fija estado/ciudad usando mapa local y lookup online
+if (name === "zip") {
+  const zip = String(v).replace(/\D/g, "").slice(0, 5);
+  dir.zip = zip;
+
+  if (zip.length === 5) {
+    // Si corresponde a Massachusetts, fija MA
+    if (isMA(zip)) {
+      dir.estado = "MA";
+      setEstadoInput("MA");
+      setEstadoOpciones(estadosUSA.filter((s) => s.startsWith("MA")));
+    }
+
+    // 1) Mapa local (siempre pisamos para reflejar el ZIP nuevo)
+    const local = zipToCiudadEstado(zip);
+    if (local.ciudad || local.estado) {
+      dir.ciudad = local.ciudad || "";
+      dir.estado = (local.estado || dir.estado || "").toUpperCase();
+      setEstadoInput(dir.estado);
+      setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(dir.estado)));
+    }
+
+    // 2) Lookup online (también pisa, pero cuidamos carreras si el ZIP cambió)
+    lookupZipOnline(zip).then((z) => {
+      if (!z) return;
+      setForm((f2) => {
+        const cur = f2.direccion || {};
+        if ((cur.zip || "") !== zip) return f2; // el usuario cambió el ZIP mientras llegaba la respuesta
+
+        const next = {
+          ...cur,
+          ciudad: z.ciudad || cur.ciudad || "",
+          estado: (z.estado || cur.estado || "").toUpperCase(),
+        };
+        setEstadoInput(next.estado);
+        setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(next.estado)));
+        return { ...f2, direccion: next };
+      });
+    });
+  }
+
+  return { ...f, direccion: dir };
+}
+
+
+      // Calle / Ciudad normales
+      dir[name] = v;
+      return { ...f, direccion: dir };
+    });
+    return;
+  }
+
+  // Resto de campos
+  setForm((f) => ({ ...f, [name]: value ?? "" }));
+}
+
 
   async function handleGuardar(e) {
     e.preventDefault();
@@ -789,14 +1031,9 @@ export default function Clientes() {
     doc.text(`Full Name: ${clienteSeleccionado.nombre || ""}`, 14, 53);
     doc.text(`Business Name: ${clienteSeleccionado.negocio || ""}`, 14, 60);
     // ⬇️ Dirección: soportar string u objeto
-    const dirRaw = clienteSeleccionado.direccion;
-    let dirTxt = "No address";
-    if (typeof dirRaw === "string") {
-      dirTxt = dirRaw || "No address";
-    } else if (dirRaw && typeof dirRaw === "object") {
-      dirTxt = [dirRaw.calle, dirRaw.ciudad, dirRaw.estado, dirRaw.zip].filter(Boolean).join(", ") || "No address";
-    }
-    doc.text(`Address: ${dirTxt}`, 14, 67);
+const dirTxt = prettyAddress(clienteSeleccionado.direccion);
+doc.text(`Address: ${dirTxt}`, 14, 67);
+
     // ✅ Mostrar teléfono sin asteriscos, formateado
     doc.text(`Phone: ${formatPhoneForInput(clienteSeleccionado.telefono) || ""}`, 14, 74);
 
@@ -1095,20 +1332,13 @@ export default function Clientes() {
                               )}
                             </div>
                           </td>
-                          <td className="px-4 sm:px-6 py-3 sm:py-4 hidden md:table-cell">
-                            <div className="text-sm text-gray-900 flex items-start gap-2">
-                              <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
-                              <div>
-                                {(() => {
-                                  if (!dRaw) return "No address";
-                                  if (typeof dRaw === "string") {
-                                    return dRaw.trim() || "No address";
-                                  }
-                                  return [d.calle, d.ciudad, d.estado, d.zip].filter(Boolean).join(", ") || "No address";
-                                })()}
-                              </div>
-                            </div>
-                          </td>
+                        <td className="px-4 sm:px-6 py-3 sm:py-4 hidden md:table-cell">
+  <div className="text-sm text-gray-900 flex items-start gap-2">
+    <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
+    <div>{prettyAddress(c.direccion)}</div>
+  </div>
+</td>
+
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <span
                               className={`inline-flex items-center px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold ${
@@ -1259,176 +1489,190 @@ export default function Clientes() {
       )}
 
       {/* Modal edición */}
-      {mostrarEdicion && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <form
-            onSubmit={handleGuardar}
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[90vh] overflow-hidden"
-          >
-            <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
-              <h3 className="text-xl sm:text-2xl font-bold">
-                {clienteSeleccionado ? "Edit Client" : "New Client"}
-              </h3>
-              <p className="text-blue-100 mt-1 text-sm">
-                {clienteSeleccionado ? "Update client information" : "Add a new client to your system"}
-              </p>
-            </div>
+{mostrarEdicion && (
+  <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+    <form
+      onSubmit={handleGuardar}
+      className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[90vh] overflow-hidden"
+    >
+      <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+        <h3 className="text-xl sm:text-2xl font-bold">
+          {clienteSeleccionado ? "Edit Client" : "New Client"}
+        </h3>
+        <p className="text-blue-100 mt-1 text-sm">
+          {clienteSeleccionado ? "Update client information" : "Add a new client to your system"}
+        </p>
+      </div>
 
-            <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                <div className="md:col-span-2">
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <User size={16} />
-                    Full Name *
-                  </label>
-                  <input
-                    name="nombre"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                    value={form.nombre ?? ""}
-                    onChange={handleChange}
-                    required
-                    placeholder="Enter full name"
-                  />
-                </div>
+      <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+          <div className="md:col-span-2">
+            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+              <User size={16} />
+              Full Name *
+            </label>
+            <input
+              name="nombre"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              value={form.nombre ?? ""}
+              onChange={handleChange}
+              required
+              placeholder="Enter full name"
+            />
+          </div>
 
-                <div>
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <Phone size={16} />
-                    Phone
-                  </label>
-                  <input
-                    name="telefono"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                    value={form.telefono ?? ""}
-                    onChange={handleChange}
-                    placeholder="(555) 123-4567"
-                  />
-                </div>
+          <div>
+            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+              <Phone size={16} />
+              Phone
+            </label>
+            <input
+              name="telefono"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              value={form.telefono ?? ""}
+              onChange={handleChange}
+              placeholder="(555) 123-4567"
+            />
+          </div>
 
-                <div>
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <Mail size={16} />
-                    Email
-                  </label>
-                  <input
-                    name="email"
-                    type="email"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                    value={form.email ?? ""}
-                    onChange={handleChange}
-                    placeholder="email@example.com"
-                  />
-                </div>
+          <div>
+            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+              <Mail size={16} />
+              Email
+            </label>
+            <input
+              name="email"
+              type="email"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              value={form.email ?? ""}
+              onChange={handleChange}
+              placeholder="email@example.com"
+            />
+          </div>
 
-                <div className="md:col-span-2">
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <Building2 size={16} />
-                    Business
-                  </label>
-                  <input
-                    name="negocio"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                    value={form.negocio ?? ""}
-                    onChange={handleChange}
-                    placeholder="Business name"
-                  />
-                </div>
+          <div className="md:col-span-2">
+            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+              <Building2 size={16} />
+              Business
+            </label>
+            <input
+              name="negocio"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              value={form.negocio ?? ""}
+              onChange={handleChange}
+              placeholder="Business name"
+            />
+          </div>
 
-                <div className="md:col-span-2">
-                  <h4 className="flex items-center gap-2 font-semibold text-gray-700 mb-4">
-                    <MapPin size={16} />
-                    Address Information
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="font-medium text-gray-600 mb-1 block">ZIP Code</label>
-                      <input
-                        name="zip"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                        value={form.direccion?.zip ?? ""}
-                        onChange={handleChange}
-                        maxLength={5}
-                        placeholder="02118"
-                      />
-                    </div>
+          {/* Address Information */}
+          <div className="md:col-span-2">
+            <h4 className="flex items-center gap-2 font-semibold text-gray-700 mb-4">
+              <MapPin size={16} />
+              Address Information
+            </h4>
 
-                    <div>
-                      <label className="font-medium text-gray-600 mb-1 block">State</label>
-                      <input
-                        name="estado"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                        placeholder="MA"
-                        value={estadoInput ?? ""}
-                        onChange={handleChange}
-                        list="estados-lista"
-                        autoComplete="off"
-                        maxLength={2}
-                        style={{ textTransform: "uppercase" }}
-                      />
-                      <datalist id="estados-lista">
-                        {estadoOpciones.map(e => (
-                          <option value={e} key={e}>{e}</option>
-                        ))}
-                      </datalist>
-                    </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Street */}
+              <div className="md:col-span-2">
+                <label className="font-medium text-gray-600 mb-1 block">Street</label>
+                <input
+                  name="calle"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  value={form.direccion?.calle ?? ""}
+                  onChange={handleChange}
+                  placeholder="123 Main St"
+                />
+              </div>
 
-                    <div>
-                      <label className="font-medium text-gray-600 mb-1 block">City</label>
-                      <input
-                        name="ciudad"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                        value={form.direccion?.ciudad ?? ""}
-                        onChange={handleChange}
-                        placeholder="Boston"
-                      />
-                    </div>
+              {/* ZIP (al escribir 5 dígitos autollenará ciudad/estado) */}
+              <div>
+                <label className="font-medium text-gray-600 mb-1 block">ZIP Code</label>
+                <input
+                  name="zip"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  value={form.direccion?.zip ?? ""}
+                  onChange={handleChange}
+                  maxLength={5}
+                  placeholder="02118"
+                  inputMode="numeric"
+                  pattern="\d{5}"
+                />
+              </div>
 
-                    <div>
-                      <label className="font-medium text-gray-600 mb-1 block">Street</label>
-                      <input
-                        name="calle"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200"
-                        value={form.direccion?.calle ?? ""}
-                        onChange={handleChange}
-                        placeholder="123 Main St"
-                      />
-                    </div>
-                  </div>
-                </div>
+              {/* City */}
+              <div>
+                <label className="font-medium text-gray-600 mb-1 block">City</label>
+                <input
+                  name="ciudad"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  value={form.direccion?.ciudad ?? ""}
+                  onChange={handleChange}
+                  placeholder="Boston"
+                />
+              </div>
+
+              {/* State (con datalist) */}
+              <div>
+                <label className="font-medium text-gray-600 mb-1 block">State</label>
+                <input
+                  name="estado"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  placeholder="MA"
+                  value={estadoInput ?? ""}
+                  onChange={handleChange}
+                  list="estados-lista"
+                  autoComplete="off"
+                  maxLength={2}
+                  style={{ textTransform: "uppercase" }}
+                />
+                <datalist id="estados-lista">
+                  {estadoOpciones.map((e) => (
+                    <option value={e} key={e}>
+                      {e}
+                    </option>
+                  ))}
+                </datalist>
               </div>
             </div>
-
-            <div className="p-4 sm:p-6 bg-gray-50 border-t border-gray-200 flex gap-3">
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
-              >
-                {isLoading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Check size={16} />
-                    Save Client
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
-                onClick={() => { setMostrarEdicion(false); navigate("/clientes"); }}
-                disabled={isLoading}
-              >
-                <X size={16} />
-                Cancel
-              </button>
-            </div>
-          </form>
+          </div>
+          {/* FIN Address Information */}
         </div>
-      )}
+      </div>
+
+      <div className="p-4 sm:p-6 bg-gray-50 border-t border-gray-200 flex gap-3">
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+        >
+          {isLoading ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+              Saving...
+            </>
+          ) : (
+            <>
+              <Check size={16} />
+              Save Client
+            </>
+          )}
+        </button>
+        <button
+          type="button"
+          className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+          onClick={() => {
+            setMostrarEdicion(false);
+            navigate("/clientes");
+          }}
+          disabled={isLoading}
+        >
+          <X size={16} />
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+)}
 
       {/* Modal Abono */}
       {mostrarAbono && clienteSeleccionado && (
@@ -1533,14 +1777,12 @@ function ClienteStatsModal({
                   </div>
                 )}
                 {cliente.direccion && (
-                  <div className="flex items-center gap-2">
-                    <MapPin size={14} />
-                    {typeof cliente.direccion === "string"
-                      ? (cliente.direccion || "No address")
-                      : [cliente.direccion?.calle, cliente.direccion?.ciudad, cliente.direccion?.estado, cliente.direccion?.zip]
-                          .filter(Boolean).join(", ") || "No address"}
-                  </div>
-                )}
+  <div className="flex items-center gap-2">
+    <MapPin size={14} />
+    {prettyAddress(cliente.direccion)}
+  </div>
+)}
+
                 <button
                   onClick={onRefreshCredito}
                   className="ml-auto bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1"
@@ -1756,114 +1998,103 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const saldoActual = Number(saldoBase ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const limite = Number(resumen?.cxc?.limite ?? 0);
-  const montoNum = Number(monto || 0);
-  const excedente = round2(Math.max(0, montoNum - saldoActual));
+ const montoNum = Number(monto || 0);
 
-  async function guardarAbono(e) {
-    e.preventDefault();
+// === Cálculo robusto en centavos ===
+const prevCents = Math.max(0, Math.round(saldoActual * 100));
+const payCents  = Math.max(0, Math.round(montoNum   * 100));
 
-    // 🔒 Bloqueo inmediato contra doble click / doble submit
-    if (submitLockRef.current) return;
-    submitLockRef.current = true;
-    setGuardando(true);
-    setMensaje("");
+const excedenteCents = Math.max(0, payCents - prevCents);
+const excedente = excedenteCents / 100;
 
+
+// 🔁 REEMPLAZA COMPLETA la función guardarAbono por esta versión
+async function guardarAbono(e) {
+  e.preventDefault();
+
+  if (submitLockRef.current) return;
+  submitLockRef.current = true;
+  setGuardando(true);
+  setMensaje("");
+
+  try {
+    if (!van || !van.id) throw new Error("You must select a VAN before adding a payment.");
+
+    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+    const saldoActualUI   = round2(Number(saldoBase ?? resumen?.balance ?? cliente?.balance ?? 0));
+    const montoIngresado  = round2(Number(monto || 0));
+    if (!montoIngresado || montoIngresado <= 0) throw new Error("Invalid amount. Must be greater than 0.");
+    if (saldoActualUI <= 0) { setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`); return; }
+
+    const pagoAplicado   = round2(Math.min(montoIngresado, saldoActualUI));
+    const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+
+    let rpcOk = false;
     try {
-      if (!van || !van.id) {
-        throw new Error("You must select a VAN before adding a payment.");
-      }
-
-      const saldo = round2(Number(resumen?.balance ?? cliente?.balance ?? 0) || 0);
-      const montoIngresado = round2(Number(monto || 0));
-
-      if (!montoIngresado || montoIngresado <= 0) {
-        throw new Error("Invalid amount. Must be greater than 0.");
-      }
-      if (saldo <= 0) {
-        setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`);
-        return;
-      }
-
-      const pagoAplicado = round2(Math.min(montoIngresado, saldo));
-      const cambioDevuelto = round2(montoIngresado - pagoAplicado);
-
-      // 1) Intentar RPC con p_idem para desambiguar la sobrecarga
-      let rpcOk = false;
-      try {
-        const { error } = await supabase.rpc("cxc_registrar_pago", {
-          p_cliente_id: cliente.id,
-          p_monto: pagoAplicado,
-          p_metodo: metodo,
-          p_van_id: van.id,
-          p_idem: makeUUID(),
-        });
-        if (!error) rpcOk = true;
-      } catch (err) {
-        const msg = String(err?.message || "");
-        // Si dice "best candidate…" probamos variante con p_fecha
-        if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
-          const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
-            p_cliente_id: cliente.id,
-            p_monto: pagoAplicado,
-            p_metodo: metodo,
-            p_van_id: van.id,
-            p_fecha: new Date().toISOString(),
-          });
-          if (!e2) rpcOk = true;
-          else if (e2.code && e2.code !== "42883") throw e2;
-        } else if (err?.code && err.code !== "42883") {
-          // Error real distinto a "función no existe"
-          throw err;
-        }
-      }
-
-      // 2) Fallback SOLO si el RPC NO existe (42883)
-      if (!rpcOk) {
-        const dbRow = {
-          cliente_id: cliente.id,
-          monto: pagoAplicado,
-          metodo_pago: metodo,
-          fecha_pago: new Date().toISOString(),
-        };
-        const { error: insErr } = await supabase.from("pagos").insert([dbRow]);
-        if (insErr) throw insErr;
-      }
-
-      // Feedback instantáneo en UI
-      setSaldoBase(s => round2(Math.max(0, s - pagoAplicado)));
-
-      // Refrescar CxC y tabla
-      const info = await safeGetCxc(cliente.id);
-      if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
-      if (typeof refresh === "function") await refresh();
-
-      // Mensaje
-      if (cambioDevuelto > 0) {
-        setMensaje(`Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`);
-      } else {
-        setMensaje("Payment registered!");
-      }
-
-      // Recibo (no afecta montos)
-      const receiptPayload = {
-        clientName: cliente?.nombre || "",
-        creditNumber: getCreditNumber(cliente),
-        dateStr: new Date().toLocaleString(),
-        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-        amount: pagoAplicado,
-        prevBalance: saldo,
-        newBalance: round2(Math.max(0, saldo - pagoAplicado)),
-      };
-      try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
-
+      const { error } = await supabase.rpc("cxc_registrar_pago", {
+        p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_idem: makeUUID(),
+      });
+      if (!error) rpcOk = true;
     } catch (err) {
-      setMensaje("Error saving payment: " + (err?.message || "unknown"));
-    } finally {
-      setGuardando(false);
-      submitLockRef.current = false;
-      setTimeout(() => setMensaje(""), 1200);
+      const msg = String(err?.message || "");
+      if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
+        const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
+          p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_fecha: new Date().toISOString(),
+        });
+        if (!e2) rpcOk = true; else if (e2.code && e2.code !== "42883") throw e2;
+      } else if (err?.code && err.code !== "42883") { throw err; }
     }
+
+    if (!rpcOk) {
+      const { error: insErr } = await supabase.from("pagos").insert([{
+        cliente_id: cliente.id, monto: pagoAplicado, metodo_pago: metodo, fecha_pago: new Date().toISOString(),
+      }]);
+      if (insErr) throw insErr;
+    }
+
+    const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
+    setSaldoBase(saldoDespues);
+
+    // ✅ limpiar input para que el banner no recalcule con el monto anterior
+    setMonto("");
+
+    // refrescar CxC/tabla
+    const info = await safeGetCxc(cliente.id);
+    if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
+    if (typeof refresh === "function") await refresh();
+
+    // opcional: mensaje
+    setMensaje(cambioDevuelto > 0
+      ? `Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`
+      : "Payment registered!"
+    );
+
+    // recibo (no afecta el UI)
+    const receiptPayload = {
+      clientName: cliente?.nombre || "",
+      creditNumber: getCreditNumber(cliente),
+      dateStr: new Date().toLocaleString(),
+      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+      amount: pagoAplicado,
+      prevBalance: saldoActualUI,
+      newBalance: saldoDespues,
+    };
+    try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
+
+    // ✅ cerrar el modal al terminar
+    if (typeof onClose === "function") onClose();
+
+  } catch (err) {
+    setMensaje("Error saving payment: " + (err?.message || "unknown"));
+  } finally {
+    setGuardando(false);
+    submitLockRef.current = false;
+    setTimeout(() => setMensaje(""), 1200);
   }
+}
+
+
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
@@ -1921,18 +2152,26 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
             </div>
 
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 sm:p-4 mb-4">
-              {montoNum <= 0 ? (
-                <span className="text-sm">Enter a payment amount to see details.</span>
-              ) : excedente > 0 ? (
-                <div className="text-sm">
-                  The payment exceeds the current balance by <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
-                </div>
-              ) : (
-                <div className="text-sm">
-                  Payment will reduce balance to <span className="font-bold">${round2(Math.max(0, saldoActual - montoNum)).toFixed(2)}</span>.
-                </div>
-              )}
-            </div>
+  {montoNum <= 0 ? (
+    <span className="text-sm">Enter a payment amount to see details.</span>
+  ) : excedente > 0 ? (
+    <div className="text-sm">
+      The payment exceeds the current balance by <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
+    </div>
+  ) : (
+    (() => {
+      // Reusa los centavos ya calculados arriba:
+      const newCents   = Math.max(0, prevCents - payCents);
+      const newBalance = (newCents / 100).toFixed(2);
+      return (
+        <div className="text-sm">
+          Payment will reduce balance to <span className="font-bold">${newBalance}</span>.
+        </div>
+      );
+    })()
+  )}
+</div>
+
 
             {mensaje && (
               <div className={`mb-4 p-4 rounded-xl ${mensaje.includes("Error") || mensaje.includes("invalid") ? "bg-red-50 text-red-700 border border-red-200" : "bg-green-50 text-green-700 border border-green-200"}`}>
