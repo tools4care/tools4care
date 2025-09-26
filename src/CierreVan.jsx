@@ -45,6 +45,15 @@ const normMetodo = (m) => {
   if (["mix", "mixed", "mixto"].includes(s)) return "mix";
   return s;
 };
+// helper: fecha local 'YYYY-MM-DD'
+const toLocalYMD = (d) => {
+  if (!d) return "";
+  const dt = new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
 
 function breakdownPorMetodo(item) {
   const out = { cash: 0, card: 0, transfer: 0 };
@@ -57,8 +66,9 @@ function breakdownPorMetodo(item) {
     if (k === "transferencia") out.transfer += v;
   });
 
-  // 2) posibles campos de desglose
+  // 2) posibles campos de desglose (incluye el JSON 'pago' que guardamos en Ventas)
   const candidates = [
+    item?.pago,               // ⬅️ importante
     item?.pagos_detalle,
     item?.detalle_pagos,
     item?.payment_breakdown,
@@ -97,6 +107,7 @@ function breakdownPorMetodo(item) {
     try {
       if (typeof cand === "string") cand = JSON.parse(cand);
     } catch {}
+
     if (Array.isArray(cand)) {
       for (const r of cand) {
         const metodo = normMetodo(r?.metodo || r?.metodo_pago || r?.type);
@@ -106,14 +117,21 @@ function breakdownPorMetodo(item) {
         else if (metodo === "transfer") out.transfer += monto;
       }
     } else if (typeof cand === "object") {
-      sumDict(cand);
+      // si viene como { map: { efectivo, tarjeta, transferencia, ... } }
+      if (cand.map && typeof cand.map === "object") {
+        sumDict(cand.map);
+      } else {
+        sumDict(cand);
+      }
     }
-  }
+  } // ⬅️ cierra el for
 
-  // 3) fallback por metodo_pago + monto
+  // 3) fallback por metodo_pago + monto (por si no hubo nada arriba)
   if (out.cash + out.card + out.transfer === 0) {
     const metodo = normMetodo(item?.metodo_pago);
-    const montoFallback = Number(item?.monto ?? item?.amount ?? item?.total ?? item?.total_pagado ?? 0);
+    const montoFallback = Number(
+      item?.monto ?? item?.amount ?? item?.total ?? item?.total_pagado ?? 0
+    );
     if (montoFallback) {
       if (metodo === "cash") out.cash += montoFallback;
       else if (metodo === "card") out.card += montoFallback;
@@ -124,9 +142,6 @@ function breakdownPorMetodo(item) {
   return out;
 }
 
-function sumBy(arr, key) {
-  return arr.reduce((t, x) => t + Number(x[key] || 0), 0);
-}
 
 /* ======================= Hooks de datos ======================= */
 
@@ -291,7 +306,9 @@ function TablaMovimientosPendientes({ ventas }) {
             <td className="p-1">
               ${ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2)}
             </td>
-            <td className="p-1">${sumBy(ventas, "total_pagado").toFixed(2)}</td>
+            <td className="p-1">
++              ${ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
++            </td>
             <td className="p-1">${totalCxc.toFixed(2)}</td>
           </tr>
         </tfoot>
@@ -751,42 +768,68 @@ export default function CierreVan() {
     [pagos, clientesDic]
   );
 
-  // Sumatorio por venta_id para pintar columnas en ventas
-  const bkPorVenta = useMemo(() => {
-    const map = new Map(); // ventaId -> {cash, card, transfer}
-    for (const p of pagosDecor) {
-      const ventaId = p.venta_id || p.sale_id || p.ventaId;
-      if (!ventaId) continue;
-      const prev = map.get(ventaId) || { cash: 0, card: 0, transfer: 0 };
-      prev.cash += Number(p._bk?.cash || 0);
-      prev.card += Number(p._bk?.card || 0);
-      prev.transfer += Number(p._bk?.transfer || 0);
-      map.set(ventaId, prev);
-    }
-    return map;
-  }, [pagosDecor]);
+// Sumatorio por venta_id a partir de pagos (fallback si la venta no trae su propio desglose)
+const bkPorVenta = useMemo(() => {
+  const map = new Map();
+  for (const p of pagosDecor) {
+    const ventaId = p.venta_id || p.sale_id || p.ventaId;
+    if (!ventaId) continue;
+    const prev = map.get(ventaId) || { cash: 0, card: 0, transfer: 0 };
+    prev.cash += Number(p._bk?.cash || 0);
+    prev.card += Number(p._bk?.card || 0);
+    prev.transfer += Number(p._bk?.transfer || 0);
+    map.set(ventaId, prev);
+  }
+  return map;
+}, [pagosDecor]);
 
-  const ventasDecor = useMemo(
-    () =>
-      (ventas || []).map((v) => {
-        const ficha = clientesDic[v.cliente_id];
-        const derivado = bkPorVenta.get(v.id) || { cash: 0, card: 0, transfer: 0 };
-        return {
-          ...v,
-          _bk: derivado,
-          cliente_nombre:
-            v.cliente_nombre ||
-            (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
-        };
-      }),
-    [ventas, clientesDic, bkPorVenta]
-  );
+const ventasDecor = useMemo(
+  () =>
+    (ventas || []).map((v) => {
+      const ficha = clientesDic[v.cliente_id];
+
+      // 🔑 1) Intentar primero el desglose propio de la venta
+      //    (campos pago_efectivo / pago_tarjeta / pago_transferencia y/o JSON "pago")
+      let propio = breakdownPorMetodo(v);
+
+      // 🔑 2) Si la venta aún no trae nada, usar como fallback lo sumado desde pagos
+      const fallback = bkPorVenta.get(v.id) || { cash: 0, card: 0, transfer: 0 };
+      const derivado = (propio.cash + propio.card + propio.transfer > 0) ? propio : fallback;
+
+      return {
+        ...v,
+        _bk: derivado,
+        cliente_nombre:
+          v.cliente_nombre ||
+          (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
+      };
+    }),
+  [ventas, clientesDic, bkPorVenta]
+);
+
 
   // Avances (pagos sin venta)
   const avances = useMemo(
-    () => pagosDecor.filter((p) => !p.venta_id && !p.sale_id && !p.ventaId),
-    [pagosDecor]
-  );
+   () =>
+     (pagosDecor || []).filter((p) => {
+       // 1) solo avances reales (sin venta vinculada)
+       const esAvance = !p.venta_id && !p.sale_id && !p.ventaId;
+       if (!esAvance) return false;
+       // 2) fecha local exacta del día seleccionado
+       const diaLocal = toLocalYMD(p.fecha_pago || p.created_at);
+       if (diaLocal !== fechaSeleccionada) return false;
+       // 3) opcional: filtra por van (si la tabla trae van_id)
+       if (p.van_id && van?.id && p.van_id !== van.id) return false;
+       // 4) monto > 0 para evitar basura/centavos de redondeo
+       const monto =
+         Number(p._bk?.cash || 0) +
+         Number(p._bk?.card || 0) +
+         Number(p._bk?.transfer || 0) ||
+         Number(p.monto || 0);
+       return monto > 0.0001;
+     }),
+   [pagosDecor, fechaSeleccionada, van?.id]
+);
 
   // Expected desde la vista
   const expected = useExpectedDia(van?.id, fechaSeleccionada);
@@ -926,7 +969,23 @@ export default function CierreVan() {
       ) : (
         <>
           <TablaMovimientosPendientes ventas={ventasDecor} />
-          <TablaAbonosPendientes pagos={avances.length ? avances : pagosDecor} />
+          {avances.length > 0 && (
+   <>
+     <p className="text-xs text-gray-500 mb-1">
+       Only customer advances not tied to a sale are listed below.
+       Payments captured inside a sale are summarized in that sale’s row.
+     </p>
+     {avances.length > 0 && (
+  <>
+     <p className="text-xs text-gray-500 mb-1">
+       Only customer advances not tied to a sale are listed below.
+       Payments captured inside a sale are summarized in that sale’s row.
+     </p>
+     <TablaAbonosPendientes pagos={avances} />
+   </>
+ )}
+   </>
+)}
         </>
       )}
 
