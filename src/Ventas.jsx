@@ -1438,9 +1438,21 @@ if (montoParaCxC > 0 && selectedClient?.id) {
   }
 
   /* ======================== Paso 1: Cliente ======================== */
-  function handleBarcodeScanned(code) {
-  setProductSearch(code);
+function handleBarcodeScanned(code) {
+  // Limpiar el código: remover ceros a la izquierda y caracteres no numéricos
+  let cleanedCode = code.replace(/^0+/, ''); // Remover ceros al inicio
+  
+  // Si después de remover ceros queda vacío, mantener al menos un cero
+  if (cleanedCode === '') {
+    cleanedCode = '0';
+  }
+  
+  // También probar con el código original por si acaso
+  setProductSearch(cleanedCode);
   setShowScanner(false);
+  
+  console.log('Código original:', code);
+  console.log('Código limpio:', cleanedCode);
 }
   function renderStepClient() {
     const clientsSafe = Array.isArray(clients) ? clients : [];
