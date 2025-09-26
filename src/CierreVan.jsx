@@ -54,6 +54,12 @@ const toLocalYMD = (d) => {
   const dd = String(dt.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 };
+// obtiene la fecha de un pago, tolerante a distintos nombres de campo
+const getPagoDate = (p) =>
+  p?.fecha_pago || p?.fecha || p?.fecha_abono || p?.created_at || p?.updated_at || "";
+
+// normaliza a 'YYYY-MM-DD' desde el registro de pago
+const pagoYMD = (p) => toLocalYMD(getPagoDate(p));
 
 function breakdownPorMetodo(item) {
   const out = { cash: 0, card: 0, transfer: 0 };
@@ -271,7 +277,7 @@ function TablaMovimientosPendientes({ ventas }) {
           )}
           {ventas.map((v) => (
             <tr key={v.id}>
-              <td className="p-1">{v.fecha?.slice(0, 10) || "-"}</td>
+              <td className="p-1">{toLocalYMD(v.fecha) || "-"}</td>
               <td className="p-1">
                 {v.cliente_nombre ||
                   (v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE)}
@@ -307,8 +313,8 @@ function TablaMovimientosPendientes({ ventas }) {
               ${ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2)}
             </td>
             <td className="p-1">
-+              ${ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
-+            </td>
+             ${ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
+           </td>
             <td className="p-1">${totalCxc.toFixed(2)}</td>
           </tr>
         </tfoot>
@@ -366,7 +372,7 @@ function TablaAbonosPendientes({ pagos }) {
 
             return (
               <tr key={p.id}>
-                <td className="p-1">{p.fecha_pago?.slice(0, 10) || "-"}</td>
+                <td className="p-1">{pagoYMD(p) || "-"}</td>
                 <td className="p-1">
                   {p.cliente_nombre ||
                     (p.cliente_id ? p.cliente_id.slice(0, 8) : NO_CLIENTE)}
@@ -807,29 +813,84 @@ const ventasDecor = useMemo(
   [ventas, clientesDic, bkPorVenta]
 );
 
-
-  // Avances (pagos sin venta)
-  const avances = useMemo(
-   () =>
-     (pagosDecor || []).filter((p) => {
-       // 1) solo avances reales (sin venta vinculada)
-       const esAvance = !p.venta_id && !p.sale_id && !p.ventaId;
-       if (!esAvance) return false;
-       // 2) fecha local exacta del día seleccionado
-       const diaLocal = toLocalYMD(p.fecha_pago || p.created_at);
-       if (diaLocal !== fechaSeleccionada) return false;
-       // 3) opcional: filtra por van (si la tabla trae van_id)
-       if (p.van_id && van?.id && p.van_id !== van.id) return false;
-       // 4) monto > 0 para evitar basura/centavos de redondeo
-       const monto =
-         Number(p._bk?.cash || 0) +
-         Number(p._bk?.card || 0) +
-         Number(p._bk?.transfer || 0) ||
-         Number(p.monto || 0);
-       return monto > 0.0001;
-     }),
-   [pagosDecor, fechaSeleccionada, van?.id]
+// IDs de ventas que sí están en este cierre (mismo día/rango)
+const ventasIdSet = useMemo(
+  () => new Set((ventas || []).map((v) => v.id)),
+  [ventas]
 );
+useEffect(() => {
+  if (!pagosDecor) return;
+  console.log("🔎 pagosDecor count:", pagosDecor.length);
+  const sample = pagosDecor.slice(0, 10).map(p =>
+    explainPagoFiltro(p, ventasIdSet, fechaSeleccionada, van)
+  );
+  console.table(sample);
+}, [pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
+
+  // 🔍 TEMP: explica por qué un pago NO aparece en "avances"
+function explainPagoFiltro(p, ventasIdSet, fechaSeleccionada, van) {
+  const ligadoAVentaDelRango = !!(p?.venta_id && ventasIdSet.has(p.venta_id));
+  const diaLocal = pagoYMD(p);
+  const fechaOK = diaLocal === fechaSeleccionada;
+  const vanOK = !(p?.van_id && van?.id && p.van_id !== van.id);
+
+  return {
+    id: p.id,
+    venta_id: p.venta_id || null,
+    monto_calc:
+      (Number(p._bk?.cash || 0) +
+        Number(p._bk?.card || 0) +
+        Number(p._bk?.transfer || 0)) || Number(p.monto || 0),
+    diaLocal,
+    fechaSeleccionada,
+    ligadoAVentaDelRango,
+    fechaOK,
+    vanOK,
+  };
+}
+
+
+// Avances (pagos fuera de las ventas mostradas en este cierre)
+const avances = useMemo(() => {
+  console.log("Filtro Avances - pagosDecor original:", pagosDecor);
+
+  return (pagosDecor || []).filter((p) => {
+    
+    const ligadoAVentaDelRango = !!(p?.venta_id && ventasIdSet.has(p.venta_id));
+          const diaLocal = pagoYMD(p);
+      if (String(diaLocal).trim() !== String(fechaSeleccionada).trim()) return false;
+
+    const vanOK = !p?.van_id || !van?.id || p.van_id === van.id;
+
+    console.log("DEBUG AVANCE:", {
+      id: p.id,
+      venta_id: p.venta_id || null,
+      diaLocal,
+      fechaSeleccionada,
+      ligadoAVentaDelRango,
+      fechaOK,
+      vanOK,
+      monto_calc:
+        (Number(p._bk?.cash || 0) +
+          Number(p._bk?.card || 0) +
+          Number(p._bk?.transfer || 0)) || Number(p.monto || 0),
+    });
+
+    if (ligadoAVentaDelRango) return false;
+    if (!fechaOK) return false;
+    if (!vanOK) return false;
+
+    const monto =
+      (Number(p._bk?.cash || 0) +
+        Number(p._bk?.card || 0) +
+        Number(p._bk?.transfer || 0)) || Number(p.monto || 0);
+
+    return monto > 0.0001;
+  });
+}, [pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
+
+
+
 
   // Expected desde la vista
   const expected = useExpectedDia(van?.id, fechaSeleccionada);
@@ -964,30 +1025,25 @@ const ventasDecor = useMemo(
         </select>
       </div>
 
-      {loading ? (
-        <div className="text-blue-600">Loading transactions...</div>
-      ) : (
-        <>
-          <TablaMovimientosPendientes ventas={ventasDecor} />
-          {avances.length > 0 && (
-   <>
-     <p className="text-xs text-gray-500 mb-1">
-       Only customer advances not tied to a sale are listed below.
-       Payments captured inside a sale are summarized in that sale’s row.
-     </p>
-     {avances.length > 0 && (
+      
+        {loading ? (
+  <div className="text-blue-600">Loading transactions...</div>
+) : (
   <>
-     <p className="text-xs text-gray-500 mb-1">
-       Only customer advances not tied to a sale are listed below.
-       Payments captured inside a sale are summarized in that sale’s row.
-     </p>
-     <TablaAbonosPendientes pagos={avances} />
-   </>
- )}
-   </>
+    <TablaMovimientosPendientes ventas={ventasDecor} />
+
+    {avances.length > 0 && (
+      <>
+        <p className="text-xs text-gray-500 mb-1">
+          Only customer advances not tied to a sale are listed below.
+          Payments captured inside a sale are summarized in that sale’s row.
+        </p>
+        <TablaAbonosPendientes pagos={avances} />
+      </>
+    )}
+  </>
 )}
-        </>
-      )}
+
 
       {/* EXPECTED (desde la vista) */}
       <div className="mb-2 p-3 rounded bg-blue-50 text-sm">
