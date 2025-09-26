@@ -1,111 +1,73 @@
-import React, { useEffect, useRef, useState } from "react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+import { useEffect, useRef, useState } from 'react';
+import Quagga from 'quagga';
 
-function BarcodeScanner({ onResult, onClose }) {
-  const [useCamera, setUseCamera] = useState(false);
-  const videoRef = useRef(null);
-  const inputRef = useRef(null);
-  const lastCodeRef = useRef("");
-  const [error, setError] = useState(null);
+export function BarcodeScanner({ onScan, onClose, isActive }) {
+  const scannerRef = useRef(null);
+  const [error, setError] = useState('');
 
-  // ESCÁNER FÍSICO SIEMPRE ACTIVO
   useEffect(() => {
-    let scannerInput = "";
-    let isMounted = true;
+    if (!isActive) return;
 
-    function handleKey(e) {
-      if (e.key === "Enter" && scannerInput.length > 2 && isMounted) {
-        if (lastCodeRef.current !== scannerInput) {
-          lastCodeRef.current = scannerInput;
-          onResult(scannerInput);
-          setTimeout(onClose, 120);
+    Quagga.init({
+      inputStream: {
+        name: "Live",
+        type: "LiveStream",
+        target: scannerRef.current,
+        constraints: {
+          width: 640,
+          height: 480,
+          facingMode: "environment" // Cámara trasera
         }
-        scannerInput = "";
-      } else if (/^[\w\-\.]$/.test(e.key)) {
-        scannerInput += e.key;
+      },
+      decoder: {
+        readers: ["code_128_reader", "ean_reader", "ean_8_reader", "code_39_reader"]
       }
-    }
-    window.addEventListener("keydown", handleKey);
-
-    setTimeout(() => inputRef.current && inputRef.current.focus(), 200);
-
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onResult, onClose]);
-
-  // CAMARA SOLO SI useCamera === true
-  useEffect(() => {
-    if (!useCamera) return;
-    let codeReader = new BrowserMultiFormatReader();
-    let isMounted = true;
-
-    codeReader.decodeFromVideoDevice(null, videoRef.current, (result, err) => {
-      if (result && isMounted) {
-        const code = result.getText();
-        if (lastCodeRef.current !== code) {
-          lastCodeRef.current = code;
-          if ("vibrate" in navigator) navigator.vibrate([120, 40, 120]);
-          try { new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg").play(); } catch {}
-          onResult(code);
-          setTimeout(onClose, 150);
-        }
+    }, (err) => {
+      if (err) {
+        setError('Error al inicializar cámara: ' + err.message);
+        return;
       }
-      if (err && err.name === "NotAllowedError") {
-        setError("Permiso de cámara denegado. Habilite permisos y reintente.");
-      }
+      Quagga.start();
+    });
+
+    Quagga.onDetected((result) => {
+      const code = result.codeResult.code;
+      onScan(code);
+      Quagga.stop();
     });
 
     return () => {
-      if (codeReader && typeof codeReader.reset === "function") codeReader.reset();
+      Quagga.stop();
     };
-  }, [useCamera, onResult, onClose]);
+  }, [isActive, onScan]);
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <p className="text-red-700">{error}</p>
+        <button onClick={onClose} className="mt-2 bg-red-600 text-white px-4 py-2 rounded">
+          Cerrar
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black bg-opacity-80 flex flex-col items-center justify-center">
-      {!useCamera ? (
-        <>
-          <input
-            ref={inputRef}
-            style={{ position: "absolute", opacity: 0, width: 1, height: 1 }}
-            tabIndex={-1}
-            aria-hidden
-          />
-          <button
-            className="bg-gray-200 text-gray-800 px-4 py-2 rounded mb-2"
-            onClick={() => setUseCamera(true)}
-          >
-            Usar cámara (opcional)
-          </button>
-          <button className="bg-white text-black px-4 py-2 rounded" onClick={onClose}>
-            Cerrar
-          </button>
-          <div className="mt-2 text-xs text-white opacity-80 text-center">
-            Escanee con un lector de códigos físico.<br />
-            (O pulse “Usar cámara” para activar la cámara)
-          </div>
-        </>
-      ) : !error ? (
-        <>
-          <video
-            ref={videoRef}
-            style={{ width: "90vw", maxWidth: 400, borderRadius: 10 }}
-            autoPlay
-            muted
-            playsInline
-          />
-          <button className="mt-3 bg-white text-black px-4 py-2 rounded" onClick={() => setUseCamera(false)}>
-            Cancelar cámara
-          </button>
-        </>
-      ) : (
-        <div className="flex flex-col items-center">
-          <div className="text-red-200 bg-red-800/80 rounded p-4 text-center">{error}</div>
-          <button className="mt-4 bg-white text-black px-4 py-2 rounded" onClick={onClose}>
-            Cerrar
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl p-4 max-w-md w-full">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-bold">Escanear Código</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            ✖
           </button>
         </div>
-      )}
+        
+        <div ref={scannerRef} className="w-full h-64 bg-gray-200 rounded-lg mb-4" />
+        
+        <p className="text-sm text-gray-600 text-center">
+          Apunta la cámara hacia el código de barras
+        </p>
+      </div>
     </div>
   );
 }
-
-export default BarcodeScanner;

@@ -4,6 +4,7 @@ import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { useNavigate } from "react-router-dom";
+import { BarcodeScanner } from "./BarcodeScanner";
 
 /* ========================= Config & Constantes ========================= */
 const PAYMENT_METHODS = [
@@ -419,6 +420,7 @@ export default function Sales() {
   const [selectedClient, setSelectedClient] = useState(null);
 
   const [productSearch, setProductSearch] = useState("");
+  const [showScanner, setShowScanner] = useState(false);
   const [products, setProducts] = useState([]);
   const [topProducts, setTopProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
@@ -1436,6 +1438,10 @@ if (montoParaCxC > 0 && selectedClient?.id) {
   }
 
   /* ======================== Paso 1: Cliente ======================== */
+  function handleBarcodeScanned(code) {
+  setProductSearch(code);
+  setShowScanner(false);
+}
   function renderStepClient() {
     const clientsSafe = Array.isArray(clients) ? clients : [];
     const creditNum = getCreditNumber(selectedClient);
@@ -1773,15 +1779,21 @@ if (montoParaCxC > 0 && selectedClient?.id) {
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
 
-        <div className="flex">
-          <input
-            type="text"
-            placeholder="🔍 Search in the van inventory…"
-            className="flex-1 border-2 border-gray-300 rounded-lg p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-            value={productSearch}
-            onChange={(e) => setProductSearch(e.target.value)}
-          />
-        </div>
+       <div className="flex gap-2">
+  <input
+    type="text"
+    placeholder="🔍 Search in the van inventory…"
+    className="flex-1 border-2 border-gray-300 rounded-lg p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+    value={productSearch}
+    onChange={(e) => setProductSearch(e.target.value)}
+  />
+  <button
+    onClick={() => setShowScanner(true)}
+    className="bg-blue-600 text-white px-4 py-3 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2"
+  >
+    📷 Scan
+  </button>
+</div>
 
         {noProductFound && (
           <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex items-start justify-between gap-3">
@@ -2006,9 +2018,18 @@ if (montoParaCxC > 0 && selectedClient?.id) {
             Next Step →
           </button>
         </div>
+        {/* Scanner Modal */}
+        {showScanner && (
+          <BarcodeScanner 
+            onScan={handleBarcodeScanned}
+            onClose={() => setShowScanner(false)}
+            isActive={showScanner}
+          />
+        )}
       </div>
     );
-  }/* ======================== Paso 3: Pago ======================== */
+  }
+    /* ======================== Paso 3: Pago ======================== */
   function renderStepPayment() {
     function handleChangePayment(index, field, value) {
       setPayments((arr) => arr.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
