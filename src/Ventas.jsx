@@ -982,23 +982,35 @@ export default function Sales() {
   const creditAvailableAfter = Math.max(0, creditLimit - balanceAfter);
   const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
-  /* ---------- Guardar venta pendiente local ---------- */
-  useEffect(() => {
-    if ((cartSafe.length > 0 || selectedClient) && step < 4) {
-      const id = window.pendingSaleId || (window.pendingSaleId = Date.now());
-      const newPending = {
-        id,
-        client: selectedClient,
-        cart: cartSafe,
-        payments,
-        notes,
-        step,
-        date: new Date().toISOString(),
-      };
-      const updated = upsertPendingInLS(newPending);
-      setPendingSales(updated);
-    }
-  }, [selectedClient, cartSafe, payments, notes, step]);
+  
+/* ---------- Guardar venta pendiente local ---------- */
+useEffect(() => {
+  // Solo guardamos si hay progreso real
+  const hasMeaning =
+    cartSafe.length > 0 ||
+    payments.some((p) => Number(p.monto) > 0) ||
+    (notes && notes.trim().length > 0);
+
+  if (selectedClient && hasMeaning && step < 4) {
+    const id =
+      window.pendingSaleId ||
+      (window.pendingSaleId = `${selectedClient?.id ?? "quick"}-${Date.now()}`);
+
+    const newPending = {
+      id,
+      client: selectedClient,
+      cart: cartSafe,
+      payments,
+      notes,
+      step,
+      date: new Date().toISOString(),
+    };
+
+    const updated = upsertPendingInLS(newPending);
+    setPendingSales(updated);
+  }
+}, [selectedClient, cartSafe, payments, notes, step]);
+
 
   function clearSale() {
     setClientSearch("");
@@ -1222,27 +1234,37 @@ async function saveSale() {
       ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
     };
 
-    // ---------- Guardar venta via RPC simple ----------
-    let ventaId = null;
-    const { data: rpcId, error: rpcErr } = await supabase.rpc('ventas_insert_simple', {
-      p_cliente_id: selectedClient?.id ?? null,
-      p_van_id: van.id ?? null,
-      p_usuario_id: usuario.id,
-      p_total: Number(saleTotal.toFixed(2)),
-      p_total_pagado: Number(paidForSaleNow.toFixed(2)),
-      p_estado_pago: estadoPago,
-      p_pago: pagoJson,
-      p_productos: itemsForDb,        // [{producto_id, cantidad, precio_unit, descuento_pct}]
-      p_notas: notes || null,
-      p_pago_efectivo: pagoEfectivo,
-      p_pago_tarjeta: pagoTarjeta,
-      p_pago_transferencia: pagoTransf,
-      p_pago_otro: pagoOtro,
-      p_metodo: metodoPrincipal,      // ✅ ya inicializado
-    });
-    if (rpcErr) throw new Error(`ventas_insert_simple: ${rpcErr.message}`);
-    ventaId = rpcId;
-    if (!ventaId) throw new Error('No se obtuvo ventaId del RPC ventas_insert_simple');
+// ---------- Guardar venta (INSERT directo y devolver id) ----------
+const { data: ventaRow, error: insErr } = await supabase
+  .from('ventas')
+  .insert([{
+    cliente_id: selectedClient?.id ?? null,
+    van_id: van.id ?? null,
+    usuario_id: usuario.id,
+    // fecha: new Date().toISOString(),   // solo si no tienes default en DB
+    total: Number(saleTotal.toFixed(2)),
+    total_pagado: Number(paidForSaleNow.toFixed(2)),
+    estado_pago: estadoPago,
+    // JSON completo con desglose aplicado (venta + deuda), cambio, etc.
+    pago: pagoJson,
+
+    // montos por método para tu resumen diario:
+    pago_efectivo: pagoEfectivo,
+    pago_tarjeta:  pagoTarjeta,
+    pago_transferencia: pagoTransf,
+    pago_otro:      pagoOtro,
+
+    // columna en tu tabla es "metodo_pago" (no p_metodo)
+    metodo_pago: metodoPrincipal,
+
+    notas: notes || null,
+  }])
+  .select('id')      // <— IMPORTANTE: pide que devuelva el id
+  .single();
+
+if (insErr) throw insErr;
+const ventaId = ventaRow.id;   // <— ahora sí existe para lo que sigue
+
 
 // ---------- CxC ----------
 // (1) Ajuste por la parte no pagada de ESTA venta -> crea saldo a favor del negocio (deuda del cliente)
@@ -1580,12 +1602,17 @@ if (montoParaCxC > 0 && selectedClient?.id) {
               >
                 🔄 Refresh credit
               </button>
-              <button
-                className="text-sm text-red-600 underline hover:text-red-800 transition-colors"
-                onClick={() => setSelectedClient(null)}
-              >
-                🔄 Change client
-              </button>
+             <button
+  className="text-sm text-red-600 underline hover:text-red-800 transition-colors"
+   onClick={() => {
+    window.pendingSaleId = null;
+    setCart([]);
+    setPayments([{ forma: "efectivo", monto: 0 }]);
+    setSelectedClient(null);
+  }}
+ >
+   🔄 Change client
+ </button>
             </div>
           </div>
 
@@ -1676,7 +1703,14 @@ if (montoParaCxC > 0 && selectedClient?.id) {
             <div
               key={c.id}
               className="bg-white p-4 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-200 border-2 border-transparent transition-all duration-200 shadow-sm"
-              onClick={() => setSelectedClient(c)}
+              onClick={() => {
+    // nuevo borrador para este cliente
+    window.pendingSaleId = null;
+    setCart([]);
+     setPayments([{ forma: "efectivo", monto: 0 }]);
+    setSelectedClient(c);
+  }}
+  >
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -1706,9 +1740,14 @@ if (montoParaCxC > 0 && selectedClient?.id) {
         {/* QUICK SALE */}
         <div className="space-y-3">
           <button
-            onClick={() => setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 })}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg py-4 font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-          >
+   onClick={() => {
+    window.pendingSaleId = null;
+    setCart([]);
+    setPayments([{ forma: "efectivo", monto: 0 }]);
+    setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 });
+  }}
+   className="w-full bg-gradient-to-r from-blue-500 to-blue-600 ..."
+ >
             ⚡ Quick Sale (No Client)
           </button>
         </div>
