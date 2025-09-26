@@ -60,30 +60,30 @@ export function BarcodeScanner({ onScan, onClose, isActive }) {
     // Contador para validar lecturas múltiples
     const detectionCounts = new Map();
     
-    const onDetected = (result) => {
-      const code = result.codeResult.code;
-      
-      // Validar que el código tiene formato válido
-      if (!code || code.length < 6 || !/^[0-9]+$/.test(code)) {
-        return;
-      }
+   const onDetected = (result) => {
+  const code = result.codeResult.code;
+  
+  // Validar que el código tiene formato válido (menos estricto)
+  if (!code || code.length < 4 || !/^[0-9]+$/.test(code)) {
+    return;
+  }
 
-      // Contar detecciones del mismo código
-      const count = detectionCounts.get(code) || 0;
-      detectionCounts.set(code, count + 1);
+  // Contar detecciones del mismo código
+  const count = detectionCounts.get(code) || 0;
+  detectionCounts.set(code, count + 1);
 
-      // Solo aceptar después de 2-3 detecciones del mismo código
-      if (count >= 1) {
-        setLastResult(code);
-        onScan(code);
-        Quagga.stop();
-      }
+  // Solo aceptar después de 2 detecciones del mismo código
+  if (count >= 1) {
+    setLastResult(code);
+    onScan(code);
+    Quagga.stop();
+  }
 
-      // Limpiar contadores antiguos después de 2 segundos
-      setTimeout(() => {
-        detectionCounts.clear();
-      }, 2000);
-    };
+  // Limpiar contadores antiguos después de 2 segundos
+  setTimeout(() => {
+    detectionCounts.clear();
+  }, 2000);
+};
 
     Quagga.onDetected(onDetected);
 
