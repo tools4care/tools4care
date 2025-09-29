@@ -1266,8 +1266,56 @@ const { data: ventaRow, error: insErr } = await supabase
 
 if (insErr) throw insErr;
 const ventaId = ventaRow.id;   // <— ahora sí existe para lo que sigue
+// ✅ DESCONTAR STOCK DE LA VAN
+for (const item of cartSafe) {
+  try {
+    // Intentar primero obtener stock actual
+    const { data: stockActual } = await supabase
+      .from('stock_van')
+      .select('cantidad')
+      .eq('van_id', van.id)
+      .eq('producto_id', item.producto_id)
+      .single();
 
+    if (stockActual && stockActual.cantidad >= item.cantidad) {
+      const nuevaCantidad = stockActual.cantidad - item.cantidad;
+      
+      const { error: updateErr } = await supabase
+        .from('stock_van')
+        .update({ cantidad: nuevaCantidad })
+        .eq('van_id', van.id)
+        .eq('producto_id', item.producto_id);
 
+      if (updateErr) {
+        console.error(`Error descontando stock del producto ${item.producto_id}:`, updateErr);
+      }
+    } else {
+      console.warn(`Stock insuficiente para producto ${item.producto_id}`);
+    }
+  } catch (err) {
+    console.error(`Error descontando stock:`, err);
+  }
+}
+// ✅ INSERTAR DETALLE DE LA VENTA (productos vendidos)
+if (ventaId && itemsForDb.length > 0) {
+  const { error: detalleErr } = await supabase
+    .from('detalle_ventas')
+    .insert(
+      itemsForDb.map((it) => ({
+        venta_id: ventaId,
+        producto_id: it.producto_id,
+        cantidad: it.cantidad,
+        precio_unitario: it.precio_unit,  // ← Cambiado de precio_unit a precio_unitario
+        descuento: it.descuento_pct || 0, // ← Cambiado de descuento_pct a descuento
+        // NO envíes subtotal, el trigger lo calcula automáticamente
+      }))
+    );
+
+  if (detalleErr) {
+    console.error('Error insertando detalle de venta:', detalleErr);
+    throw new Error(`Error guardando productos: ${detalleErr.message}`);
+  }
+}
 // ---------- CxC ----------
 // (1) Ajuste por la parte no pagada de ESTA venta -> crea saldo a favor del negocio (deuda del cliente)
 if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {

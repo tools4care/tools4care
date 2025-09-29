@@ -9,22 +9,32 @@ import { useVan } from "./hooks/VanContext";
 /* ===================== Utilities ===================== */
 function formatAddress(dir) {
   if (!dir) return "-";
+  
+  // Si es string, intentar parsear
   if (typeof dir === "string") {
     try {
-      if (dir.includes(",") && dir.match(/[A-Z]{2}\s*\d{5}/)) return dir;
       dir = JSON.parse(dir);
     } catch {
       return dir;
     }
   }
-  const partes = [
-    dir.calle && dir.calle.trim() ? dir.calle.trim() : null,
-    dir.ciudad && dir.ciudad.trim() ? dir.ciudad.trim() : null,
-    dir.estado && dir.estado.trim() ? dir.estado.trim() : null,
-    dir.zip && dir.zip.trim() ? dir.zip.trim() : null,
-  ].filter(Boolean);
-  return partes.length ? partes.join(", ") : "-";
+  
+  // Si es objeto, construir dirección
+  if (typeof dir === "object" && dir !== null) {
+    const partes = [
+      dir.calle,
+      dir.ciudad,
+      dir.estado,
+      dir.zip,
+      dir.country
+    ].filter(Boolean).map(p => String(p).trim()).filter(p => p.length > 0);
+    
+    return partes.length ? partes.join(", ") : "-";
+  }
+  
+  return String(dir);
 }
+
 function formatPhone(phone) {
   if (!phone) return "-";
   const num = String(phone).replace(/\D/g, "");
@@ -34,8 +44,6 @@ function formatPhone(phone) {
 }
 
 /* ========== Normalización / fallbacks de detalle ========== */
-
-// Normaliza filas de detalle (vengan de detalle_ventas o ventas.productos)
 function normalizeDetalleRows(rows, productosMap) {
   return (rows || []).map((d) => {
     const pid = d.producto_id ?? d.producto ?? d.id;
@@ -65,7 +73,6 @@ function normalizeDetalleRows(rows, productosMap) {
   });
 }
 
-// Fallback: lee productos desde ventas.productos (JSON) y los enriquece con nombre/código
 async function fetchDetalleFromVenta(ventaId) {
   const { data: v } = await supabase
     .from("ventas")
@@ -170,7 +177,7 @@ function descargarPDFFactura(factura) {
   doc.setTextColor(azul);
   doc.text("Total:", 400, totalY);
   doc.setTextColor(negro);
-  doc.text("$" + Number(factura.total_venta || 0).toFixed(2), 470, totalY);
+  doc.text("$" + Number(factura.total || 0).toFixed(2), 470, totalY);
   doc.setFontSize(10);
   doc.setTextColor("#444");
   doc.text(
@@ -203,13 +210,16 @@ export default function Facturas() {
   const [porPagina, setPorPagina] = useState(20);
   const [totalVentas, setTotalVentas] = useState(0);
 
-  // Search filter
+  // Filters
   const [busqueda, setBusqueda] = useState("");
+  const [fechaInicio, setFechaInicio] = useState("");
+  const [fechaFin, setFechaFin] = useState("");
+  const [estadoFiltro, setEstadoFiltro] = useState("all");
 
   useEffect(() => {
     cargarFacturas();
     // eslint-disable-next-line
-  }, [pagina, porPagina]);
+  }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro]);
 
   async function cargarFacturas() {
     setLoading(true);
@@ -217,6 +227,21 @@ export default function Facturas() {
 
     if (usuario?.rol !== "admin" && van?.id) {
       query = query.eq("van_id", van.id);
+    }
+
+    // Filtro por rango de fechas
+    if (fechaInicio) {
+      query = query.gte("fecha", fechaInicio);
+    }
+    if (fechaFin) {
+      const fechaFinAjustada = new Date(fechaFin);
+      fechaFinAjustada.setDate(fechaFinAjustada.getDate() + 1);
+      query = query.lt("fecha", fechaFinAjustada.toISOString().split("T")[0]);
+    }
+
+    // Filtro por estado de pago
+    if (estadoFiltro !== "all") {
+      query = query.eq("estado_pago", estadoFiltro);
     }
 
     const desde = (pagina - 1) * porPagina;
@@ -237,54 +262,34 @@ export default function Facturas() {
     return t1.includes(q) || t2.includes(q);
   });
 
-  /* === Carga perezosa del detalle (con fallbacks) === */
+  // Calcular estadísticas
+  const totalGeneral = facturasFiltradas.reduce((sum, f) => sum + Number(f.total || 0), 0);
+  const totalPagado = facturasFiltradas.filter(f => f.estado_pago === "pagado").reduce((sum, f) => sum + Number(f.total || 0), 0);
+  const totalPendiente = facturasFiltradas.filter(f => f.estado_pago !== "pagado").reduce((sum, f) => sum + Number(f.total || 0), 0);
+
+  /* === Carga perezosa del detalle === */
   useEffect(() => {
     if (!facturaSeleccionada) return;
     if (facturaSeleccionada.detalle_ventas) return;
 
     async function cargarDetalle() {
       const ventaId = facturaSeleccionada.id;
-
-      // 1) detalle_ventas por venta_id con alias al precio
       let rows = [];
+
       try {
         const { data } = await supabase
           .from("detalle_ventas")
-          .select("producto_id,cantidad,precio_unitario:precio_unit, productos(nombre,codigo)")
+          .select("producto_id,cantidad,precio_unitario, productos(nombre,codigo)")
           .eq("venta_id", ventaId);
         rows = data || [];
       } catch {}
 
-      // 2) mismo pero con columna nativa precio_unitario
-      if (!rows.length) {
-        try {
-          const { data } = await supabase
-            .from("detalle_ventas")
-            .select("producto_id,cantidad,precio_unitario, productos(nombre,codigo)")
-            .eq("venta_id", ventaId);
-          rows = data || [];
-        } catch {}
-      }
-
-      // 3) algunos esquemas usan FK 'venta' en lugar de 'venta_id'
-      if (!rows.length) {
-        try {
-          const { data } = await supabase
-            .from("detalle_ventas")
-            .select("producto_id,cantidad,precio_unitario:precio_unit, productos(nombre,codigo)")
-            .eq("venta", ventaId);
-          rows = data || [];
-        } catch {}
-      }
-
-      // 4) 🔥 Fallback definitivo: leer ventas.productos (JSON) y enriquecer
       if (!rows.length) {
         try {
           rows = await fetchDetalleFromVenta(ventaId);
         } catch {}
       }
 
-      // Normalización final (soporta cualquiera de los casos)
       const normalizados = normalizeDetalleRows(rows);
       setFacturaSeleccionada((f) => (f ? { ...f, detalle_ventas: normalizados } : f));
     }
@@ -294,36 +299,102 @@ export default function Facturas() {
 
   const totalPaginas = Math.ceil(totalVentas / porPagina) || 1;
 
+  function limpiarFiltros() {
+    setBusqueda("");
+    setFechaInicio("");
+    setFechaFin("");
+    setEstadoFiltro("all");
+    setPagina(1);
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
-      <div className="w-full max-w-6xl mx-auto">
+      <div className="w-full max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-              🧾 Invoices (Sales)
+              Invoices
             </h2>
             <span className="text-sm text-gray-500">
-              Showing <b>{facturasFiltradas.length}</b> of <b>{facturas.length}</b> on this page
+              Page {pagina} / {totalPaginas}
             </span>
           </div>
-          <div className="mt-3 flex items-center gap-3">
+
+          {/* Estadísticas */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200">
+              <div className="text-xs text-blue-600 font-semibold uppercase">Total</div>
+              <div className="text-2xl font-bold text-blue-800">${totalGeneral.toFixed(2)}</div>
+            </div>
+            <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3 border border-green-200">
+              <div className="text-xs text-green-600 font-semibold uppercase">Paid</div>
+              <div className="text-2xl font-bold text-green-800">${totalPagado.toFixed(2)}</div>
+            </div>
+            <div className="bg-gradient-to-r from-amber-50 to-amber-100 rounded-lg p-3 border border-amber-200">
+              <div className="text-xs text-amber-600 font-semibold uppercase">Pending</div>
+              <div className="text-2xl font-bold text-amber-800">${totalPendiente.toFixed(2)}</div>
+            </div>
+          </div>
+
+          {/* Filtros */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <input
-              className="w-full sm:w-96 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-              placeholder="🔍 Search by client or invoice number"
+              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+              placeholder="Search client or invoice..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
             />
-            <span className="hidden sm:inline text-xs text-gray-500">
-              Page {pagina} / {totalPaginas}
-            </span>
+            
+            <input
+              type="date"
+              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+              value={fechaInicio}
+              onChange={(e) => {
+                setFechaInicio(e.target.value);
+                setPagina(1);
+              }}
+              placeholder="Start date"
+            />
+            
+            <input
+              type="date"
+              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+              value={fechaFin}
+              onChange={(e) => {
+                setFechaFin(e.target.value);
+                setPagina(1);
+              }}
+              placeholder="End date"
+            />
+            
+            <select
+              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+              value={estadoFiltro}
+              onChange={(e) => {
+                setEstadoFiltro(e.target.value);
+                setPagina(1);
+              }}
+            >
+              <option value="all">All Status</option>
+              <option value="pagado">Paid</option>
+              <option value="parcial">Partial</option>
+              <option value="pendiente">Pending</option>
+            </select>
+
+            <button
+              onClick={limpiarFiltros}
+              className="bg-gray-500 hover:bg-gray-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md transition-all"
+            >
+              Clear Filters
+            </button>
           </div>
         </div>
 
         {/* Tabla */}
         <div className="bg-white rounded-xl shadow-lg p-0 overflow-hidden">
           {loading ? (
-            <div className="p-8 text-blue-700 font-semibold">Loading invoices…</div>
+            <div className="p-8 text-blue-700 font-semibold">Loading invoices...</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
@@ -332,16 +403,16 @@ export default function Facturas() {
                     <th className="p-3 text-left">Number</th>
                     <th className="p-3 text-left">Date</th>
                     <th className="p-3 text-left">Client</th>
-                    <th className="p-3 text-left">Total</th>
+                    <th className="p-3 text-right">Total</th>
                     <th className="p-3 text-left">VAN</th>
-                    <th className="p-3 text-left">Status</th>
+                    <th className="p-3 text-center">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {facturasFiltradas.length === 0 && (
                     <tr>
                       <td colSpan={6} className="text-center text-gray-400 py-8">
-                        No results.
+                        No results found
                       </td>
                     </tr>
                   )}
@@ -355,22 +426,24 @@ export default function Facturas() {
                         {f.numero_factura || f.id?.slice(0, 8)}
                       </td>
                       <td className="p-3 text-gray-800">
-                        {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : ""}
+                        {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : "-"}
                       </td>
                       <td className="p-3 text-gray-800">{f.cliente_nombre_c || "-"}</td>
-                      <td className="p-3 text-gray-900 font-semibold">
-                        ${Number(f.total_venta || 0).toFixed(2)}
+                      <td className="p-3 text-right text-gray-900 font-semibold">
+                        ${Number(f.total || 0).toFixed(2)}
                       </td>
                       <td className="p-3 text-gray-800">{f.nombre_van || "-"}</td>
-                      <td className="p-3">
+                      <td className="p-3 text-center">
                         <span
                           className={
                             f.estado_pago === "pagado"
                               ? "inline-block px-2 py-1 rounded-full bg-green-100 text-green-700 font-semibold text-xs"
+                              : f.estado_pago === "parcial"
+                              ? "inline-block px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-semibold text-xs"
                               : "inline-block px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-semibold text-xs"
                           }
                         >
-                          {f.estado_pago === "pagado" ? "Paid" : "Pending"}
+                          {f.estado_pago === "pagado" ? "Paid" : f.estado_pago === "parcial" ? "Partial" : "Pending"}
                         </span>
                       </td>
                     </tr>
@@ -384,7 +457,7 @@ export default function Facturas() {
         {/* Paginación */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4">
           <div className="text-xs text-gray-500">
-            Total records: <b>{totalVentas}</b> · Per page: <b>{porPagina}</b>
+            Showing <b>{facturasFiltradas.length}</b> of <b>{totalVentas}</b> records
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -392,17 +465,17 @@ export default function Facturas() {
               onClick={() => setPagina((p) => Math.max(1, p - 1))}
               disabled={pagina === 1}
             >
-              ← Previous
+              Previous
             </button>
             <span className="px-3 py-1 rounded-full border text-xs text-gray-600 bg-white">
-              Page {pagina} of {totalPaginas}
+              {pagina} / {totalPaginas}
             </span>
             <button
               className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold shadow hover:shadow-md disabled:opacity-50"
               onClick={() => setPagina((p) => p + 1)}
               disabled={pagina >= totalPaginas}
             >
-              Next →
+              Next
             </button>
           </div>
         </div>
@@ -410,25 +483,25 @@ export default function Facturas() {
         {/* Modal Detalle */}
         {facturaSeleccionada && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
               <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-3 flex items-center justify-between">
-                <h3 className="font-bold text-lg tracking-tight">Invoice Details</h3>
+                <h3 className="font-bold text-lg">Invoice Details</h3>
                 <button
                   className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center"
                   onClick={() => setFacturaSeleccionada(null)}
                 >
-                  ✖️
+                  ✖
                 </button>
               </div>
 
-              <div className="p-5 text-sm text-gray-700 space-y-2">
-                <div><b>Invoice Number:</b> {facturaSeleccionada.numero_factura || facturaSeleccionada.id}</div>
-                <div><b>Date:</b> {facturaSeleccionada.fecha ? new Date(facturaSeleccionada.fecha).toLocaleDateString("en-US") : ""}</div>
+              <div className="p-5 text-sm text-gray-700 space-y-2 overflow-y-auto">
+                <div><b>Invoice #:</b> {facturaSeleccionada.numero_factura || facturaSeleccionada.id}</div>
+                <div><b>Date:</b> {facturaSeleccionada.fecha ? new Date(facturaSeleccionada.fecha).toLocaleDateString("en-US") : "-"}</div>
                 <div><b>Client:</b> {facturaSeleccionada.cliente_nombre_c || "-"}</div>
                 <div><b>Address:</b> {formatAddress(facturaSeleccionada.cliente_direccion)}</div>
                 <div><b>Phone:</b> {formatPhone(facturaSeleccionada.cliente_telefono)}</div>
                 <div><b>Email:</b> {facturaSeleccionada.cliente_email || "-"}</div>
-                <div><b>Total:</b> ${Number(facturaSeleccionada.total_venta || 0).toFixed(2)}</div>
+                <div><b>Total:</b> ${Number(facturaSeleccionada.total || 0).toFixed(2)}</div>
                 <div><b>VAN:</b> {facturaSeleccionada.nombre_van || "-"}</div>
                 <div>
                   <b>Status:</b>{" "}
@@ -468,7 +541,7 @@ export default function Facturas() {
                   onClick={() => descargarPDFFactura(facturaSeleccionada)}
                   disabled={!facturaSeleccionada.detalle_ventas}
                 >
-                  ⬇️ Download PDF
+                  Download PDF
                 </button>
                 <button
                   className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2.5 px-4 rounded-lg"
