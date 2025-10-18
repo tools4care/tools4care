@@ -1,10 +1,11 @@
-// src/Ventas.jsx - PARTE 1
-import { useEffect, useState } from "react";
+// src/Ventas.jsx - PARTE 1 (CON STRIPE QR)
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { useNavigate } from "react-router-dom";
 import { BarcodeScanner } from "./BarcodeScanner";
+import QRCode from "qrcode"; // npm install qrcode
 
 /* ========================= Config & Constantes ========================= */
 const PAYMENT_METHODS = [
@@ -21,6 +22,120 @@ const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4CareMovil";
 const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
+/* ========================= Stripe QR Payment Helpers ========================= */
+// retorna { url, sessionId }
+async function createStripeCheckoutSession(amount, description = "Pago de venta") {
+  const res = await fetch(
+    "https://gvloygqbavibmpakzdma.functions.supabase.co/create_checkout_session",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: Math.round(Number(amount) * 100),
+        currency: "usd",
+        description,
+      }),
+    }
+  );
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.error || `HTTP ${res.status} - Error creando Checkout Session`);
+  }
+  // asegúrate que la función Edge retorne { url, sessionId } (ver abajo)
+  return { url: data.url, sessionId: data.sessionId };
+}
+
+
+async function createStripePaymentIntent({ amount, description, clientEmail, clientName }) {
+  try {
+    const { data, error } = await supabase.functions.invoke("create_payment_intent", {
+    body: {
+      amount: Math.round(Number(amount) * 100),
+      currency: "usd",
+      description,
+      customer_email: clientEmail || null,
+      customer_name: clientName || null,
+    },
+});
+
+    if (error) throw error;
+    
+    return {
+      ok: true,
+      clientSecret: data.clientSecret,
+      paymentIntentId: data.paymentIntentId,
+      publicKey: data.publicKey,
+    };
+  } catch (err) {
+    console.error("Error creating payment intent:", err);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function checkStripePaymentStatus(paymentIntentId) {
+  try {
+    const { data, error } = await supabase.functions.invoke("check_payment_status", {
+    body: { paymentIntentId },
+});
+
+    if (error) throw error;
+    
+    return {
+      ok: true,
+      status: data.status, // 'succeeded', 'processing', 'requires_payment_method', etc.
+      amount: data.amount,
+    };
+  } catch (err) {
+    console.error("Error checking payment status:", err);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function generateQRCode(text) {
+  try {
+    const qrDataUrl = await QRCode.toDataURL(text, {
+      width: 300,
+      margin: 2,
+      color: {
+        dark: "#000000",
+        light: "#FFFFFF",
+      },
+    });
+    return qrDataUrl;
+  } catch (err) {
+    console.error("Error generating QR:", err);
+    return null;
+  }
+}
+
+function buildStripePaymentUrl(clientSecret, publicKey) {
+  // Construir URL para página de pago de Stripe
+  const baseUrl = window.location.origin;
+  return `${baseUrl}/stripe-payment?client_secret=${clientSecret}&pk=${publicKey}`;
+}
+
+// Consulta a tu función Edge si la Checkout Session ya está pagada
+async function checkStripeCheckoutStatus(sessionId) {
+  try {
+    const res = await fetch(
+      "https://gvloygqbavibmpakzdma.functions.supabase.co/check_checkout_session",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      }
+    );
+    const data = await res.json();
+    if (!res.ok || !data?.ok) throw new Error(data?.error || "Stripe check failed");
+    return { ok: true, status: data.status, paid: data.paid, amount: data.amount, currency: data.currency };
+  } catch (err) {
+    console.error("Error checking checkout session:", err);
+    return { ok: false, error: err.message };
+  }
+}
+
+
 /* ========================= Helpers de negocio ========================= */
 function policyLimit(score) {
   const s = Number(score ?? 600);
@@ -31,7 +146,7 @@ function policyLimit(score) {
   if (s < 700) return 200;
   if (s < 750) return 350;
   if (s < 800) return 500;
-  return 800; // >= 800
+  return 800;
 }
 
 function fmt(n) {
@@ -149,7 +264,7 @@ function upsertPendingInLS(newPending) {
   return next;
 }
 
-/* ===== CxC helpers: lectura + suscripción ===== */
+/* ===== CxC helpers ===== */
 const makeUUID = () =>
   (crypto?.randomUUID?.()) ||
   "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
@@ -260,24 +375,28 @@ function subscribeClienteCxC(clienteId, onChange) {
     },
   };
 }
+
 /* ========================= SMS / Email helpers ========================= */
 function isIOS() {
   const ua = navigator.userAgent || navigator.vendor || "";
   return /iPad|iPhone|iPod|Macintosh/.test(ua);
 }
+
 function normalizePhoneE164ish(raw, defaultCountry = "1") {
   const digits = String(raw || "").replace(/\D/g, "");
   if (!digits) return "";
   const withCc = digits.length === 10 ? defaultCountry + digits : digits;
   return withCc.startsWith("+") ? withCc : `+${withCc}`;
 }
+
 function buildSmsUrl(phone, message) {
   const target = normalizePhoneE164ish(phone, "1");
   if (!target) return null;
   const body = encodeURIComponent(String(message || ""));
-  const sep = isIOS() ? "&" : "?"; // iOS usa sms:+1...&body= ; Android ?body=
+  const sep = isIOS() ? "&" : "?";
   return `sms:${target}${sep}body=${body}`;
 }
+
 async function sendSmsIfPossible({ phone, text }) {
   if (!phone || !text) return { ok: false, reason: "missing_phone_or_text" };
   const href = buildSmsUrl(phone, text);
@@ -301,10 +420,12 @@ async function sendSmsIfPossible({ phone, text }) {
     }
   }
 }
+
 function buildMailtoUrl(to, subject, body) {
   if (!to) return null;
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
+
 async function sendEmailSmart({ to, subject, html, text }) {
   if (!to) return { ok: false, reason: "missing_email" };
 
@@ -333,6 +454,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
   }
   return { ok: true, via: "mailto" };
 }
+
 async function askChannel({ hasPhone, hasEmail }) {
   if (!hasPhone && !hasEmail) return null;
   if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
@@ -404,7 +526,7 @@ function composeReceiptMessageEN(payload) {
   lines.push("");
   lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
   return lines.join("\n");
-}
+}// src/Ventas.jsx - PARTE 2 (Componente Principal con Stripe QR)
 
 /* ========================= Componente Principal ========================= */
 export default function Sales() {
@@ -461,6 +583,15 @@ export default function Sales() {
   const [showPaymentDetails, setShowPaymentDetails] = useState(false);
   const [invTick, setInvTick] = useState(0);
   const reloadInventory = () => setInvTick(n => n + 1);
+
+  // ---- 🆕 STRIPE QR Estados ----
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrCodeData, setQRCodeData] = useState(null);
+  const [qrPaymentIntent, setQRPaymentIntent] = useState(null);
+  const [qrAmount, setQRAmount] = useState(0);
+  const [qrPaymentIndex, setQRPaymentIndex] = useState(null);
+  const [qrPollingActive, setQRPollingActive] = useState(false);
+  const qrPollingIntervalRef = useRef(null);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
@@ -547,7 +678,7 @@ export default function Sales() {
       }
     }
     loadClients();
-  }, [debouncedClientSearch]);// src/Ventas.jsx - PARTE 2 (CONTINUACIÓN)
+  }, [debouncedClientSearch]);
 
   /* ---------- Historial al seleccionar cliente ---------- */
   useEffect(() => {
@@ -938,7 +1069,7 @@ export default function Sales() {
     setNoProductFound(searchActive && filtered.length === 0 ? productSearch.trim() : "");
   }, [productSearch, topProducts, allProducts]);
 
-  /* ---------- Totales & crédito (SIN BALANCE A FAVOR) ---------- */
+  /* ---------- Totales & crédito ---------- */
   const cartSafe = Array.isArray(cart) ? cart : [];
 
   const saleTotal = cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
@@ -949,11 +1080,10 @@ export default function Sales() {
       ? Number(cxcBalance)
       : Number(getClientBalance(selectedClient));
   
-  // ✅ SOLO PERMITIR DEUDA POSITIVA - NUNCA BALANCE A FAVOR
   const balanceBefore = Math.max(0, Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0);
 
-  const oldDebt = balanceBefore; // Solo deuda existente, nunca crédito a favor
-  const totalAPagar = oldDebt + saleTotal; // Deuda anterior + venta nueva
+  const oldDebt = balanceBefore;
+  const totalAPagar = oldDebt + saleTotal;
 
   const paidForSale = Math.min(paid, saleTotal);
   const paidToOldDebt = Math.min(oldDebt, Math.max(0, paid - paidForSale));
@@ -962,11 +1092,9 @@ export default function Sales() {
   const change = Math.max(0, paid - totalAPagar);
   const mostrarAdvertencia = paid > totalAPagar;
 
-  // ✅ BALANCE FINAL: Solo puede ser 0 o positivo (deuda)
   const balanceAfter = Math.max(0, balanceBefore + saleTotal - paidApplied);
   const amountToCredit = Math.max(0, balanceAfter - balanceBefore);
 
-  // Panel crédito
   const clientScore = Number(selectedClient?.score_credito ?? 600);
   const showCreditPanel = !!selectedClient && (clientHistory.has || balanceBefore !== 0);
 
@@ -984,35 +1112,122 @@ export default function Sales() {
   const creditAvailableAfter = Math.max(0, creditLimit - balanceAfter);
   const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
+  /* ---------- Guardar venta pendiente local ---------- */
+  useEffect(() => {
+    const hasMeaning =
+      cartSafe.length > 0 ||
+      payments.some((p) => Number(p.monto) > 0) ||
+      (notes && notes.trim().length > 0);
+
+    if (selectedClient && hasMeaning && step < 4) {
+      const id =
+        window.pendingSaleId ||
+        (window.pendingSaleId = `${selectedClient?.id ?? "quick"}-${Date.now()}`);
+
+      const newPending = {
+        id,
+        client: selectedClient,
+        cart: cartSafe,
+        payments,
+        notes,
+        step,
+        date: new Date().toISOString(),
+      };
+
+      const updated = upsertPendingInLS(newPending);
+      setPendingSales(updated);
+    }
+  }, [selectedClient, cartSafe, payments, notes, step]);
+
+  /* ========== 🆕 STRIPE QR FUNCTIONS ========== */
   
-/* ---------- Guardar venta pendiente local ---------- */
-useEffect(() => {
-  // Solo guardamos si hay progreso real
-  const hasMeaning =
-    cartSafe.length > 0 ||
-    payments.some((p) => Number(p.monto) > 0) ||
-    (notes && notes.trim().length > 0);
-
-  if (selectedClient && hasMeaning && step < 4) {
-    const id =
-      window.pendingSaleId ||
-      (window.pendingSaleId = `${selectedClient?.id ?? "quick"}-${Date.now()}`);
-
-    const newPending = {
-      id,
-      client: selectedClient,
-      cart: cartSafe,
-      payments,
-      notes,
-      step,
-      date: new Date().toISOString(),
+  // Limpiar polling al desmontar
+  useEffect(() => {
+    return () => {
+      if (qrPollingIntervalRef.current) {
+        clearInterval(qrPollingIntervalRef.current);
+      }
     };
+  }, []);
 
-    const updated = upsertPendingInLS(newPending);
-    setPendingSales(updated);
+async function handleGenerateQR(paymentIndex) {
+  const payment = payments[paymentIndex];
+  const amount = Number(payment.monto);
+
+  if (!amount || amount <= 0) {
+    alert("⚠️ Ingresa un monto válido antes de generar el QR");
+    return;
   }
-}, [selectedClient, cartSafe, payments, notes, step]);
 
+  setQRPaymentIndex(paymentIndex);
+  setQRAmount(amount);
+
+  // 1️⃣ Crear sesión de pago (Checkout Session en Stripe)
+  let checkoutUrl, sessionId;
+  try {
+    const created = await createStripeCheckoutSession(
+      amount,
+      `Pago ${selectedClient?.nombre || "venta rápida"} - ${van?.nombre || "Van"}`
+    );
+
+    // Guardamos los valores devueltos
+    checkoutUrl = created.url;
+    sessionId = created.sessionId;
+  } catch (e) {
+    alert(`❌ Error generando checkout: ${e.message || e}`);
+    return;
+  }
+
+  // 2️⃣ Generar el código QR con la URL real de Stripe
+  const qrData = await generateQRCode(checkoutUrl);
+  if (!qrData) {
+    alert("❌ Error generando código QR");
+    return;
+  }
+
+  // 3️⃣ Mostrar el modal con el QR y activar polling
+  setQRCodeData(qrData);
+  setShowQRModal(true);
+  setQRPollingActive(true);
+
+  // 4️⃣ Iniciar verificación automática del pago
+  startCheckoutPolling(sessionId, paymentIndex);
+}
+
+
+  function startCheckoutPolling(sessionId, paymentIndex) {
+  if (qrPollingIntervalRef.current) {
+    clearInterval(qrPollingIntervalRef.current);
+  }
+
+  qrPollingIntervalRef.current = setInterval(async () => {
+    const res = await checkStripeCheckoutStatus(sessionId);
+
+    if (res.ok && res.paid) {
+      clearInterval(qrPollingIntervalRef.current);
+      setQRPollingActive(false);
+
+      const paidAmount = (res.amount || 0) / 100; // centavos -> dólares
+      handleChangePayment(paymentIndex, "monto", paidAmount);
+
+      alert("✅ ¡Pago recibido exitosamente!");
+      setShowQRModal(false);
+    }
+  }, 3000);
+}
+
+
+  function handleCloseQRModal() {
+    if (qrPollingIntervalRef.current) {
+      clearInterval(qrPollingIntervalRef.current);
+    }
+    setQRPollingActive(false);
+    setShowQRModal(false);
+    setQRCodeData(null);
+    setQRPaymentIntent(null);
+  }
+
+  /* ========== HANDLERS ========== */
 
   function clearSale() {
     setClientSearch("");
@@ -1030,32 +1245,29 @@ useEffect(() => {
     window.pendingSaleId = null;
   }
 
-// ✅ Enviar recibo por SMS/Email al terminar la venta
-async function requestAndSendNotifications({ client, payload }) {
-  if (!client) return;
+  async function requestAndSendNotifications({ client, payload }) {
+    if (!client) return;
 
-  const hasPhone = !!client.telefono;
-  const hasEmail = !!client.email;
+    const hasPhone = !!client.telefono;
+    const hasEmail = !!client.email;
 
-  // Construir mensaje de recibo (texto plano)
-  const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
-  const text = composeReceiptMessageEN(payload);
-  const html = text; // si tu función edge acepta HTML, aquí podrías formatearlo
+    const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
+    const text = composeReceiptMessageEN(payload);
+    const html = text;
 
-  const wants = await askChannel({ hasPhone, hasEmail });
-  if (!wants) return;
+    const wants = await askChannel({ hasPhone, hasEmail });
+    if (!wants) return;
 
-  try {
-    if (wants === "sms" && hasPhone) {
-      await sendSmsIfPossible({ phone: client.telefono, text });
-    } else if (wants === "email" && hasEmail) {
-      await sendEmailSmart({ to: client.email, subject, html, text });
+    try {
+      if (wants === "sms" && hasPhone) {
+        await sendSmsIfPossible({ phone: client.telefono, text });
+      } else if (wants === "email" && hasEmail) {
+        await sendEmailSmart({ to: client.email, subject, html, text });
+      }
+    } catch (e) {
+      console.warn("Receipt send error:", e?.message || e);
     }
-  } catch (e) {
-    console.warn("Receipt send error:", e?.message || e);
   }
-}
-
 
   function handleAddProduct(p) {
     const stockNow = Number(p.cantidad ?? p.stock ?? 0);
@@ -1114,307 +1326,25 @@ async function requestAndSendNotifications({ client, payload }) {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
 
-/* ===================== Guardar venta ===================== */
-async function saveSale() {
-  setSaving(true);
-  setPaymentError("");
-
-  const currentPendingId = window.pendingSaleId;
-
-  try {
-    // --- Validaciones básicas ---
-    if (!usuario?.id) throw new Error("User not synced, please re-login.");
-    if (!van?.id) throw new Error("Select a VAN first.");
-    if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
-    if (cartSafe.length === 0) throw new Error("Add at least one product.");
-
-    // --- Tope de crédito ---
-    if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
-      setPaymentError(
-        `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
-      );
-      return;
-    }
-
-    if (amountToCredit > 0) {
-      const ok = window.confirm(
-        `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
-          (selectedClient
-            ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
-                creditAvailable
-              )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
-            : `\n(No credit history yet)\n\n`) +
-          `Do you want to continue?`
-      );
-      if (!ok) return;
-    }
-
-    // ===== Recalcular al guardar (consistente) =====
-    const existingCreditNow   = Math.max(0, -balanceBefore);
-    const oldDebtNow          = Math.max(0, balanceBefore);
-    const saleAfterCreditNow  = Math.max(0, saleTotal - existingCreditNow);
-    const totalAPagarNow      = oldDebtNow + saleAfterCreditNow;
-
-    const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
-    const payOldDebtNow  = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
-    const changeNow      = Math.max(0, paid - totalAPagarNow);
-
-    // Pendiente nuevo que nace en esta venta
-    const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
-
-    // Estado del pago de LA VENTA (no de la deuda previa)
-    const estadoPago =
-      pendingFromThisSale === 0 ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente";
-
-    // ===== Desglose de pagos aplicados (capado; sin cambio) =====
-    const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
-    const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2)); // aplicado total
-
-    let remainingToApply = paidApplied;
-    const metodosAplicados = [];
-    for (const p of nonZeroPayments) {
-      if (remainingToApply <= 0) break;
-      const original = Number(p.monto || 0);
-      const usar = Math.min(original, remainingToApply);
-      if (usar > 0) {
-        metodosAplicados.push({ ...p, monto: Number(usar.toFixed(2)) });
-        remainingToApply = Number((remainingToApply - usar).toFixed(2));
-      }
-    }
-
-    // ✅ definir método principal ANTES de cualquier uso
-    const metodoPrincipal =
-      metodosAplicados.length === 1 ? (metodosAplicados[0].forma || "mix") : "mix";
-
-    const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
-    for (const p of metodosAplicados) {
-      if (paymentMap[p.forma] !== undefined) {
-        paymentMap[p.forma] += Number(p.monto || 0);
-      }
-    }
-
-    const pagoEfectivo = Number((paymentMap.efectivo || 0).toFixed(2));
-    const pagoTarjeta  = Number((paymentMap.tarjeta  || 0).toFixed(2));
-    const pagoTransf   = Number((paymentMap.transferencia || 0).toFixed(2));
-    const pagoOtro     = Number((paymentMap.otro || 0).toFixed(2));
-
-    // ===== Items =====
-    const itemsForDb = cartSafe.map((p) => {
-      const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
-      const qty = Number(p.cantidad);
-      let base = Number(meta.base || p.precio_unitario) || 0;
-      let descuento_pct = 0;
-
-      const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
-      if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
-        descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
-      } else if (Number(meta.pct) > 0) {
-        descuento_pct = Number(meta.pct);
-      }
-
-      if (!base || !Number.isFinite(base)) {
-        base = Number(p.precio_unitario) || 0;
-        descuento_pct = 0;
-      }
-
-      return {
-        producto_id: p.producto_id,
-        cantidad: qty,
-        precio_unit: Number(base.toFixed(2)),
-        descuento_pct: Number(descuento_pct.toFixed(4)),
-      };
-    });
-
-    // ===== Pago JSON =====
-    const pagoJson = {
-      metodos: metodosAplicados, // aplicado (venta + deuda)
-      map: paymentMap,
-      total_ingresado: Number(paid.toFixed(2)),
-      aplicado_venta: Number(paidForSaleNow.toFixed(2)),
-      aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
-      cambio: Number(changeNow.toFixed(2)),
-      ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
-    };
-
-// ---------- Guardar venta (INSERT directo y devolver id) ----------
-const { data: ventaRow, error: insErr } = await supabase
-  .from('ventas')
-  .insert([{
-    cliente_id: selectedClient?.id ?? null,
-    van_id: van.id ?? null,
-    usuario_id: usuario.id,
-    // fecha: new Date().toISOString(),   // solo si no tienes default en DB
-    total: Number(saleTotal.toFixed(2)),
-    total_pagado: Number(paidForSaleNow.toFixed(2)),
-    estado_pago: estadoPago,
-    // JSON completo con desglose aplicado (venta + deuda), cambio, etc.
-    pago: pagoJson,
-
-    // montos por método para tu resumen diario:
-    pago_efectivo: pagoEfectivo,
-    pago_tarjeta:  pagoTarjeta,
-    pago_transferencia: pagoTransf,
-    pago_otro:      pagoOtro,
-
-    // columna en tu tabla es "metodo_pago" (no p_metodo)
-    metodo_pago: metodoPrincipal,
-
-    notas: notes || null,
-  }])
-  .select('id')      // <— IMPORTANTE: pide que devuelva el id
-  .single();
-
-if (insErr) throw insErr;
-const ventaId = ventaRow.id;   // <— ahora sí existe para lo que sigue
-// ✅ DESCONTAR STOCK DE LA VAN
-for (const item of cartSafe) {
-  try {
-    // Intentar primero obtener stock actual
-    const { data: stockActual } = await supabase
-      .from('stock_van')
-      .select('cantidad')
-      .eq('van_id', van.id)
-      .eq('producto_id', item.producto_id)
-      .single();
-
-    if (stockActual && stockActual.cantidad >= item.cantidad) {
-      const nuevaCantidad = stockActual.cantidad - item.cantidad;
-      
-      const { error: updateErr } = await supabase
-        .from('stock_van')
-        .update({ cantidad: nuevaCantidad })
-        .eq('van_id', van.id)
-        .eq('producto_id', item.producto_id);
-
-      if (updateErr) {
-        console.error(`Error descontando stock del producto ${item.producto_id}:`, updateErr);
-      }
-    } else {
-      console.warn(`Stock insuficiente para producto ${item.producto_id}`);
-    }
-  } catch (err) {
-    console.error(`Error descontando stock:`, err);
+  function handleChangePayment(index, field, value) {
+    setPayments((arr) => arr.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
   }
-}
-// ✅ INSERTAR DETALLE DE LA VENTA (productos vendidos)
-if (ventaId && itemsForDb.length > 0) {
-  const { error: detalleErr } = await supabase
-    .from('detalle_ventas')
-    .insert(
-      itemsForDb.map((it) => ({
-        venta_id: ventaId,
-        producto_id: it.producto_id,
-        cantidad: it.cantidad,
-        precio_unitario: it.precio_unit,  // ← Cambiado de precio_unit a precio_unitario
-        descuento: it.descuento_pct || 0, // ← Cambiado de descuento_pct a descuento
-        // NO envíes subtotal, el trigger lo calcula automáticamente
-      }))
-    );
 
-  if (detalleErr) {
-    console.error('Error insertando detalle de venta:', detalleErr);
-    throw new Error(`Error guardando productos: ${detalleErr.message}`);
+  function handleAddPayment() {
+    setPayments([...payments, { forma: "efectivo", monto: 0 }]);
   }
-}
-// ---------- CxC ----------
-// (1) Ajuste por la parte no pagada de ESTA venta -> crea saldo a favor del negocio (deuda del cliente)
-if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {
-  try {
-    // Preferido: RPC si existe
-    await supabase.rpc("cxc_crear_ajuste_por_venta", {
-      p_cliente_id: selectedClient.id,
-      p_venta_id: ventaId,
-      p_monto: Number(pendingFromThisSale.toFixed(2)),
-      p_van_id: van.id,
-      p_usuario_id: usuario.id,
-      p_nota: "Saldo de venta no pagado",
-    });
-  } catch (e) {
-    console.warn("RPC cxc_crear_ajuste_por_venta no disponible, uso fallback directo:", e?.message || e);
-    // Fallback robusto: insert/upsert directo al libro CxC
-    // Requiere UNIQUE(venta_id) ya creado (cxc_movimientos_venta_unique)
-    const { error: e2 } = await supabase
-      .from("cxc_movimientos")
-      .upsert(
-        [
-          {
-            cliente_id: selectedClient.id,
-            tipo: "venta", // <-- identifica que es saldo generado por una venta
-            monto: Number(pendingFromThisSale.toFixed(2)), // deuda creada por esta venta
-            usuario_id: usuario.id ?? null,
-            fecha: new Date().toISOString(),
-            venta_id: ventaId,
-          },
-        ],
-        { onConflict: "venta_id" }
-      );
-    if (e2) console.error("Fallback CxC upsert error:", e2.message || e2);
+
+  function handleRemovePayment(index) {
+    setPayments((ps) => (ps.length === 1 ? ps : ps.filter((_, i) => i !== index)));
   }
-}
 
-// (2) Registrar pago SOLO por lo aplicado a deuda previa (no lo de la venta)
-const montoParaCxC = Number(payOldDebtNow.toFixed(2));
-if (montoParaCxC > 0 && selectedClient?.id) {
-  await registrarPagoCxC({
-    cliente_id: selectedClient.id,
-    monto: montoParaCxC,             // solo lo aplicado a deuda antigua
-    metodo: metodoPrincipal,
-    van_id: van.id,
-  });
-}
-
-
-    // ===== Recibo =====
-    const prevDue     = Math.max(0, balanceBefore);
-    const balancePost = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
-    const newDue      = Math.max(0, balancePost);
-
-    const payload = {
-      clientName: selectedClient?.nombre || "",
-      creditNumber: getCreditNumber(selectedClient),
-      dateStr: new Date().toLocaleString(),
-      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-      items: cartSafe.map((p) => ({
-        name: p.nombre,
-        qty: p.cantidad,
-        unit: p.precio_unitario,
-        subtotal: p.cantidad * p.precio_unitario,
-      })),
-      saleTotal,
-      paid: paidForSaleNow + payOldDebtNow,
-      change: changeNow,
-      prevBalance: prevDue,
-      saleRemaining: pendingFromThisSale,
-      newDue,
-      creditLimit,
-      availableBefore: creditAvailable,
-      availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
-    };
-
-    removePendingFromLSById(currentPendingId);
-    await requestAndSendNotifications({ client: selectedClient, payload });
-
-    alert(
-      `✅ Sale saved successfully` +
-        (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
-        (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
-    );
-
-    reloadInventory();
-    clearSale();
-
-  } catch (err) {
-    setPaymentError("❌ Error saving sale: " + (err?.message || ""));
-    console.error(err);
-  } finally {
-    setSaving(false);
+  function handleBarcodeScanned(code) {
+    let cleanedCode = code.replace(/^0+/, '');
+    if (cleanedCode === '') cleanedCode = '0';
+    setProductSearch(cleanedCode);
+    setShowScanner(false);
   }
-}
 
-
-  // src/Ventas.jsx - PARTE 3 FINAL (Componentes de UI)
-
-  /* ======================== Modal: ventas pendientes ======================== */
   function handleSelectPendingSale(sale) {
     setSelectedClient(sale.client);
     setCart(sale.cart);
@@ -1431,6 +1361,366 @@ if (montoParaCxC > 0 && selectedClient?.id) {
     if (window.pendingSaleId === id) window.pendingSaleId = null;
   }
 
+  function renderAddress(address) {
+    if (!address) return "No address";
+    if (typeof address === "string") {
+      try {
+        address = JSON.parse(address);
+      } catch {}
+    }
+    if (typeof address === "object") {
+      return [address.calle, address.ciudad, address.estado, address.zip].filter(Boolean).join(", ");
+    }
+    return address;
+  }// src/Ventas.jsx - PARTE 3 FINAL (saveSale + UI con Modal QR Stripe)
+
+  /* ===================== Guardar venta ===================== */
+  async function saveSale() {
+    setSaving(true);
+    setPaymentError("");
+
+    const currentPendingId = window.pendingSaleId;
+
+    try {
+      // --- Validaciones básicas ---
+      if (!usuario?.id) throw new Error("User not synced, please re-login.");
+      if (!van?.id) throw new Error("Select a VAN first.");
+      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
+      if (cartSafe.length === 0) throw new Error("Add at least one product.");
+
+      // --- Tope de crédito ---
+      if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
+        setPaymentError(
+          `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
+        );
+        return;
+      }
+
+      if (amountToCredit > 0) {
+        const ok = window.confirm(
+          `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
+            (selectedClient
+              ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
+                  creditAvailable
+                )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
+              : `\n(No credit history yet)\n\n`) +
+            `Do you want to continue?`
+        );
+        if (!ok) return;
+      }
+
+      // ===== Recalcular al guardar =====
+      const existingCreditNow = Math.max(0, -balanceBefore);
+      const oldDebtNow = Math.max(0, balanceBefore);
+      const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
+      const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+
+      const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
+      const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
+      const changeNow = Math.max(0, paid - totalAPagarNow);
+
+      const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
+
+      const estadoPago =
+        pendingFromThisSale === 0 ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente";
+
+      // ===== Desglose de pagos aplicados =====
+      const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
+      const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2));
+
+      let remainingToApply = paidApplied;
+      const metodosAplicados = [];
+      for (const p of nonZeroPayments) {
+        if (remainingToApply <= 0) break;
+        const original = Number(p.monto || 0);
+        const usar = Math.min(original, remainingToApply);
+        if (usar > 0) {
+          metodosAplicados.push({ ...p, monto: Number(usar.toFixed(2)) });
+          remainingToApply = Number((remainingToApply - usar).toFixed(2));
+        }
+      }
+
+      const metodoPrincipal =
+        metodosAplicados.length === 1 ? (metodosAplicados[0].forma || "mix") : "mix";
+
+      const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+      for (const p of metodosAplicados) {
+        if (paymentMap[p.forma] !== undefined) {
+          paymentMap[p.forma] += Number(p.monto || 0);
+        }
+      }
+
+      const pagoEfectivo = Number((paymentMap.efectivo || 0).toFixed(2));
+      const pagoTarjeta = Number((paymentMap.tarjeta || 0).toFixed(2));
+      const pagoTransf = Number((paymentMap.transferencia || 0).toFixed(2));
+      const pagoOtro = Number((paymentMap.otro || 0).toFixed(2));
+
+      // ===== Items =====
+      const itemsForDb = cartSafe.map((p) => {
+        const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
+        const qty = Number(p.cantidad);
+        let base = Number(meta.base || p.precio_unitario) || 0;
+        let descuento_pct = 0;
+
+        const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
+        if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
+          descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
+        } else if (Number(meta.pct) > 0) {
+          descuento_pct = Number(meta.pct);
+        }
+
+        if (!base || !Number.isFinite(base)) {
+          base = Number(p.precio_unitario) || 0;
+          descuento_pct = 0;
+        }
+
+        return {
+          producto_id: p.producto_id,
+          cantidad: qty,
+          precio_unit: Number(base.toFixed(2)),
+          descuento_pct: Number(descuento_pct.toFixed(4)),
+        };
+      });
+
+      // ===== Pago JSON =====
+      const pagoJson = {
+        metodos: metodosAplicados,
+        map: paymentMap,
+        total_ingresado: Number(paid.toFixed(2)),
+        aplicado_venta: Number(paidForSaleNow.toFixed(2)),
+        aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
+        cambio: Number(changeNow.toFixed(2)),
+        ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
+      };
+
+      // ---------- Guardar venta ----------
+      const { data: ventaRow, error: insErr } = await supabase
+        .from('ventas')
+        .insert([{
+          cliente_id: selectedClient?.id ?? null,
+          van_id: van.id ?? null,
+          usuario_id: usuario.id,
+          total: Number(saleTotal.toFixed(2)),
+          total_pagado: Number(paidForSaleNow.toFixed(2)),
+          estado_pago: estadoPago,
+          pago: pagoJson,
+          pago_efectivo: pagoEfectivo,
+          pago_tarjeta: pagoTarjeta,
+          pago_transferencia: pagoTransf,
+          pago_otro: pagoOtro,
+          metodo_pago: metodoPrincipal,
+          notas: notes || null,
+        }])
+        .select('id')
+        .single();
+
+      if (insErr) throw insErr;
+      const ventaId = ventaRow.id;
+
+      // ✅ DESCONTAR STOCK DE LA VAN
+      for (const item of cartSafe) {
+        try {
+          const { data: stockActual } = await supabase
+            .from('stock_van')
+            .select('cantidad')
+            .eq('van_id', van.id)
+            .eq('producto_id', item.producto_id)
+            .single();
+
+          if (stockActual && stockActual.cantidad >= item.cantidad) {
+            const nuevaCantidad = stockActual.cantidad - item.cantidad;
+            
+            const { error: updateErr } = await supabase
+              .from('stock_van')
+              .update({ cantidad: nuevaCantidad })
+              .eq('van_id', van.id)
+              .eq('producto_id', item.producto_id);
+
+            if (updateErr) {
+              console.error(`Error descontando stock del producto ${item.producto_id}:`, updateErr);
+            }
+          } else {
+            console.warn(`Stock insuficiente para producto ${item.producto_id}`);
+          }
+        } catch (err) {
+          console.error(`Error descontando stock:`, err);
+        }
+      }
+
+      // ✅ INSERTAR DETALLE DE LA VENTA
+      if (ventaId && itemsForDb.length > 0) {
+        const { error: detalleErr } = await supabase
+          .from('detalle_ventas')
+          .insert(
+            itemsForDb.map((it) => ({
+              venta_id: ventaId,
+              producto_id: it.producto_id,
+              cantidad: it.cantidad,
+              precio_unitario: it.precio_unit,
+              descuento: it.descuento_pct || 0,
+            }))
+          );
+
+        if (detalleErr) {
+          console.error('Error insertando detalle de venta:', detalleErr);
+          throw new Error(`Error guardando productos: ${detalleErr.message}`);
+        }
+      }
+
+      // ---------- CxC ----------
+      if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {
+        try {
+          await supabase.rpc("cxc_crear_ajuste_por_venta", {
+            p_cliente_id: selectedClient.id,
+            p_venta_id: ventaId,
+            p_monto: Number(pendingFromThisSale.toFixed(2)),
+            p_van_id: van.id,
+            p_usuario_id: usuario.id,
+            p_nota: "Saldo de venta no pagado",
+          });
+        } catch (e) {
+          console.warn("RPC cxc_crear_ajuste_por_venta no disponible, uso fallback directo:", e?.message || e);
+          const { error: e2 } = await supabase
+            .from("cxc_movimientos")
+            .upsert(
+              [{
+                cliente_id: selectedClient.id,
+                tipo: "venta",
+                monto: Number(pendingFromThisSale.toFixed(2)),
+                usuario_id: usuario.id ?? null,
+                fecha: new Date().toISOString(),
+                venta_id: ventaId,
+              }],
+              { onConflict: "venta_id" }
+            );
+          if (e2) console.error("Fallback CxC upsert error:", e2.message || e2);
+        }
+      }
+
+      const montoParaCxC = Number(payOldDebtNow.toFixed(2));
+      if (montoParaCxC > 0 && selectedClient?.id) {
+        await registrarPagoCxC({
+          cliente_id: selectedClient.id,
+          monto: montoParaCxC,
+          metodo: metodoPrincipal,
+          van_id: van.id,
+        });
+      }
+
+      // ===== Recibo =====
+      const prevDue = Math.max(0, balanceBefore);
+      const balancePost = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
+      const newDue = Math.max(0, balancePost);
+
+      const payload = {
+        clientName: selectedClient?.nombre || "",
+        creditNumber: getCreditNumber(selectedClient),
+        dateStr: new Date().toLocaleString(),
+        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+        items: cartSafe.map((p) => ({
+          name: p.nombre,
+          qty: p.cantidad,
+          unit: p.precio_unitario,
+          subtotal: p.cantidad * p.precio_unitario,
+        })),
+        saleTotal,
+        paid: paidForSaleNow + payOldDebtNow,
+        change: changeNow,
+        prevBalance: prevDue,
+        saleRemaining: pendingFromThisSale,
+        newDue,
+        creditLimit,
+        availableBefore: creditAvailable,
+        availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
+      };
+
+      removePendingFromLSById(currentPendingId);
+      await requestAndSendNotifications({ client: selectedClient, payload });
+
+      alert(
+        `✅ Sale saved successfully` +
+          (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
+          (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
+      );
+
+      reloadInventory();
+      clearSale();
+
+    } catch (err) {
+      setPaymentError("❌ Error saving sale: " + (err?.message || ""));
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /* ======================== Modal: QR de Stripe ======================== */
+  function renderQRModal() {
+    if (!showQRModal) return null;
+
+    return (
+      <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-4 flex items-center justify-between">
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              💳 Pago con Tarjeta - Stripe
+            </h3>
+            <button
+              className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
+              onClick={handleCloseQRModal}
+            >
+              ✖️
+            </button>
+          </div>
+
+          <div className="p-6 text-center space-y-4">
+            <div className="text-2xl font-bold text-gray-900">
+              Monto a Pagar: {fmt(qrAmount)}
+            </div>
+
+            {qrCodeData && (
+              <div className="bg-white p-4 rounded-xl border-4 border-purple-200 inline-block">
+                <img 
+                  src={qrCodeData} 
+                  alt="QR Code de pago" 
+                  className="w-64 h-64"
+                />
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <p className="text-gray-700 font-semibold">
+                📱 Escanea el código QR con tu teléfono
+              </p>
+              <p className="text-sm text-gray-600">
+                El cliente puede pagar de forma segura con su tarjeta
+              </p>
+            </div>
+
+            {qrPollingActive && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="flex items-center justify-center gap-2 text-blue-700">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700"></div>
+                  <span className="font-semibold">Esperando confirmación del pago...</span>
+                </div>
+              </div>
+            )}
+
+            <div className="pt-4">
+              <button
+                onClick={handleCloseQRModal}
+                className="w-full bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ======================== Modal: ventas pendientes ======================== */
   function renderPendingSalesModal() {
     return (
       <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
@@ -1486,22 +1776,6 @@ if (montoParaCxC > 0 && selectedClient?.id) {
   }
 
   /* ======================== Paso 1: Cliente ======================== */
-function handleBarcodeScanned(code) {
-  // Limpiar el código: remover ceros a la izquierda y caracteres no numéricos
-  let cleanedCode = code.replace(/^0+/, ''); // Remover ceros al inicio
-  
-  // Si después de remover ceros queda vacío, mantener al menos un cero
-  if (cleanedCode === '') {
-    cleanedCode = '0';
-  }
-  
-  // También probar con el código original por si acaso
-  setProductSearch(cleanedCode);
-  setShowScanner(false);
-  
-  console.log('Código original:', code);
-  console.log('Código limpio:', cleanedCode);
-}
   function renderStepClient() {
     const clientsSafe = Array.isArray(clients) ? clients : [];
     const creditNum = getCreditNumber(selectedClient);
@@ -1668,17 +1942,17 @@ function handleBarcodeScanned(code) {
               >
                 🔄 Refresh credit
               </button>
-             <button
-  className="text-sm text-red-600 underline hover:text-red-800 transition-colors"
-   onClick={() => {
-    window.pendingSaleId = null;
-    setCart([]);
-    setPayments([{ forma: "efectivo", monto: 0 }]);
-    setSelectedClient(null);
-  }}
- >
-   🔄 Change client
- </button>
+              <button
+                className="text-sm text-red-600 underline hover:text-red-800 transition-colors"
+                onClick={() => {
+                  window.pendingSaleId = null;
+                  setCart([]);
+                  setPayments([{ forma: "efectivo", monto: 0 }]);
+                  setSelectedClient(null);
+                }}
+              >
+                🔄 Change client
+              </button>
             </div>
           </div>
 
@@ -1706,7 +1980,7 @@ function handleBarcodeScanned(code) {
             {migrationMode && (
               <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
                 🔒 Migration mode
-                </span>
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -1770,13 +2044,11 @@ function handleBarcodeScanned(code) {
               key={c.id}
               className="bg-white p-4 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-200 border-2 border-transparent transition-all duration-200 shadow-sm"
               onClick={() => {
-    // nuevo borrador para este cliente
-    window.pendingSaleId = null;
-    setCart([]);
-     setPayments([{ forma: "efectivo", monto: 0 }]);
-    setSelectedClient(c);
-  }}
-  >
+                window.pendingSaleId = null;
+                setCart([]);
+                setPayments([{ forma: "efectivo", monto: 0 }]);
+                setSelectedClient(c);
+              }}
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -1806,14 +2078,14 @@ function handleBarcodeScanned(code) {
         {/* QUICK SALE */}
         <div className="space-y-3">
           <button
-   onClick={() => {
-    window.pendingSaleId = null;
-    setCart([]);
-    setPayments([{ forma: "efectivo", monto: 0 }]);
-    setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 });
-  }}
-   className="w-full bg-gradient-to-r from-blue-500 to-blue-600 ..."
- >
+            onClick={() => {
+              window.pendingSaleId = null;
+              setCart([]);
+              setPayments([{ forma: "efectivo", monto: 0 }]);
+              setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 });
+            }}
+            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-4 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200"
+          >
             ⚡ Quick Sale (No Client)
           </button>
         </div>
@@ -1839,21 +2111,21 @@ function handleBarcodeScanned(code) {
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
 
-       <div className="flex gap-2">
-  <input
-    type="text"
-    placeholder="🔍 Search in the van inventory…"
-    className="flex-1 border-2 border-gray-300 rounded-lg p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-    value={productSearch}
-    onChange={(e) => setProductSearch(e.target.value)}
-  />
-  <button
-    onClick={() => setShowScanner(true)}
-    className="bg-blue-600 text-white px-4 py-3 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2"
-  >
-    📷 Scan
-  </button>
-</div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="🔍 Search in the van inventory…"
+            className="flex-1 border-2 border-gray-300 rounded-lg p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+            value={productSearch}
+            onChange={(e) => setProductSearch(e.target.value)}
+          />
+          <button
+            onClick={() => setShowScanner(true)}
+            className="bg-blue-600 text-white px-4 py-3 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2"
+          >
+            📷 Scan
+          </button>
+        </div>
 
         {noProductFound && (
           <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex items-start justify-between gap-3">
@@ -1883,9 +2155,9 @@ function handleBarcodeScanned(code) {
           {products.map((p) => {
             const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
 
-            const name  = p.productos?.nombre ?? p.nombre ?? "—";
-            const code  = p.productos?.codigo ?? p.codigo ?? "N/A";
-            const brand = p.productos?.marca  ?? p.marca  ?? "—";
+            const name = p.productos?.nombre ?? p.nombre ?? "—";
+            const code = p.productos?.codigo ?? p.codigo ?? "N/A";
+            const brand = p.productos?.marca ?? p.marca ?? "—";
             const price = Number(p.productos?.precio ?? p.precio ?? 0);
             const stock = p.cantidad ?? p.stock ?? 0;
 
@@ -2078,6 +2350,7 @@ function handleBarcodeScanned(code) {
             Next Step →
           </button>
         </div>
+
         {/* Scanner Modal */}
         {showScanner && (
           <BarcodeScanner 
@@ -2089,23 +2362,14 @@ function handleBarcodeScanned(code) {
       </div>
     );
   }
-    /* ======================== Paso 3: Pago ======================== */
-  function renderStepPayment() {
-    function handleChangePayment(index, field, value) {
-      setPayments((arr) => arr.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
-    }
-    function handleAddPayment() {
-      setPayments([...payments, { forma: "efectivo", monto: 0 }]);
-    }
-    function handleRemovePayment(index) {
-      setPayments((ps) => (ps.length === 1 ? ps : ps.filter((_, i) => i !== index)));
-    }
 
+  /* ======================== Paso 3: Pago (CON BOTÓN QR STRIPE) ======================== */
+  function renderStepPayment() {
     return (
       <div className="space-y-6">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
 
-        {/* HERO compacto (mobile first) */}
+        {/* HERO compacto */}
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-center">
             <div className="text-[10px] uppercase text-blue-700 font-semibold tracking-wide">Total</div>
@@ -2170,6 +2434,17 @@ function handleBarcodeScanned(code) {
                       placeholder="0.00"
                     />
                   </div>
+
+                  {/* 🆕 BOTÓN GENERAR QR si es tarjeta */}
+                  {p.forma === "tarjeta" && (
+                    <button
+                      onClick={() => handleGenerateQR(i)}
+                      className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-md transition-colors flex items-center gap-1"
+                      title="Generar QR para pago con Stripe"
+                    >
+                      📱 QR
+                    </button>
+                  )}
 
                   {payments.length > 1 && (
                     <button
@@ -2287,24 +2562,12 @@ function handleBarcodeScanned(code) {
   }
 
   /* ======================== Render raíz ======================== */
-  function renderAddress(address) {
-    if (!address) return "No address";
-    if (typeof address === "string") {
-      try {
-        address = JSON.parse(address);
-      } catch {}
-    }
-    if (typeof address === "object") {
-      return [address.calle, address.ciudad, address.estado, address.zip].filter(Boolean).join(", ");
-    }
-    return address;
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-4xl mx-auto">
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
           {modalPendingSales && renderPendingSalesModal()}
+          {showQRModal && renderQRModal()}
           {step === 1 && renderStepClient()}
           {step === 2 && renderStepProducts()}
           {step === 3 && renderStepPayment()}

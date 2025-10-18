@@ -3,8 +3,9 @@
 
 import Stripe from "https://esm.sh/stripe@16.6.0?target=deno";
 
+// =================== CONFIGURACIÓN CORS ===================
 const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*", // en prod limita a tu dominio
+  "Access-Control-Allow-Origin": "*", // ⚠️ En producción limita a tu dominio
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-ev-anon, x-anon-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -12,6 +13,7 @@ const CORS_HEADERS = {
   "Content-Type": "application/json",
 };
 
+// =================== TIPADO OPCIONAL ===================
 type ShippingInput = {
   name?: string;
   phone?: string;
@@ -25,6 +27,7 @@ type ShippingInput = {
   };
 };
 
+// =================== HELPERS ===================
 function sanitizeShipping(s: any): ShippingInput | undefined {
   if (!s || typeof s !== "object") return undefined;
   const a = s.address || {};
@@ -42,12 +45,14 @@ function sanitizeShipping(s: any): ShippingInput | undefined {
   };
 }
 
+// =================== MAIN HANDLER ===================
 Deno.serve(async (req) => {
-  // ✅ Preflight: responder sin leer body
+  // ✅ 1. Preflight CORS
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
+    return new Response("ok", { status: 200, headers: CORS_HEADERS });
   }
 
+  // ✅ 2. Solo acepta POST
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -56,13 +61,13 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Evita errores si el body viene vacío
+    // ✅ 3. Leer body seguro
     const raw = await req.text();
     const body = raw ? JSON.parse(raw) : {};
 
     const amount = Number(body?.amount);
     if (!Number.isInteger(amount) || amount <= 0) {
-      return new Response(JSON.stringify({ error: "Invalid amount (integer cents > 0)" }), {
+      return new Response(JSON.stringify({ error: "Invalid amount (must be integer cents > 0)" }), {
         status: 400,
         headers: CORS_HEADERS,
       });
@@ -70,13 +75,14 @@ Deno.serve(async (req) => {
 
     const currency = (body?.currency ?? "usd").toLowerCase();
     const metadata =
-      (body?.metadata && typeof body.metadata === "object")
+      typeof body?.metadata === "object"
         ? body.metadata
-        : (body?.meta && typeof body.meta === "object")
-          ? body.meta
-          : {};
+        : typeof body?.meta === "object"
+        ? body.meta
+        : {};
     const shipping = sanitizeShipping(body?.shipping);
 
+    // ✅ 4. Validar clave
     const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
     if (!STRIPE_SECRET_KEY) {
       return new Response(JSON.stringify({ error: "Missing STRIPE_SECRET_KEY" }), {
@@ -85,11 +91,13 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ✅ 5. Inicializar Stripe
     const stripe = new Stripe(STRIPE_SECRET_KEY, {
       apiVersion: "2024-06-20",
       httpClient: Stripe.createFetchHttpClient(),
     });
 
+    // ✅ 6. Crear PaymentIntent
     const intent = await stripe.paymentIntents.create({
       amount,
       currency,
@@ -98,6 +106,7 @@ Deno.serve(async (req) => {
       shipping,
     });
 
+    // ✅ 7. Respuesta con headers CORS
     return new Response(
       JSON.stringify({
         clientSecret: intent.client_secret,
@@ -107,7 +116,7 @@ Deno.serve(async (req) => {
       { status: 200, headers: CORS_HEADERS },
     );
   } catch (e) {
-    console.error("create_payment_intent error:", e);
+    console.error("❌ create_payment_intent error:", e);
     return new Response(JSON.stringify({ error: e?.message || "Internal error" }), {
       status: 500,
       headers: CORS_HEADERS,
