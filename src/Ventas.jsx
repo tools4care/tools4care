@@ -49,21 +49,18 @@ async function withTimeout(run, ms = 15000) {
 }
 
 // ✅ Crea una Stripe Checkout Session en tu Edge Function
-// Devuelve: { url, sessionId }
 async function createStripeCheckoutSession(amount, description = "Pago de venta") {
   const num = Number(amount);
   if (!Number.isFinite(num)) throw new Error("Amount inválido");
 
-  // Stripe usa centavos; validación mínima (> 0)
   const cents = Math.round(num * 100);
   if (!Number.isInteger(cents) || cents <= 0) {
     throw new Error("Amount debe ser mayor a 0");
   }
 
-  // Sugerido: éxito/cancel a tu app (pueden ser rutas placeholder en dev)
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const success_url = `${origin || "https://checkout.stripe.com"}/stripe-success?session_id={CHECKOUT_SESSION_ID}`;
-  const cancel_url = `${origin || "https://checkout.stripe.com"}/stripe-cancel`;
+  // ✅ URLs DE STRIPE - No redirigen a tu app
+  const success_url = "https://checkout.stripe.com/success";
+  const cancel_url = "https://checkout.stripe.com/cancel";
 
   const doFetch = (signal) =>
     fetch(CHECKOUT_FN_URL, {
@@ -211,55 +208,59 @@ function buildStripePaymentUrl(clientSecret, publicKey) {
 
 // ⏱️ Polling de la Checkout Session (debe vivir DENTRO del componente porque usa refs/estados)
 function startCheckoutPolling(sessionId, paymentIndex) {
-  // Limpia cualquier polling previo
   if (qrPollingIntervalRef.current) {
     clearInterval(qrPollingIntervalRef.current);
   }
 
   console.log("🌀 Iniciando polling para session:", sessionId);
 
-  // Cada 3 segundos consulta el estado del pago
   qrPollingIntervalRef.current = setInterval(async () => {
     try {
       const res = await checkStripeCheckoutStatus(sessionId);
+      
       if (!res.ok) {
         console.warn("⚠️ Error temporal en checkStripeCheckoutStatus:", res.error);
         return;
       }
 
-      console.log("📊 Estado Stripe:", res.status, res.paid);
+      console.log("📊 Estado Stripe:", {
+        status: res.status,
+        paid: res.paid,
+        payment_status: res.payment_status,
+        session_status: res.session_status
+      });
 
-      // Caso 1: Pago completado
-      if (res.paid === true || res.status === "complete" || res.status === "succeeded") {
+      // ✅ Caso 1: Pago completado
+      if (res.paid === true || res.status === "complete") {
         clearInterval(qrPollingIntervalRef.current);
         qrPollingIntervalRef.current = null;
         setQRPollingActive(false);
 
-        const paidAmount = Number(res.amount || 0) / 100; // convertir centavos → USD
+        const paidAmount = Number(res.amount || 0) / 100;
         if (Number.isFinite(paidAmount) && paidAmount > 0) {
           handleChangePayment(paymentIndex, "monto", paidAmount);
         }
 
         alert("✅ ¡Pago confirmado con Stripe!");
-        setShowQRModal(false);
+        setShowQRModal(false); // ✅ Cierra el modal
         return;
       }
 
-      // Caso 2: Sesión cancelada o expirada
-      if (res.status === "expired" || res.status === "canceled") {
+      // ✅ Caso 2: Sesión cancelada o expirada
+      if (res.status === "expired") {
         clearInterval(qrPollingIntervalRef.current);
         qrPollingIntervalRef.current = null;
         setQRPollingActive(false);
-        alert("❌ La sesión de pago expiró o fue cancelada.");
+        alert("❌ La sesión de pago expiró.");
         setShowQRModal(false);
         return;
       }
 
-      // Caso 3: Aún sin completar → seguimos esperando
+      // Caso 3: Aún abierto → seguimos esperando
     } catch (err) {
       console.error("❌ Error durante el polling Stripe:", err);
     }
-  }, 3000);
+  }, 3000); // Verifica cada 3 segundos
 }
 
 /* ========================= Helpers de negocio ========================= */
