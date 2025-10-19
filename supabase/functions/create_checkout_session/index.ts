@@ -8,79 +8,102 @@ const CORS = {
 };
 
 Deno.serve(async (req) => {
+  // ✅ Manejo de preflight CORS
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS });
   }
+
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: CORS });
+    return new Response(
+      JSON.stringify({ error: "Method not allowed" }), 
+      { status: 405, headers: CORS }
+    );
   }
 
   try {
+    // ✅ Parsear body
     const raw = await req.text();
     const body = raw ? JSON.parse(raw) : {};
-    const session_id = String(body?.session_id || "").trim();
-    if (!session_id) {
-      return new Response(JSON.stringify({ error: "Missing session_id" }), { status: 400, headers: CORS });
+    
+    const { amount, currency, description, success_url, cancel_url } = body;
+
+    // ✅ Validaciones
+    if (!amount || typeof amount !== "number" || amount <= 0) {
+      return new Response(
+        JSON.stringify({ error: "Invalid amount. Must be a positive number in cents." }), 
+        { status: 400, headers: CORS }
+      );
     }
 
+    // ✅ Verificar API Key de Stripe
     const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
     if (!STRIPE_SECRET_KEY) {
-      return new Response(JSON.stringify({ error: "Missing STRIPE_SECRET_KEY" }), { status: 500, headers: CORS });
+      console.error("❌ STRIPE_SECRET_KEY not configured");
+      return new Response(
+        JSON.stringify({ error: "Stripe configuration missing" }), 
+        { status: 500, headers: CORS }
+      );
     }
 
+    // ✅ Inicializar Stripe
     const stripe = new Stripe(STRIPE_SECRET_KEY, {
       apiVersion: "2024-06-20",
       httpClient: Stripe.createFetchHttpClient(),
     });
 
-    const session = await stripe.checkout.sessions.retrieve(session_id, {
-      expand: ["payment_intent"],
+    console.log("🔵 Creating Checkout Session:", { 
+      amount, 
+      currency: currency || "usd",
+      description: description || "Pago de venta"
     });
 
-    // ✅ Mapear payment_status a un estado consistente
-    const paymentStatus = session.payment_status; // 'paid' | 'unpaid' | 'no_payment_required'
-    const sessionStatus = session.status; // 'open' | 'complete' | 'expired'
-    
-    // Determinar si el pago fue exitoso
-    const paid = paymentStatus === "paid" || sessionStatus === "complete";
-    
-    // Estado unificado para el frontend
-    let status = "pending";
-    if (paid) {
-      status = "complete";
-    } else if (sessionStatus === "expired") {
-      status = "expired";
-    } else if (sessionStatus === "open") {
-      status = "open";
-    }
+    // ✅ Crear Checkout Session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: currency || "usd",
+            product_data: {
+              name: description || "Pago de venta",
+            },
+            unit_amount: amount, // Ya viene en centavos desde el frontend
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: success_url || "https://example.com/success",
+      cancel_url: cancel_url || "https://example.com/cancel",
+      // ✅ Opcional: expira en 30 minutos
+      expires_at: Math.floor(Date.now() / 1000) + (30 * 60),
+    });
 
-    let amount = session.amount_total ?? null;
-    let currency = session.currency ?? "usd";
-    
-    // Fallback por si amount_total no está
-    if (amount == null && session.payment_intent && typeof session.payment_intent === "object") {
-      amount = session.payment_intent.amount ?? null;
-      currency = session.payment_intent.currency ?? currency;
-    }
+    console.log("✅ Checkout Session created:", session.id);
 
+    // ✅ Retornar URL y Session ID
     return new Response(
       JSON.stringify({
-        ok: true,
-        status,        // ✅ 'complete' | 'open' | 'expired' | 'pending'
-        paid,
-        amount,        // en centavos
-        currency,
+        url: session.url,
         sessionId: session.id,
-        payment_status: paymentStatus, // Info adicional para debugging
-        session_status: sessionStatus,
       }),
       { status: 200, headers: CORS }
     );
-  } catch (e) {
-    console.error("check_checkout_session error:", e);
-    return new Response(JSON.stringify({ error: e?.message || "Internal error" }), {
-      status: 500,
-      headers: CORS,
-    });
+
+  } catch (error) {
+    console.error("❌ create_checkout_session error:", error);
+    
+    // ✅ Manejo específico de errores de Stripe
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : "Internal server error";
+
+    return new Response(
+      JSON.stringify({ 
+        error: errorMessage,
+        type: error?.type || "unknown_error"
+      }),
+      { status: 500, headers: CORS }
+    );
   }
 });
