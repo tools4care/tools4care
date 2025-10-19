@@ -56,8 +56,8 @@ async function createStripeCheckoutSession(amount, description = "Pago de venta"
   }
 
   // ✅ URLs DE STRIPE - No redirigen a tu app
-  const success_url = "https://checkout.stripe.com/success";
-  const cancel_url = "https://checkout.stripe.com/cancel";
+ const success_url = "https://example.com/success";
+const cancel_url = "https://example.com/cancel";
 
   const doFetch = (signal) =>
     fetch(CHECKOUT_FN_URL, {
@@ -1264,77 +1264,105 @@ export default function Sales() {
     startCheckoutPolling(sessionId, paymentIndex);
   }
 
-  // ⏱️ Polling de la Checkout Session con timeout de 5 minutos
-  function startCheckoutPolling(sessionId, paymentIndex) {
-    // Limpia cualquier polling previo
+// ⏱️ Polling de la Checkout Session con timeout de 5 minutos
+function startCheckoutPolling(sessionId, paymentIndex) {
+  // Limpia cualquier polling previo
+  if (qrPollingIntervalRef.current) {
+    clearInterval(qrPollingIntervalRef.current);
+  }
+
+  console.log("🌀 Iniciando polling para session:", sessionId);
+
+  let errorCount = 0; // ✅ Contador de errores consecutivos
+  const MAX_ERRORS = 3; // ✅ Máximo 3 errores antes de cancelar
+
+  // ✅ Timeout de 5 minutos
+  const timeoutId = setTimeout(() => {
     if (qrPollingIntervalRef.current) {
       clearInterval(qrPollingIntervalRef.current);
+      qrPollingIntervalRef.current = null;
+      setQRPollingActive(false);
+      setShowQRModal(false);
+      alert("⏰ Tiempo de espera agotado. Por favor, verifica el pago manualmente.");
     }
+  }, 5 * 60 * 1000); // 5 minutos
 
-    console.log("🌀 Iniciando polling para session:", sessionId);
+  // Polling cada 3 segundos
+  qrPollingIntervalRef.current = setInterval(async () => {
+    try {
+      const res = await checkStripeCheckoutStatus(sessionId);
+      
+      if (!res.ok) {
+        console.warn("⚠️ Error en checkStripeCheckoutStatus:", res.error);
+        
+        // ✅ Si hay errores consecutivos, cancelar
+        errorCount++;
+        if (errorCount >= MAX_ERRORS) {
+          clearInterval(qrPollingIntervalRef.current);
+          clearTimeout(timeoutId);
+          qrPollingIntervalRef.current = null;
+          setQRPollingActive(false);
+          setShowQRModal(false);
+          alert("❌ Error de conexión con Stripe. Por favor, verifica tu configuración.");
+        }
+        return;
+      }
 
-    // ✅ Timeout de 5 minutos
-    const timeoutId = setTimeout(() => {
-      if (qrPollingIntervalRef.current) {
+      // ✅ Reset contador si la respuesta es exitosa
+      errorCount = 0;
+
+      console.log("📊 Estado Stripe:", {
+        status: res.status,
+        paid: res.paid,
+        payment_status: res.payment_status,
+        session_status: res.session_status
+      });
+
+      // ✅ Caso 1: Pago completado
+      if (res.paid === true || res.status === "complete") {
         clearInterval(qrPollingIntervalRef.current);
+        clearTimeout(timeoutId);
+        qrPollingIntervalRef.current = null;
+        setQRPollingActive(false);
+
+        const paidAmount = Number(res.amount || 0) / 100;
+        if (Number.isFinite(paidAmount) && paidAmount > 0) {
+          handleChangePayment(paymentIndex, "monto", paidAmount);
+        }
+
+        alert("✅ ¡Pago confirmado con Stripe!");
+        setShowQRModal(false);
+        return;
+      }
+
+      // ✅ Caso 2: Sesión expirada
+      if (res.status === "expired") {
+        clearInterval(qrPollingIntervalRef.current);
+        clearTimeout(timeoutId);
+        qrPollingIntervalRef.current = null;
+        setQRPollingActive(false);
+        alert("❌ La sesión de pago expiró.");
+        setShowQRModal(false);
+        return;
+      }
+
+      // Caso 3: Aún 'open' → seguimos esperando
+    } catch (err) {
+      console.error("❌ Error durante el polling Stripe:", err);
+      errorCount++;
+      
+      // ✅ Si hay demasiados errores, cancelar
+      if (errorCount >= MAX_ERRORS) {
+        clearInterval(qrPollingIntervalRef.current);
+        clearTimeout(timeoutId);
         qrPollingIntervalRef.current = null;
         setQRPollingActive(false);
         setShowQRModal(false);
-        alert("⏰ Tiempo de espera agotado. Por favor, verifica el pago manualmente.");
+        alert("❌ Error crítico. Por favor, verifica tu conexión y configuración de Stripe.");
       }
-    }, 5 * 60 * 1000); // 5 minutos
-
-    // Polling cada 3 segundos
-    qrPollingIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await checkStripeCheckoutStatus(sessionId);
-        
-        if (!res.ok) {
-          console.warn("⚠️ Error temporal en checkStripeCheckoutStatus:", res.error);
-          return;
-        }
-
-        console.log("📊 Estado Stripe:", {
-          status: res.status,
-          paid: res.paid,
-          payment_status: res.payment_status,
-          session_status: res.session_status
-        });
-
-        // ✅ Caso 1: Pago completado
-        if (res.paid === true || res.status === "complete") {
-          clearInterval(qrPollingIntervalRef.current);
-          clearTimeout(timeoutId); // ✅ Cancela el timeout
-          qrPollingIntervalRef.current = null;
-          setQRPollingActive(false);
-
-          const paidAmount = Number(res.amount || 0) / 100; // convertir centavos → USD
-          if (Number.isFinite(paidAmount) && paidAmount > 0) {
-            handleChangePayment(paymentIndex, "monto", paidAmount);
-          }
-
-          alert("✅ ¡Pago confirmado con Stripe!");
-          setShowQRModal(false); // ✅ Cierra el modal
-          return;
-        }
-
-        // ✅ Caso 2: Sesión expirada
-        if (res.status === "expired") {
-          clearInterval(qrPollingIntervalRef.current);
-          clearTimeout(timeoutId); // ✅ Cancela el timeout
-          qrPollingIntervalRef.current = null;
-          setQRPollingActive(false);
-          alert("❌ La sesión de pago expiró.");
-          setShowQRModal(false);
-          return;
-        }
-
-        // Caso 3: Aún 'open' → seguimos esperando
-      } catch (err) {
-        console.error("❌ Error durante el polling Stripe:", err);
-      }
-    }, 3000); // Verifica cada 3 segundos
-  }
+    }
+  }, 3000);
+}
 
   // 🚫 Cerrar modal QR y detener polling
   function handleCloseQRModal() {
