@@ -7,12 +7,10 @@ const supabaseUrl =
 const supabaseAnonKey =
   import.meta?.env?.VITE_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o";
-const functionsUrl = import.meta?.env?.VITE_SB_FUNCTIONS_URL; // ← importante para email por Edge
+const functionsUrl = import.meta?.env?.VITE_SB_FUNCTIONS_URL;
 
 /* ============================================================================
    anon-id persistente (para carritos de invitados con RLS)
-   - Exportamos la FUNCIÓN para usarla también desde Storefront/Checkout
-   - Se guarda en localStorage y se reutiliza siempre
 ============================================================================ */
 const ANON_KEY = "t4c_anon_id";
 
@@ -34,46 +32,48 @@ export function getAnonId() {
   }
 }
 
-// Conveniencia: algunos sitios lo importan como constante
 export const anonId = getAnonId();
 
 /* ============================================================================
-   Cliente Supabase con header global x-ev-anon (para tus políticas RLS)
-   + Functions URL para que .functions.invoke use tu dominio de Edge Functions
+   Cliente Supabase con configuración de AUTH + headers globales
 ============================================================================ */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  // ✅ CRÍTICO: Configuración de autenticación
+  auth: {
+    persistSession: true,        // ← Guarda sesión en localStorage
+    autoRefreshToken: true,       // ← Refresca token automáticamente
+    detectSessionInUrl: true,     // ← Detecta sesión en URL (para OAuth)
+    storage: window.localStorage, // ← Dónde guardar la sesión
+  },
+  // Headers globales para RLS
   global: {
     headers: anonId ? { "x-ev-anon": anonId } : {},
   },
+  // Edge Functions URL
   ...(functionsUrl
     ? { functions: { url: functionsUrl, headers: anonId ? { "x-ev-anon": anonId } : {} } }
     : {}),
 });
 
 /* ============================================================================
-   (Opcional) Refrescar header si borras el storage. Nota: la librería no
-   expone un setter público estable para headers globales; lo más seguro si
-   necesitas regenerarlo es recargar la página. Dejamos un helper benigno.
+   Refrescar header anon
 ============================================================================ */
 export function refreshAnonHeader() {
   const id = getAnonId();
   if (!id) return;
   try {
-    // No todas las versiones exponen esta propiedad; si no existe, ignora.
     // @ts-ignore
     if (supabase && supabase.headers) {
       // @ts-ignore
-      supabase.headers = { ...(supabase.headers || {}), "x-ev-anon": id }; // <- misma clave
+      supabase.headers = { ...(supabase.headers || {}), "x-ev-anon": id };
     }
   } catch {
-    // silencio: es opcional
+    // silencio
   }
 }
 
 /* ============================================================================
    Parche: envolver supabase.rpc con caché "no existe"
-   - Evita spam de 404 cuando llamas a RPC que aún no están creadas
-   - Devuelve { error: { code: "RPC_NOT_AVAILABLE" } } y deja al caller decidir
 ============================================================================ */
 (function patchRpc(client) {
   const LS_KEY = "rpc-availability-v1";
