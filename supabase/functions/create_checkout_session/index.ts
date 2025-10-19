@@ -18,15 +18,9 @@ Deno.serve(async (req) => {
   try {
     const raw = await req.text();
     const body = raw ? JSON.parse(raw) : {};
-
-    const amount = Number(body?.amount);
-    const currency = String(body?.currency || "usd").toLowerCase();
-
-    const success_url = body?.success_url || "https://checkout.stripe.com/success";
-    const cancel_url  = body?.cancel_url  || "https://checkout.stripe.com/cancel";
-
-    if (!Number.isInteger(amount) || amount <= 0) {
-      return new Response(JSON.stringify({ error: "Invalid amount" }), { status: 400, headers: CORS });
+    const session_id = String(body?.session_id || "").trim();
+    if (!session_id) {
+      return new Response(JSON.stringify({ error: "Missing session_id" }), { status: 400, headers: CORS });
     }
 
     const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
@@ -39,31 +33,51 @@ Deno.serve(async (req) => {
       httpClient: Stripe.createFetchHttpClient(),
     });
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      success_url,
-      cancel_url,
-      line_items: [
-        {
-          price_data: {
-            currency,
-            unit_amount: amount,
-            product_data: { name: body?.description || "Pago de venta" },
-          },
-          quantity: 1,
-        },
-      ],
+    const session = await stripe.checkout.sessions.retrieve(session_id, {
+      expand: ["payment_intent"],
     });
+
+    // ✅ Mapear payment_status a un estado consistente
+    const paymentStatus = session.payment_status; // 'paid' | 'unpaid' | 'no_payment_required'
+    const sessionStatus = session.status; // 'open' | 'complete' | 'expired'
+    
+    // Determinar si el pago fue exitoso
+    const paid = paymentStatus === "paid" || sessionStatus === "complete";
+    
+    // Estado unificado para el frontend
+    let status = "pending";
+    if (paid) {
+      status = "complete";
+    } else if (sessionStatus === "expired") {
+      status = "expired";
+    } else if (sessionStatus === "open") {
+      status = "open";
+    }
+
+    let amount = session.amount_total ?? null;
+    let currency = session.currency ?? "usd";
+    
+    // Fallback por si amount_total no está
+    if (amount == null && session.payment_intent && typeof session.payment_intent === "object") {
+      amount = session.payment_intent.amount ?? null;
+      currency = session.payment_intent.currency ?? currency;
+    }
 
     return new Response(
       JSON.stringify({
-        url: session.url,
+        ok: true,
+        status,        // ✅ 'complete' | 'open' | 'expired' | 'pending'
+        paid,
+        amount,        // en centavos
+        currency,
         sessionId: session.id,
+        payment_status: paymentStatus, // Info adicional para debugging
+        session_status: sessionStatus,
       }),
       { status: 200, headers: CORS }
     );
   } catch (e) {
-    console.error("create_checkout_session error:", e);
+    console.error("check_checkout_session error:", e);
     return new Response(JSON.stringify({ error: e?.message || "Internal error" }), {
       status: 500,
       headers: CORS,
