@@ -990,66 +990,159 @@ export default function Productos() {
         </button>
       </div>
 
+    
       <div className="max-w-6xl mx-auto">
         {loading ? (
           <div className="text-center py-6 text-blue-700 font-bold">Loading...</div>
         ) : (
-          <div className="overflow-x-auto rounded shadow bg-white">
-            <table className="min-w-[780px] w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Code/UPC</th>
-                  <th className="p-2 text-left">Name</th>
-                  <th className="p-2 text-left hidden md:table-cell">Brand</th>
-                  <th className="p-2 text-left hidden lg:table-cell">Category</th>
-                  <th className="p-2 text-left hidden lg:table-cell">Size</th>
-                  <th className="p-2 text-left hidden xl:table-cell">Supplier</th>
-                  <th className="p-2 text-right hidden md:table-cell">Cost</th>
-                  <th className="p-2 text-right">Price</th>
-                </tr>
-              </thead>
-              <tbody>
-                {productos.length === 0 ? (
-                  <tr>
-                    <td colSpan="8" className="text-center text-gray-400 py-5">
-                      {busqueda ? "No results found for your search." : "No products."}
-                    </td>
+          <>
+            {/* VISTA MÓVIL - TARJETAS */}
+            <div className="lg:hidden space-y-3">
+              {productos.length === 0 ? (
+                <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400">
+                  {busqueda ? "No results found for your search." : "No products."}
+                </div>
+              ) : (
+                productos.map((p, idx) => (
+                  <div
+                    key={p.id}
+                    id={`prod-row-${idx}`}
+                    className={`bg-white rounded-lg shadow-md p-4 cursor-pointer transition-all ${
+                      idx === hl ? "ring-2 ring-blue-500 bg-blue-50" : "active:bg-blue-50"
+                    }`}
+                    onMouseEnter={() => setHl(idx)}
+                    onClick={() => abrirModal(p)}
+                  >
+                    {/* Header con precio destacado */}
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex-1 min-w-0 pr-3">
+                        <h3 className="font-bold text-gray-900 text-base leading-tight mb-1">
+                          {p.nombre}
+                        </h3>
+                        {p.marca && (
+                          <p className="text-sm text-gray-600">{p.marca}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-green-600">
+                          ${Number(p.precio || 0).toFixed(2)}
+                        </div>
+                        {p.costo && (
+                          <div className="text-xs text-gray-500">
+                            Cost: ${Number(p.costo).toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Info adicional en grid */}
+                    <div className="grid grid-cols-2 gap-2 text-sm border-t pt-3">
+                      <div>
+                        <span className="text-gray-500">Code:</span>
+                        <p className="font-mono text-gray-900 truncate">{p.codigo}</p>
+                      </div>
+                      {p.size && (
+                        <div>
+                          <span className="text-gray-500">Size:</span>
+                          <p className="text-gray-900">{p.size}</p>
+                        </div>
+                      )}
+                      {p.categoria && (
+                        <div>
+                          <span className="text-gray-500">Category:</span>
+                          <p className="text-gray-900 truncate">{p.categoria}</p>
+                        </div>
+                      )}
+                      {p.suplidor?.nombre && (
+                        <div>
+                          <span className="text-gray-500">Supplier:</span>
+                          <p className="text-gray-900 truncate">{p.suplidor.nombre}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Indicador visual de tap */}
+                    <div className="mt-3 pt-3 border-t text-center text-xs text-blue-600 font-semibold">
+                      Tap to view details →
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* VISTA DESKTOP - TABLA */}
+            <div className="hidden lg:block overflow-x-auto rounded shadow bg-white">
+              <table className="min-w-[780px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Code/UPC</th>
+                    <th className="p-2 text-left">Name</th>
+                    <th className="p-2 text-left">Brand</th>
+                    <th className="p-2 text-left">Category</th>
+                    <th className="p-2 text-left">Size</th>
+                    <th className="p-2 text-left">Supplier</th>
+                    <th className="p-2 text-right">Cost</th>
+                    <th className="p-2 text-right">Price</th>
                   </tr>
-                ) : (
-                  productos.map((p, idx) => (
-                    <tr
-                      id={`prod-row-${idx}`}
-                      key={p.id}
-                      className={`cursor-pointer border-t ${idx === hl ? "bg-blue-50 ring-2 ring-blue-200" : "hover:bg-blue-50"}`}
-                      onMouseEnter={() => setHl(idx)}
-                      onClick={() => abrirModal(p)}
-                    >
-                      <td className="p-2 font-mono truncate max-w-[140px]">{p.codigo}</td>
-                      <td className="p-2 truncate">{p.nombre}</td>
-                      <td className="p-2 hidden md:table-cell truncate">{p.marca}</td>
-                      <td className="p-2 hidden lg:table-cell truncate">{p.categoria}</td>
-                      <td className="p-2 hidden lg:table-cell">{p.size}</td>
-                      <td className="p-2 hidden xl:table-cell truncate">{p.suplidor?.nombre || ""}</td>
-                      <td className="p-2 text-right hidden md:table-cell">{p.costo}</td>
-                      <td className="p-2 text-right font-semibold">{p.precio}</td>
+                </thead>
+                <tbody>
+                  {productos.length === 0 ? (
+                    <tr>
+                      <td colSpan="8" className="text-center text-gray-400 py-5">
+                        {busqueda ? "No results found for your search." : "No products."}
+                      </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ) : (
+                    productos.map((p, idx) => (
+                      <tr
+                        id={`prod-row-${idx}`}
+                        key={p.id}
+                        className={`cursor-pointer border-t ${
+                          idx === hl ? "bg-blue-50 ring-2 ring-blue-200" : "hover:bg-blue-50"
+                        }`}
+                        onMouseEnter={() => setHl(idx)}
+                        onClick={() => abrirModal(p)}
+                      >
+                        <td className="p-2 font-mono truncate max-w-[140px]">{p.codigo}</td>
+                        <td className="p-2 truncate">{p.nombre}</td>
+                        <td className="p-2 truncate">{p.marca}</td>
+                        <td className="p-2 truncate">{p.categoria}</td>
+                        <td className="p-2">{p.size}</td>
+                        <td className="p-2 truncate">{p.suplidor?.nombre || ""}</td>
+                        <td className="p-2 text-right">{p.costo}</td>
+                        <td className="p-2 text-right font-semibold">{p.precio}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
 
+        {/* PAGINACIÓN */}
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-between items-center mt-4">
-          <button className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50" onClick={handleAnterior} disabled={pagina === 1}>
+          <button 
+            className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50" 
+            onClick={handleAnterior} 
+            disabled={pagina === 1}
+          >
             Previous
           </button>
-          <span className="text-sm">Page {pagina} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
-          <button className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50" onClick={handleSiguiente} disabled={pagina * PAGE_SIZE >= total}>
+          <span className="text-sm">
+            Page {pagina} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+          </span>
+          <button 
+            className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50" 
+            onClick={handleSiguiente} 
+            disabled={pagina * PAGE_SIZE >= total}
+          >
             Next
           </button>
         </div>
-        <div className="text-xs text-gray-400 mt-2 text-center mb-10">Showing {productos.length} of {total} products.</div>
+        <div className="text-xs text-gray-400 mt-2 text-center mb-10">
+          Showing {productos.length} of {total} products.
+        </div>
       </div>
 
       {/* 🆕 ESCÁNER DE CÓDIGOS DE BARRAS */}
