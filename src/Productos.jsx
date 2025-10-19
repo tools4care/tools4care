@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { BarcodeScanner } from "./BarcodeScanner";
 
 /* ============================================================
    ===============  Crear / Buscar SUPLIDORES  ================
@@ -13,16 +14,13 @@ function CrearSuplidor({ onCreate }) {
   const [cargando, setCargando] = useState(false);
   const [err, setErr] = useState("");
 
-  // Opcional: crear deuda u orden de compra al crear el suplidor
   const [finanzasOpen, setFinanzasOpen] = useState(false);
   const hoy = new Date().toISOString().slice(0, 10);
 
-  // Deuda (CXP)
   const [cxpMonto, setCxpMonto] = useState("");
   const [cxpFecha, setCxpFecha] = useState(hoy);
   const [cxpNotas, setCxpNotas] = useState("");
 
-  // Orden de compra (OC)
   const [ocMonto, setOcMonto] = useState("");
   const [ocFecha, setOcFecha] = useState(hoy);
   const [ocNotas, setOcNotas] = useState("");
@@ -62,7 +60,6 @@ function CrearSuplidor({ onCreate }) {
         return;
       }
 
-      // (opcional) side-effects silenciosos
       try {
         const monto = Number(cxpMonto);
         if (finanzasOpen && monto > 0) {
@@ -161,7 +158,6 @@ function BuscadorSuplidor({ value, name, onChange, disabled }) {
     if (hl >= 0) document.getElementById(`sup-opt-${hl}`)?.scrollIntoView({ block: "nearest" });
   }, [hl]);
 
-  // 🔄 Mantener el input sincronizado con el ID/nombre actual
   useEffect(() => {
     if (name && name !== busqueda) {
       setBusqueda(name);
@@ -177,7 +173,6 @@ function BuscadorSuplidor({ value, name, onChange, disabled }) {
         if (data?.nombre) setBusqueda(data.nombre);
       })();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, name]);
 
   useEffect(() => {
@@ -314,7 +309,6 @@ function PestañaVentas({ productoId, nombre }) {
 
       setLoading(false);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productoId]);
 
   async function cargarFacturasMes(detallesEnriquecidos, mes) {
@@ -349,7 +343,6 @@ function PestañaVentas({ productoId, nombre }) {
       await cargarFacturasMes(enriquecido, mesSeleccionado);
       setLoading(false);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mesSeleccionado, productoId]);
 
   return (
@@ -386,7 +379,7 @@ function PestañaVentas({ productoId, nombre }) {
       </div>
 
       <div className="border rounded-lg">
-        <div className="px-3 py-2 font-bold bg-gray-50 border-b">Invoices for …</div>
+        <div className="px-3 py-2 font-bold bg-gray-50 border-b">Invoices for {mesSeleccionado}</div>
         {loading ? (
           <div className="p-3 text-blue-600">Loading...</div>
         ) : facturas.length === 0 ? (
@@ -516,7 +509,6 @@ export default function Productos() {
   const [mensaje, setMensaje] = useState("");
   const [tabActivo, setTabActivo] = useState("editar");
 
-  // 👇 SOLO VISTA por defecto al abrir un producto existente (misma visual, inputs deshabilitados)
   const [editMode, setEditMode] = useState(true);
 
   const [stockResumen, setStockResumen] = useState({ unidades: 0, valor: 0 });
@@ -525,11 +517,13 @@ export default function Productos() {
   const [sizeCustom, setSizeCustom] = useState("");
   const [isCustomSize, setIsCustomSize] = useState(false);
 
-  // Suplidor (FK correcta)
   const [suplidorId, setSuplidorId] = useState(null);
   const [suplidorNombre, setSuplidorNombre] = useState("");
 
   const [ubicaciones, setUbicaciones] = useState([{ key: "almacen", nombre: "Central warehouse" }]);
+
+  // 🆕 ESCÁNER
+  const [showScanner, setShowScanner] = useState(false);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -558,7 +552,6 @@ export default function Productos() {
 
   useEffect(() => {
     cargarProductos();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced, pagina]);
 
   async function cargarProductos() {
@@ -625,6 +618,15 @@ export default function Productos() {
     }
   }
 
+  // 🆕 HANDLER DE ESCÁNER
+  const handleBarcodeScanned = (code) => {
+    let cleanedCode = code.replace(/^0+/, '');
+    if (cleanedCode === '') cleanedCode = '0';
+    setPagina(1);
+    setBusqueda(cleanedCode);
+    setShowScanner(false);
+  };
+
   function handleBuscar(e) {
     setPagina(1);
     setBusqueda((e.target.value || "").replace(/\s+/g, ""));
@@ -667,7 +669,6 @@ export default function Productos() {
       bulk_unit_price: prod.bulk_unit_price ?? "",
     });
 
-    // EXISTENTE => SOLO VISTA; NUEVO => EDICIÓN
     setEditMode(!prod?.id ? true : false);
 
     setTabActivo("editar");
@@ -733,7 +734,7 @@ export default function Productos() {
     setModalAbierto(true);
     setStockResumen({ unidades: 0, valor: 0 });
     setUltimaVenta(null);
-    setEditMode(true); // nuevo => edit
+    setEditMode(true);
   }
 
   useEffect(() => {
@@ -771,7 +772,6 @@ export default function Productos() {
       costo: productoActual.costo ? Number(productoActual.costo) : null,
       precio: Number(productoActual.precio),
       size: isCustomSize ? sizeCustom : productoActual.size,
-      // ✅ usa el que esté realmente actualizado
       suplidor_id: (productoActual.suplidor_id ?? suplidorId) || null,
       notas: productoActual.notas || "",
       descuento_pct: productoActual.descuento_pct !== "" ? Number(productoActual.descuento_pct) : null,
@@ -816,7 +816,6 @@ export default function Productos() {
         : prev
     );
 
-    // 🔔 Alerta visible y cerrar el modal
     await cargarProductos();
     window.alert(savedMessage);
     cerrarModal();
@@ -949,11 +948,7 @@ export default function Productos() {
     w.focus();
   }
 
-  /* ========================== RENDER =========================== */
-
-  const disabled = !editMode; // <- una sola bandera para bloquear/desbloquear inputs
-
-  // helper: a mayúsculas
+  const disabled = !editMode;
   const toUpper = (v) => (v ?? "").toString().toUpperCase();
 
   return (
@@ -961,23 +956,36 @@ export default function Productos() {
       <h2 className="text-2xl font-bold mb-4 text-center">Product Inventory</h2>
 
       <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
-        <input
-          type="text"
-          placeholder="Search by code, name, brand, category..."
-          value={busqueda}
-          onChange={handleBuscar}
-          onKeyDown={(e) => {
-            const list = productos || [];
-            if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1)); }
-            else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
-            else if (e.key === "PageDown") { e.preventDefault(); if (pagina * 50 < total) setPagina(pagina + 1); }
-            else if (e.key === "PageUp") { e.preventDefault(); if (pagina > 1) setPagina(pagina - 1); }
-            else if (e.key === "Enter") { if (hl >= 0 && list[hl]) abrirModal(list[hl]); else if (list.length > 0) abrirModal(list[0]); }
-            else if (e.key === "Escape") { setHl(-1); }
-          }}
-          className="border rounded p-2 w-full"
-        />
-        <button onClick={() => agregarProductoNuevo()} className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap">
+        <div className="flex gap-2 w-full">
+          <input
+            type="text"
+            placeholder="Search by code, name, brand, category..."
+            value={busqueda}
+            onChange={handleBuscar}
+            onKeyDown={(e) => {
+              const list = productos || [];
+              if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1)); }
+              else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
+              else if (e.key === "PageDown") { e.preventDefault(); if (pagina * 50 < total) setPagina(pagina + 1); }
+              else if (e.key === "PageUp") { e.preventDefault(); if (pagina > 1) setPagina(pagina - 1); }
+              else if (e.key === "Enter") { if (hl >= 0 && list[hl]) abrirModal(list[hl]); else if (list.length > 0) abrirModal(list[0]); }
+              else if (e.key === "Escape") { setHl(-1); }
+            }}
+            className="border rounded p-2 flex-1"
+          />
+          {/* 🆕 BOTÓN ESCÁNER - SOLO MÓVIL */}
+          <button
+            onClick={() => setShowScanner(true)}
+            className="lg:hidden bg-gradient-to-r from-purple-600 to-violet-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 whitespace-nowrap"
+            title="Scan barcode"
+          >
+            📷 Scan
+          </button>
+        </div>
+        <button 
+          onClick={() => agregarProductoNuevo()} 
+          className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap"
+        >
           + Add product
         </button>
       </div>
@@ -1032,7 +1040,6 @@ export default function Productos() {
           </div>
         )}
 
-        {/* PAGINATION */}
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-between items-center mt-4">
           <button className="px-4 py-2 bg-gray-200 rounded w-full sm:w-auto disabled:opacity-50" onClick={handleAnterior} disabled={pagina === 1}>
             Previous
@@ -1045,7 +1052,16 @@ export default function Productos() {
         <div className="text-xs text-gray-400 mt-2 text-center mb-10">Showing {productos.length} of {total} products.</div>
       </div>
 
-      {/* MODAL (misma VISUAL; inputs deshabilitados hasta pulsar Edit) */}
+      {/* 🆕 ESCÁNER DE CÓDIGOS DE BARRAS */}
+      {showScanner && (
+        <BarcodeScanner
+          onScan={handleBarcodeScanned}
+          onClose={() => setShowScanner(false)}
+          isActive={showScanner}
+        />
+      )}
+
+      {/* MODAL */}
       {modalAbierto && productoActual && (
         <div className="fixed inset-0 bg-black/40 flex justify-center items-end sm:items-center z-50 p-0 sm:p-6">
           <div className="bg-white w-full h-[100vh] sm:h-auto sm:max-h-[90vh] sm:rounded-xl shadow-xl max-w-2xl relative p-4 sm:p-8 overflow-y-auto">
@@ -1053,7 +1069,7 @@ export default function Productos() {
               ×
             </button>
 
-            {/* KPIs arriba */}
+            {/* KPIs */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
                 <div className="text-xs text-blue-700 uppercase font-semibold">On Hand</div>
@@ -1273,7 +1289,6 @@ export default function Productos() {
                     <p className="text-xs text-gray-500 mt-1">If qty ≥ Min. qty, this unit price overrides base/% off in Sales.</p>
                   </div>
 
-                  {/* Add stock now */}
                   <div className="md:col-span-2 border-t pt-2 mt-2">
                     <b>Add stock now (optional)</b>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

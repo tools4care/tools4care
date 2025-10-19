@@ -43,7 +43,7 @@ export default function ModalTraspasoStock({
     }
   }, [abierto, ubicacionActual, ubicaciones]);
 
-  // 🚀 Búsqueda con debounce
+  // Búsqueda con debounce
   useEffect(() => {
     if (!abierto || !origen) return;
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -66,7 +66,7 @@ export default function ModalTraspasoStock({
     return () => clearTimeout(timerRef.current);
   }, [busqueda, abierto, origen]);
 
-  // 🚀 Búsqueda OPTIMIZADA
+  // Búsqueda de productos
   async function buscarProducto(filtro, exacto = false) {
     if (!origen) return;
 
@@ -77,51 +77,56 @@ export default function ModalTraspasoStock({
 
     try {
       const tabla = origen.tipo === "warehouse" ? "stock_almacen" : "stock_van";
-      let query = supabase
+      
+      // Primero obtenemos los IDs de productos con stock
+      let stockQuery = supabase
         .from(tabla)
-        .select(
-          `
-          id,
-          producto_id,
-          cantidad,
-          productos:producto_id (id, codigo, nombre, marca)
-        `
-        )
-        .gt("cantidad", 0)
-        .limit(20);
+        .select("id, producto_id, cantidad")
+        .gt("cantidad", 0);
 
-      if (origen.tipo === "van") {
-        query = query.eq("van_id", origen.id);
+      if (origen.tipo === "van" && origen.id) {
+        stockQuery = stockQuery.eq("van_id", origen.id);
       }
 
-      // 🚀 Búsqueda exacta por código (más rápida)
+      const { data: stockData, error: stockError } = await stockQuery;
+      
+      if (stockError) throw stockError;
+      if (!stockData || stockData.length === 0) {
+        setMensaje("❌ No products with stock in this location.");
+        setLoading(false);
+        return;
+      }
+
+      // Obtener info de productos
+      const productoIds = stockData.map(s => s.producto_id);
+      let prodQuery = supabase
+        .from("productos")
+        .select("id, codigo, nombre, marca")
+        .in("id", productoIds);
+
+      // Filtro de búsqueda
       if (exacto) {
-        query = query.eq("productos.codigo", filtro);
+        prodQuery = prodQuery.eq("codigo", filtro);
+      } else {
+        prodQuery = prodQuery.or(
+          `codigo.ilike.%${filtro}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`
+        );
       }
 
-      const { data, error } = await query;
+      const { data: productosData, error: prodError } = await prodQuery;
+      
+      if (prodError) throw prodError;
 
-      if (error) throw error;
-
-      let results = (data || []).map((s) => ({
-        id: s.id,
-        producto_id: s.producto_id,
-        cantidad: Number(s.cantidad || 0),
-        productos: s.productos || null,
-      }));
-
-      // Si no es búsqueda exacta, filtrar en memoria
-      if (!exacto && results.length > 0) {
-        const f = filtro.toLowerCase();
-        results = results.filter((r) => {
-          const p = r.productos || {};
-          return (
-            (p.codigo || "").toLowerCase().includes(f) ||
-            (p.nombre || "").toLowerCase().includes(f) ||
-            (p.marca || "").toLowerCase().includes(f)
-          );
-        });
-      }
+      // Unir stock con productos
+      const results = (productosData || []).map(prod => {
+        const stock = stockData.find(s => s.producto_id === prod.id);
+        return {
+          id: stock?.id,
+          producto_id: prod.id,
+          cantidad: Number(stock?.cantidad || 0),
+          productos: prod,
+        };
+      }).filter(r => r.cantidad > 0);
 
       setOpciones(results);
 
@@ -134,13 +139,14 @@ export default function ModalTraspasoStock({
         setMensaje(`📦 Found ${results.length} products. Select one.`);
       }
     } catch (err) {
-      setMensaje("❌ Error: " + err.message);
+      console.error("Error searching product:", err);
+      setMensaje("❌ Error: " + (err?.message || "Unknown error"));
     } finally {
       setLoading(false);
     }
   }
 
-  // 🚀 Transferir stock (ATÓMICO)
+  // Transferir stock
   async function transferirStock(e) {
     e.preventDefault();
     setMensaje("");
@@ -174,24 +180,8 @@ export default function ModalTraspasoStock({
     try {
       setLoading(true);
 
-      // 🔒 TRANSFERENCIA ATÓMICA VÍA RPC
-      const { error } = await supabase.rpc("transferir_stock", {
-        p_producto_id: seleccion.producto_id,
-        p_cantidad: qty,
-        p_origen_tipo: origen.tipo,
-        p_origen_van_id: origen.id,
-        p_destino_tipo: destino.tipo,
-        p_destino_van_id: destino.id,
-      });
-
-      if (error) {
-        // Si no existe el RPC, fallback manual
-        if (error.code === "42883" || error.message?.includes("does not exist")) {
-          await transferirStockManual(qty);
-        } else {
-          throw error;
-        }
-      }
+      // Transferencia manual (más segura que RPC por ahora)
+      await transferirStockManual(qty);
 
       setMensaje("✅ Transfer completed successfully!");
       if (onSuccess) await onSuccess();
@@ -200,25 +190,31 @@ export default function ModalTraspasoStock({
         cerrar();
       }, 1500);
     } catch (err) {
-      setMensaje("❌ Error: " + err.message);
+      console.error("Transfer error:", err);
+      setMensaje("❌ Error: " + (err?.message || "Unknown error"));
     } finally {
       setLoading(false);
     }
   }
 
-  // Fallback manual si no hay RPC
+  // Transferencia manual
   async function transferirStockManual(qty) {
     // 1. Descontar de origen
     const tablaOrigen = origen.tipo === "warehouse" ? "stock_almacen" : "stock_van";
     const nuevaCantidadOrigen = seleccion.cantidad - qty;
 
     if (nuevaCantidadOrigen <= 0) {
-      await supabase.from(tablaOrigen).delete().eq("id", seleccion.id);
+      const { error: delError } = await supabase
+        .from(tablaOrigen)
+        .delete()
+        .eq("id", seleccion.id);
+      if (delError) throw delError;
     } else {
-      await supabase
+      const { error: updError } = await supabase
         .from(tablaOrigen)
         .update({ cantidad: nuevaCantidadOrigen })
         .eq("id", seleccion.id);
+      if (updError) throw updError;
     }
 
     // 2. Sumar en destino
@@ -228,26 +224,31 @@ export default function ModalTraspasoStock({
       .select("id, cantidad")
       .eq("producto_id", seleccion.producto_id);
 
-    if (destino.tipo === "van") {
+    if (destino.tipo === "van" && destino.id) {
       queryDestino = queryDestino.eq("van_id", destino.id);
     }
 
-    const { data: existeDestino } = await queryDestino.maybeSingle();
+    const { data: existeDestino, error: selectError } = await queryDestino.maybeSingle();
+    if (selectError) throw selectError;
 
     if (existeDestino) {
-      await supabase
+      const { error: updError } = await supabase
         .from(tablaDestino)
         .update({ cantidad: Number(existeDestino.cantidad) + qty })
         .eq("id", existeDestino.id);
+      if (updError) throw updError;
     } else {
       const insertData = {
         producto_id: seleccion.producto_id,
         cantidad: qty,
       };
-      if (destino.tipo === "van") {
+      if (destino.tipo === "van" && destino.id) {
         insertData.van_id = destino.id;
       }
-      await supabase.from(tablaDestino).insert([insertData]);
+      const { error: insError } = await supabase
+        .from(tablaDestino)
+        .insert([insertData]);
+      if (insError) throw insError;
     }
   }
 
@@ -281,6 +282,7 @@ export default function ModalTraspasoStock({
                   setOrigen(sel || null);
                   setOpciones([]);
                   setSeleccion(null);
+                  setBusqueda("");
                 }}
               >
                 <option value="">-- Select --</option>
@@ -340,9 +342,9 @@ export default function ModalTraspasoStock({
             <div className="max-h-40 overflow-y-auto border-2 border-gray-200 rounded-lg">
               {opciones.map((opt) => (
                 <div
-                  key={opt.id}
+                  key={`${opt.producto_id}_${opt.id || Math.random()}`}
                   className={`p-3 border-b cursor-pointer hover:bg-green-50 ${
-                    seleccion?.id === opt.id ? "bg-green-100" : ""
+                    seleccion?.producto_id === opt.producto_id ? "bg-green-100" : ""
                   }`}
                   onClick={() => {
                     setSeleccion(opt);
@@ -350,9 +352,9 @@ export default function ModalTraspasoStock({
                     setMensaje("");
                   }}
                 >
-                  <div className="font-semibold">{opt.productos?.nombre}</div>
+                  <div className="font-semibold">{opt.productos?.nombre || "Sin nombre"}</div>
                   <div className="text-xs text-gray-600">
-                    Code: {opt.productos?.codigo} | Available: {opt.cantidad}
+                    Code: {opt.productos?.codigo || "-"} | Available: {opt.cantidad}
                   </div>
                 </div>
               ))}
