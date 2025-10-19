@@ -34,31 +34,45 @@ Deno.serve(async (req) => {
     });
 
     const session = await stripe.checkout.sessions.retrieve(session_id, {
-      expand: ["payment_intent", "amount_subtotal", "amount_total"],
+      expand: ["payment_intent"],
     });
 
-    // Estados posibles: 'paid' | 'unpaid' | 'no_payment_required'
-    const status = session.payment_status; 
-    const paid = status === "paid";
+    // ✅ CORREGIDO: Mapear payment_status a un estado consistente
+    const paymentStatus = session.payment_status; // 'paid' | 'unpaid' | 'no_payment_required'
+    const sessionStatus = session.status; // 'open' | 'complete' | 'expired'
+    
+    // Determinar si el pago fue exitoso
+    const paid = paymentStatus === "paid" || sessionStatus === "complete";
+    
+    // Estado unificado para el frontend
+    let status = "pending";
+    if (paid) {
+      status = "complete";
+    } else if (sessionStatus === "expired") {
+      status = "expired";
+    } else if (sessionStatus === "open") {
+      status = "open";
+    }
 
     let amount = session.amount_total ?? null;
     let currency = session.currency ?? "usd";
-    // fallback por si amount_total no está:
+    
+    // Fallback por si amount_total no está
     if (amount == null && session.payment_intent && typeof session.payment_intent === "object") {
-      // @ts-ignore – payment_intent expandido
       amount = session.payment_intent.amount ?? null;
-      // @ts-ignore
       currency = session.payment_intent.currency ?? currency;
     }
 
     return new Response(
       JSON.stringify({
         ok: true,
-        status,        // 'paid' | 'unpaid' | ...
+        status,        // ✅ 'complete' | 'open' | 'expired' | 'pending'
         paid,
         amount,        // en centavos
         currency,
         sessionId: session.id,
+        payment_status: paymentStatus, // Info adicional para debugging
+        session_status: sessionStatus,
       }),
       { status: 200, headers: CORS }
     );
