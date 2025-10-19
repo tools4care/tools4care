@@ -26,6 +26,10 @@ import OnlineDiscounts from "./online/Discounts";
 import Storefront from "./storefront/Storefront";
 import AuthCallback from "./storefront/AuthCallback";
 
+// 🆕 Payment pages
+import PaymentSuccess from "./PaymentSuccess";
+import PaymentCancelled from "./PaymentCancelled";
+
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
 
@@ -77,6 +81,10 @@ export default function App() {
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
+
+          {/* 🆕 Payment Success/Cancel Pages */}
+          <Route path="/payment-success" element={<PaymentSuccess />} />
+          <Route path="/payment-cancelled" element={<PaymentCancelled />} />
 
           {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />

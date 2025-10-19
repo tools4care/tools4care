@@ -55,9 +55,9 @@ async function createStripeCheckoutSession(amount, description = "Pago de venta"
     throw new Error("Amount debe ser mayor a 0");
   }
 
-  // ✅ URLs DE STRIPE - No redirigen a tu app
- const success_url = "https://example.com/success";
-const cancel_url = "https://example.com/cancel";
+ // ✅ URLs de tu app para success/cancel
+const success_url = `${window.location.origin}/payment-success`;
+const cancel_url = `${window.location.origin}/payment-cancelled`;
 
   const doFetch = (signal) =>
     fetch(CHECKOUT_FN_URL, {
