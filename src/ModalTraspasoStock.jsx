@@ -1,172 +1,418 @@
-import { useState, useEffect } from "react";
+// src/ModalTraspasoStock.jsx
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 
-export default function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
-  const [origenKey, setOrigenKey] = useState("");
-  const [destinoKey, setDestinoKey] = useState("");
-  const [productos, setProductos] = useState([]);
-  const [productoId, setProductoId] = useState("");
-  const [productoNombre, setProductoNombre] = useState("");
+const norm = (s) => String(s || "").trim();
+const isLikelyScan = (s) => !!s && s.length >= 6 && !/\s/.test(s);
+
+export default function ModalTraspasoStock({
+  abierto,
+  cerrar,
+  ubicaciones = [],
+  ubicacionActual = null,
+  onSuccess,
+}) {
+  const [origen, setOrigen] = useState(null);
+  const [destino, setDestino] = useState(null);
+  const [busqueda, setBusqueda] = useState("");
+  const [opciones, setOpciones] = useState([]);
+  const [seleccion, setSeleccion] = useState(null);
   const [cantidad, setCantidad] = useState(1);
+  const [mensaje, setMensaje] = useState("");
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef();
 
-  // Para autocomplete
-  const [filtro, setFiltro] = useState("");
-  const [mostrarOpciones, setMostrarOpciones] = useState(false);
-
+  // Reset al abrir/cerrar
   useEffect(() => {
-    if (abierto && ubicaciones.length > 1) {
-      setOrigenKey(ubicaciones[0].key);
-      setDestinoKey(ubicaciones[1].key);
-      cargarProductos(ubicaciones[0]);
-      setProductoId("");
-      setProductoNombre("");
-      setFiltro("");
+    if (!abierto) {
+      setBusqueda("");
+      setOpciones([]);
+      setSeleccion(null);
       setCantidad(1);
+      setMensaje("");
+      if (timerRef.current) clearTimeout(timerRef.current);
+    } else {
+      // Auto-seleccionar ubicación actual como origen
+      if (ubicacionActual) {
+        setOrigen(ubicacionActual);
+        const primeraOtraUbicacion = ubicaciones.find(
+          (u) => u.key !== ubicacionActual.key
+        );
+        setDestino(primeraOtraUbicacion || null);
+      }
     }
-  }, [abierto, ubicaciones]);
+  }, [abierto, ubicacionActual, ubicaciones]);
 
-  async function cargarProductos(ubicacion) {
-    if (!ubicacion) return;
-    let tabla = ubicacion.tipo === "warehouse" || ubicacion.tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let query = supabase.from(tabla).select("producto_id, cantidad, productos(nombre, marca, codigo)");
-    if (ubicacion.tipo === "van") query = query.eq("van_id", ubicacion.id);
-    // En almacén central NO poner ningún filtro más, ya que solo hay uno.
-    const { data } = await query;
-    setProductos(data || []);
-  }
+  // 🚀 Búsqueda con debounce
+  useEffect(() => {
+    if (!abierto || !origen) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
 
-  async function transferirStock(e) {
-    e.preventDefault();
-    const origen = ubicaciones.find(u => u.key === origenKey);
-    const destino = ubicaciones.find(u => u.key === destinoKey);
-    if (!origen || !destino || origen.key === destino.key || !productoId) return;
-
-    // --- Consulta el stock actual en el origen
-    let tablaOrigen = origen.tipo === "warehouse" || origen.tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let filtroOrigen = origen.tipo === "warehouse" || origen.tipo === "almacen"
-      ? { producto_id: productoId }
-      : { producto_id: productoId, van_id: origen.id };
-
-    let { data: stockOrigen } = await supabase.from(tablaOrigen).select("*").match(filtroOrigen).maybeSingle();
-
-    if (!stockOrigen || stockOrigen.cantidad < Number(cantidad)) {
-      alert("Not enough stock in the origin.");
+    const term = norm(busqueda);
+    if (!term) {
+      setOpciones([]);
+      setSeleccion(null);
+      setMensaje("");
       return;
     }
 
-    // --- Resta en origen
-    await supabase.from(tablaOrigen)
-      .update({ cantidad: stockOrigen.cantidad - Number(cantidad) })
-      .match(filtroOrigen);
-
-    // --- Suma en destino (o inserta si no existe)
-    let tablaDestino = destino.tipo === "warehouse" || destino.tipo === "almacen" ? "stock_almacen" : "stock_van";
-    let filtroDestino = destino.tipo === "warehouse" || destino.tipo === "almacen"
-      ? { producto_id: productoId }
-      : { producto_id: productoId, van_id: destino.id };
-
-    let { data: stockDestino } = await supabase.from(tablaDestino).select("*").match(filtroDestino).maybeSingle();
-
-    if (stockDestino) {
-      await supabase.from(tablaDestino)
-        .update({ cantidad: stockDestino.cantidad + Number(cantidad) })
-        .match(filtroDestino);
+    // Fast-path para códigos escaneados
+    if (isLikelyScan(term)) {
+      timerRef.current = setTimeout(() => buscarProducto(term, true), 150);
     } else {
-      await supabase.from(tablaDestino)
-        .insert([{ ...filtroDestino, cantidad: Number(cantidad) }]);
+      timerRef.current = setTimeout(() => buscarProducto(term, false), 300);
     }
 
-    onSuccess && onSuccess();
-    cerrar();
+    return () => clearTimeout(timerRef.current);
+  }, [busqueda, abierto, origen]);
+
+  // 🚀 Búsqueda OPTIMIZADA
+  async function buscarProducto(filtro, exacto = false) {
+    if (!origen) return;
+
+    setLoading(true);
+    setOpciones([]);
+    setSeleccion(null);
+    setMensaje("");
+
+    try {
+      const tabla = origen.tipo === "warehouse" ? "stock_almacen" : "stock_van";
+      let query = supabase
+        .from(tabla)
+        .select(
+          `
+          id,
+          producto_id,
+          cantidad,
+          productos:producto_id (id, codigo, nombre, marca)
+        `
+        )
+        .gt("cantidad", 0)
+        .limit(20);
+
+      if (origen.tipo === "van") {
+        query = query.eq("van_id", origen.id);
+      }
+
+      // 🚀 Búsqueda exacta por código (más rápida)
+      if (exacto) {
+        query = query.eq("productos.codigo", filtro);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      let results = (data || []).map((s) => ({
+        id: s.id,
+        producto_id: s.producto_id,
+        cantidad: Number(s.cantidad || 0),
+        productos: s.productos || null,
+      }));
+
+      // Si no es búsqueda exacta, filtrar en memoria
+      if (!exacto && results.length > 0) {
+        const f = filtro.toLowerCase();
+        results = results.filter((r) => {
+          const p = r.productos || {};
+          return (
+            (p.codigo || "").toLowerCase().includes(f) ||
+            (p.nombre || "").toLowerCase().includes(f) ||
+            (p.marca || "").toLowerCase().includes(f)
+          );
+        });
+      }
+
+      setOpciones(results);
+
+      if (results.length === 1 && exacto) {
+        setSeleccion(results[0]);
+        setMensaje("✅ Exact match found!");
+      } else if (results.length === 0) {
+        setMensaje("❌ No products found in current location.");
+      } else {
+        setMensaje(`📦 Found ${results.length} products. Select one.`);
+      }
+    } catch (err) {
+      setMensaje("❌ Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // Opciones de autocomplete
-  const opcionesFiltradas = productos.filter(item =>
-    (item.productos?.nombre || "").toLowerCase().includes(filtro.toLowerCase()) ||
-    (item.productos?.marca || "").toLowerCase().includes(filtro.toLowerCase()) ||
-    (item.productos?.codigo || "").toLowerCase().includes(filtro.toLowerCase())
-  );
+  // 🚀 Transferir stock (ATÓMICO)
+  async function transferirStock(e) {
+    e.preventDefault();
+    setMensaje("");
+
+    if (!origen || !destino) {
+      setMensaje("❌ Select origin and destination.");
+      return;
+    }
+
+    if (origen.key === destino.key) {
+      setMensaje("❌ Origin and destination must be different.");
+      return;
+    }
+
+    if (!seleccion?.producto_id) {
+      setMensaje("❌ Select a product.");
+      return;
+    }
+
+    const qty = Number(cantidad);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setMensaje("❌ Invalid quantity.");
+      return;
+    }
+
+    if (qty > seleccion.cantidad) {
+      setMensaje(`❌ Not enough stock. Available: ${seleccion.cantidad}`);
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // 🔒 TRANSFERENCIA ATÓMICA VÍA RPC
+      const { error } = await supabase.rpc("transferir_stock", {
+        p_producto_id: seleccion.producto_id,
+        p_cantidad: qty,
+        p_origen_tipo: origen.tipo,
+        p_origen_van_id: origen.id,
+        p_destino_tipo: destino.tipo,
+        p_destino_van_id: destino.id,
+      });
+
+      if (error) {
+        // Si no existe el RPC, fallback manual
+        if (error.code === "42883" || error.message?.includes("does not exist")) {
+          await transferirStockManual(qty);
+        } else {
+          throw error;
+        }
+      }
+
+      setMensaje("✅ Transfer completed successfully!");
+      if (onSuccess) await onSuccess();
+
+      setTimeout(() => {
+        cerrar();
+      }, 1500);
+    } catch (err) {
+      setMensaje("❌ Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Fallback manual si no hay RPC
+  async function transferirStockManual(qty) {
+    // 1. Descontar de origen
+    const tablaOrigen = origen.tipo === "warehouse" ? "stock_almacen" : "stock_van";
+    const nuevaCantidadOrigen = seleccion.cantidad - qty;
+
+    if (nuevaCantidadOrigen <= 0) {
+      await supabase.from(tablaOrigen).delete().eq("id", seleccion.id);
+    } else {
+      await supabase
+        .from(tablaOrigen)
+        .update({ cantidad: nuevaCantidadOrigen })
+        .eq("id", seleccion.id);
+    }
+
+    // 2. Sumar en destino
+    const tablaDestino = destino.tipo === "warehouse" ? "stock_almacen" : "stock_van";
+    let queryDestino = supabase
+      .from(tablaDestino)
+      .select("id, cantidad")
+      .eq("producto_id", seleccion.producto_id);
+
+    if (destino.tipo === "van") {
+      queryDestino = queryDestino.eq("van_id", destino.id);
+    }
+
+    const { data: existeDestino } = await queryDestino.maybeSingle();
+
+    if (existeDestino) {
+      await supabase
+        .from(tablaDestino)
+        .update({ cantidad: Number(existeDestino.cantidad) + qty })
+        .eq("id", existeDestino.id);
+    } else {
+      const insertData = {
+        producto_id: seleccion.producto_id,
+        cantidad: qty,
+      };
+      if (destino.tipo === "van") {
+        insertData.van_id = destino.id;
+      }
+      await supabase.from(tablaDestino).insert([insertData]);
+    }
+  }
 
   if (!abierto) return null;
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-      <form onSubmit={transferirStock} className="bg-white p-6 rounded shadow w-96">
-        <h2 className="font-bold mb-4">Transfer Stock</h2>
-        <div className="mb-2 flex gap-2">
-          <select className="border rounded p-2 flex-1" value={origenKey} onChange={e => {
-            setOrigenKey(e.target.value);
-            const origen = ubicaciones.find(u => u.key === e.target.value);
-            cargarProductos(origen);
-            setProductoId("");
-            setProductoNombre("");
-            setFiltro("");
-          }}>
-            {ubicaciones.map(u => (
-              <option key={u.key} value={u.key}>{u.nombre}</option>
-            ))}
-          </select>
-          <span className="mx-2">→</span>
-          <select className="border rounded p-2 flex-1" value={destinoKey} onChange={e => setDestinoKey(e.target.value)}>
-            {ubicaciones.map(u => (
-              <option key={u.key} value={u.key}>{u.nombre}</option>
-            ))}
-          </select>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <form
+        className="bg-white rounded-2xl w-full max-w-lg shadow-2xl"
+        onSubmit={transferirStock}
+        autoComplete="off"
+      >
+        <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white p-4 rounded-t-2xl">
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            🔁 Transfer Stock
+          </h2>
         </div>
-        {/* Product autocomplete */}
-        <div className="relative mb-2">
-          <input
-            className="border p-2 rounded w-full"
-            placeholder="Search product (name, brand or code)"
-            value={filtro || productoNombre}
-            onChange={e => {
-              setFiltro(e.target.value);
-              setProductoNombre("");
-              setProductoId("");
-              setMostrarOpciones(true);
-            }}
-            onFocus={() => setMostrarOpciones(true)}
-            autoComplete="off"
-          />
-          {mostrarOpciones && filtro.length > 0 && (
-            <ul className="absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto mt-1">
-              {opcionesFiltradas.length === 0 && (
-                <li className="p-2 text-gray-400">Not found</li>
-              )}
-              {opcionesFiltradas.map((item) => (
-                <li
-                  key={item.producto_id}
-                  className="p-2 hover:bg-blue-100 cursor-pointer"
+
+        <div className="p-6 space-y-4">
+          {/* Origen y Destino */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                From (Origin)
+              </label>
+              <select
+                className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-green-500 outline-none"
+                value={origen?.key || ""}
+                onChange={(e) => {
+                  const sel = ubicaciones.find((u) => u.key === e.target.value);
+                  setOrigen(sel || null);
+                  setOpciones([]);
+                  setSeleccion(null);
+                }}
+              >
+                <option value="">-- Select --</option>
+                {ubicaciones.map((u) => (
+                  <option key={u.key} value={u.key}>
+                    {u.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                To (Destination)
+              </label>
+              <select
+                className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-green-500 outline-none"
+                value={destino?.key || ""}
+                onChange={(e) => {
+                  const sel = ubicaciones.find((u) => u.key === e.target.value);
+                  setDestino(sel || null);
+                }}
+              >
+                <option value="">-- Select --</option>
+                {ubicaciones.map((u) => (
+                  <option key={u.key} value={u.key}>
+                    {u.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Búsqueda de producto */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Product
+            </label>
+            <input
+              className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-green-500 outline-none font-mono"
+              placeholder="Scan or search product..."
+              value={busqueda}
+              onChange={(e) => {
+                setBusqueda(e.target.value);
+                setSeleccion(null);
+              }}
+              disabled={!origen}
+            />
+          </div>
+
+          {/* Resultados */}
+          {loading && (
+            <div className="text-blue-500 text-sm">🔍 Searching...</div>
+          )}
+
+          {opciones.length > 0 && (
+            <div className="max-h-40 overflow-y-auto border-2 border-gray-200 rounded-lg">
+              {opciones.map((opt) => (
+                <div
+                  key={opt.id}
+                  className={`p-3 border-b cursor-pointer hover:bg-green-50 ${
+                    seleccion?.id === opt.id ? "bg-green-100" : ""
+                  }`}
                   onClick={() => {
-                    setProductoId(item.producto_id);
-                    setProductoNombre(
-                      `${item.productos?.nombre || ""}` +
-                      `${item.productos?.marca ? " - " + item.productos.marca : ""}` +
-                      `${item.productos?.codigo ? " - " + item.productos.codigo : ""}`
-                    );
-                    setFiltro("");
-                    setMostrarOpciones(false);
+                    setSeleccion(opt);
+                    setCantidad(Math.min(1, opt.cantidad));
+                    setMensaje("");
                   }}
                 >
-                  {item.productos?.nombre}
-                  {item.productos?.marca ? ` - ${item.productos.marca}` : ""}
-                  {item.productos?.codigo ? ` - ${item.productos.codigo}` : ""}
-                  (Stock: {item.cantidad})
-                </li>
+                  <div className="font-semibold">{opt.productos?.nombre}</div>
+                  <div className="text-xs text-gray-600">
+                    Code: {opt.productos?.codigo} | Available: {opt.cantidad}
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
+          )}
+
+          {/* Cantidad */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Quantity to transfer
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={seleccion?.cantidad || 1}
+              className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-green-500 outline-none"
+              value={cantidad}
+              onChange={(e) => setCantidad(e.target.value)}
+              disabled={!seleccion}
+            />
+            {seleccion && (
+              <div className="text-xs text-gray-600 mt-1">
+                Max available: {seleccion.cantidad}
+              </div>
+            )}
+          </div>
+
+          {/* Mensaje */}
+          {mensaje && (
+            <div
+              className={`p-3 rounded-lg text-center font-semibold ${
+                mensaje.includes("✅")
+                  ? "bg-green-100 text-green-800"
+                  : mensaje.includes("❌")
+                  ? "bg-red-100 text-red-800"
+                  : "bg-yellow-100 text-yellow-800"
+              }`}
+            >
+              {mensaje}
+            </div>
           )}
         </div>
-        <input
-          className="w-full border rounded mb-2 p-2"
-          type="number"
-          required
-          min={1}
-          value={cantidad}
-          onChange={e => setCantidad(e.target.value)}
-        />
-        <div className="flex gap-2 mt-2">
-          <button type="submit" className="bg-green-600 text-white px-4 py-1 rounded" disabled={!productoId}>Transfer</button>
-          <button type="button" className="bg-gray-300 px-4 py-1 rounded" onClick={cerrar}>Cancel</button>
+
+        {/* Botones */}
+        <div className="flex gap-3 p-6 pt-0">
+          <button
+            type="button"
+            className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-3 rounded-lg font-semibold transition-colors"
+            onClick={cerrar}
+            disabled={loading}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white px-6 py-3 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 disabled:opacity-50"
+            disabled={!seleccion || loading}
+          >
+            {loading ? "Transferring..." : "Transfer"}
+          </button>
         </div>
       </form>
     </div>
