@@ -23,44 +23,156 @@ const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
 /* ========================= Stripe QR Payment Helpers ========================= */
-// retorna { url, sessionId }
-async function createStripeCheckoutSession(amount, description = "Pago de venta") {
-  const res = await fetch(
-    "https://gvloygqbavibmpakzdma.functions.supabase.co/create_checkout_session",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        amount: Math.round(Number(amount) * 100),
-        currency: "usd",
-        description,
-      }),
-    }
-  );
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data?.error || `HTTP ${res.status} - Error creando Checkout Session`);
+// ⚠️ Ajusta estos valores a tu dominio en producción:
+const CHECKOUT_FN_URL =
+  "https://gvloygqbavibmpakzdma.functions.supabase.co/create_checkout_session";
+const CHECK_FN_URL =
+  "https://gvloygqbavibmpakzdma.functions.supabase.co/check_checkout_session";
+
+// Opcional: si tu función exige la API Key, descomenta y usa estas cabeceras.
+// const SUPABASE_ANON_KEY = import.meta?.env?.VITE_SUPABASE_ANON_KEY;
+// const extraHeaders = SUPABASE_ANON_KEY
+//   ? { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+//   : {};
+const extraHeaders = {}; // ← por ahora vacío, porque desplegaste con --no-verify-jwt
+
+// Utilidad: timeout de red (llama a una función que recibe AbortSignal)
+async function withTimeout(run, ms = 15000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort("timeout"), ms);
+  try {
+    return await run(ctrl.signal);
+  } finally {
+    clearTimeout(t);
   }
-  // asegúrate que la función Edge retorne { url, sessionId } (ver abajo)
+}
+
+// ✅ Crea una Stripe Checkout Session en tu Edge Function
+// Devuelve: { url, sessionId }
+async function createStripeCheckoutSession(amount, description = "Pago de venta") {
+  const num = Number(amount);
+  if (!Number.isFinite(num)) throw new Error("Amount inválido");
+
+  // Stripe usa centavos; validación mínima (> 0)
+  const cents = Math.round(num * 100);
+  if (!Number.isInteger(cents) || cents <= 0) {
+    throw new Error("Amount debe ser mayor a 0");
+  }
+
+  // Sugerido: éxito/cancel a tu app (pueden ser rutas placeholder en dev)
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const success_url = `${origin || "https://checkout.stripe.com"}/stripe-success?session_id={CHECKOUT_SESSION_ID}`;
+  const cancel_url = `${origin || "https://checkout.stripe.com"}/stripe-cancel`;
+
+  const doFetch = (signal) =>
+    fetch(CHECKOUT_FN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...extraHeaders },
+      body: JSON.stringify({
+        amount: cents,
+        currency: "usd",
+        description: String(description || "Pago de venta").slice(0, 120),
+        success_url,
+        cancel_url,
+      }),
+      signal,
+    });
+
+  let res, data;
+  try {
+    res = await withTimeout(doFetch);
+  } catch (e) {
+    throw new Error(`No se pudo conectar con la función (create_checkout_session): ${e?.message || e}`);
+  }
+
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok) {
+    const msg = data?.error || `HTTP ${res.status} creando Checkout Session`;
+    throw new Error(msg);
+  }
+  if (!data?.url || !data?.sessionId) {
+    throw new Error("Respuesta inválida de create_checkout_session (faltan url/sessionId)");
+  }
+
   return { url: data.url, sessionId: data.sessionId };
 }
 
+// 🔎 Consulta si la Checkout Session ya está pagada.
+async function checkStripeCheckoutStatus(sessionId) {
+  if (!sessionId) return { ok: false, error: "sessionId requerido" };
+
+  const doFetch = (signal) =>
+    fetch(CHECK_FN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...extraHeaders },
+      body: JSON.stringify({ session_id: sessionId }),
+      signal,
+    });
+
+  let res, data;
+  try {
+    res = await withTimeout(doFetch);
+  } catch (e) {
+    return { ok: false, error: `No se pudo conectar (check_checkout_session): ${e?.message || e}` };
+  }
+
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok || !data?.ok) {
+    return { ok: false, error: data?.error || `HTTP ${res.status} al verificar Checkout Session` };
+  }
+
+  return {
+    ok: true,
+    status: data.status,   // 'complete' / 'open' / 'expired' / 'canceled' (según tu función)
+    paid: !!data.paid,     // boolean
+    amount: data.amount,   // en centavos
+    currency: data.currency,
+  };
+}
+
+// 🖼️ Genera el QR desde la URL de Stripe
+async function generateQRCode(text) {
+  try {
+    const qrDataUrl = await QRCode.toDataURL(text, {
+      width: 300,
+      margin: 2,
+      color: { dark: "#000000", light: "#FFFFFF" },
+    });
+    return qrDataUrl;
+  } catch (err) {
+    console.error("Error generating QR:", err);
+    return null;
+  }
+}
+
+/* ==== (Opcional) Helpers de Payment Intent: NO MEZCLAR CON CHECKOUT ====
+   Déjalos sólo si tienes pantallas que paguen con Payment Element.
+   Si usas QR + Checkout, no los llames en el flujo actual. */
 
 async function createStripePaymentIntent({ amount, description, clientEmail, clientName }) {
   try {
     const { data, error } = await supabase.functions.invoke("create_payment_intent", {
-    body: {
-      amount: Math.round(Number(amount) * 100),
-      currency: "usd",
-      description,
-      customer_email: clientEmail || null,
-      customer_name: clientName || null,
-    },
-});
-
+      body: {
+        amount: Math.round(Number(amount) * 100),
+        currency: "usd",
+        description,
+        customer_email: clientEmail || null,
+        customer_name: clientName || null,
+      },
+    });
     if (error) throw error;
-    
+
     return {
       ok: true,
       clientSecret: data.clientSecret,
@@ -76,14 +188,13 @@ async function createStripePaymentIntent({ amount, description, clientEmail, cli
 async function checkStripePaymentStatus(paymentIntentId) {
   try {
     const { data, error } = await supabase.functions.invoke("check_payment_status", {
-    body: { paymentIntentId },
-});
-
+      body: { paymentIntentId },
+    });
     if (error) throw error;
-    
+
     return {
       ok: true,
-      status: data.status, // 'succeeded', 'processing', 'requires_payment_method', etc.
+      status: data.status, // 'succeeded', 'processing', etc.
       amount: data.amount,
     };
   } catch (err) {
@@ -92,49 +203,64 @@ async function checkStripePaymentStatus(paymentIntentId) {
   }
 }
 
-async function generateQRCode(text) {
-  try {
-    const qrDataUrl = await QRCode.toDataURL(text, {
-      width: 300,
-      margin: 2,
-      color: {
-        dark: "#000000",
-        light: "#FFFFFF",
-      },
-    });
-    return qrDataUrl;
-  } catch (err) {
-    console.error("Error generating QR:", err);
-    return null;
-  }
-}
-
+// (Sólo para Payment Element)
 function buildStripePaymentUrl(clientSecret, publicKey) {
-  // Construir URL para página de pago de Stripe
   const baseUrl = window.location.origin;
   return `${baseUrl}/stripe-payment?client_secret=${clientSecret}&pk=${publicKey}`;
 }
 
-// Consulta a tu función Edge si la Checkout Session ya está pagada
-async function checkStripeCheckoutStatus(sessionId) {
-  try {
-    const res = await fetch(
-      "https://gvloygqbavibmpakzdma.functions.supabase.co/check_checkout_session",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId }),
-      }
-    );
-    const data = await res.json();
-    if (!res.ok || !data?.ok) throw new Error(data?.error || "Stripe check failed");
-    return { ok: true, status: data.status, paid: data.paid, amount: data.amount, currency: data.currency };
-  } catch (err) {
-    console.error("Error checking checkout session:", err);
-    return { ok: false, error: err.message };
+// ⏱️ Polling de la Checkout Session (debe vivir DENTRO del componente porque usa refs/estados)
+function startCheckoutPolling(sessionId, paymentIndex) {
+  // Limpia cualquier polling previo
+  if (qrPollingIntervalRef.current) {
+    clearInterval(qrPollingIntervalRef.current);
   }
-}
 
+  console.log("🌀 Iniciando polling para session:", sessionId);
+
+  // Cada 3 segundos consulta el estado del pago
+  qrPollingIntervalRef.current = setInterval(async () => {
+    try {
+      const res = await checkStripeCheckoutStatus(sessionId);
+      if (!res.ok) {
+        console.warn("⚠️ Error temporal en checkStripeCheckoutStatus:", res.error);
+        return;
+      }
+
+      console.log("📊 Estado Stripe:", res.status, res.paid);
+
+      // Caso 1: Pago completado
+      if (res.paid === true || res.status === "complete" || res.status === "succeeded") {
+        clearInterval(qrPollingIntervalRef.current);
+        qrPollingIntervalRef.current = null;
+        setQRPollingActive(false);
+
+        const paidAmount = Number(res.amount || 0) / 100; // convertir centavos → USD
+        if (Number.isFinite(paidAmount) && paidAmount > 0) {
+          handleChangePayment(paymentIndex, "monto", paidAmount);
+        }
+
+        alert("✅ ¡Pago confirmado con Stripe!");
+        setShowQRModal(false);
+        return;
+      }
+
+      // Caso 2: Sesión cancelada o expirada
+      if (res.status === "expired" || res.status === "canceled") {
+        clearInterval(qrPollingIntervalRef.current);
+        qrPollingIntervalRef.current = null;
+        setQRPollingActive(false);
+        alert("❌ La sesión de pago expiró o fue cancelada.");
+        setShowQRModal(false);
+        return;
+      }
+
+      // Caso 3: Aún sin completar → seguimos esperando
+    } catch (err) {
+      console.error("❌ Error durante el polling Stripe:", err);
+    }
+  }, 3000);
+}
 
 /* ========================= Helpers de negocio ========================= */
 function policyLimit(score) {
