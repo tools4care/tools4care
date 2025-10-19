@@ -1273,8 +1273,8 @@ function startCheckoutPolling(sessionId, paymentIndex) {
 
   console.log("🌀 Iniciando polling para session:", sessionId);
 
-  let errorCount = 0; // ✅ Contador de errores consecutivos
-  const MAX_ERRORS = 3; // ✅ Máximo 3 errores antes de cancelar
+  let errorCount = 0;
+  const MAX_ERRORS = 3;
 
   // ✅ Timeout de 5 minutos
   const timeoutId = setTimeout(() => {
@@ -1283,9 +1283,9 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       qrPollingIntervalRef.current = null;
       setQRPollingActive(false);
       setShowQRModal(false);
-      alert("⏰ Tiempo de espera agotado. Por favor, verifica el pago manualmente.");
+      alert("⏰ Payment timeout. Please verify manually.");
     }
-  }, 5 * 60 * 1000); // 5 minutos
+  }, 5 * 60 * 1000);
 
   // Polling cada 3 segundos
   qrPollingIntervalRef.current = setInterval(async () => {
@@ -1293,9 +1293,7 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       const res = await checkStripeCheckoutStatus(sessionId);
       
       if (!res.ok) {
-        console.warn("⚠️ Error en checkStripeCheckoutStatus:", res.error);
-        
-        // ✅ Si hay errores consecutivos, cancelar
+        console.warn("⚠️ Error temporal en checkStripeCheckoutStatus:", res.error);
         errorCount++;
         if (errorCount >= MAX_ERRORS) {
           clearInterval(qrPollingIntervalRef.current);
@@ -1303,12 +1301,11 @@ function startCheckoutPolling(sessionId, paymentIndex) {
           qrPollingIntervalRef.current = null;
           setQRPollingActive(false);
           setShowQRModal(false);
-          alert("❌ Error de conexión con Stripe. Por favor, verifica tu configuración.");
+          alert("❌ Connection error with Stripe. Please verify your configuration.");
         }
         return;
       }
 
-      // ✅ Reset contador si la respuesta es exitosa
       errorCount = 0;
 
       console.log("📊 Estado Stripe:", {
@@ -1318,7 +1315,7 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         session_status: res.session_status
       });
 
-      // ✅ Caso 1: Pago completado
+      // ✅ Caso 1: Pago completado (VERSIÓN EN INGLÉS MEJORADA)
       if (res.paid === true || res.status === "complete") {
         clearInterval(qrPollingIntervalRef.current);
         clearTimeout(timeoutId);
@@ -1330,8 +1327,24 @@ function startCheckoutPolling(sessionId, paymentIndex) {
           handleChangePayment(paymentIndex, "monto", paidAmount);
         }
 
-        alert("✅ ¡Pago confirmado con Stripe!");
         setShowQRModal(false);
+
+        // 🆕 MENSAJE EN INGLÉS MEJORADO
+        alert(
+          "✅ Payment confirmed with Stripe!\n\n" +
+          `💰 Amount: ${fmt(paidAmount)}\n\n` +
+          "👉 Review the details and click 'Save Sale' to complete."
+        );
+
+        // 🆕 OPCIONAL: Scroll automático al botón Save Sale
+        setTimeout(() => {
+          const saveButton = document.querySelector('button[type="button"]')?.closest('button:has-text("Save Sale")') 
+            || Array.from(document.querySelectorAll('button')).find(btn => 
+              btn.textContent.includes('Save Sale') || btn.textContent.includes('💾')
+            );
+          saveButton?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 500);
+
         return;
       }
 
@@ -1341,7 +1354,7 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         clearTimeout(timeoutId);
         qrPollingIntervalRef.current = null;
         setQRPollingActive(false);
-        alert("❌ La sesión de pago expiró.");
+        alert("❌ Payment session expired.");
         setShowQRModal(false);
         return;
       }
@@ -1351,14 +1364,13 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       console.error("❌ Error durante el polling Stripe:", err);
       errorCount++;
       
-      // ✅ Si hay demasiados errores, cancelar
       if (errorCount >= MAX_ERRORS) {
         clearInterval(qrPollingIntervalRef.current);
         clearTimeout(timeoutId);
         qrPollingIntervalRef.current = null;
         setQRPollingActive(false);
         setShowQRModal(false);
-        alert("❌ Error crítico. Por favor, verifica tu conexión y configuración de Stripe.");
+        alert("❌ Critical error. Please verify your connection and Stripe configuration.");
       }
     }
   }, 3000);
