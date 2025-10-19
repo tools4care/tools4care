@@ -37,14 +37,40 @@ import { VanProvider, useVan } from "./hooks/VanContext";
 import Suplidores from "./Suplidores";
 
 function PrivateRoute({ children }) {
-  const { usuario } = useUsuario();
+  const { usuario, cargando } = useUsuario(); // ✅ Agregado: cargando
+  
+  // ✅ Espera a que termine de cargar
+  if (cargando) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 font-semibold">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+  
   if (!usuario) return <Navigate to="/login" />;
   return children;
 }
 
 function PrivateRouteWithVan({ children }) {
-  const { usuario } = useUsuario();
+  const { usuario, cargando } = useUsuario(); // ✅ Agregado: cargando
   const { van } = useVan();
+  
+  // ✅ Espera a que termine de cargar
+  if (cargando) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 font-semibold">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+  
   if (!usuario) return <Navigate to="/login" />;
   if (!van) return <Navigate to="/van" />;
 
