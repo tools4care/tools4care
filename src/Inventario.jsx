@@ -4,8 +4,9 @@ import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import AgregarStockModal from "./AgregarStockModal";
 import ModalTraspasoStock from "./ModalTraspasoStock";
+import { BarcodeScanner } from "./BarcodeScanner";
 
-const PAGE_SIZE = 100; // ajusta según necesites
+const PAGE_SIZE = 100;
 
 export default function Inventory() {
   const { van } = useVan();
@@ -26,6 +27,9 @@ export default function Inventory() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTransferOpen, setModalTransferOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
+
+  // 🆕 Escáner móvil
+  const [showScanner, setShowScanner] = useState(false);
 
   // paginación
   const [page, setPage] = useState(0);
@@ -61,7 +65,6 @@ export default function Inventory() {
 
       setLocations([warehouse, ...vansLocations]);
 
-      // Si hay VAN en contexto, arranca ahí; si no, warehouse.
       if (van?.id) {
         const current = vansLocations.find((x) => x.id === van.id);
         setSelected(current || warehouse);
@@ -69,10 +72,9 @@ export default function Inventory() {
         setSelected(warehouse);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [van?.id]);
 
-  // Reset de paginación e items cuando cambia ubicación o pedimos refresh
+  // Reset de paginación
   useEffect(() => {
     setPage(0);
     setHasMore(true);
@@ -92,7 +94,6 @@ export default function Inventory() {
         const to = offset + PAGE_SIZE - 1;
 
         if (selected.tipo === "warehouse") {
-          // INVENTARIO DE ALMACÉN CENTRAL
           const { data, error: sErr, count } = await supabase
             .from("stock_almacen")
             .select(
@@ -125,7 +126,6 @@ export default function Inventory() {
           return;
         }
 
-        // INVENTARIO DE VAN
         const { data, error: sErr, count } = await supabase
           .from("stock_van")
           .select(
@@ -161,12 +161,10 @@ export default function Inventory() {
         setHasMore(false);
       }
     })();
-    // 👉 IMPORTANTE: añadimos `refresh` para que recargue tras agregar/transferir
   }, [selected.id, selected.tipo, offset, refresh]);
 
-  // ======================== Realtime: actualiza al cambiar inventario ========================
+  // ======================== Realtime ========================
   useEffect(() => {
-    // VAN
     if (selected.tipo === "van" && selected.id) {
       const channel = supabase
         .channel(`inv-van-${selected.id}`)
@@ -181,7 +179,6 @@ export default function Inventory() {
       };
     }
 
-    // WAREHOUSE (tabla global sin van_id)
     if (selected.tipo === "warehouse") {
       const channel = supabase
         .channel(`inv-warehouse`)
@@ -197,10 +194,30 @@ export default function Inventory() {
     }
   }, [selected.tipo, selected.id]);
 
-  // ======================== Filtro de búsqueda ========================
+  // 🆕 Handler de escáner
+  const handleBarcodeScanned = (code) => {
+    let cleanedCode = code.replace(/^0+/, '');
+    if (cleanedCode === '') cleanedCode = '0';
+    setSearch(cleanedCode);
+    setShowScanner(false);
+  };
+
+  // ======================== Filtro de búsqueda OPTIMIZADO ========================
   const filteredInventory = useMemo(() => {
-    const f = (search || "").toLowerCase();
+    const f = (search || "").toLowerCase().trim();
     if (!f) return inventory;
+    
+    // 🚀 OPTIMIZACIÓN: Búsqueda exacta primero (más rápida)
+    const exactMatch = inventory.find((it) => {
+      const p = it.productos || {};
+      return (p.codigo || "").toLowerCase() === f;
+    });
+
+    if (exactMatch) {
+      return [exactMatch];
+    }
+
+    // Búsqueda parcial
     return inventory.filter((it) => {
       const p = it.productos || {};
       return (
@@ -223,7 +240,7 @@ export default function Inventory() {
             <div className="text-sm text-gray-500">{filteredInventory.length} items</div>
           </div>
           <div className="mt-3 text-xs text-gray-600">
-            Gestiona existencias por ubicación con una interfaz clara y consistente con Ventas.
+            Manage inventory by location with a clear and consistent interface.
           </div>
         </div>
 
@@ -232,7 +249,7 @@ export default function Inventory() {
           <div className="flex flex-col lg:flex-row lg:items-center gap-3">
             <div className="flex-1 flex flex-col sm:flex-row sm:items-center gap-3">
               <div className="flex items-center gap-2 flex-1">
-                <span className="text-sm text-gray-600 whitespace-nowrap">Ubicación</span>
+                <span className="text-sm text-gray-600 whitespace-nowrap">Location</span>
                 <select
                   className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
                   value={selected.key}
@@ -250,13 +267,23 @@ export default function Inventory() {
               </div>
 
               <div className="flex items-center gap-2 flex-1">
-                <span className="text-sm text-gray-600 whitespace-nowrap">Buscar</span>
-                <input
-                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-                  placeholder="🔍 Product, brand, or code"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+                <span className="text-sm text-gray-600 whitespace-nowrap">Search</span>
+                <div className="flex items-center gap-2 w-full">
+                  <input
+                    className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+                    placeholder="🔍 Product, brand, or code"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  {/* 🆕 BOTÓN ESCÁNER - SOLO MÓVIL */}
+                  <button
+                    onClick={() => setShowScanner(true)}
+                    className="lg:hidden bg-purple-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                    title="Scan barcode"
+                  >
+                    📷
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -271,7 +298,7 @@ export default function Inventory() {
                 className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
                 onClick={() => setModalTransferOpen(true)}
               >
-                🔁 Transfer Stock
+                🔁 Transfer
               </button>
             </div>
           </div>
@@ -294,7 +321,9 @@ export default function Inventory() {
         {/* Inventory Table */}
         <div className="bg-white rounded-xl shadow-lg p-0 overflow-hidden">
           {filteredInventory.length === 0 ? (
-            <div className="p-8 text-gray-400 text-center">🗃️ No products in inventory.</div>
+            <div className="p-8 text-gray-400 text-center">
+              {search ? "🔍 No products match your search." : "🗃️ No products in inventory."}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -327,8 +356,8 @@ export default function Inventory() {
             </div>
           )}
 
-          {/* Botón cargar más (paginación simple) */}
-          {hasMore && (
+          {/* Paginación */}
+          {hasMore && !search && (
             <div className="p-3 border-t flex justify-center">
               <button
                 className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
@@ -351,10 +380,9 @@ export default function Inventory() {
         <AgregarStockModal
           abierto={modalOpen}
           cerrar={() => setModalOpen(false)}
-          tipo={selected.tipo}          // "van" o "warehouse"
-          ubicacionId={selected.id}     // van_id cuando es "van"
+          tipo={selected.tipo}
+          ubicacionId={selected.id}
           onSuccess={() => {
-            // Opcional: forzamos volver a la primera página y refrescar
             setPage(0);
             setRefresh((r) => r + 1);
           }}
@@ -363,11 +391,21 @@ export default function Inventory() {
           abierto={modalTransferOpen}
           cerrar={() => setModalTransferOpen(false)}
           ubicaciones={locations}
+          ubicacionActual={selected}
           onSuccess={() => {
             setPage(0);
             setRefresh((r) => r + 1);
           }}
         />
+
+        {/* 🆕 Escáner de códigos de barras */}
+        {showScanner && (
+          <BarcodeScanner
+            onScan={handleBarcodeScanned}
+            onClose={() => setShowScanner(false)}
+            isActive={showScanner}
+          />
+        )}
       </div>
     </div>
   );
