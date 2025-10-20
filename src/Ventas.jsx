@@ -1,4 +1,4 @@
-// src/Ventas.jsx - PARTE 1 (CON STRIPE QR)
+// src/Ventas.jsx - PARTE 1 DE 4 (Imports, Constantes, Helpers)
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
@@ -23,16 +23,13 @@ const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
 /* ========================= Stripe QR Payment Helpers ========================= */
-
-// ⚠️ Ajusta estos valores a tu dominio en producción:
 const CHECKOUT_FN_URL =
   "https://gvloygqbavibmpakzdma.functions.supabase.co/create_checkout_session";
 const CHECK_FN_URL =
   "https://gvloygqbavibmpakzdma.functions.supabase.co/check_checkout_session";
 
-const extraHeaders = {}; // ← Vacío si desplegaste con --no-verify-jwt
+const extraHeaders = {};
 
-// Utilidad: timeout de red (llama a una función que recibe AbortSignal)
 async function withTimeout(run, ms = 15000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort("timeout"), ms);
@@ -43,21 +40,17 @@ async function withTimeout(run, ms = 15000) {
   }
 }
 
-// ✅ Crea una Stripe Checkout Session en tu Edge Function
-// Devuelve: { url, sessionId }
 async function createStripeCheckoutSession(amount, description = "Pago de venta") {
   const num = Number(amount);
   if (!Number.isFinite(num)) throw new Error("Amount inválido");
 
-  // Stripe usa centavos; validación mínima (> 0)
   const cents = Math.round(num * 100);
   if (!Number.isInteger(cents) || cents <= 0) {
     throw new Error("Amount debe ser mayor a 0");
   }
 
- // ✅ URLs de tu app para success/cancel
-const success_url = `${window.location.origin}/payment-success`;
-const cancel_url = `${window.location.origin}/payment-cancelled`;
+  const success_url = `${window.location.origin}/payment-success`;
+  const cancel_url = `${window.location.origin}/payment-cancelled`;
 
   const doFetch = (signal) =>
     fetch(CHECKOUT_FN_URL, {
@@ -97,7 +90,6 @@ const cancel_url = `${window.location.origin}/payment-cancelled`;
   return { url: data.url, sessionId: data.sessionId };
 }
 
-// 🔎 Consulta si la Checkout Session ya está pagada.
 async function checkStripeCheckoutStatus(sessionId) {
   if (!sessionId) return { ok: false, error: "sessionId requerido" };
 
@@ -128,16 +120,15 @@ async function checkStripeCheckoutStatus(sessionId) {
 
   return {
     ok: true,
-    status: data.status,           // 'complete' | 'open' | 'expired' (desde Edge Function)
-    paid: !!data.paid,             // boolean
-    amount: data.amount,           // en centavos
-    currency: data.currency,       // 'usd'
-    payment_status: data.payment_status,  // info adicional de Stripe
-    session_status: data.session_status,  // info adicional de Stripe
+    status: data.status,
+    paid: !!data.paid,
+    amount: data.amount,
+    currency: data.currency,
+    payment_status: data.payment_status,
+    session_status: data.session_status,
   };
 }
 
-// 🖼️ Genera el QR desde la URL de Stripe
 async function generateQRCode(text) {
   try {
     const qrDataUrl = await QRCode.toDataURL(text, {
@@ -151,60 +142,6 @@ async function generateQRCode(text) {
     return null;
   }
 }
-
-/* ==== (Opcional) Helpers de Payment Intent: NO MEZCLAR CON CHECKOUT ====
-   Déjalos sólo si tienes pantallas que paguen con Payment Element.
-   Si usas QR + Checkout, no los llames en el flujo actual. */
-
-async function createStripePaymentIntent({ amount, description, clientEmail, clientName }) {
-  try {
-    const { data, error } = await supabase.functions.invoke("create_payment_intent", {
-      body: {
-        amount: Math.round(Number(amount) * 100),
-        currency: "usd",
-        description,
-        customer_email: clientEmail || null,
-        customer_name: clientName || null,
-      },
-    });
-    if (error) throw error;
-
-    return {
-      ok: true,
-      clientSecret: data.clientSecret,
-      paymentIntentId: data.paymentIntentId,
-      publicKey: data.publicKey,
-    };
-  } catch (err) {
-    console.error("Error creating payment intent:", err);
-    return { ok: false, error: err.message };
-  }
-}
-
-async function checkStripePaymentStatus(paymentIntentId) {
-  try {
-    const { data, error } = await supabase.functions.invoke("check_payment_status", {
-      body: { paymentIntentId },
-    });
-    if (error) throw error;
-
-    return {
-      ok: true,
-      status: data.status, // 'succeeded', 'processing', etc.
-      amount: data.amount,
-    };
-  } catch (err) {
-    console.error("Error checking payment status:", err);
-    return { ok: false, error: err.message };
-  }
-}
-
-// (Sólo para Payment Element)
-function buildStripePaymentUrl(clientSecret, publicKey) {
-  const baseUrl = window.location.origin;
-  return `${baseUrl}/stripe-payment?client_secret=${clientSecret}&pk=${publicKey}`;
-}
-
 
 /* ========================= Helpers de negocio ========================= */
 function policyLimit(score) {
@@ -239,7 +176,6 @@ function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
   return r2(base);
 }
 
-/* =================== PRICING HELPERS =================== */
 const firstNumber = (arr, def = 0, acceptZero = false) => {
   for (const v of arr) {
     const n = Number(v);
@@ -535,7 +471,6 @@ async function askChannel({ hasPhone, hasEmail }) {
   return null;
 }
 
-/* ===== Helper para stock map ===== */
 async function getStockMapForVan(vanId, ids = []) {
   const map = new Map();
   if (!vanId || !Array.isArray(ids) || ids.length === 0) return map;
@@ -549,7 +484,6 @@ async function getStockMapForVan(vanId, ids = []) {
   return map;
 }
 
-/* ===== Recibo ===== */
 function composeReceiptMessageEN(payload) {
   const {
     clientName,
@@ -596,7 +530,7 @@ function composeReceiptMessageEN(payload) {
   lines.push("");
   lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
   return lines.join("\n");
-}// src/Ventas.jsx - PARTE 2 (Componente Principal con Stripe QR)
+}// src/Ventas.jsx - PARTE 2 DE 4 (Componente Principal, Estados y useEffects)
 
 /* ========================= Componente Principal ========================= */
 export default function Sales() {
@@ -663,6 +597,14 @@ export default function Sales() {
   const [qrPollingActive, setQRPollingActive] = useState(false);
   const qrPollingIntervalRef = useRef(null);
 
+  // ---- 🆕 ESTADOS PARA DASHBOARD Y CLIENTES RECIENTES ----
+  const [recentClients, setRecentClients] = useState([]);
+  const [todayStats, setTodayStats] = useState({
+    sales: 0,
+    clients: 0,
+    total: 0
+  });
+
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
     const t = setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 250);
@@ -674,6 +616,71 @@ export default function Sales() {
     setPendingSales(readPendingLS());
   }, []);
 
+  /* ---------- 🆕 CARGAR CLIENTES RECIENTES ---------- */
+  useEffect(() => {
+    async function loadRecentClients() {
+      if (!van?.id) return;
+      
+      const { data } = await supabase
+        .from('ventas')
+        .select(`
+          cliente_id,
+          created_at,
+          clientes:cliente_id (
+            id, nombre, apellido, telefono, negocio, email, direccion
+          )
+        `)
+        .eq('van_id', van.id)
+        .not('cliente_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (!data) return;
+
+      const uniqueClients = [];
+      const seen = new Set();
+      
+      for (const sale of data) {
+        if (!seen.has(sale.cliente_id) && sale.clientes) {
+          seen.add(sale.cliente_id);
+          uniqueClients.push(sale.clientes);
+          if (uniqueClients.length >= 5) break;
+        }
+      }
+      
+      setRecentClients(uniqueClients);
+    }
+    
+    loadRecentClients();
+  }, [van?.id]);
+
+  /* ---------- 🆕 CARGAR ESTADÍSTICAS DEL DÍA ---------- */
+  useEffect(() => {
+    async function loadTodayStats() {
+      if (!van?.id) return;
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const { data } = await supabase
+        .from('ventas')
+        .select('total, cliente_id')
+        .eq('van_id', van.id)
+        .gte('created_at', today.toISOString());
+      
+      if (data) {
+        const uniqueClients = new Set(data.map(v => v.cliente_id));
+        setTodayStats({
+          sales: data.length,
+          clients: uniqueClients.size,
+          total: data.reduce((sum, v) => sum + Number(v.total || 0), 0)
+        });
+      }
+    }
+    
+    loadTodayStats();
+  }, [van?.id]);
+
   /* ---------- CLIENTES (búsqueda + saldo real) ---------- */
   useEffect(() => {
     async function loadClients() {
@@ -684,6 +691,7 @@ export default function Sales() {
       }
       setClientLoading(true);
       try {
+        // ✅ BÚSQUEDA COMPLETA (incluye direccion)
         const orParts = [
           `nombre.ilike.%${term}%`,
           `apellido.ilike.%${term}%`,
@@ -704,11 +712,13 @@ export default function Sales() {
             `negocio.ilike.%${term}%`,
             `telefono.ilike.%${term}%`,
             `email.ilike.%${term}%`,
+            `direccion.ilike.%${term}%`,
           ].join(",");
           const r2 = await supabase.from("clientes_balance").select("*").or(fallbackOr);
           baseData = r2.data || [];
         }
 
+        // BÚSQUEDA POR NOMBRE + APELLIDO (tokens)
         const tokens = term.split(/\s+/).filter(Boolean);
         let andData = [];
         if (tokens.length >= 2) {
@@ -722,10 +732,14 @@ export default function Sales() {
           andData = dAnd || [];
         }
 
+        // COMBINAR RESULTADOS (eliminar duplicados)
         const byId = new Map();
-        for (const x of [...(baseData || []), ...andData]) byId.set(x.id, x);
+        for (const x of [...(baseData || []), ...andData]) {
+          byId.set(x.id, x);
+        }
         const merged = Array.from(byId.values());
 
+        // ENRIQUECER CON SALDO REAL (CxC)
         const ids = merged.map((c) => c.id).filter(Boolean);
         let enriched = merged;
         if (ids.length > 0) {
@@ -741,7 +755,8 @@ export default function Sales() {
         }
 
         setClients(enriched);
-      } catch {
+      } catch (err) {
+        console.error("Error searching clients:", err);
         setClients([]);
       } finally {
         setClientLoading(false);
@@ -1182,7 +1197,7 @@ export default function Sales() {
   const creditAvailableAfter = Math.max(0, creditLimit - balanceAfter);
   const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
- /* ---------- Guardar venta pendiente local ---------- */
+  /* ---------- Guardar venta pendiente local ---------- */
   useEffect(() => {
     const hasMeaning =
       cartSafe.length > 0 ||
@@ -1209,16 +1224,16 @@ export default function Sales() {
     }
   }, [selectedClient, cartSafe, payments, notes, step]);
 
-  /* ========== 🆕 LIMPIAR POLLING AL DESMONTAR ========== */
+  /* ========== LIMPIAR POLLING AL DESMONTAR ========== */
   useEffect(() => {
     return () => {
       if (qrPollingIntervalRef.current) {
         clearInterval(qrPollingIntervalRef.current);
       }
     };
-  }, []);
+  }, []);// src/Ventas.jsx - PARTE 3 DE 4 (Stripe QR Functions, Handlers y saveSale)
 
-  /* ========== 🆕 STRIPE QR FUNCTIONS (DENTRO DEL COMPONENTE) ========== */
+  /* ========== STRIPE QR FUNCTIONS ========== */
 
   // 📱 Genera QR para pago con Stripe
   async function handleGenerateQR(paymentIndex) {
@@ -1264,119 +1279,109 @@ export default function Sales() {
     startCheckoutPolling(sessionId, paymentIndex);
   }
 
-// ⏱️ Polling de la Checkout Session con timeout de 5 minutos
-function startCheckoutPolling(sessionId, paymentIndex) {
-  // Limpia cualquier polling previo
-  if (qrPollingIntervalRef.current) {
-    clearInterval(qrPollingIntervalRef.current);
-  }
-
-  console.log("🌀 Iniciando polling para session:", sessionId);
-
-  let errorCount = 0;
-  const MAX_ERRORS = 3;
-
-  // ✅ Timeout de 5 minutos
-  const timeoutId = setTimeout(() => {
+  // ⏱️ Polling de la Checkout Session con timeout de 5 minutos
+  function startCheckoutPolling(sessionId, paymentIndex) {
     if (qrPollingIntervalRef.current) {
       clearInterval(qrPollingIntervalRef.current);
-      qrPollingIntervalRef.current = null;
-      setQRPollingActive(false);
-      setShowQRModal(false);
-      alert("⏰ Payment timeout. Please verify manually.");
     }
-  }, 5 * 60 * 1000);
 
-  // Polling cada 3 segundos
-  qrPollingIntervalRef.current = setInterval(async () => {
-    try {
-      const res = await checkStripeCheckoutStatus(sessionId);
-      
-      if (!res.ok) {
-        console.warn("⚠️ Error temporal en checkStripeCheckoutStatus:", res.error);
+    console.log("🌀 Iniciando polling para session:", sessionId);
+
+    let errorCount = 0;
+    const MAX_ERRORS = 3;
+
+    const timeoutId = setTimeout(() => {
+      if (qrPollingIntervalRef.current) {
+        clearInterval(qrPollingIntervalRef.current);
+        qrPollingIntervalRef.current = null;
+        setQRPollingActive(false);
+        setShowQRModal(false);
+        alert("⏰ Payment timeout. Please verify manually.");
+      }
+    }, 5 * 60 * 1000);
+
+    qrPollingIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await checkStripeCheckoutStatus(sessionId);
+        
+        if (!res.ok) {
+          console.warn("⚠️ Error temporal en checkStripeCheckoutStatus:", res.error);
+          errorCount++;
+          if (errorCount >= MAX_ERRORS) {
+            clearInterval(qrPollingIntervalRef.current);
+            clearTimeout(timeoutId);
+            qrPollingIntervalRef.current = null;
+            setQRPollingActive(false);
+            setShowQRModal(false);
+            alert("❌ Connection error with Stripe. Please verify your configuration.");
+          }
+          return;
+        }
+
+        errorCount = 0;
+
+        console.log("📊 Estado Stripe:", {
+          status: res.status,
+          paid: res.paid,
+          payment_status: res.payment_status,
+          session_status: res.session_status
+        });
+
+        if (res.paid === true || res.status === "complete") {
+          clearInterval(qrPollingIntervalRef.current);
+          clearTimeout(timeoutId);
+          qrPollingIntervalRef.current = null;
+          setQRPollingActive(false);
+
+          const paidAmount = Number(res.amount || 0) / 100;
+          if (Number.isFinite(paidAmount) && paidAmount > 0) {
+            handleChangePayment(paymentIndex, "monto", paidAmount);
+          }
+
+          setShowQRModal(false);
+
+          alert(
+            "✅ Payment confirmed with Stripe!\n\n" +
+            `💰 Amount: ${fmt(paidAmount)}\n\n` +
+            "👉 Review the details and click 'Save Sale' to complete."
+          );
+
+          setTimeout(() => {
+            const saveButton = document.querySelector('button[type="button"]')?.closest('button:has-text("Save Sale")') 
+              || Array.from(document.querySelectorAll('button')).find(btn => 
+                btn.textContent.includes('Save Sale') || btn.textContent.includes('💾')
+              );
+            saveButton?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 500);
+
+          return;
+        }
+
+        if (res.status === "expired") {
+          clearInterval(qrPollingIntervalRef.current);
+          clearTimeout(timeoutId);
+          qrPollingIntervalRef.current = null;
+          setQRPollingActive(false);
+          alert("❌ Payment session expired.");
+          setShowQRModal(false);
+          return;
+        }
+      } catch (err) {
+        console.error("❌ Error durante el polling Stripe:", err);
         errorCount++;
+        
         if (errorCount >= MAX_ERRORS) {
           clearInterval(qrPollingIntervalRef.current);
           clearTimeout(timeoutId);
           qrPollingIntervalRef.current = null;
           setQRPollingActive(false);
           setShowQRModal(false);
-          alert("❌ Connection error with Stripe. Please verify your configuration.");
+          alert("❌ Critical error. Please verify your connection and Stripe configuration.");
         }
-        return;
       }
+    }, 3000);
+  }
 
-      errorCount = 0;
-
-      console.log("📊 Estado Stripe:", {
-        status: res.status,
-        paid: res.paid,
-        payment_status: res.payment_status,
-        session_status: res.session_status
-      });
-
-      // ✅ Caso 1: Pago completado (VERSIÓN EN INGLÉS MEJORADA)
-      if (res.paid === true || res.status === "complete") {
-        clearInterval(qrPollingIntervalRef.current);
-        clearTimeout(timeoutId);
-        qrPollingIntervalRef.current = null;
-        setQRPollingActive(false);
-
-        const paidAmount = Number(res.amount || 0) / 100;
-        if (Number.isFinite(paidAmount) && paidAmount > 0) {
-          handleChangePayment(paymentIndex, "monto", paidAmount);
-        }
-
-        setShowQRModal(false);
-
-        // 🆕 MENSAJE EN INGLÉS MEJORADO
-        alert(
-          "✅ Payment confirmed with Stripe!\n\n" +
-          `💰 Amount: ${fmt(paidAmount)}\n\n` +
-          "👉 Review the details and click 'Save Sale' to complete."
-        );
-
-        // 🆕 OPCIONAL: Scroll automático al botón Save Sale
-        setTimeout(() => {
-          const saveButton = document.querySelector('button[type="button"]')?.closest('button:has-text("Save Sale")') 
-            || Array.from(document.querySelectorAll('button')).find(btn => 
-              btn.textContent.includes('Save Sale') || btn.textContent.includes('💾')
-            );
-          saveButton?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 500);
-
-        return;
-      }
-
-      // ✅ Caso 2: Sesión expirada
-      if (res.status === "expired") {
-        clearInterval(qrPollingIntervalRef.current);
-        clearTimeout(timeoutId);
-        qrPollingIntervalRef.current = null;
-        setQRPollingActive(false);
-        alert("❌ Payment session expired.");
-        setShowQRModal(false);
-        return;
-      }
-
-      // Caso 3: Aún 'open' → seguimos esperando
-    } catch (err) {
-      console.error("❌ Error durante el polling Stripe:", err);
-      errorCount++;
-      
-      if (errorCount >= MAX_ERRORS) {
-        clearInterval(qrPollingIntervalRef.current);
-        clearTimeout(timeoutId);
-        qrPollingIntervalRef.current = null;
-        setQRPollingActive(false);
-        setShowQRModal(false);
-        alert("❌ Critical error. Please verify your connection and Stripe configuration.");
-      }
-    }
-  }, 3000);
-}
-
-  // 🚫 Cerrar modal QR y detener polling
   function handleCloseQRModal() {
     if (qrPollingIntervalRef.current) {
       clearInterval(qrPollingIntervalRef.current);
@@ -1533,7 +1538,7 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       return [address.calle, address.ciudad, address.estado, address.zip].filter(Boolean).join(", ");
     }
     return address;
-  }// src/Ventas.jsx - PARTE 3 FINAL (saveSale + UI con Modal QR Stripe)
+  }
 
   /* ===================== Guardar venta ===================== */
   async function saveSale() {
@@ -1543,13 +1548,11 @@ function startCheckoutPolling(sessionId, paymentIndex) {
     const currentPendingId = window.pendingSaleId;
 
     try {
-      // --- Validaciones básicas ---
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!van?.id) throw new Error("Select a VAN first.");
       if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
       if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
-      // --- Tope de crédito ---
       if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
         setPaymentError(
           `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
@@ -1570,7 +1573,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         if (!ok) return;
       }
 
-      // ===== Recalcular al guardar =====
       const existingCreditNow = Math.max(0, -balanceBefore);
       const oldDebtNow = Math.max(0, balanceBefore);
       const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
@@ -1585,7 +1587,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       const estadoPago =
         pendingFromThisSale === 0 ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente";
 
-      // ===== Desglose de pagos aplicados =====
       const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
       const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2));
 
@@ -1616,7 +1617,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       const pagoTransf = Number((paymentMap.transferencia || 0).toFixed(2));
       const pagoOtro = Number((paymentMap.otro || 0).toFixed(2));
 
-      // ===== Items =====
       const itemsForDb = cartSafe.map((p) => {
         const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
         const qty = Number(p.cantidad);
@@ -1643,7 +1643,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         };
       });
 
-      // ===== Pago JSON =====
       const pagoJson = {
         metodos: metodosAplicados,
         map: paymentMap,
@@ -1654,7 +1653,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
       };
 
-      // ---------- Guardar venta ----------
       const { data: ventaRow, error: insErr } = await supabase
         .from('ventas')
         .insert([{
@@ -1678,7 +1676,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       if (insErr) throw insErr;
       const ventaId = ventaRow.id;
 
-      // ✅ DESCONTAR STOCK DE LA VAN
       for (const item of cartSafe) {
         try {
           const { data: stockActual } = await supabase
@@ -1708,7 +1705,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         }
       }
 
-      // ✅ INSERTAR DETALLE DE LA VENTA
       if (ventaId && itemsForDb.length > 0) {
         const { error: detalleErr } = await supabase
           .from('detalle_ventas')
@@ -1728,7 +1724,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         }
       }
 
-      // ---------- CxC ----------
       if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {
         try {
           await supabase.rpc("cxc_crear_ajuste_por_venta", {
@@ -1768,7 +1763,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         });
       }
 
-      // ===== Recibo =====
       const prevDue = Math.max(0, balanceBefore);
       const balancePost = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
       const newDue = Math.max(0, balancePost);
@@ -1815,7 +1809,8 @@ function startCheckoutPolling(sessionId, paymentIndex) {
     }
   }
 
-  /* ======================== Modal: QR de Stripe ======================== */
+  /* ======================== MODALES ======================== */
+
   function renderQRModal() {
     if (!showQRModal) return null;
 
@@ -1881,7 +1876,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
     );
   }
 
-  /* ======================== Modal: ventas pendientes ======================== */
   function renderPendingSalesModal() {
     return (
       <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
@@ -1934,9 +1928,9 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         </div>
       </div>
     );
-  }
+  }// src/Ventas.jsx - PARTE 4 DE 4 (UI Completa - Renderizado de Pasos y Root)
 
-  /* ======================== Paso 1: Cliente ======================== */
+  /* ======================== Paso 1: Cliente (CON MEJORAS) ======================== */
   function renderStepClient() {
     const clientsSafe = Array.isArray(clients) ? clients : [];
     const creditNum = getCreditNumber(selectedClient);
@@ -1967,7 +1961,7 @@ function startCheckoutPolling(sessionId, paymentIndex) {
                 onClick={() => navigate("/clientes/nuevo", { replace: false })}
                 className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200"
               >
-                ✨ Quick Create Client
+                ✨ Quick Create
               </button>
             </div>
           </div>
@@ -2130,7 +2124,7 @@ function startCheckoutPolling(sessionId, paymentIndex) {
       );
     }
 
-    // Sin cliente seleccionado: BUSCADOR
+    // Sin cliente seleccionado: BUSCADOR CON MEJORAS
     return (
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
@@ -2156,16 +2150,73 @@ function startCheckoutPolling(sessionId, paymentIndex) {
               onClick={() => navigate("/clientes/nuevo", { replace: false })}
               className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200"
             >
-              ✨ Quick Create Client
+              ✨ Quick Create
             </button>
           </div>
         </div>
+
+        {/* 🆕 MINI DASHBOARD DEL DÍA */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-3 border-2 border-blue-200">
+            <div className="text-[10px] sm:text-xs text-blue-600 font-semibold uppercase">Today</div>
+            <div className="text-lg sm:text-2xl font-bold text-blue-800">{todayStats.sales}</div>
+            <div className="text-[10px] text-blue-600">Sales</div>
+          </div>
+          <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-lg p-3 border-2 border-emerald-200">
+            <div className="text-[10px] sm:text-xs text-emerald-600 font-semibold uppercase">Clients</div>
+            <div className="text-lg sm:text-2xl font-bold text-emerald-800">{todayStats.clients}</div>
+            <div className="text-[10px] text-emerald-600">Served</div>
+          </div>
+          <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-lg p-3 border-2 border-amber-200">
+            <div className="text-[10px] sm:text-xs text-amber-600 font-semibold uppercase">Total</div>
+            <div className="text-base sm:text-xl font-bold text-amber-800">{fmt(todayStats.total)}</div>
+            <div className="text-[10px] text-amber-600">Revenue</div>
+          </div>
+        </div>
+
+        {/* 🆕 ÚLTIMOS CLIENTES (ACCESO RÁPIDO) */}
+        {recentClients.length > 0 && (
+          <div className="bg-white rounded-lg border-2 border-gray-200 p-3">
+            <div className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-2">
+              <span>⚡ Recent Clients</span>
+              <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded">Quick access</span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {recentClients.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => {
+                    window.pendingSaleId = null;
+                    setCart([]);
+                    setPayments([{ forma: "efectivo", monto: 0 }]);
+                    setSelectedClient(c);
+                  }}
+                  className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-blue-200 rounded-lg px-3 py-2 transition-all duration-200 min-w-[140px]"
+                >
+                  <div className="text-left">
+                    <div className="font-semibold text-sm text-gray-900 truncate">
+                      {c.nombre} {c.apellido || ""}
+                    </div>
+                    <div className="text-xs text-gray-600 font-mono truncate">
+                      {c.telefono}
+                    </div>
+                    {c.negocio && (
+                      <div className="text-[10px] text-blue-600 truncate mt-0.5">
+                        🏢 {c.negocio}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* BUSCADOR */}
         <div className="relative">
           <input
             type="text"
-            placeholder="🔍 Search by name, last name, business, phone, email or address..."
+            placeholder="🔍 Name · Phone · Email · Address · Business..."
             className="w-full border-2 border-gray-300 rounded-lg p-4 text-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
             value={clientSearch}
             onChange={(e) => setClientSearch(e.target.value)}
@@ -2186,7 +2237,21 @@ function startCheckoutPolling(sessionId, paymentIndex) {
           )}
         </div>
 
-        {/* RESULTADOS */}
+        {/* 🆕 HINT DE BÚSQUEDA ACTIVA */}
+        {debouncedClientSearch.length > 0 && (
+          <div className="flex items-center gap-2 text-xs text-gray-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+            <span>🔍 Searching in:</span>
+            <div className="flex flex-wrap gap-1">
+              {['Name', 'Phone', 'Email', 'Address', 'Business'].map(field => (
+                <span key={field} className="bg-white px-2 py-0.5 rounded border border-blue-200">
+                  {field}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* RESULTADOS MEJORADOS */}
         <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2 border border-gray-200">
           {clientsSafe.length === 0 && debouncedClientSearch.length < 3 && (
             <div className="text-gray-400 text-center py-8">
@@ -2200,40 +2265,95 @@ function startCheckoutPolling(sessionId, paymentIndex) {
               <div className="text-gray-400 text-center py-8">🔍 No results found</div>
             )}
 
-          {clientsSafe.map((c) => (
-            <div
-              key={c.id}
-              className="bg-white p-4 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-200 border-2 border-transparent transition-all duration-200 shadow-sm"
-              onClick={() => {
-                window.pendingSaleId = null;
-                setCart([]);
-                setPayments([{ forma: "efectivo", monto: 0 }]);
-                setSelectedClient(c);
-              }}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="font-bold text-gray-900 flex items-center gap-2">
-                    👤 {c.nombre} {c.apellido || ""}
-                    {c.negocio && (
-                      <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
-                        {c.negocio}
-                      </span>
+          {clientsSafe.map((c) => {
+            const balance = getClientBalance(c);
+            const hasDebt = balance > 0;
+            
+            return (
+              <div
+                key={c.id}
+                className="bg-white p-3 sm:p-4 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-200 border-2 border-transparent transition-all duration-200 shadow-sm"
+                onClick={() => {
+                  window.pendingSaleId = null;
+                  setCart([]);
+                  setPayments([{ forma: "efectivo", monto: 0 }]);
+                  setSelectedClient(c);
+                }}
+              >
+                <div className="space-y-2">
+                  {/* Línea 1: Nombre + Badge Deuda */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+                        <span className="truncate">
+                          👤 {c.nombre} {c.apellido || ""}
+                        </span>
+                        {c.negocio && (
+                          <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full whitespace-nowrap">
+                            🏢 {c.negocio}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {hasDebt && (
+                      <div className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-semibold whitespace-nowrap">
+                        💰 {fmt(balance)}
+                      </div>
                     )}
                   </div>
-                  <div className="text-sm text-gray-600 mt-1">📍 {renderAddress(c.direccion)}</div>
-                  <div className="text-sm text-gray-600 flex items-center gap-1 mt-1">
-                    📞 {c.telefono} {c.email ? ` · ✉️ ${c.email}` : ""}
+
+                  {/* Línea 2: Info de contacto */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                    <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded px-2 py-1.5">
+                      <span className="text-green-600">📞</span>
+                      <span className="font-mono font-semibold text-gray-900 truncate">
+                        {c.telefono || "—"}
+                      </span>
+                    </div>
+
+                    {c.email && (
+                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded px-2 py-1.5">
+                        <span className="text-blue-600">📧</span>
+                        <span className="font-mono text-xs text-gray-700 truncate">
+                          {c.email}
+                        </span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Línea 3: Dirección */}
+                  {c.direccion && (
+                    <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                      <span className="text-amber-600 text-sm mt-0.5">📍</span>
+                      <span className="text-sm text-gray-700 leading-tight">
+                        {renderAddress(c.direccion)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Línea 4: Credit info */}
+                  {(clientHistory.has || balance !== 0) && (
+                    <div className="flex items-center justify-between pt-1 border-t border-gray-200">
+                      <div className="flex items-center gap-3 text-xs text-gray-600">
+                        <span>💳 #{getCreditNumber(c)}</span>
+                        {clientHistory.ventas > 0 && (
+                          <span className="bg-gray-100 px-2 py-0.5 rounded">
+                            🛒 {clientHistory.ventas}
+                          </span>
+                        )}
+                      </div>
+                      {balance > 0 && (
+                        <span className="text-xs text-red-600 font-semibold">
+                          Due: {fmt(balance)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {Number(getClientBalance(c)) > 0 && (
-                  <div className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-semibold">
-                    💰 {fmt(getClientBalance(c))}
-                  </div>
-                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* QUICK SALE */}
@@ -2512,7 +2632,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
           </button>
         </div>
 
-        {/* Scanner Modal */}
         {showScanner && (
           <BarcodeScanner 
             onScan={handleBarcodeScanned}
@@ -2524,13 +2643,12 @@ function startCheckoutPolling(sessionId, paymentIndex) {
     );
   }
 
-  /* ======================== Paso 3: Pago (CON BOTÓN QR STRIPE) ======================== */
+  /* ======================== Paso 3: Pago ======================== */
   function renderStepPayment() {
     return (
       <div className="space-y-6">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
 
-        {/* HERO compacto */}
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-center">
             <div className="text-[10px] uppercase text-blue-700 font-semibold tracking-wide">Total</div>
@@ -2555,7 +2673,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
           </div>
         )}
 
-        {/* Payment Methods */}
         <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <div className="font-bold text-gray-900">Payment Methods</div>
@@ -2596,7 +2713,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
                     />
                   </div>
 
-                  {/* 🆕 BOTÓN GENERAR QR si es tarjeta */}
                   {p.forma === "tarjeta" && (
                     <button
                       onClick={() => handleGenerateQR(i)}
@@ -2620,7 +2736,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
             ))}
           </div>
 
-          {/* Toggle para ver más */}
           <button
             type="button"
             className="mt-3 text-sm text-blue-700 underline"
@@ -2658,7 +2773,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
           )}
         </div>
 
-        {/* Totales simples al pie */}
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-4">
           <div className="grid grid-cols-2 gap-4 text-center">
             <div>
@@ -2734,7 +2848,6 @@ function startCheckoutPolling(sessionId, paymentIndex) {
           {step === 3 && renderStepPayment()}
         </div>
 
-        {/* Fixed bottom summary for mobile */}
         {cartSafe.length > 0 && step === 2 && (
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 p-4 shadow-lg sm:hidden">
             <div className="flex items-center justify-between">
@@ -2745,7 +2858,7 @@ function startCheckoutPolling(sessionId, paymentIndex) {
         )}
       </div>
 
-      {/* Modal: Ajuste inicial (modo migración) */}
+      {/* Modal: Ajuste inicial */}
       {showAdjustModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
