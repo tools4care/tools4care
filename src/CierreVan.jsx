@@ -183,6 +183,33 @@ function useFechasPendientes(van_id) {
   return fechas;
 }
 
+// Hook para obtener fechas ya cerradas
+function useFechasCerradas(van_id) {
+  const [fechasCerradas, setFechasCerradas] = useState([]);
+  useEffect(() => {
+    if (!van_id) {
+      setFechasCerradas([]);
+      return;
+    }
+    (async () => {
+      const { data, error } = await supabase
+        .from("cierres_van")
+        .select("fecha_inicio")
+        .eq("van_id", van_id);
+      
+      if (error) {
+        setFechasCerradas([]);
+        return;
+      }
+      
+      // Extraemos las fechas únicas
+      const fechas = Array.from(new Set((data || []).map(item => item.fecha_inicio)));
+      setFechasCerradas(fechas);
+    })();
+  }, [van_id]);
+  return fechasCerradas;
+}
+
 // 2) Movimientos no cerrados (tus RPCs)
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
@@ -244,6 +271,33 @@ function useExpectedDia(van_id, dia) {
   return exp;
 }
 
+// Hook para obtener información del cierre
+function useCierreInfo(van_id, fecha) {
+  const [cierreInfo, setCierreInfo] = useState(null);
+  useEffect(() => {
+    if (!van_id || !isIsoDate(fecha)) {
+      setCierreInfo(null);
+      return;
+    }
+    (async () => {
+      const { data, error } = await supabase
+        .from("cierres_van")
+        .select("*")
+        .eq("van_id", van_id)
+        .eq("fecha_inicio", fecha)
+        .maybeSingle();
+      
+      if (error || !data) {
+        setCierreInfo(null);
+        return;
+      }
+      
+      setCierreInfo(data);
+    })();
+  }, [van_id, fecha]);
+  return cierreInfo;
+}
+
 /* ======================= Tablas UI ======================= */
 function TablaMovimientosPendientes({ ventas }) {
   const totalCxc = ventas.reduce(
@@ -288,8 +342,7 @@ function TablaMovimientosPendientes({ ventas }) {
               <td className="p-1">${Number(v._bk?.transfer || 0).toFixed(2)}</td>
               <td className="p-1">${Number(v.total_pagado || 0).toFixed(2)}</td>
               <td className="p-1">
-                $
-                {(
+                $                 {(
                   Number(v.total_venta || 0) - Number(v.total_pagado || 0)
                 ).toFixed(2)}
               </td>
@@ -398,7 +451,6 @@ function generarPDFCierreVan({
     telefono: "(978) 594-1624",
     email: "tools4care@gmail.com",
   },
-  cierre,
   usuario,
   vanNombre,
   ventas = [],
@@ -406,32 +458,36 @@ function generarPDFCierreVan({
   resumen = {},
   fechaInicio,
   fechaFin,
+  fechaCierre = null, // Nueva propiedad para fecha de cierre
+  mode = "download", // "download" | "print"
 }) {
   const doc = new jsPDF("p", "pt", "a4");
-  const azul = "#0B4A6F",
-    azulSuave = "#e3f2fd",
-    negro = "#222";
+  const azul = "#0B4A6F", azulSuave = "#e3f2fd", negro = "#222";
+
+  // Encabezado texto
+  const xLeft = 36;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
   doc.setTextColor(azul);
-  doc.text(empresa.nombre, 36, 48);
+  doc.text(empresa.nombre, xLeft, 48);
+
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(negro);
-  doc.text(`Address: ${empresa.direccion}`, 36, 65);
-  doc.text(`Phone: ${empresa.telefono}  |  Email: ${empresa.email}`, 36, 78);
+  doc.text(`Address: ${empresa.direccion}`, xLeft, 65);
+  doc.text(`Phone: ${empresa.telefono}  |  Email: ${empresa.email}`, xLeft, 78);
   doc.setLineWidth(1.1);
   doc.setDrawColor(azul);
   doc.line(36, 86, 560, 86);
 
-  const vanIdShort = (cierre?.van_id || "").toString().slice(0, 8);
-  const vanLabel = [vanNombre || cierre?.van_nombre || "-", `ID: ${vanIdShort}`]
+  const vanIdShort = (vanNombre || "").toString().slice(0, 8);
+  const vanLabel = [vanNombre || "-", `ID: ${vanIdShort}`]
     .filter(Boolean)
     .join(" — ");
-  const userLine = `${usuario?.nombre || usuario?.email || cierre?.usuario_id || "-"}${
+  const userLine = `${usuario?.nombre || usuario?.email || "-"}${
     usuario?.email ? " | " + usuario.email : ""
-  }${cierre?.usuario_id ? " (ID: " + cierre.usuario_id + ")" : ""}`;
+  }${usuario?.id ? " (ID: " + usuario.id + ")" : ""}`;
 
   doc.setFontSize(14);
   doc.setTextColor(azul);
@@ -441,7 +497,13 @@ function generarPDFCierreVan({
   doc.text(`Period: ${fechaInicio} to ${fechaFin}`, 36, 130);
   doc.text(doc.splitTextToSize(`Responsible: ${userLine}`, 240), 36, 146);
   doc.text(doc.splitTextToSize(`Van: ${vanLabel}`, 220), 316, 130);
-  doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 316, 146);
+  
+  // Mostrar fecha de cierre si está disponible
+  if (fechaCierre) {
+    doc.text(`Closeout Date: ${fechaCierre}`, 316, 146);
+  } else {
+    doc.text(`Closeout Date: ${new Date().toLocaleString()}`, 316, 146);
+  }
 
   doc.setFillColor(azulSuave);
   doc.roundedRect(36, 160, 520, 52, 8, 8, "F");
@@ -452,15 +514,15 @@ function generarPDFCierreVan({
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(negro);
-  doc.text(`Expected Cash: $${Number(resumen.efectivo_esperado).toFixed(2)}`, 44, 198);
-  doc.text(`Expected Card: $${Number(resumen.tarjeta_esperado).toFixed(2)}`, 220, 198);
+  doc.text(`Expected Cash: $${Number(resumen.efectivo_esperado || 0).toFixed(2)}`, 44, 198);
+  doc.text(`Expected Card: $${Number(resumen.tarjeta_esperado || 0).toFixed(2)}`, 220, 198);
   doc.text(
-    `Expected Transfer: $${Number(resumen.transferencia_esperado).toFixed(2)}`,
-    370,
-    198
+    `Expected Transfer: $${Number(resumen.transferencia_esperado || 0).toFixed(2)}`,
+    370, 198
   );
-  doc.text(`A/R in Period: $${Number(resumen.cxc_periodo).toFixed(2)}`, 44, 214);
+  doc.text(`A/R in Period: $${Number(resumen.cxc_periodo || 0).toFixed(2)}`, 44, 214);
 
+  // ===== Tabla Ventas =====
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
   doc.setFontSize(13);
@@ -475,7 +537,7 @@ function generarPDFCierreVan({
         : ventas.map((v) => [
             v.fecha?.slice(0, 10) || "-",
             v.cliente_nombre ||
-              (v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
+              (v.cliente_id ? v.cliente_id.slice(0, 8) : "No client"),
             "$" + Number(v.total_venta || 0).toFixed(2),
             "$" + Number(v._bk?.cash || 0).toFixed(2),
             "$" + Number(v._bk?.card || 0).toFixed(2),
@@ -488,28 +550,11 @@ function generarPDFCierreVan({
           ]),
     theme: "grid",
     headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
-    styles: { fontSize: 9, lineColor: "#e3f2fd", textColor: "#333" },
-    foot: [
-      [
-        "Totals",
-        "",
-        "$" + ventas.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2),
-        "$" + ventas.reduce((t, v) => t + Number(v._bk?.cash || 0), 0).toFixed(2),
-        "$" + ventas.reduce((t, v) => t + Number(v._bk?.card || 0), 0).toFixed(2),
-        "$" + ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2),
-        "$" + ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2),
-        "$" +
-          ventas
-            .reduce(
-              (t, v) => t + (Number(v.total_venta || 0) - Number(v.total_pagado || 0)),
-              0
-            )
-            .toFixed(2),
-      ],
-    ],
+    styles: { fontSize: 9 },
     margin: { left: 36, right: 36 },
   });
 
+  // ===== Tabla Pagos (Avances o pagosDecor) =====
   let yAbonos = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 260) + 20;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
@@ -533,7 +578,7 @@ function generarPDFCierreVan({
                 (Number(p._bk?.transfer || 0) > 0) >
               1;
             const method = hasMix
-              ? "mix"
+              ? "Mix"
               : Number(p._bk?.cash || 0) > 0
               ? "Cash"
               : Number(p._bk?.card || 0) > 0
@@ -542,9 +587,9 @@ function generarPDFCierreVan({
               ? "Transfer"
               : p.metodo_pago || "-";
             return [
-              p.fecha_pago?.slice(0, 10) || "-",
+              (p.fecha_pago || p.fecha || p.created_at || "").toString().slice(0,10) || "-",
               p.cliente_nombre ||
-                (p.cliente_id ? p.cliente_id.slice(0, 8) : NO_CLIENTE),
+                (p.cliente_id ? p.cliente_id.slice(0, 8) : "No client"),
               "$" + amount.toFixed(2),
               method,
               p.referencia || "-",
@@ -553,13 +598,52 @@ function generarPDFCierreVan({
           }),
     theme: "grid",
     headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
-    styles: { fontSize: 9, lineColor: "#F4F6FB", textColor: "#333" },
+    styles: { fontSize: 9 },
     margin: { left: 36, right: 36 },
   });
 
-  const nombreArchivo = `VanCloseout_${(vanNombre || vanIdShort || "")
+  // ===== Totales por método de pago =====
+  const totalCash = ventas.reduce((t, v) => t + Number(v._bk?.cash || 0), 0) + 
+                   pagos.reduce((t, p) => t + Number(p._bk?.cash || 0), 0);
+  const totalCard = ventas.reduce((t, v) => t + Number(v._bk?.card || 0), 0) + 
+                   pagos.reduce((t, p) => t + Number(p._bk?.card || 0), 0);
+  const totalTransfer = ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0) + 
+                      pagos.reduce((t, p) => t + Number(p._bk?.transfer || 0), 0);
+
+  let yTotales = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 260) + 20;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.setTextColor(azul);
+  doc.text("Payment Totals", 36, yTotales);
+
+  autoTable(doc, {
+    startY: yTotales + 10,
+    head: [["Payment Method", "Total"]],
+    body: [
+      ["Cash", "$" + totalCash.toFixed(2)],
+      ["Card", "$" + totalCard.toFixed(2)],
+      ["Transfer", "$" + totalTransfer.toFixed(2)],
+      ["Grand Total", "$" + (totalCash + totalCard + totalTransfer).toFixed(2)]
+    ],
+    theme: "grid",
+    headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
+    styles: { fontSize: 10 },
+    margin: { left: 36, right: 36 },
+  });
+
+  const nombreArchivo = `VanCloseout_${(vanNombre || "")
     .toString()
     .replace(/\s+/g, "")}_${fechaInicio}_${fechaFin}.pdf`;
+
+  if (mode === "print") {
+    doc.autoPrint();
+    const blobUrl = doc.output("bloburl");
+    const win = window.open(blobUrl, "_blank");
+    setTimeout(() => { try { win?.print?.(); } catch {} }, 400);
+    return;
+  }
+
+  // default: descargar
   doc.save(nombreArchivo);
 }
 
@@ -696,8 +780,12 @@ export default function CierreVan() {
 
   // Fechas disponibles
   const fechasPendientes = useFechasPendientes(van?.id);
+  const fechasCerradas = useFechasCerradas(van?.id);
   const hoy = new Date().toISOString().slice(0, 10);
   const [fechaSeleccionada, setFechaSeleccionada] = useState("");
+
+  // Información del cierre si ya existe
+  const cierreInfo = useCierreInfo(van?.id, fechaSeleccionada);
 
   useEffect(() => {
     if (fechasPendientes.length === 0) {
@@ -708,9 +796,14 @@ export default function CierreVan() {
     try {
       pref = localStorage.getItem("pre_cierre_fecha") || "";
     } catch {}
-    if (isIsoDate(pref) && fechasPendientes.includes(pref)) setFechaSeleccionada(pref);
-    else if (fechasPendientes.includes(hoy)) setFechaSeleccionada(hoy);
-    else setFechaSeleccionada(fechasPendientes[0]);
+    if (isIsoDate(pref) && fechasPendientes.includes(pref)) {
+      setFechaSeleccionada(pref);
+    } else if (fechasPendientes.includes(hoy)) {
+      setFechaSeleccionada(hoy);
+    } else {
+      // Buscar la primera fecha pendiente
+      setFechaSeleccionada(fechasPendientes[0]);
+    }
   }, [fechasPendientes, hoy]);
 
   const fechaInicio = fechaSeleccionada;
@@ -925,6 +1018,10 @@ const avances = useMemo(() => {
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  
+  // Estados para generación de PDF
+  const [generandoPDF, setGenerandoPDF] = useState(false);
+  const [pdfMode, setPdfMode] = useState("download"); // "download" o "print"
 
   async function guardarCierre(e) {
     if (e && e.preventDefault) e.preventDefault();
@@ -996,6 +1093,48 @@ const avances = useMemo(() => {
     navigate("/cierres");
   }
 
+  // Función para generar el PDF
+  const generarPDF = async () => {
+    setGenerandoPDF(true);
+    
+    try {
+      const resumen = {
+        efectivo_esperado: totalesEsperados.pago_efectivo,
+        tarjeta_esperado: totalesEsperados.pago_tarjeta,
+        transferencia_esperado: totalesEsperados.pago_transferencia,
+        cxc_periodo: cuentasCobrar,
+      };
+
+      // Si ya hay un cierre, usar su fecha de cierre
+      const fechaCierre = cierreInfo?.created_at ? toLocalYMD(cierreInfo.created_at) : null;
+
+      generarPDFCierreVan({
+        empresa: {
+          nombre: "TOOLS4CARE",
+          direccion: "108 Lafayette St, Salem, MA 01970",
+          telefono: "(978) 594-1624",
+          email: "tools4care@gmail.com",
+        },
+        usuario,
+        vanNombre: van?.nombre || van?.van_nombre || "",
+        ventas: ventasDecor,
+        pagos: avances,
+        resumen,
+        fechaInicio,
+        fechaFin,
+        fechaCierre,
+        mode: pdfMode,
+      });
+      
+      setMensaje(pdfMode === "print" ? "PDF generated for printing..." : "PDF generated successfully!");
+    } catch (error) {
+      setMensaje("Error generating PDF: " + error.message);
+    } finally {
+      setGenerandoPDF(false);
+      setTimeout(() => setMensaje(""), 3500);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
       <h2 className="font-bold text-xl mb-6 text-blue-900">Van Closeout</h2>
@@ -1007,6 +1146,7 @@ const avances = useMemo(() => {
           value={fechaSeleccionada}
           onChange={(e) => {
             const v = e.target.value;
+            // Permitir cambiar a cualquier fecha, incluso si está cerrada
             setFechaSeleccionada(v);
             try {
               localStorage.setItem("pre_cierre_fecha", v);
@@ -1017,12 +1157,21 @@ const avances = useMemo(() => {
             <option value="">No pending days</option>
           ) : (
             fechasPendientes.map((f) => (
-              <option value={f} key={f}>
-                {f}
+              <option 
+                value={f} 
+                key={f}
+                disabled={fechasCerradas.includes(f)}
+              >
+                {f} {fechasCerradas.includes(f) ? "(Closed)" : ""}
               </option>
             ))
           )}
         </select>
+        {cierreInfo && (
+          <div className="mt-1 text-sm text-red-600">
+            This date has already been closed on {toLocalYMD(cierreInfo.created_at)}
+          </div>
+        )}
       </div>
 
       
@@ -1036,7 +1185,7 @@ const avances = useMemo(() => {
       <>
         <p className="text-xs text-gray-500 mb-1">
           Only customer advances not tied to a sale are listed below.
-          Payments captured inside a sale are summarized in that sale’s row.
+          Payments captured inside a sale are summarized in that sale's row.
         </p>
         <TablaAbonosPendientes pagos={avances} />
       </>
@@ -1083,6 +1232,7 @@ const avances = useMemo(() => {
                   setReales((r) => ({ ...r, [campo]: e.target.value }))
                 }
                 required
+                disabled={cierreInfo !== null}
               />
               {campo === "pago_efectivo" && (
                 <button
@@ -1090,6 +1240,7 @@ const avances = useMemo(() => {
                   className="bg-blue-100 px-3 py-2 rounded text-xs font-bold text-blue-900 border border-blue-200"
                   onClick={() => setOpenDesglose(true)}
                   tabIndex={-1}
+                  disabled={cierreInfo !== null}
                 >
                   Breakdown
                 </button>
@@ -1111,12 +1262,52 @@ const avances = useMemo(() => {
             className="border p-2 w-full"
             value={comentario}
             onChange={(e) => setComentario(e.target.value)}
+            disabled={cierreInfo !== null}
           />
         </div>
+        
+        {/* Opciones de PDF */}
+        <div className="mb-4 p-3 bg-gray-50 rounded">
+          <h3 className="font-bold text-blue-800 mb-2">PDF Report Options</h3>
+          <div className="flex items-center mb-2">
+            <input
+              type="radio"
+              id="pdf-download"
+              name="pdf-mode"
+              value="download"
+              checked={pdfMode === "download"}
+              onChange={() => setPdfMode("download")}
+              className="mr-2"
+              // Permitir seleccionar aunque esté cerrado
+            />
+            <label htmlFor="pdf-download" className="mr-4">Download PDF</label>
+            <input
+              type="radio"
+              id="pdf-print"
+              name="pdf-mode"
+              value="print"
+              checked={pdfMode === "print"}
+              onChange={() => setPdfMode("print")}
+              className="mr-2"
+              // Permitir seleccionar aunque esté cerrado
+            />
+            <label htmlFor="pdf-print">Print PDF</label>
+          </div>
+          <button
+            type="button"
+            className="bg-green-700 text-white px-4 py-2 rounded font-bold w-full"
+            onClick={generarPDF}
+            disabled={generandoPDF}
+            // Permitir generar PDF aunque esté cerrado
+          >
+            {generandoPDF ? "Generating PDF..." : "Generate PDF Report"}
+          </button>
+        </div>
+        
         <button
           type="submit"
           className="bg-blue-700 text-white px-4 py-2 rounded font-bold w-full"
-          disabled={guardando || ventasDecor.length + pagosDecor.length === 0}
+          disabled={guardando || ventasDecor.length + pagosDecor.length === 0 || cierreInfo !== null}
         >
           {guardando ? "Saving..." : "Register Closeout"}
         </button>
