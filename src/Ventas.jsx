@@ -528,9 +528,10 @@ function composeReceiptMessageEN(payload) {
     lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
   }
   lines.push("");
-  lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
-  return lines.join("\n");
-}// src/Ventas.jsx - PARTE 2 DE 4 (Componente Principal, Estados y useEffects)
+    lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
+   return lines.join("\n");
+}
+ // src/Ventas.jsx - PARTE 2 DE 4 (Componente Principal, Estados y useEffects) - CORREGIDA
 
 /* ========================= Componente Principal ========================= */
 export default function Sales() {
@@ -551,6 +552,7 @@ export default function Sales() {
   const [topProducts, setTopProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [allProductsLoading, setAllProductsLoading] = useState(false);
+  const [productsLoaded, setProductsLoaded] = useState(false); // ✅ SOLO UNA VEZ
   const [productError, setProductError] = useState("");
   const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState("");
@@ -571,6 +573,8 @@ export default function Sales() {
     pagos: 0,
     loading: false,
   });
+// === Dirección: detección de forma (JSON vs texto) ===
+const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
 
   // ---- CxC de cliente actual
   const [cxcLimit, setCxcLimit] = useState(null);
@@ -588,7 +592,7 @@ export default function Sales() {
   const [invTick, setInvTick] = useState(0);
   const reloadInventory = () => setInvTick(n => n + 1);
 
-  // ---- 🆕 STRIPE QR Estados ----
+  // ---- STRIPE QR Estados
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrCodeData, setQRCodeData] = useState(null);
   const [qrPaymentIntent, setQRPaymentIntent] = useState(null);
@@ -597,13 +601,19 @@ export default function Sales() {
   const [qrPollingActive, setQRPollingActive] = useState(false);
   const qrPollingIntervalRef = useRef(null);
 
-  // ---- 🆕 ESTADOS PARA DASHBOARD Y CLIENTES RECIENTES ----
+  // ---- DASHBOARD Y CLIENTES RECIENTES
   const [recentClients, setRecentClients] = useState([]);
   const [todayStats, setTodayStats] = useState({
     sales: 0,
     clients: 0,
     total: 0
   });
+
+  // ---- 🆕 CACHE DE BÚSQUEDA DE CLIENTES
+  const [clientCache, setClientCache] = useState(new Map());
+
+  // ---- 🆕 AUTO-FILL PAYMENT
+  const [paymentAutoFilled, setPaymentAutoFilled] = useState(false);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
@@ -616,7 +626,7 @@ export default function Sales() {
     setPendingSales(readPendingLS());
   }, []);
 
-  /* ---------- 🆕 CARGAR CLIENTES RECIENTES ---------- */
+  /* ---------- CARGAR CLIENTES RECIENTES ---------- */
   useEffect(() => {
     async function loadRecentClients() {
       if (!van?.id) return;
@@ -654,7 +664,7 @@ export default function Sales() {
     loadRecentClients();
   }, [van?.id]);
 
-  /* ---------- 🆕 CARGAR ESTADÍSTICAS DEL DÍA ---------- */
+  /* ---------- CARGAR ESTADÍSTICAS DEL DÍA ---------- */
   useEffect(() => {
     async function loadTodayStats() {
       if (!van?.id) return;
@@ -680,90 +690,222 @@ export default function Sales() {
     
     loadTodayStats();
   }, [van?.id]);
+useEffect(() => {
+  // Se ejecuta SOLO una vez para detectar si `direccion` viene como JSON o texto.
+  async function probeAddressShape() {
+    try {
+      // Trae poquitas filas para inspeccionar
+      const { data } = await supabase
+        .from("clientes_balance")
+        .select("direccion")
+        .limit(5);
 
-  /* ---------- CLIENTES (búsqueda + saldo real) ---------- */
-  useEffect(() => {
-    async function loadClients() {
-      const term = debouncedClientSearch;
-      if (!term) {
-        setClients([]);
-        return;
+      if (!data || data.length === 0) return;
+
+      let jsonCount = 0;
+      let textCount = 0;
+      const keys = new Set();
+
+      for (const row of data) {
+        const v = row?.direccion;
+        if (v == null) continue;
+
+        // 1) ¿Es objeto JSON?
+        if (typeof v === "object") {
+          jsonCount++;
+          ["calle", "ciudad", "estado", "zip"].forEach(k => {
+            if (v[k] != null) keys.add(k);
+          });
+          continue;
+        }
+
+        // 2) ¿Es string con JSON?
+        if (typeof v === "string") {
+          const s = v.trim();
+          if (s.startsWith("{") && s.endsWith("}")) {
+            try {
+              const obj = JSON.parse(s);
+              if (obj && typeof obj === "object") {
+                jsonCount++;
+                ["calle", "ciudad", "estado", "zip"].forEach(k => {
+                  if (obj[k] != null) keys.add(k);
+                });
+                continue;
+              }
+            } catch {}
+          }
+          // 3) Si no, lo contamos como texto plano
+          textCount++;
+        }
       }
-      setClientLoading(true);
-      try {
-        // ✅ BÚSQUEDA COMPLETA (incluye direccion)
-        const orParts = [
-          `nombre.ilike.%${term}%`,
-          `apellido.ilike.%${term}%`,
-          `negocio.ilike.%${term}%`,
-          `telefono.ilike.%${term}%`,
-          `email.ilike.%${term}%`,
-          `direccion.ilike.%${term}%`,
-        ].join(",");
 
-        let { data: baseData, error: e1 } = await supabase
-          .from("clientes_balance")
-          .select("*")
-          .or(orParts);
-
-        if (e1) {
-          const fallbackOr = [
-            `nombre.ilike.%${term}%`,
-            `negocio.ilike.%${term}%`,
-            `telefono.ilike.%${term}%`,
-            `email.ilike.%${term}%`,
-            `direccion.ilike.%${term}%`,
-          ].join(",");
-          const r2 = await supabase.from("clientes_balance").select("*").or(fallbackOr);
-          baseData = r2.data || [];
-        }
-
-        // BÚSQUEDA POR NOMBRE + APELLIDO (tokens)
-        const tokens = term.split(/\s+/).filter(Boolean);
-        let andData = [];
-        if (tokens.length >= 2) {
-          const first = tokens[0];
-          const rest = tokens.slice(1).join(" ");
-          const { data: dAnd } = await supabase
-            .from("clientes_balance")
-            .select("*")
-            .ilike("nombre", `%${first}%`)
-            .ilike("apellido", `%${rest}%`);
-          andData = dAnd || [];
-        }
-
-        // COMBINAR RESULTADOS (eliminar duplicados)
-        const byId = new Map();
-        for (const x of [...(baseData || []), ...andData]) {
-          byId.set(x.id, x);
-        }
-        const merged = Array.from(byId.values());
-
-        // ENRIQUECER CON SALDO REAL (CxC)
-        const ids = merged.map((c) => c.id).filter(Boolean);
-        let enriched = merged;
-        if (ids.length > 0) {
-          const { data: cxcRows } = await supabase
-            .from("v_cxc_cliente_detalle")
-            .select("cliente_id, saldo")
-            .in("cliente_id", ids);
-          const map = new Map((cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)]));
-          enriched = merged.map((c) => ({
-            ...c,
-            _saldo_real: map.has(c.id) ? map.get(c.id) : Number(c.balance || 0),
-          }));
-        }
-
-        setClients(enriched);
-      } catch (err) {
-        console.error("Error searching clients:", err);
-        setClients([]);
-      } finally {
-        setClientLoading(false);
+      if (jsonCount > textCount) {
+        setAddrSpec({ type: "json", fields: Array.from(keys) });
+      } else if (textCount > 0) {
+        setAddrSpec({ type: "text", fields: [] });
+      } else {
+        setAddrSpec({ type: "unknown", fields: [] });
       }
+    } catch (e) {
+      console.warn("No se pudo sondear `direccion`:", e?.message || e);
+      setAddrSpec({ type: "unknown", fields: [] });
     }
-    loadClients();
-  }, [debouncedClientSearch]);
+  }
+
+  probeAddressShape();
+}, []);
+
+/* ---------- 🆕 CLIENTES (búsqueda OPTIMIZADA con CACHE y fallback 42703) ---------- */
+useEffect(() => {
+  async function loadClients() {
+    const term = String(debouncedClientSearch || "").trim();
+
+    // evita llamadas vacías
+    if (term.length < 2) {
+      setClients([]);
+      return;
+    }
+
+    // cache primero
+    if (clientCache.has(term)) {
+      setClients(clientCache.get(term));
+      return;
+    }
+
+    setClientLoading(true);
+    try {
+      // ⚠️ quitar caracteres que rompen el or= (coma, paréntesis, %)
+      const safe = term.replace(/[(),%]/g, "").slice(0, 80);
+
+      // --- intento 1: con apellido (si existe en tu vista)
+      const primaryFields = ["nombre", "apellido", "negocio", "telefono", "email"];
+      const primaryCols =
+        "id,nombre,apellido,negocio,telefono,email,direccion,balance";
+      const primaryOr = primaryFields.map(f => `${f}.ilike.%${safe}%`).join(",");
+
+      let baseData = [];
+      let needFallbackNoApellido = false;
+
+      let { data: d1, error: e1 } = await supabase
+        .from("clientes_balance")
+        .select(primaryCols)
+        .or(primaryOr)
+        .limit(20);
+
+      if (e1) {
+        // Si la vista no tiene 'apellido' (42703) reintentamos sin ese campo
+        if (e1.code === "42703") {
+          needFallbackNoApellido = true;
+        } else {
+          console.warn("OR principal falló:", e1);
+        }
+      } else {
+        baseData = d1 || [];
+      }
+
+      // --- fallback: sin apellido (lo quita del select y del OR)
+      if (needFallbackNoApellido || baseData.length === 0) {
+        const fbFields = ["nombre", "negocio", "telefono", "email"];
+        const fbCols = "id,nombre,negocio,telefono,email,direccion,balance";
+        const fbOr = fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
+
+        const { data: d2, error: e2 } = await supabase
+          .from("clientes_balance")
+          .select(fbCols)
+          .or(fbOr)
+          .limit(20);
+
+        if (e2) {
+          console.warn("Fallback OR sin apellido también falló:", e2);
+        } else {
+          baseData = d2 || baseData;
+        }
+      }
+
+      // --- búsqueda adicional: nombre + apellido por tokens (funciona aunque la vista no tenga 'apellido'; solo se aplica si tenemos ambas palabras)
+      let andData = [];
+      const tokens = safe.split(/\s+/).filter(Boolean);
+      if (tokens.length >= 2) {
+        const first = tokens[0];
+        const rest = tokens.slice(1).join(" ");
+
+        // Si tu vista no expone 'apellido', esta parte podría fallar.
+        // La envolvemos en try/catch y, si da 42703, la ignoramos.
+        try {
+          const { data: dAnd, error: eAnd } = await supabase
+            .from("clientes_balance")
+            .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
+            .ilike("nombre", `%${first}%`)
+            .ilike("apellido", `%${rest}%`)
+            .limit(10);
+
+          if (eAnd) {
+            if (eAnd.code !== "42703") console.warn("AND nombre+apellido falló:", eAnd);
+          } else {
+            andData = dAnd || [];
+          }
+        } catch (e) {
+          // ignora si no existe 'apellido' en esta vista
+        }
+      }
+
+      // --- merge único por id
+      const byId = new Map();
+      for (const row of [...(baseData || []), ...andData]) {
+        if (row && row.id != null) byId.set(row.id, row);
+      }
+      const merged = Array.from(byId.values());
+
+      // --- enriquecer con saldo real cuando hay pocos (rápido)
+const ids = merged.map((c) => c.id).filter(Boolean);
+let enriched = merged;
+
+if (ids.length > 0 && ids.length <= 10) {
+  const { data: cxcRows, error: eCx } = await supabase
+    .from("v_cxc_cliente_detalle")
+    .select("cliente_id,saldo")
+    .in("cliente_id", ids);
+
+  if (eCx) console.warn("Enriquecimiento saldo falló:", eCx);
+
+  const saldoMap = new Map(
+    (cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)])
+  );
+
+  enriched = merged.map((c) => ({
+    ...c,
+    _saldo_real: saldoMap.has(c.id)
+      ? saldoMap.get(c.id)
+      : Number(c.balance || 0),
+  }));
+} else {
+  enriched = merged.map((c) => ({
+    ...c,
+    _saldo_real: Number(c.balance || 0),
+  }));
+}
+
+// --- cache (LRU simple)
+setClientCache((prev) => {
+  const next = new Map(prev);
+  next.set(term, enriched);
+  if (next.size > 12) next.delete(next.keys().next().value);
+  return next;
+});
+
+setClients(enriched);
+} catch (err) {
+  console.error("Error searching clients:", err);
+  setClients([]);
+} finally {
+  setClientLoading(false);
+}
+}
+
+loadClients();
+}, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length]);
+
+
 
   /* ---------- Historial al seleccionar cliente ---------- */
   useEffect(() => {
@@ -1033,8 +1175,18 @@ export default function Sales() {
     loadTopProducts();
   }, [van?.id, invTick]);
 
-  /* ---------- INVENTARIO COMPLETO para búsqueda ---------- */
+  /* ---------- 🆕 INVENTARIO COMPLETO - LAZY LOADING ---------- */
   useEffect(() => {
+    if (productSearch.trim().length === 0) {
+      setAllProductsLoading(false);
+      setProductsLoaded(false);
+      return;
+    }
+
+    if (productsLoaded && allProducts.length > 0) {
+      return;
+    }
+
     async function loadAllProducts() {
       setAllProducts([]);
       setAllProductsLoading(true);
@@ -1043,12 +1195,11 @@ export default function Sales() {
       try {
         const { data, error } = await supabase
           .from("stock_van")
-          .select(
-            "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca)"
-          )
+          .select("producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca)")
           .eq("van_id", van.id)
           .gt("cantidad", 0)
-          .order("nombre", { ascending: true, foreignTable: "productos" });
+          .order("nombre", { ascending: true, foreignTable: "productos" })
+          .limit(100);
 
         if (error) throw error;
 
@@ -1060,74 +1211,29 @@ export default function Sales() {
             nombre: row.productos?.nombre,
             precio: Number(row.productos?.precio) || 0,
             codigo: row.productos?.codigo,
-            descuento_pct: row.productos?.descuento_pct ?? null,
-            bulk_min_qty: row.productos?.bulk_min_qty ?? null,
-            bulk_unit_price: row.productos?.bulk_unit_price ?? null,
             marca: row.productos?.marca ?? "",
           },
         }));
+        
         setAllProducts(rows);
+        setProductsLoaded(true);
         setAllProductsLoading(false);
         return;
       } catch (err) {
-        console.warn("Inventario completo (join) falló. Fallback a 2 pasos.", err?.message || err);
-      }
-
-      try {
-        const { data: stock, error: e1 } = await supabase
-          .from("stock_van")
-          .select("producto_id,cantidad")
-          .eq("van_id", van.id)
-          .gt("cantidad", 0);
-        if (e1) throw e1;
-
-        const ids = (stock || []).map((r) => r.producto_id);
-        if (ids.length === 0) {
-          setAllProducts([]);
-          setAllProductsLoading(false);
-          return;
-        }
-
-        const { data: prods, error: e2 } = await supabase
-          .from("productos")
-          .select("id,nombre,precio,codigo,descuento_pct,bulk_min_qty,bulk_unit_price,marca")
-          .in("id", ids);
-        if (e2) throw e2;
-
-        const map = new Map((prods || []).map((p) => [p.id, p]));
-        const rows = (stock || []).map((s) => {
-          const p = map.get(s.producto_id) || {};
-          return {
-            producto_id: s.producto_id,
-            cantidad: Number(s.cantidad) || 0,
-            productos: {
-              id: p.id,
-              nombre: p.nombre,
-              precio: Number(p.precio) || 0,
-              codigo: p.codigo,
-              descuento_pct: p.descuento_pct ?? null,
-              bulk_min_qty: p.bulk_min_qty ?? null,
-              bulk_unit_price: p.bulk_unit_price ?? null,
-              marca: p.marca ?? "",
-            },
-          };
-        });
-
-        rows.sort((a, b) =>
-          String(a.productos?.nombre || "").localeCompare(String(b.productos?.nombre || ""))
-        );
-
-        setAllProducts(rows);
-      } catch (err2) {
-        console.error("Inventario completo (2 pasos) falló:", err2?.message || err2);
+        console.warn("Inventario completo falló:", err?.message || err);
         setAllProducts([]);
+        setProductsLoaded(false);
       } finally {
         setAllProductsLoading(false);
       }
     }
 
-    loadAllProducts();
-  }, [van?.id, invTick]);
+    const timer = setTimeout(() => {
+      loadAllProducts();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [van?.id, productSearch, invTick, productsLoaded, allProducts.length]);
 
   useEffect(() => {
     if (step === 2) reloadInventory();
@@ -1224,6 +1330,28 @@ export default function Sales() {
     }
   }, [selectedClient, cartSafe, payments, notes, step]);
 
+  /* ---------- 🆕 AUTO-FILL del monto de pago con el total a pagar ---------- */
+  useEffect(() => {
+    if (
+      step === 3 && 
+      totalAPagar > 0 && 
+      !paymentAutoFilled && 
+      payments.length === 1 && 
+      Number(payments[0].monto) === 0
+    ) {
+      setPayments([{ ...payments[0], monto: totalAPagar }]);
+      setPaymentAutoFilled(true);
+    }
+
+    if (step !== 3 && paymentAutoFilled) {
+      setPaymentAutoFilled(false);
+    }
+
+    if (step === 3 && paymentAutoFilled && payments.length > 1) {
+      setPaymentAutoFilled(false);
+    }
+  }, [step, totalAPagar, payments, paymentAutoFilled]);
+
   /* ========== LIMPIAR POLLING AL DESMONTAR ========== */
   useEffect(() => {
     return () => {
@@ -1231,8 +1359,7 @@ export default function Sales() {
         clearInterval(qrPollingIntervalRef.current);
       }
     };
-  }, []);// src/Ventas.jsx - PARTE 3 DE 4 (Stripe QR Functions, Handlers y saveSale)
-
+  }, []);
   /* ========== STRIPE QR FUNCTIONS ========== */
 
   // 📱 Genera QR para pago con Stripe
