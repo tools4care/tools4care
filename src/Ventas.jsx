@@ -755,7 +755,8 @@ useEffect(() => {
   probeAddressShape();
 }, []);
 
-/* ---------- 🆕 CLIENTES (búsqueda OPTIMIZADA con CACHE y fallback 42703) ---------- */
+
+/* ---------- 🆕 CLIENTES (búsqueda OPTIMIZADA con CACHE, dirección y fallback 42703) ---------- */
 useEffect(() => {
   async function loadClients() {
     const term = String(debouncedClientSearch || "").trim();
@@ -777,10 +778,19 @@ useEffect(() => {
       // ⚠️ quitar caracteres que rompen el or= (coma, paréntesis, %)
       const safe = term.replace(/[(),%]/g, "").slice(0, 80);
 
-      // --- intento 1: con apellido (si existe en tu vista)
-      const primaryFields = ["nombre", "apellido", "negocio", "telefono", "email"];
-      const primaryCols =
-        "id,nombre,apellido,negocio,telefono,email,direccion,balance";
+      // --- CONSTRUCCIÓN DINÁMICA DE CAMPOS SEGÚN TIPO DE DIRECCIÓN ---
+      let primaryFields = ["nombre", "apellido", "negocio", "telefono", "email"];
+      let primaryCols = "id,nombre,apellido,negocio,telefono,email,direccion,balance";
+      
+      // Si la dirección es texto plano, agregar al OR
+      if (addrSpec.type === "text") {
+        primaryFields.push("direccion");
+      }
+      
+      // Si la dirección es JSON, intentar buscar en sub-campos
+      // Nota: Supabase no permite buscar dentro de JSON con OR directo,
+      // así que haremos búsquedas separadas después
+      
       const primaryOr = primaryFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
       let baseData = [];
@@ -805,7 +815,11 @@ useEffect(() => {
 
       // --- fallback: sin apellido (lo quita del select y del OR)
       if (needFallbackNoApellido || baseData.length === 0) {
-        const fbFields = ["nombre", "negocio", "telefono", "email"];
+        let fbFields = ["nombre", "negocio", "telefono", "email"];
+        if (addrSpec.type === "text") {
+          fbFields.push("direccion");
+        }
+        
         const fbCols = "id,nombre,negocio,telefono,email,direccion,balance";
         const fbOr = fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
@@ -822,15 +836,56 @@ useEffect(() => {
         }
       }
 
-      // --- búsqueda adicional: nombre + apellido por tokens (funciona aunque la vista no tenga 'apellido'; solo se aplica si tenemos ambas palabras)
+      // --- 🆕 BÚSQUEDA ADICIONAL EN DIRECCIÓN JSON ---
+      let jsonAddressData = [];
+      if (addrSpec.type === "json" && addrSpec.fields.length > 0) {
+        // Para direcciones JSON, hacemos una búsqueda más amplia y filtramos en memoria
+        try {
+          const { data: allData, error: eAll } = await supabase
+            .from("clientes_balance")
+            .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
+            .not("direccion", "is", null)
+            .limit(100); // Límite más alto para filtrar después
+
+          if (!eAll && allData) {
+            // Filtrar en memoria por dirección JSON
+            jsonAddressData = allData.filter(client => {
+              if (!client.direccion) return false;
+              
+              let addr = client.direccion;
+              
+              // Si viene como string JSON, parsearlo
+              if (typeof addr === "string") {
+                try {
+                  addr = JSON.parse(addr);
+                } catch {
+                  return false;
+                }
+              }
+              
+              // Si no es objeto, no buscar
+              if (typeof addr !== "object") return false;
+              
+              // Buscar en los campos de dirección
+              const searchLower = safe.toLowerCase();
+              return addrSpec.fields.some(field => {
+                const value = String(addr[field] || "").toLowerCase();
+                return value.includes(searchLower);
+              });
+            });
+          }
+        } catch (e) {
+          console.warn("Búsqueda en dirección JSON falló:", e);
+        }
+      }
+
+      // --- búsqueda adicional: nombre + apellido por tokens
       let andData = [];
       const tokens = safe.split(/\s+/).filter(Boolean);
       if (tokens.length >= 2) {
         const first = tokens[0];
         const rest = tokens.slice(1).join(" ");
 
-        // Si tu vista no expone 'apellido', esta parte podría fallar.
-        // La envolvemos en try/catch y, si da 42703, la ignoramos.
         try {
           const { data: dAnd, error: eAnd } = await supabase
             .from("clientes_balance")
@@ -851,62 +906,59 @@ useEffect(() => {
 
       // --- merge único por id
       const byId = new Map();
-      for (const row of [...(baseData || []), ...andData]) {
+      for (const row of [...(baseData || []), ...andData, ...jsonAddressData]) {
         if (row && row.id != null) byId.set(row.id, row);
       }
       const merged = Array.from(byId.values());
 
       // --- enriquecer con saldo real cuando hay pocos (rápido)
-const ids = merged.map((c) => c.id).filter(Boolean);
-let enriched = merged;
+      const ids = merged.map((c) => c.id).filter(Boolean);
+      let enriched = merged;
 
-if (ids.length > 0 && ids.length <= 10) {
-  const { data: cxcRows, error: eCx } = await supabase
-    .from("v_cxc_cliente_detalle")
-    .select("cliente_id,saldo")
-    .in("cliente_id", ids);
+      if (ids.length > 0 && ids.length <= 10) {
+        const { data: cxcRows, error: eCx } = await supabase
+          .from("v_cxc_cliente_detalle")
+          .select("cliente_id,saldo")
+          .in("cliente_id", ids);
 
-  if (eCx) console.warn("Enriquecimiento saldo falló:", eCx);
+        if (eCx) console.warn("Enriquecimiento saldo falló:", eCx);
 
-  const saldoMap = new Map(
-    (cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)])
-  );
+        const saldoMap = new Map(
+          (cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)])
+        );
 
-  enriched = merged.map((c) => ({
-    ...c,
-    _saldo_real: saldoMap.has(c.id)
-      ? saldoMap.get(c.id)
-      : Number(c.balance || 0),
-  }));
-} else {
-  enriched = merged.map((c) => ({
-    ...c,
-    _saldo_real: Number(c.balance || 0),
-  }));
-}
+        enriched = merged.map((c) => ({
+          ...c,
+          _saldo_real: saldoMap.has(c.id)
+            ? saldoMap.get(c.id)
+            : Number(c.balance || 0),
+        }));
+      } else {
+        enriched = merged.map((c) => ({
+          ...c,
+          _saldo_real: Number(c.balance || 0),
+        }));
+      }
 
-// --- cache (LRU simple)
-setClientCache((prev) => {
-  const next = new Map(prev);
-  next.set(term, enriched);
-  if (next.size > 12) next.delete(next.keys().next().value);
-  return next;
-});
+      // --- cache (LRU simple)
+      setClientCache((prev) => {
+        const next = new Map(prev);
+        next.set(term, enriched);
+        if (next.size > 12) next.delete(next.keys().next().value);
+        return next;
+      });
 
-setClients(enriched);
-} catch (err) {
-  console.error("Error searching clients:", err);
-  setClients([]);
-} finally {
-  setClientLoading(false);
-}
-}
+      setClients(enriched);
+    } catch (err) {
+      console.error("Error searching clients:", err);
+      setClients([]);
+    } finally {
+      setClientLoading(false);
+    }
+  }
 
-loadClients();
+  loadClients();
 }, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length]);
-
-
-
   /* ---------- Historial al seleccionar cliente ---------- */
   useEffect(() => {
     async function fetchHistory() {
