@@ -1,4 +1,3 @@
-// src/Productos.jsx
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -84,11 +83,11 @@ function CrearSuplidor({ onCreate }) {
   }
 
   return (
-    <div className="p-2 bg-gray-50 rounded mt-2" onKeyDown={preventEnterSubmit}>
+    <div className="p-2 sm:p-4 bg-gray-50 rounded mt-2" onKeyDown={preventEnterSubmit}>
       {["nombre", "contacto", "telefono", "direccion", "email"].map((f) => (
         <input
           key={f}
-          className="border rounded p-2 w-full mb-1"
+          className="border rounded p-2 w-full mb-2 sm:mb-1"
           placeholder={f.charAt(0).toUpperCase() + f.slice(1)}
           value={form[f]}
           onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
@@ -96,41 +95,45 @@ function CrearSuplidor({ onCreate }) {
         />
       ))}
 
-      <div className="mt-2">
-        <button type="button" className="text-xs text-blue-700" onClick={() => setFinanzasOpen((v) => !v)}>
+      <div className="mt-2 sm:mt-3">
+        <button 
+          type="button" 
+          className="text-xs sm:text-sm text-blue-700 w-full text-left sm:text-center" 
+          onClick={() => setFinanzasOpen((v) => !v)}
+        >
           {finanzasOpen ? "Ocultar" : "+ Deuda u Orden con este suplidor (opcional)"}
         </button>
 
         {finanzasOpen && (
-          <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-            <div className="border rounded p-2">
-              <b className="text-sm">Deuda / CXP</b>
-              <div className="mt-1">
-                <label className="text-xs">Monto</label>
+          <div className="mt-2 sm:mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-2">
+            <div className="border rounded p-2 sm:p-3">
+              <b className="text-sm sm:text-base">Deuda / CXP</b>
+              <div className="mt-1 sm:mt-2">
+                <label className="text-xs sm:text-sm">Monto</label>
                 <input className="border rounded p-2 w-full" type="number" step="0.01" min="0" value={cxpMonto} onChange={(e) => setCxpMonto(e.target.value)} />
               </div>
-              <div className="mt-1">
-                <label className="text-xs">Fecha</label>
+              <div className="mt-1 sm:mt-2">
+                <label className="text-xs sm:text-sm">Fecha</label>
                 <input className="border rounded p-2 w-full" type="date" value={cxpFecha} onChange={(e) => setCxpFecha(e.target.value)} />
               </div>
-              <div className="mt-1">
-                <label className="text-xs">Notas</label>
+              <div className="mt-1 sm:mt-2">
+                <label className="text-xs sm:text-sm">Notas</label>
                 <input className="border rounded p-2 w-full" value={cxpNotas} onChange={(e) => setCxpNotas(e.target.value)} />
               </div>
             </div>
 
-            <div className="border rounded p-2">
-              <b className="text-sm">Orden de compra</b>
-              <div className="mt-1">
-                <label className="text-xs">Total</label>
+            <div className="border rounded p-2 sm:p-3">
+              <b className="text-sm sm:text-base">Orden de compra</b>
+              <div className="mt-1 sm:mt-2">
+                <label className="text-xs sm:text-sm">Total</label>
                 <input className="border rounded p-2 w-full" type="number" step="0.01" min="0" value={ocMonto} onChange={(e) => setOcMonto(e.target.value)} />
               </div>
-              <div className="mt-1">
-                <label className="text-xs">Fecha</label>
+              <div className="mt-1 sm:mt-2">
+                <label className="text-xs sm:text-sm">Fecha</label>
                 <input className="border rounded p-2 w-full" type="date" value={ocFecha} onChange={(e) => setOcFecha(e.target.value)} />
               </div>
-              <div className="mt-1">
-                <label className="text-xs">Notas</label>
+              <div className="mt-1 sm:mt-2">
+                <label className="text-xs sm:text-sm">Notas</label>
                 <input className="border rounded p-2 w-full" value={ocNotas} onChange={(e) => setOcNotas(e.target.value)} />
               </div>
             </div>
@@ -138,10 +141,15 @@ function CrearSuplidor({ onCreate }) {
         )}
       </div>
 
-      {err && <div className="text-red-600 text-xs mt-1">{err}</div>}
+      {err && <div className="text-red-600 text-xs sm:text-sm mt-2 sm:mt-1">{err}</div>}
 
-      <button type="button" className="bg-green-600 text-white rounded px-3 py-1 mt-2 w-full disabled:opacity-50" onClick={guardarSuplidor} disabled={cargando}>
-        Save supplier
+      <button 
+        type="button" 
+        className="bg-green-600 text-white rounded px-3 py-2 sm:py-1 mt-2 sm:mt-3 w-full sm:w-auto sm:px-5 disabled:opacity-50 text-sm sm:text-base" 
+        onClick={guardarSuplidor} 
+        disabled={cargando}
+      >
+        {cargando ? "Guardando..." : "Save supplier"}
       </button>
     </div>
   );
@@ -155,7 +163,7 @@ function BuscadorSuplidor({ value, name, onChange, disabled }) {
   const [hl, setHl] = useState(-1);
   useEffect(() => setHl(-1), [busqueda, suplidores.length]);
   useEffect(() => {
-    if (hl >= 0) document.getElementById(`sup-opt-${hl}`)?.scrollIntoView({ block: "nearest" });
+    if (hl >= 0) document.getElementById(`sup-opt-${hl}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [hl]);
 
   useEffect(() => {
@@ -230,7 +238,12 @@ function BuscadorSuplidor({ value, name, onChange, disabled }) {
           </div>
         ))}
       </div>
-      <button type="button" className="text-xs text-blue-700 mt-1" onClick={() => setShowCrear(!showCrear)} disabled={disabled}>
+      <button 
+        type="button" 
+        className="text-xs sm:text-sm text-blue-700 mt-1 w-full text-left sm:text-center" 
+        onClick={() => setShowCrear(!showCrear)} 
+        disabled={disabled}
+      >
         {showCrear ? "Cancel" : "+ New supplier"}
       </button>
       {showCrear && (
@@ -347,7 +360,7 @@ function PestañaVentas({ productoId, nombre }) {
 
   return (
     <div>
-      <h3 className="font-bold text-blue-900 mb-4">Sales for "{nombre}"</h3>
+      <h3 className="font-bold text-blue-900 mb-4 text-sm sm:text-base">Sales for "{nombre}"</h3>
 
       <div className="border-2 border-dashed border-blue-200 rounded-lg p-3 min-h-[160px] flex items-center justify-center">
         {ventasMes.length === 0 ? (
@@ -368,8 +381,8 @@ function PestañaVentas({ productoId, nombre }) {
       </div>
 
       <div className="my-4">
-        <label className="font-bold">Select month:</label>
-        <select className="border rounded p-2 ml-2" value={mesSeleccionado} onChange={(e) => setMesSeleccionado(e.target.value)}>
+        <label className="font-bold text-sm sm:text-base">Select month:</label>
+        <select className="border rounded p-2 ml-2 w-full sm:w-auto" value={mesSeleccionado} onChange={(e) => setMesSeleccionado(e.target.value)}>
           {meses.map((m) => (
             <option key={m} value={m}>
               {m}
@@ -379,29 +392,29 @@ function PestañaVentas({ productoId, nombre }) {
       </div>
 
       <div className="border rounded-lg">
-        <div className="px-3 py-2 font-bold bg-gray-50 border-b">Invoices for {mesSeleccionado}</div>
+        <div className="px-3 py-2 font-bold bg-gray-50 border-b text-sm sm:text-base">Invoices for {mesSeleccionado}</div>
         {loading ? (
           <div className="p-3 text-blue-600">Loading...</div>
         ) : facturas.length === 0 ? (
           <div className="p-3 text-gray-500">No invoices for this month.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-xs sm:text-sm">
               <thead>
                 <tr className="bg-blue-100">
-                  <th className="border px-2 py-1">Invoice ID</th>
-                  <th className="border px-2 py-1">Date</th>
-                  <th className="border px-2 py-1">Client</th>
-                  <th className="border px-2 py-1">Quantity</th>
+                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Invoice ID</th>
+                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Date</th>
+                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Client</th>
+                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Quantity</th>
                 </tr>
               </thead>
               <tbody>
                 {facturas.map((f) => (
                   <tr key={f.venta_id + "-" + (f.fecha || "")} className="border-b">
-                    <td className="border px-2 py-1 font-mono">{f.venta_id}</td>
-                    <td className="border px-2 py-1">{(f.fecha || "").slice(0, 10)}</td>
-                    <td className="border px-2 py-1">{f.cliente}</td>
-                    <td className="border px-2 py-1">{f.cantidad}</td>
+                    <td className="border px-2 py-1 sm:px-3 sm:py-2 font-mono">{f.venta_id}</td>
+                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{(f.fecha || "").slice(0, 10)}</td>
+                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{f.cliente}</td>
+                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{f.cantidad}</td>
                   </tr>
                 ))}
               </tbody>
@@ -411,23 +424,23 @@ function PestañaVentas({ productoId, nombre }) {
       </div>
 
       <div className="mt-4 border rounded-lg">
-        <div className="px-3 py-2 font-bold bg-gray-50 border-b">Daily sales (last 30 days)</div>
+        <div className="px-3 py-2 font-bold bg-gray-50 border-b text-sm sm:text-base">Daily sales (last 30 days)</div>
         {porDia.length === 0 ? (
           <div className="p-3 text-gray-500">No daily sales.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-xs sm:text-sm">
               <thead>
                 <tr className="bg-gray-100">
-                  <th className="border px-2 py-1 text-left">Date</th>
-                  <th className="border px-2 py-1 text-right">Qty</th>
+                  <th className="border px-2 py-1 sm:px-3 sm:py-2 text-left">Date</th>
+                  <th className="border px-2 py-1 sm:px-3 sm:py-2 text-right">Qty</th>
                 </tr>
               </thead>
               <tbody>
                 {porDia.map((r) => (
                   <tr key={r.dia} className="border-b">
-                    <td className="border px-2 py-1">{r.dia}</td>
-                    <td className="border px-2 py-1 text-right">{r.qty}</td>
+                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{r.dia}</td>
+                    <td className="border px-2 py-1 sm:px-3 sm:py-2 text-right">{r.qty}</td>
                   </tr>
                 ))}
               </tbody>
@@ -497,7 +510,7 @@ async function addStockSeleccionado(productoId, productoActual) {
    ============================================================ */
 
 export default function Productos() {
-  const PAGE_SIZE = 50;
+  const PAGE_SIZE = 20; // Reducido para móviles
   const [productos, setProductos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [pagina, setPagina] = useState(1);
@@ -522,8 +535,9 @@ export default function Productos() {
 
   const [ubicaciones, setUbicaciones] = useState([{ key: "almacen", nombre: "Central warehouse" }]);
 
-  // 🆕 ESCÁNER
+  // 🆕 ESCÁNER MEJORADO
   const [showScanner, setShowScanner] = useState(false);
+  const scannerRef = useRef(null);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -532,7 +546,7 @@ export default function Productos() {
   const [hl, setHl] = useState(-1);
   useEffect(() => setHl(-1), [productos.length, pagina, busqueda]);
   useEffect(() => {
-    if (hl >= 0) document.getElementById(`prod-row-${hl}`)?.scrollIntoView({ block: "nearest" });
+    if (hl >= 0) document.getElementById(`prod-row-${hl}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [hl]);
 
   const [debounced, setDebounced] = useState("");
@@ -618,13 +632,26 @@ export default function Productos() {
     }
   }
 
-  // 🆕 HANDLER DE ESCÁNER
+  // 🆕 HANDLER DE ESCÁNER MEJORADO
   const handleBarcodeScanned = (code) => {
     let cleanedCode = code.replace(/^0+/, '');
     if (cleanedCode === '') cleanedCode = '0';
+    
+    // Cerrar el escáner automáticamente
+    setShowScanner(false);
+    
+    // Enfocar el campo de búsqueda para facilitar la edición si es necesario
+    setTimeout(() => {
+      const searchInput = document.querySelector('input[placeholder="Search by code, name, brand, category..."]');
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
+    }, 300);
+    
+    // Realizar la búsqueda
     setPagina(1);
     setBusqueda(cleanedCode);
-    setShowScanner(false);
   };
 
   function handleBuscar(e) {
@@ -632,6 +659,7 @@ export default function Productos() {
     setBusqueda((e.target.value || "").replace(/\s+/g, ""));
     setHl(-1);
   }
+  
   const handleSiguiente = () => { if (pagina * PAGE_SIZE < total) setPagina(pagina + 1); };
   const handleAnterior = () => { if (pagina > 1) setPagina(pagina - 1); };
 
@@ -952,9 +980,10 @@ export default function Productos() {
   const toUpper = (v) => (v ?? "").toString().toUpperCase();
 
   return (
-    <div className="px-2 sm:px-4">
-      <h2 className="text-2xl font-bold mb-4 text-center">Product Inventory</h2>
+    <div className="px-2 sm:px-4 pb-20 sm:pb-0">
+      <h2 className="text-xl sm:text-2xl font-bold mb-4 text-center">Product Inventory</h2>
 
+      {/* BARRA DE BÚSQUEDA Y ACCIONES */}
       <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
         <div className="flex gap-2 w-full">
           <input
@@ -966,31 +995,63 @@ export default function Productos() {
               const list = productos || [];
               if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1)); }
               else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
-              else if (e.key === "PageDown") { e.preventDefault(); if (pagina * 50 < total) setPagina(pagina + 1); }
+              else if (e.key === "PageDown") { e.preventDefault(); if (pagina * 20 < total) setPagina(pagina + 1); }
               else if (e.key === "PageUp") { e.preventDefault(); if (pagina > 1) setPagina(pagina - 1); }
               else if (e.key === "Enter") { if (hl >= 0 && list[hl]) abrirModal(list[hl]); else if (list.length > 0) abrirModal(list[0]); }
               else if (e.key === "Escape") { setHl(-1); }
             }}
             className="border rounded p-2 flex-1"
           />
-          {/* 🆕 BOTÓN ESCÁNER - SOLO MÓVIL */}
+          {/* 🆕 BOTÓN ESCÁNER MEJORADO */}
           <button
             onClick={() => setShowScanner(true)}
-            className="lg:hidden bg-gradient-to-r from-purple-600 to-violet-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 whitespace-nowrap"
+            className="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 whitespace-nowrap flex items-center gap-2"
             title="Scan barcode"
           >
-            📷 Scan
+            <span className="text-lg">📷</span>
+            <span className="hidden sm:inline">Scan</span>
           </button>
         </div>
         <button 
           onClick={() => agregarProductoNuevo()} 
-          className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap"
+          className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap flex items-center justify-center gap-2"
         >
-          + Add product
+          <span>+</span>
+          <span>Add product</span>
         </button>
       </div>
 
-    
+      {/* 🆕 ESCÁNER MEJORADO */}
+      {showScanner && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex flex-col">
+          <div className="p-4 bg-black text-white flex justify-between items-center">
+            <h3 className="text-lg font-bold">Scan Barcode</h3>
+            <button 
+              onClick={() => setShowScanner(false)}
+              className="text-white text-2xl"
+            >
+              ×
+            </button>
+          </div>
+          
+          <div className="flex-1 relative overflow-hidden">
+            <BarcodeScanner
+              onScan={handleBarcodeScanned}
+              onClose={() => setShowScanner(false)}
+              isActive={showScanner}
+              ref={scannerRef}
+            />
+            
+            {/* MENSAJES DE INSTRUCCIONES */}
+            <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white p-4 text-center">
+              <p className="text-sm mb-2">Position the barcode within the frame</p>
+              <p className="text-xs opacity-75">Hold your device steady and ensure good lighting</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LISTA DE PRODUCTOS */}
       <div className="max-w-6xl mx-auto">
         {loading ? (
           <div className="text-center py-6 text-blue-700 font-bold">Loading...</div>
@@ -1024,7 +1085,7 @@ export default function Productos() {
                         )}
                       </div>
                       <div className="text-right">
-                        <div className="text-2xl font-bold text-green-600">
+                        <div className="text-xl sm:text-2xl font-bold text-green-600">
                           ${Number(p.precio || 0).toFixed(2)}
                         </div>
                         {p.costo && (
@@ -1038,25 +1099,25 @@ export default function Productos() {
                     {/* Info adicional en grid */}
                     <div className="grid grid-cols-2 gap-2 text-sm border-t pt-3">
                       <div>
-                        <span className="text-gray-500">Code:</span>
-                        <p className="font-mono text-gray-900 truncate">{p.codigo}</p>
+                        <span className="text-gray-500 text-xs">Code:</span>
+                        <p className="font-mono text-gray-900 truncate text-xs">{p.codigo}</p>
                       </div>
                       {p.size && (
                         <div>
-                          <span className="text-gray-500">Size:</span>
-                          <p className="text-gray-900">{p.size}</p>
+                          <span className="text-gray-500 text-xs">Size:</span>
+                          <p className="text-gray-900 text-xs">{p.size}</p>
                         </div>
                       )}
                       {p.categoria && (
                         <div>
-                          <span className="text-gray-500">Category:</span>
-                          <p className="text-gray-900 truncate">{p.categoria}</p>
+                          <span className="text-gray-500 text-xs">Category:</span>
+                          <p className="text-gray-900 truncate text-xs">{p.categoria}</p>
                         </div>
                       )}
                       {p.suplidor?.nombre && (
                         <div>
-                          <span className="text-gray-500">Supplier:</span>
-                          <p className="text-gray-900 truncate">{p.suplidor.nombre}</p>
+                          <span className="text-gray-500 text-xs">Supplier:</span>
+                          <p className="text-gray-900 truncate text-xs">{p.suplidor.nombre}</p>
                         </div>
                       )}
                     </div>
@@ -1127,7 +1188,7 @@ export default function Productos() {
             onClick={handleAnterior} 
             disabled={pagina === 1}
           >
-            Previous
+            ← Previous
           </button>
           <span className="text-sm">
             Page {pagina} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
@@ -1137,7 +1198,7 @@ export default function Productos() {
             onClick={handleSiguiente} 
             disabled={pagina * PAGE_SIZE >= total}
           >
-            Next
+            Next →
           </button>
         </div>
         <div className="text-xs text-gray-400 mt-2 text-center mb-10">
@@ -1145,36 +1206,33 @@ export default function Productos() {
         </div>
       </div>
 
-      {/* 🆕 ESCÁNER DE CÓDIGOS DE BARRAS */}
-      {showScanner && (
-        <BarcodeScanner
-          onScan={handleBarcodeScanned}
-          onClose={() => setShowScanner(false)}
-          isActive={showScanner}
-        />
-      )}
-
       {/* MODAL */}
       {modalAbierto && productoActual && (
         <div className="fixed inset-0 bg-black/40 flex justify-center items-end sm:items-center z-50 p-0 sm:p-6">
           <div className="bg-white w-full h-[100vh] sm:h-auto sm:max-h-[90vh] sm:rounded-xl shadow-xl max-w-2xl relative p-4 sm:p-8 overflow-y-auto">
-            <button type="button" className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black" onClick={cerrarModal} title="Close" style={{ zIndex: 100 }}>
+            <button 
+              type="button" 
+              className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black" 
+              onClick={cerrarModal} 
+              title="Close"
+              style={{ zIndex: 100 }}
+            >
               ×
             </button>
 
             {/* KPIs */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
-                <div className="text-xs text-blue-700 uppercase font-semibold">On Hand</div>
-                <div className="text-lg font-bold text-blue-900">{stockResumen.unidades}</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 mb-3">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 sm:p-3 text-center">
+                <div className="text-xs sm:text-sm text-blue-700 uppercase font-semibold">On Hand</div>
+                <div className="text-lg sm:text-xl font-bold text-blue-900">{stockResumen.unidades}</div>
               </div>
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-center">
-                <div className="text-xs text-emerald-700 uppercase font-semibold">On Hand $</div>
-                <div className="text-lg font-bold text-emerald-900">${Number(stockResumen.valor || 0).toFixed(2)}</div>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 sm:p-3 text-center">
+                <div className="text-xs sm:text-sm text-emerald-700 uppercase font-semibold">On Hand $</div>
+                <div className="text-lg sm:text-xl font-bold text-emerald-900">${Number(stockResumen.valor || 0).toFixed(2)}</div>
               </div>
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 text-center">
-                <div className="text-xs text-gray-600 uppercase font-semibold">Last Sold</div>
-                <div className="text-sm font-bold text-gray-800">{ultimaVenta ? new Date(ultimaVenta).toLocaleDateString() : "—"}</div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 sm:p-3 text-center">
+                <div className="text-xs sm:text-sm text-gray-600 uppercase font-semibold">Last Sold</div>
+                <div className="text-sm sm:text-base font-bold text-gray-800">{ultimaVenta ? new Date(ultimaVenta).toLocaleDateString() : "—"}</div>
               </div>
             </div>
 
@@ -1193,7 +1251,7 @@ export default function Productos() {
               </button>
 
               {!editMode && productoActual?.id && tabActivo === "editar" && (
-                <button className="ml-auto bg-blue-600 text-white rounded px-3 py-1.5" onClick={() => setEditMode(true)}>
+                <button className="ml-auto bg-blue-600 text-white rounded px-3 py-1.5 sm:px-4 text-sm sm:text-base" onClick={() => setEditMode(true)}>
                   Edit
                 </button>
               )}
@@ -1201,11 +1259,11 @@ export default function Productos() {
 
             {tabActivo === "editar" ? (
               <form onSubmit={guardarProducto}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3">
                   <div>
-                    <label className="font-bold">Code/UPC*</label>
+                    <label className="font-bold text-sm sm:text-base">Code/UPC*</label>
                     <input
-                      className="border rounded p-2 w-full uppercase"
+                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
                       value={productoActual.codigo ?? ""}
                       onChange={(e) => setProductoActual({ ...productoActual, codigo: toUpper(e.target.value) })}
                       required
@@ -1214,9 +1272,9 @@ export default function Productos() {
                     />
                   </div>
                   <div>
-                    <label className="font-bold">Name*</label>
+                    <label className="font-bold text-sm sm:text-base">Name*</label>
                     <input
-                      className="border rounded p-2 w-full uppercase"
+                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
                       value={productoActual.nombre ?? ""}
                       onChange={(e) => setProductoActual({ ...productoActual, nombre: toUpper(e.target.value) })}
                       required
@@ -1224,27 +1282,27 @@ export default function Productos() {
                     />
                   </div>
                   <div>
-                    <label className="font-bold">Brand</label>
+                    <label className="font-bold text-sm sm:text-base">Brand</label>
                     <input
-                      className="border rounded p-2 w-full uppercase"
+                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
                       value={productoActual.marca ?? ""}
                       onChange={(e) => setProductoActual({ ...productoActual, marca: toUpper(e.target.value) })}
                       disabled={disabled}
                     />
                   </div>
                   <div>
-                    <label className="font-bold">Category</label>
+                    <label className="font-bold text-sm sm:text-base">Category</label>
                     <input
-                      className="border rounded p-2 w-full uppercase"
+                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
                       value={productoActual.categoria ?? ""}
                       onChange={(e) => setProductoActual({ ...productoActual, categoria: toUpper(e.target.value) })}
                       disabled={disabled}
                     />
                   </div>
                   <div>
-                    <label className="font-bold">Size</label>
+                    <label className="font-bold text-sm sm:text-base">Size</label>
                     <select
-                      className="border rounded p-2 w-full"
+                      className="border rounded p-2 w-full text-sm sm:text-base"
                       value={isCustomSize ? "custom" : productoActual.size || ""}
                       onChange={(e) => {
                         if (disabled) return;
@@ -1266,7 +1324,7 @@ export default function Productos() {
                     </select>
                     {isCustomSize && (
                       <input
-                        className="border rounded p-2 mt-1 w-full uppercase"
+                        className="border rounded p-2 mt-1 w-full uppercase text-sm sm:text-base"
                         value={sizeCustom}
                         placeholder="Enter custom size"
                         onChange={(e) => setSizeCustom(toUpper(e.target.value))}
@@ -1276,7 +1334,7 @@ export default function Productos() {
                   </div>
 
                   <div>
-                    <label className="font-bold">Supplier</label>
+                    <label className="font-bold text-sm sm:text-base">Supplier</label>
                     <BuscadorSuplidor
                       value={suplidorId}
                       name={suplidorNombre}
@@ -1290,9 +1348,9 @@ export default function Productos() {
                   </div>
 
                   <div>
-                    <label className="font-bold">Cost</label>
+                    <label className="font-bold text-sm sm:text-base">Cost</label>
                     <input
-                      className="border rounded p-2 w-full"
+                      className="border rounded p-2 w-full text-sm sm:text-base"
                       value={productoActual.costo ?? ""}
                       type="number"
                       step="0.01"
@@ -1302,9 +1360,9 @@ export default function Productos() {
                     />
                   </div>
                   <div>
-                    <label className="font-bold">Price*</label>
+                    <label className="font-bold text-sm sm:text-base">Price*</label>
                     <input
-                      className="border rounded p-2 w-full"
+                      className="border rounded p-2 w-full text-sm sm:text-base"
                       value={productoActual.precio ?? ""}
                       type="number"
                       step="0.01"
@@ -1322,11 +1380,11 @@ export default function Productos() {
                       const margin = p > 0 ? ((p - c) / p) * 100 : 0;
                       const markup = c > 0 ? ((p - c) / c) * 100 : 0;
                       return (
-                        <div className="mt-1 flex flex-wrap gap-2 text-sm">
-                          <span className="inline-flex items-center rounded-full bg-blue-50 text-blue-800 px-3 py-1">
+                        <div className="mt-1 sm:mt-2 flex flex-wrap gap-2 text-sm">
+                          <span className="inline-flex items-center rounded-full bg-blue-50 text-blue-800 px-3 py-1 text-xs sm:text-sm">
                             Margin: <b className="ml-1">{margin.toFixed(1)}%</b>
                           </span>
-                          <span className="inline-flex items-center rounded-full bg-violet-50 text-violet-800 px-3 py-1">
+                          <span className="inline-flex items-center rounded-full bg-violet-50 text-violet-800 px-3 py-1 text-xs sm:text-sm">
                             Markup: <b className="ml-1">{markup.toFixed(1)}%</b>
                           </span>
                         </div>
@@ -1335,9 +1393,9 @@ export default function Productos() {
                   </div>
 
                   <div>
-                    <label className="font-bold">% Off (auto-applied)</label>
+                    <label className="font-bold text-sm sm:text-base">% Off (auto-applied)</label>
                     <input
-                      className="border rounded p-2 w-full"
+                      className="border rounded p-2 w-full text-sm sm:text-base"
                       type="number"
                       step="0.01"
                       min="0"
@@ -1350,13 +1408,13 @@ export default function Productos() {
                     <p className="text-xs text-gray-500 mt-1">It automatically applies in sales if bulk pricing does not apply.</p>
                   </div>
 
-                  <div className="md:col-span-2 border rounded p-3">
-                    <b>Bulk pricing (optional)</b>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                  <div className="md:col-span-2 border rounded p-3 sm:p-4">
+                    <b className="text-sm sm:text-base">Bulk pricing (optional)</b>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 mt-2 sm:mt-3">
                       <div>
-                        <label className="font-bold">Min. qty (≥)</label>
+                        <label className="font-bold text-sm sm:text-base">Min. qty (≥)</label>
                         <input
-                          className="border rounded p-2 w-full"
+                          className="border rounded p-2 w-full text-sm sm:text-base"
                           type="number"
                           min="1"
                           value={productoActual.bulk_min_qty ?? ""}
@@ -1366,9 +1424,9 @@ export default function Productos() {
                         />
                       </div>
                       <div>
-                        <label className="font-bold">Unit price at that qty</label>
+                        <label className="font-bold text-sm sm:text-base">Unit price at that qty</label>
                         <input
-                          className="border rounded p-2 w-full"
+                          className="border rounded p-2 w-full text-sm sm:text-base"
                           type="number"
                           step="0.01"
                           min="0"
@@ -1379,16 +1437,16 @@ export default function Productos() {
                         />
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">If qty ≥ Min. qty, this unit price overrides base/% off in Sales.</p>
+                    <p className="text-xs text-gray-500 mt-1 sm:mt-2">If qty ≥ Min. qty, this unit price overrides base/% off in Sales.</p>
                   </div>
 
-                  <div className="md:col-span-2 border-t pt-2 mt-2">
-                    <b>Add stock now (optional)</b>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="md:col-span-2 border-t pt-2 sm:pt-3 mt-2 sm:mt-3">
+                    <b className="text-sm sm:text-base">Add stock now (optional)</b>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
                       <div>
-                        <label className="font-bold">Quantity</label>
+                        <label className="font-bold text-sm sm:text-base">Quantity</label>
                         <input
-                          className="border rounded p-2 w-full"
+                          className="border rounded p-2 w-full text-sm sm:text-base"
                           type="number"
                           min="0"
                           value={productoActual.cantidad_inicial || ""}
@@ -1398,9 +1456,9 @@ export default function Productos() {
                         />
                       </div>
                       <div>
-                        <label className="font-bold">Location</label>
+                        <label className="font-bold text-sm sm:text-base">Location</label>
                         <select
-                          className="border rounded p-2 w-full"
+                          className="border rounded p-2 w-full text-sm sm:text-base"
                           value={productoActual.ubicacion_inicial}
                           onChange={(e) => {
                             if (disabled) return;
@@ -1423,13 +1481,13 @@ export default function Productos() {
                         </select>
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">If you set a quantity & location, stock will be added when you save.</p>
+                    <p className="text-xs text-gray-500 mt-1 sm:mt-2">If you set a quantity & location, stock will be added when you save.</p>
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="font-bold">Product notes</label>
+                    <label className="font-bold text-sm sm:text-base">Product notes</label>
                     <textarea
-                      className="border rounded p-2 w-full min-h-[60px] uppercase"
+                      className="border rounded p-2 w-full min-h-[60px] uppercase text-sm sm:text-base"
                       value={productoActual.notas || ""}
                       placeholder="Special notes, important details, etc."
                       onChange={(e) => setProductoActual({ ...productoActual, notas: toUpper(e.target.value) })}
@@ -1438,17 +1496,17 @@ export default function Productos() {
                   </div>
                 </div>
 
-                {mensaje && <div className="text-blue-700 text-center mt-2">{mensaje}</div>}
+                {mensaje && <div className="text-blue-700 text-center mt-2 sm:mt-3 text-sm sm:text-base">{mensaje}</div>}
 
-                <div className="flex flex-col sm:flex-row gap-2 mt-4 sticky bottom-0 bg-white py-3 z-10">
-                  <button type="submit" className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2" disabled={disabled}>
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4 sm:mt-6 sticky bottom-0 bg-white py-3 z-10">
+                  <button type="submit" className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2 text-sm sm:text-base" disabled={disabled}>
                     {productoActual.id ? "Save changes" : "Add product"}
                   </button>
-                  <button type="button" className="sm:flex-1 bg-gray-200 text-gray-800 rounded px-5 py-2" onClick={() => imprimirEtiqueta(productoActual)}>
+                  <button type="button" className="sm:flex-1 bg-gray-200 text-gray-800 rounded px-5 py-2 text-sm sm:text-base" onClick={() => imprimirEtiqueta(productoActual)}>
                     🖨️ Print label
                   </button>
                   {productoActual.id && (
-                    <button type="button" className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2" onClick={eliminarProducto} disabled={disabled}>
+                    <button type="button" className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2 text-sm sm:text-base" onClick={eliminarProducto} disabled={disabled}>
                       Delete
                     </button>
                   )}

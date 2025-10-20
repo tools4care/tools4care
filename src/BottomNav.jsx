@@ -90,9 +90,9 @@ export default function BottomNav() {
               <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/cierres")}>
                 <Truck size={18} color="#059669" /> Van Closeout
               </button>
-              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/cxc")}>
-                <CreditCard size={18} color="#0ea5e9" /> Accounts Receivable
-              </button>
+
+              {/* ✅ ELIMINADO: Accounts Receivable duplicado */}
+              {/* La opción "Accounts" ya está en el menú inferior principal */}
 
               {/* ✅ NUEVO: acceso a Suplidores */}
               <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/suplidores")}>

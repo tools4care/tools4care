@@ -14,6 +14,7 @@ import {
   Bar,
   Legend,
   ComposedChart,
+  Cell,
 } from "recharts";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -68,8 +69,8 @@ function LowStockModal({ open, items, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-        <div className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white flex items-center justify-between">
-          <h3 className="font-bold text-lg">Low stock — All items</h3>
+        <div className="px-5 py-3 bg-gradient-to-r from-red-600 to-orange-600 text-white flex items-center justify-between">
+          <h3 className="font-bold text-lg">Low Stock Alert</h3>
           <button
             className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center"
             onClick={onClose}
@@ -268,7 +269,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
   );
 }
 
-/* ==================== DASHBOARD ==================== */
+/* ==================== DASHBOARD MEJORADO ==================== */
 export default function Dashboard() {
   const { usuario } = useUsuario();
   const { van } = useVan();
@@ -293,6 +294,14 @@ export default function Dashboard() {
 
   const [clientes, setClientes] = useState([]);
 
+  // Estados para métricas clave
+  const [metricas, setMetricas] = useState({
+    promedioDiario: 0,
+    crecimiento: 0,
+    conversion: 0,
+    productosAgotados: 0,
+  });
+
   useEffect(() => {
     cargarClientes();
   }, []);
@@ -310,6 +319,13 @@ export default function Dashboard() {
     }
   }, [van?.id, rangeDays]);
 
+  // Cargar métricas clave
+  useEffect(() => {
+    if (ventas.length > 0) {
+      calcularMetricas();
+    }
+  }, [ventas]);
+
   async function cargarClientes() {
     const { data } = await supabase.from("clientes").select("id, nombre");
     setClientes(data || []);
@@ -324,7 +340,7 @@ export default function Dashboard() {
     setLoading(true);
     const desde = dayjs().subtract(days - 1, "day").startOf("day").format("YYYY-MM-DD");
 
-    // ✅ CORRECCIÓN: usar 'total' en lugar de 'total_venta'
+    // Ventas del período
     const { data: ventasData, error: errVentas } = await supabase
       .from("ventas")
       .select("*")
@@ -342,7 +358,7 @@ export default function Dashboard() {
       const mapCount = {};
       (ventasData || []).forEach((v) => {
         const f = dayjs(v.fecha).format("YYYY-MM-DD");
-        mapTotal[f] = (mapTotal[f] || 0) + (Number(v.total) || 0); // ✅ Cambiado
+        mapTotal[f] = (mapTotal[f] || 0) + (Number(v.total) || 0);
         mapCount[f] = (mapCount[f] || 0) + 1;
       });
 
@@ -500,10 +516,48 @@ export default function Dashboard() {
   const remainingLow = Math.max(0, stockVan.length - LOW_STOCK_PREVIEW);
   const chartData = withMA(ventasSerie, "total", 7);
 
-  // ✅ Estadísticas generales
-  const totalVentas = ventas.reduce((sum, v) => sum + Number(v.total || 0), 0);
-  const totalPagado = ventas.reduce((sum, v) => sum + Number(v.total_pagado || 0), 0);
-  const totalPendiente = totalVentas - totalPagado;
+  // Cálculo de métricas clave
+  const calcularMetricas = () => {
+    // Ventas totales y promedio diario
+    const totalVentas = ventas.reduce((sum, v) => sum + Number(v.total || 0), 0);
+    const diasConVentas = new Set(ventas.map(v => dayjs(v.fecha).format("YYYY-MM-DD"))).size;
+    const promedioDiario = diasConVentas > 0 ? totalVentas / diasConVentas : 0;
+    
+    // Crecimiento vs período anterior
+    const periodoAnterior = dayjs().subtract(rangeDays, "day").format("YYYY-MM-DD");
+    const ventasAnteriores = ventas.filter(v => dayjs(v.fecha).isBefore(periodoAnterior));
+    const totalAnterior = ventasAnteriores.reduce((sum, v) => sum + Number(v.total || 0), 0);
+    const crecimiento = totalAnterior > 0 ? ((totalVentas - totalAnterior) / totalAnterior * 100) : 0;
+    
+    // Tasa de conversión (ventas totales / clientes únicos)
+    const clientesUnicos = new Set(ventas.map(v => v.cliente_id)).size;
+    const conversion = clientesUnicos > 0 ? (ventas.length / clientesUnicos) * 100 : 0;
+    
+    // Productos agotados (stock = 0)
+    const productosAgotados = stockVan.filter(p => p.cantidad === 0).length;
+    
+    setMetricas({
+      promedioDiario,
+      crecimiento,
+      conversion,
+      productosAgotados,
+    });
+  };
+
+  // Componente de métrica con indicador visual
+  const MetricaCard = ({ title, value, unit, trend, color }) => (
+    <div className="bg-white rounded-xl shadow-lg p-4 flex flex-col">
+      <div className="text-sm text-gray-500 mb-1">{title}</div>
+      <div className="flex items-baseline">
+        <div className={`text-2xl font-bold ${color}`}>{value.toFixed(1)}{unit}</div>
+        {trend !== null && (
+          <div className={`ml-2 flex items-center ${trend > 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {trend > 0 ? '↗' : '↘'} <span className="ml-1 text-sm">{Math.abs(trend).toFixed(1)}%</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
@@ -511,7 +565,7 @@ export default function Dashboard() {
         {/* Header */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Dashboard</h1>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
               <div className="text-sm text-gray-600">
                 {van?.nombre || van?.nombre_van ? `VAN: ${van?.nombre || van?.nombre_van}` : "Select a VAN"}
@@ -534,27 +588,59 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Estadísticas */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
-            <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200">
-              <div className="text-xs text-blue-600 font-semibold uppercase">Total Sales</div>
-              <div className="text-2xl font-bold text-blue-800">{fmtMoney(totalVentas)}</div>
-            </div>
-            <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3 border border-green-200">
-              <div className="text-xs text-green-600 font-semibold uppercase">Collected</div>
-              <div className="text-2xl font-bold text-green-800">{fmtMoney(totalPagado)}</div>
-            </div>
-            <div className="bg-gradient-to-r from-amber-50 to-amber-100 rounded-lg p-3 border border-amber-200">
-              <div className="text-xs text-amber-600 font-semibold uppercase">Pending</div>
-              <div className="text-2xl font-bold text-amber-800">{fmtMoney(totalPendiente)}</div>
-            </div>
+          {/* Métricas clave */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+            <MetricaCard 
+              title="Daily Avg" 
+              value={metricas.promedioDiario} 
+              unit="" 
+              trend={metricas.crecimiento} 
+              color="text-blue-600" 
+            />
+            <MetricaCard 
+              title="Growth" 
+              value={metricas.crecimiento} 
+              unit="%" 
+              trend={metricas.crecimiento} 
+              color={metricas.crecimiento > 0 ? "text-green-600" : "text-red-600"} 
+            />
+            <MetricaCard 
+              title="Conversion" 
+              value={metricas.conversion} 
+              unit="%" 
+              trend={null} 
+              color="text-purple-600" 
+            />
+            <MetricaCard 
+              title="Out of Stock" 
+              value={metricas.productosAgotados} 
+              unit="" 
+              trend={null} 
+              color="text-red-600" 
+            />
           </div>
         </div>
 
-        {/* Gráfica */}
+        {/* Gráfica principal */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <h2 className="font-bold text-gray-800 mb-3">Sales Trends</h2>
-          <div className="h-64">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3">
+            <h2 className="font-bold text-gray-800 mb-2 sm:mb-0">Sales Performance</h2>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-blue-500 rounded-full mr-1"></div>
+                <span className="text-xs">Sales</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-gray-800 rounded-full mr-1"></div>
+                <span className="text-xs">7-day Avg</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-green-500 rounded-full mr-1"></div>
+                <span className="text-xs">Orders</span>
+              </div>
+            </div>
+          </div>
+          <div className="h-64 sm:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -580,57 +666,60 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Top Products */}
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <h2 className="font-bold text-gray-800 mb-3">Top Selling Products</h2>
-          <div className="h-60">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={productosTop}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="nombre" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="cantidad" fill="#22c55e" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Low Stock */}
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-gray-800">Low Stock Alert</h2>
-            {stockVan.length > LOW_STOCK_PREVIEW && (
-              <button
-                onClick={() => setShowAllLow(true)}
-                className="text-sm px-3 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-semibold"
-              >
-                View All ({stockVan.length})
-              </button>
+        {/* Sección de alertas y productos */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          {/* Low Stock */}
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-bold text-gray-800">Low Stock Alert</h2>
+              {stockVan.length > LOW_STOCK_PREVIEW && (
+                <button
+                  onClick={() => setShowAllLow(true)}
+                  className="text-sm px-3 py-1 rounded-lg bg-red-600 text-white hover:bg-red-700 font-semibold"
+                >
+                  View All ({stockVan.length})
+                </button>
+              )}
+            </div>
+            {stockVan.length === 0 ? (
+              <div className="text-gray-400">No low-stock products</div>
+            ) : (
+              <>
+                <ul className="space-y-2">
+                  {lowPreview.map((p, idx) => (
+                    <li key={idx} className="flex items-center justify-between bg-red-50 rounded-lg p-3 border border-red-200">
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-900">{p.nombre}</div>
+                        <div className="text-xs text-gray-500 font-mono">{p.codigo}</div>
+                      </div>
+                      <div className="text-red-600 font-bold text-lg">{p.cantidad}</div>
+                    </li>
+                  ))}
+                </ul>
+                {remainingLow > 0 && (
+                  <div className="text-xs text-gray-500 mt-2">
+                    And <b>{remainingLow}</b> more…
+                  </div>
+                )}
+              </>
             )}
           </div>
-          {stockVan.length === 0 ? (
-            <div className="text-gray-400">No low-stock products</div>
-          ) : (
-            <>
-              <ul className="space-y-2">
-                {lowPreview.map((p, idx) => (
-                  <li key={idx} className="flex items-center justify-between bg-red-50 rounded-lg p-3 border border-red-200">
-                    <div className="flex-1">
-                      <div className="font-semibold text-gray-900">{p.nombre}</div>
-                      <div className="text-xs text-gray-500 font-mono">{p.codigo}</div>
-                    </div>
-                    <div className="text-red-600 font-bold text-lg">{p.cantidad}</div>
-                  </li>
-                ))}
-              </ul>
-              {remainingLow > 0 && (
-                <div className="text-xs text-gray-500 mt-2">
-                  And <b>{remainingLow}</b> more…
-                </div>
-              )}
-            </>
-          )}
+
+          {/* Top Products */}
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
+            <h2 className="font-bold text-gray-800 mb-3">Top Selling Products</h2>
+            <div className="h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={productosTop}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="nombre" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="cantidad" fill="#22c55e" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
 
         {/* Recent Sales */}
