@@ -1,4 +1,4 @@
-// creditoSimulador.jsx
+// creditoSimulador.jsx - PARTE 1
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import {
@@ -15,26 +15,24 @@ const fmt = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractio
 
 // Límites de crédito según tu política
 const CREDIT_LIMITS_BY_SCORE = [
-  { minScore: 800, maxScore: 850, limit: 800, label: "Excelente", color: "emerald" },
-  { minScore: 750, maxScore: 799, limit: 500, label: "Muy Bueno", color: "green" },
-  { minScore: 700, maxScore: 749, limit: 350, label: "Bueno", color: "lime" },
-  { minScore: 650, maxScore: 699, limit: 200, label: "Aceptable", color: "yellow" },
-  { minScore: 600, maxScore: 649, limit: 150, label: "Regular", color: "orange" },
-  { minScore: 550, maxScore: 599, limit: 80, label: "Bajo", color: "amber" },
-  { minScore: 500, maxScore: 549, limit: 30, label: "Muy Bajo", color: "red" },
-  { minScore: 300, maxScore: 499, limit: 0, label: "Sin Crédito", color: "gray" }
+  { minScore: 800, maxScore: 850, limit: 800, label: "Excelente" },
+  { minScore: 750, maxScore: 799, limit: 500, label: "Muy Bueno" },
+  { minScore: 700, maxScore: 749, limit: 350, label: "Bueno" },
+  { minScore: 650, maxScore: 699, limit: 200, label: "Aceptable" },
+  { minScore: 600, maxScore: 649, limit: 150, label: "Regular" },
+  { minScore: 550, maxScore: 599, limit: 80, label: "Bajo" },
+  { minScore: 500, maxScore: 549, limit: 30, label: "Muy Bajo" },
+  { minScore: 300, maxScore: 499, limit: 0, label: "Sin Crédito" }
 ];
 
-// 🆕 Función que respeta limite_manual
+// Función que respeta limite_manual
 function getEffectiveLimit(score, limiteManual) {
-  // Si hay límite manual, usarlo; si no, usar política
   if (limiteManual !== null && limiteManual !== undefined) {
     return limiteManual;
   }
   return policyLimit(score);
 }
 
-// Función de política de límites
 function policyLimit(score) {
   const s = Number(score ?? 600);
   if (s < 500) return 0;
@@ -47,25 +45,28 @@ function policyLimit(score) {
   return 800;
 }
 
-const getLimitByScore = (score) => {
-  const limit = policyLimit(score);
-  const tier = CREDIT_LIMITS_BY_SCORE.find(t => score >= t.minScore && score <= t.maxScore);
-  return { 
-    limit, 
-    label: tier?.label || "Sin Clasificar", 
-    color: tier?.color || "gray" 
-  };
+// Función para obtener colores SIN template literals dinámicos
+const getScoreColorClasses = (score) => {
+  if (score >= 800) return "bg-emerald-100 text-emerald-700 border-emerald-300";
+  if (score >= 750) return "bg-green-100 text-green-700 border-green-300";
+  if (score >= 700) return "bg-lime-100 text-lime-700 border-lime-300";
+  if (score >= 650) return "bg-yellow-100 text-yellow-700 border-yellow-300";
+  if (score >= 600) return "bg-orange-100 text-orange-700 border-orange-300";
+  if (score >= 550) return "bg-amber-100 text-amber-700 border-amber-300";
+  if (score >= 500) return "bg-red-100 text-red-700 border-red-300";
+  return "bg-gray-100 text-gray-700 border-gray-300";
 };
 
-const getScoreColor = (score) => {
-  if (score >= 800) return { bg: "bg-emerald-100", text: "text-emerald-700", border: "border-emerald-300" };
-  if (score >= 750) return { bg: "bg-green-100", text: "text-green-700", border: "border-green-300" };
-  if (score >= 700) return { bg: "bg-lime-100", text: "text-lime-700", border: "border-lime-300" };
-  if (score >= 650) return { bg: "bg-yellow-100", text: "text-yellow-700", border: "border-yellow-300" };
-  if (score >= 600) return { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300" };
-  if (score >= 550) return { bg: "bg-amber-100", text: "text-amber-700", border: "border-amber-300" };
-  if (score >= 500) return { bg: "bg-red-100", text: "text-red-700", border: "border-red-300" };
-  return { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-300" };
+// Función para obtener clases de tarjetas por rango
+const getTierCardClasses = (minScore) => {
+  if (minScore >= 800) return "bg-emerald-50 border-emerald-200 text-emerald-700";
+  if (minScore >= 750) return "bg-green-50 border-green-200 text-green-700";
+  if (minScore >= 700) return "bg-lime-50 border-lime-200 text-lime-700";
+  if (minScore >= 650) return "bg-yellow-50 border-yellow-200 text-yellow-700";
+  if (minScore >= 600) return "bg-orange-50 border-orange-200 text-orange-700";
+  if (minScore >= 550) return "bg-amber-50 border-amber-200 text-amber-700";
+  if (minScore >= 500) return "bg-red-50 border-red-200 text-red-700";
+  return "bg-gray-50 border-gray-200 text-gray-700";
 };
 
 const getScoreLabel = (score) => {
@@ -159,7 +160,7 @@ export default function SimuladorCredito({ onClose }) {
     { id: 5, type: "HISTORIAL_PERFECTO", label: "⭐ Pagos Puntuales", periods: 4, unit: "weeks", active: false }
   ]);
 
-  // 🆕 Buscar clientes - AHORA INCLUYE limite_manual
+  // Buscar clientes
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (searchQuery.trim().length < 2) {
@@ -211,7 +212,7 @@ export default function SimuladorCredito({ onClose }) {
     );
   };
 
-  // Calcular impactos (RESPONSIVO EN TIEMPO REAL)
+  // Calcular impactos
   const impacts = useMemo(() => {
     if (!selectedClient) return [];
 
@@ -245,7 +246,6 @@ export default function SimuladorCredito({ onClose }) {
     return impacts[impacts.length - 1].newSaldo;
   }, [selectedClient, impacts]);
 
-  // 🆕 Límites actual y proyectado - RESPETA limite_manual
   const currentLimit = useMemo(() => {
     if (!selectedClient) return 0;
     return getEffectiveLimit(
@@ -255,8 +255,6 @@ export default function SimuladorCredito({ onClose }) {
   }, [selectedClient]);
 
   const projectedLimit = useMemo(() => {
-    // Si tiene límite manual, se mantiene a menos que cambie dramáticamente
-    // Por ahora mantenemos el manual si existe
     if (selectedClient?.limite_manual !== null && selectedClient?.limite_manual !== undefined) {
       return selectedClient.limite_manual;
     }
@@ -267,7 +265,6 @@ export default function SimuladorCredito({ onClose }) {
     return selectedClient?.limite_manual !== null && selectedClient?.limite_manual !== undefined;
   }, [selectedClient]);
 
-  // Crédito disponible actual y proyectado
   const currentAvailable = useMemo(() => {
     if (!selectedClient) return 0;
     return Math.max(0, currentLimit - Number(selectedClient.saldo || 0));
@@ -288,7 +285,6 @@ export default function SimuladorCredito({ onClose }) {
     let currentScore = selectedClient.score_base || 500;
     impacts.forEach((impact, idx) => {
       currentScore = impact.newScore;
-      // Si hay límite manual, se mantiene; si no, se calcula por score
       const limit = hasManualLimit 
         ? selectedClient.limite_manual 
         : policyLimit(currentScore);
@@ -330,6 +326,7 @@ export default function SimuladorCredito({ onClose }) {
     return data;
   }, [selectedClient, impacts, currentAvailable, hasManualLimit]);
 
+  // ============= VISTA DE BÚSQUEDA =============
   if (!selectedClient) {
     return (
       <div className="p-6">
@@ -357,7 +354,7 @@ export default function SimuladorCredito({ onClose }) {
         {!searching && searchResults.length > 0 && (
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {searchResults.map(client => {
-              const scoreColors = getScoreColor(client.score_base || 0);
+              const scoreClasses = getScoreColorClasses(client.score_base || 0);
               const effectiveLimit = getEffectiveLimit(
                 client.score_base || 0, 
                 client.limite_manual
@@ -382,7 +379,7 @@ export default function SimuladorCredito({ onClose }) {
                       </div>
                     </div>
                     <div className="ml-4 text-right">
-                      <div className={`inline-flex px-3 py-1 rounded-full text-sm font-bold ${scoreColors.bg} ${scoreColors.text} border ${scoreColors.border}`}>
+                      <div className={`inline-flex px-3 py-1 rounded-full text-sm font-bold border ${scoreClasses}`}>
                         {client.score_base || 0}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">Saldo: {fmt(client.saldo)}</div>
@@ -414,29 +411,31 @@ export default function SimuladorCredito({ onClose }) {
             <div className="text-4xl mb-2">👥</div>
             <p className="text-gray-500 mb-4">Escribe al menos 2 caracteres para buscar</p>
             
-            {/* Tabla de límites de crédito */}
             <div className="mt-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-6">
               <h4 className="font-bold text-gray-900 mb-4 flex items-center justify-center gap-2">
                 <Award className="text-indigo-600" size={20} />
                 Política de Límites de Crédito
               </h4>
               <div className="space-y-2">
-                {CREDIT_LIMITS_BY_SCORE.map((tier, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex items-center justify-between p-3 rounded-lg border-2 bg-${tier.color}-50 border-${tier.color}-200`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`text-xl font-bold text-${tier.color}-700`}>
-                        {tier.minScore}-{tier.maxScore}
+                {CREDIT_LIMITS_BY_SCORE.map((tier, idx) => {
+                  const cardClasses = getTierCardClasses(tier.minScore);
+                  return (
+                    <div
+                      key={idx}
+                      className={`flex items-center justify-between p-3 rounded-lg border-2 ${cardClasses}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="text-xl font-bold">
+                          {tier.minScore}-{tier.maxScore}
+                        </div>
+                        <div className="text-sm text-gray-600">{tier.label}</div>
                       </div>
-                      <div className="text-sm text-gray-600">{tier.label}</div>
+                      <div className="text-xl font-bold">
+                        {tier.limit === 0 ? "Sin crédito" : fmt(tier.limit)}
+                      </div>
                     </div>
-                    <div className={`text-xl font-bold text-${tier.color}-700`}>
-                      {tier.limit === 0 ? "Sin crédito" : fmt(tier.limit)}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               
               <div className="mt-4 bg-amber-50 border-2 border-amber-200 rounded-lg p-3">
@@ -454,11 +453,11 @@ export default function SimuladorCredito({ onClose }) {
     );
   }
 
-  // Vista de simulación con cliente seleccionado
-  const currentColors = getScoreColor(selectedClient.score_base || 0);
-  const finalColors = getScoreColor(finalScore);
-  const currentTier = getLimitByScore(selectedClient.score_base || 0);
-  const projectedTier = getLimitByScore(finalScore);
+  // ============= PARTE 2 CONTINÚA... =============// creditoSimulador.jsx - PARTE 2 (Continuación)
+
+  // ============= VISTA DE SIMULACIÓN CON CLIENTE SELECCIONADO =============
+  const currentScoreClasses = getScoreColorClasses(selectedClient.score_base || 0);
+  const finalScoreClasses = getScoreColorClasses(finalScore);
 
   return (
     <div className="max-h-[80vh] overflow-y-auto">
@@ -491,10 +490,10 @@ export default function SimuladorCredito({ onClose }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-white rounded-lg p-3 border border-indigo-200">
               <div className="text-xs text-gray-500 uppercase">Score Actual</div>
-              <div className={`text-2xl font-bold ${currentColors.text}`}>
+              <div className={`text-2xl font-bold ${currentScoreClasses.split(' ')[1]}`}>
                 {selectedClient.score_base || 0}
               </div>
-              <div className="text-xs text-gray-600">{currentTier.label}</div>
+              <div className="text-xs text-gray-600">{getScoreLabel(selectedClient.score_base || 0)}</div>
             </div>
 
             <div className="bg-white rounded-lg p-3 border border-indigo-200">
@@ -504,7 +503,7 @@ export default function SimuladorCredito({ onClose }) {
               </div>
               <div className="text-lg font-bold text-indigo-600">{fmt(currentLimit)}</div>
               {hasManualLimit && (
-                <div className="text-[10px] text-amber-600">Manual</div>
+                <div className="text-xs text-amber-600">Manual</div>
               )}
             </div>
 
@@ -610,7 +609,7 @@ export default function SimuladorCredito({ onClose }) {
           </div>
         </div>
 
-        {/* Resto del código igual... solo cambian los cálculos de límite */}
+        {/* Resultados de la simulación */}
         {impacts.length > 0 && (
           <>
             {/* Impactos individuales */}
@@ -665,17 +664,17 @@ export default function SimuladorCredito({ onClose }) {
               </div>
             </div>
 
-            {/* Resultado final - agregar indicador de límite manual */}
+            {/* Resultado final */}
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-300 rounded-xl p-6">
               <h4 className="font-bold text-gray-900 mb-4 text-center text-xl">📊 Resultado Proyectado</h4>
               
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div className="text-center">
                   <div className="text-sm text-gray-600 mb-2">Score Actual</div>
-                  <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold ${currentColors.bg} ${currentColors.text} border-2 ${currentColors.border}`}>
+                  <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold border-2 ${currentScoreClasses}`}>
                     {selectedClient.score_base || 0}
                   </div>
-                  <div className="text-xs text-gray-600 mt-1">{currentTier.label}</div>
+                  <div className="text-xs text-gray-600 mt-1">{getScoreLabel(selectedClient.score_base || 0)}</div>
                   <div className="text-xs font-semibold text-indigo-600 mt-1 flex items-center justify-center gap-1">
                     {hasManualLimit && <Shield size={10} />}
                     Límite: {fmt(currentLimit)}
@@ -684,10 +683,10 @@ export default function SimuladorCredito({ onClose }) {
 
                 <div className="text-center">
                   <div className="text-sm text-gray-600 mb-2">Score Proyectado</div>
-                  <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold ${finalColors.bg} ${finalColors.text} border-2 ${finalColors.border}`}>
+                  <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold border-2 ${finalScoreClasses}`}>
                     {finalScore}
                   </div>
-                  <div className="text-xs text-gray-600 mt-1">{projectedTier.label}</div>
+                  <div className="text-xs text-gray-600 mt-1">{getScoreLabel(finalScore)}</div>
                   <div className="text-xs font-semibold text-indigo-600 mt-1 flex items-center justify-center gap-1">
                     {hasManualLimit && <Shield size={10} />}
                     Límite: {fmt(projectedLimit)}
@@ -754,8 +753,9 @@ export default function SimuladorCredito({ onClose }) {
               </div>
             </div>
 
-            {/* Gráficas (código igual, solo cambian los datos calculados arriba) */}
+            {/* Gráficas */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Progresión del Score y Límite */}
               <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
                 <h5 className="font-bold text-gray-900 mb-3 text-center flex items-center justify-center gap-2">
                   📈 Evolución del Score y Límite
@@ -798,6 +798,7 @@ export default function SimuladorCredito({ onClose }) {
                 </ResponsiveContainer>
               </div>
 
+              {/* Progresión del Saldo y Disponible */}
               <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
                 <h5 className="font-bold text-gray-900 mb-3 text-center">💰 Saldo vs Disponible</h5>
                 <ResponsiveContainer width="100%" height={250}>
@@ -820,7 +821,230 @@ export default function SimuladorCredito({ onClose }) {
               </div>
             </div>
 
-            {/* El resto de las secciones continúan igual... */}
+            {/* Comparativa detallada */}
+            <div className="bg-white border-2 border-gray-200 rounded-xl p-6">
+              <h5 className="font-bold text-gray-900 mb-6 text-center text-xl">
+                🎯 Comparativa Detallada
+              </h5>
+              
+              <div className="space-y-6">
+                {/* Score Comparison */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Target className="text-indigo-600" size={20} />
+                      <span className="font-semibold text-gray-700">Credit Score</span>
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      Cambio: {finalScore > (selectedClient.score_base || 0) && "+"}
+                      {finalScore - (selectedClient.score_base || 0)} pts
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="text-center">
+                      <div className="text-xs text-gray-500 mb-2">Actual</div>
+                      <div className={`px-4 py-3 rounded-lg border-2 ${currentScoreClasses}`}>
+                        <div className="text-3xl font-bold">{selectedClient.score_base || 0}</div>
+                        <div className="text-xs mt-1">{getScoreLabel(selectedClient.score_base || 0)}</div>
+                      </div>
+                    </div>
+                    
+                    <div className="text-center">
+                      <div className="text-xs text-gray-500 mb-2">Proyectado</div>
+                      <div className={`px-4 py-3 rounded-lg border-2 ${finalScoreClasses}`}>
+                        <div className="text-3xl font-bold">{finalScore}</div>
+                        <div className="text-xs mt-1">{getScoreLabel(finalScore)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="relative h-8 bg-gray-100 rounded-lg overflow-hidden">
+                      <div
+                        className={`absolute top-0 left-0 h-full transition-all duration-500 ${
+                          finalScore >= (selectedClient.score_base || 0)
+                            ? "bg-gradient-to-r from-green-400 to-emerald-500"
+                            : "bg-gradient-to-r from-red-400 to-rose-500"
+                        }`}
+                        style={{
+                          width: `${Math.min(100, Math.abs((finalScore / 850) * 100))}%`
+                        }}
+                      >
+                        <div className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">
+                          {finalScore >= (selectedClient.score_base || 0) ? "↑" : "↓"} 
+                          {Math.abs(finalScore - (selectedClient.score_base || 0))} puntos
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Límite de Crédito */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Award className="text-indigo-600" size={20} />
+                      <span className="font-semibold text-gray-700">Límite de Crédito</span>
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      Cambio: {fmt(projectedLimit - currentLimit)}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg p-3">
+                      <div className="text-xs text-indigo-600 uppercase font-semibold mb-1">Actual</div>
+                      <div className="text-2xl font-bold text-indigo-700">{fmt(currentLimit)}</div>
+                    </div>
+                    
+                    <div className={`border-2 rounded-lg p-3 ${
+                      projectedLimit > currentLimit
+                        ? "bg-emerald-50 border-emerald-200"
+                        : projectedLimit < currentLimit
+                        ? "bg-orange-50 border-orange-200"
+                        : "bg-gray-50 border-gray-200"
+                    }`}>
+                      <div className={`text-xs uppercase font-semibold mb-1 ${
+                        projectedLimit > currentLimit
+                          ? "text-emerald-600"
+                          : projectedLimit < currentLimit
+                          ? "text-orange-600"
+                          : "text-gray-600"
+                      }`}>
+                        Proyectado
+                      </div>
+                      <div className={`text-2xl font-bold ${
+                        projectedLimit > currentLimit
+                          ? "text-emerald-700"
+                          : projectedLimit < currentLimit
+                          ? "text-orange-700"
+                          : "text-gray-700"
+                      }`}>
+                        {fmt(projectedLimit)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Crédito Disponible */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="text-green-600" size={20} />
+                      <span className="font-semibold text-gray-700">Crédito Disponible</span>
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      Cambio: {fmt(projectedAvailable - currentAvailable)}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-green-50 border-2 border-green-200 rounded-lg p-3">
+                      <div className="text-xs text-green-600 uppercase font-semibold mb-1">Actual</div>
+                      <div className="text-2xl font-bold text-green-700">
+                        {fmt(currentAvailable)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {currentLimit > 0 ? Math.round((currentAvailable / currentLimit) * 100) : 0}% del límite
+                      </div>
+                    </div>
+                    
+                    <div className={`border-2 rounded-lg p-3 ${
+                      projectedAvailable > currentAvailable
+                        ? "bg-emerald-50 border-emerald-200"
+                        : "bg-orange-50 border-orange-200"
+                    }`}>
+                      <div className={`text-xs uppercase font-semibold mb-1 ${
+                        projectedAvailable > currentAvailable
+                          ? "text-emerald-600"
+                          : "text-orange-600"
+                      }`}>
+                        Proyectado
+                      </div>
+                      <div className={`text-2xl font-bold ${
+                        projectedAvailable > currentAvailable
+                          ? "text-emerald-700"
+                          : "text-orange-700"
+                      }`}>
+                        {fmt(projectedAvailable)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {projectedLimit > 0 ? Math.round((projectedAvailable / projectedLimit) * 100) : 0}% del límite
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Medidor visual de disponibilidad */}
+                  <div className="mt-3 bg-gray-100 rounded-full h-4 overflow-hidden border-2 border-gray-200">
+                    <div className="flex h-full">
+                      <div
+                        className="bg-gradient-to-r from-red-500 to-red-600 transition-all duration-500"
+                        style={{
+                          width: projectedLimit > 0 ? `${Math.min(100, ((finalSaldo / projectedLimit) * 100))}%` : "0%"
+                        }}
+                      />
+                      <div
+                        className="bg-gradient-to-r from-green-500 to-emerald-600 transition-all duration-500"
+                        style={{
+                          width: projectedLimit > 0 ? `${Math.max(0, 100 - ((finalSaldo / projectedLimit) * 100))}%` : "0%"
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>Usado: {fmt(finalSaldo)}</span>
+                    <span>Disponible: {fmt(projectedAvailable)}</span>
+                  </div>
+                </div>
+
+                {/* Resumen del impacto */}
+                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-4">
+                  <div className="text-center">
+                    <div className="text-sm text-gray-600 mb-3 font-semibold">Resumen del Impacto</div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Score</div>
+                        <div className={`text-lg font-bold ${
+                          finalScore > (selectedClient.score_base || 0)
+                            ? "text-green-600"
+                            : finalScore < (selectedClient.score_base || 0)
+                            ? "text-red-600"
+                            : "text-gray-600"
+                        }`}>
+                          {finalScore > (selectedClient.score_base || 0) ? "↑" : finalScore < (selectedClient.score_base || 0) ? "↓" : "→"} 
+                          {Math.abs(finalScore - (selectedClient.score_base || 0))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Límite</div>
+                        <div className={`text-lg font-bold ${
+                          projectedLimit > currentLimit
+                            ? "text-green-600"
+                            : projectedLimit < currentLimit
+                            ? "text-red-600"
+                            : "text-gray-600"
+                        }`}>
+                          {projectedLimit > currentLimit ? "↑" : projectedLimit < currentLimit ? "↓" : "→"}
+                          {fmt(Math.abs(projectedLimit - currentLimit))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Disponible</div>
+                        <div className={`text-lg font-bold ${
+                          projectedAvailable > currentAvailable
+                            ? "text-green-600"
+                            : "text-red-600"
+                        }`}>
+                          {projectedAvailable > currentAvailable ? "↑" : "↓"}
+                          {fmt(Math.abs(projectedAvailable - currentAvailable))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </>
         )}
 
