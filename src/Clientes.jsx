@@ -1,4 +1,3 @@
-// src/Clientes.jsx
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
@@ -9,7 +8,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
   MapPin, Building2, Calendar, TrendingUp, X, Check, ChevronsLeft,
-  ChevronLeft, ChevronRight, ChevronsRight, BarChart3, RefreshCcw
+  ChevronLeft, ChevronRight, ChevronsRight, BarChart3, RefreshCcw,
+  ChevronDown, ChevronUp  // 🆕 Agregar estos dos
 } from "lucide-react";
 
 /* === CxC centralizado === */
@@ -142,7 +142,6 @@ function isMA(zip) {
   return (p >= 10 && p <= 27) || p === 55;
 }
 
-
 async function lookupZipOnline(zip) {
   // caché simple en localStorage
   try {
@@ -171,7 +170,6 @@ async function lookupZipOnline(zip) {
   }
 }
 
-
 // === Helpers numéricos (evitan mostrar "-0.00")
 const safe2 = (n) => {
   const x = Math.round(Number(n || 0) * 100) / 100;
@@ -179,6 +177,7 @@ const safe2 = (n) => {
 };
 const fmtSafe = (n) =>
   `$${safe2(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 /** ================== HELPERS DIRECCIÓN ================== */
 /**
  * Acepta un string de dirección libre (ej: "11 Winthrop Ave, Beverly MA 01915")
@@ -234,7 +233,7 @@ function parseDireccionString(raw) {
     }
   }
 
-  // Si tenemos ZIP pero falta ciudad/estado, intenta inferir (ajusta tu mapa en zipToCiudadEstado)
+  // Si tenemos ZIP pero falta ciudad/estado, intenta inferir
   if (zip && (!estado || !ciudad)) {
     const z = zipToCiudadEstado(zip);
     if (!estado && z.estado) estado = z.estado;
@@ -301,15 +300,6 @@ function prettyAddress(raw) {
   const parts = [d.calle, d.ciudad, d.estado, d.zip].filter(Boolean);
   return parts.length ? parts.join(", ") : "No address";
 }
-/** (opcional) Enmascarado anterior, ya no usado para mostrar */
-function maskPhoneForDisplay(raw) {
-  let d = String(raw || "").replace(/\D/g, "");
-  if (!d) return "";
-  if (d.length === 11 && d.startsWith("1")) d = d.slice(1);
-  if (d.length < 4) return "*".repeat(Math.max(0, d.length));
-  const last4 = d.slice(-4);
-  return `(***) ***-${last4}`;
-}
 
 /** ✅ Formateo en tiempo real y para mostrar sin asteriscos: "(555) 123-4567" */
 function formatPhoneForInput(raw) {
@@ -325,7 +315,7 @@ function formatPhoneForInput(raw) {
   return `(${a}) ${b}-${c}`;
 }
 
-// UUID para idempotencia (y para desambiguar la sobrecarga del RPC)
+// UUID para idempotencia
 const makeUUID = () =>
   (globalThis.crypto?.randomUUID?.()) ||
   "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
@@ -333,7 +323,7 @@ const makeUUID = () =>
     return v.toString(16);
   });
 
-// Wrapper por si no existiera la lib (fallback seguro)
+// Wrapper para obtener CxC
 async function safeGetCxc(clienteId) {
   try {
     const info = await getCxcCliente(clienteId);
@@ -527,7 +517,7 @@ export default function Clientes() {
     direccion: { calle: "", ciudad: "", estado: "", zip: "" },
   });
 
-  // ✅ Ref para buscar con atajo
+  // Ref para buscar con atajo
   const searchRef = useRef(null);
 
   /* -------------------- Debounce búsqueda -------------------- */
@@ -649,7 +639,7 @@ export default function Clientes() {
     } else {
       setMostrarEdicion(false);
     }
-  }, [location.pathname]); // eslint-disable-line
+  }, [location.pathname]);
 
   function abrirNuevoCliente() {
     setForm({
@@ -666,7 +656,7 @@ export default function Clientes() {
     setMensaje("");
   }
 
-  // ✅ Atajos: ⌘/Ctrl+N (nuevo), ⌘/Ctrl+K (buscar)
+  // Atajos: ⌘/Ctrl+N (nuevo), ⌘/Ctrl+K (buscar)
   useEffect(() => {
     const handler = (e) => {
       const key = (e.key || "").toLowerCase();
@@ -683,7 +673,6 @@ export default function Clientes() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-    // eslint-disable-next-line
   }, []);
 
   /** ================== EDITAR CLIENTE ================== */
@@ -740,85 +729,81 @@ export default function Clientes() {
   }
 
   function handleChange(e) {
-  const { name, value } = e.target;
+    const { name, value } = e.target;
 
-  // Teléfono → formateo en vivo
-  if (name === "telefono") {
-    const pretty = formatPhoneForInput(value);
-    setForm((f) => ({ ...f, telefono: pretty }));
-    return;
-  }
+    // Teléfono → formateo en vivo
+    if (name === "telefono") {
+      const pretty = formatPhoneForInput(value);
+      setForm((f) => ({ ...f, telefono: pretty }));
+      return;
+    }
 
-  // Campos de dirección
-  if (["calle", "ciudad", "estado", "zip"].includes(name)) {
-    setForm((f) => {
-      const dir = { ...(f.direccion || { calle: "", ciudad: "", estado: "", zip: "" }) };
-      const v = value ?? "";
+    // Campos de dirección
+    if (["calle", "ciudad", "estado", "zip"].includes(name)) {
+      setForm((f) => {
+        const dir = { ...(f.direccion || { calle: "", ciudad: "", estado: "", zip: "" }) };
+        const v = value ?? "";
 
-      // STATE: siempre 2 letras mayúsculas + afinamos datalist
-      if (name === "estado") {
-        dir.estado = v.toUpperCase().slice(0, 2);
-        setEstadoInput(dir.estado);
-        setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(dir.estado)));
+        // STATE: siempre 2 letras mayúsculas + afinamos datalist
+        if (name === "estado") {
+          dir.estado = v.toUpperCase().slice(0, 2);
+          setEstadoInput(dir.estado);
+          setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(dir.estado)));
+          return { ...f, direccion: dir };
+        }
+
+        // ZIP: al tener 5 dígitos → fija estado/ciudad usando mapa local y lookup online
+        if (name === "zip") {
+          const zip = String(v).replace(/\D/g, "").slice(0, 5);
+          dir.zip = zip;
+
+          if (zip.length === 5) {
+            // Si corresponde a Massachusetts, fija MA
+            if (isMA(zip)) {
+              dir.estado = "MA";
+              setEstadoInput("MA");
+              setEstadoOpciones(estadosUSA.filter((s) => s.startsWith("MA")));
+            }
+
+            // 1) Mapa local (siempre pisamos para reflejar el ZIP nuevo)
+            const local = zipToCiudadEstado(zip);
+            if (local.ciudad || local.estado) {
+              dir.ciudad = local.ciudad || "";
+              dir.estado = (local.estado || dir.estado || "").toUpperCase();
+              setEstadoInput(dir.estado);
+              setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(dir.estado)));
+            }
+
+            // 2) Lookup online (también pisa, pero cuidamos carreras si el ZIP cambió)
+            lookupZipOnline(zip).then((z) => {
+              if (!z) return;
+              setForm((f2) => {
+                const cur = f2.direccion || {};
+                if ((cur.zip || "") !== zip) return f2; // el usuario cambió el ZIP mientras llegaba la respuesta
+
+                const next = {
+                  ...cur,
+                  ciudad: z.ciudad || cur.ciudad || "",
+                  estado: (z.estado || cur.estado || "").toUpperCase(),
+                };
+                setEstadoInput(next.estado);
+                setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(next.estado)));
+                return { ...f2, direccion: next };
+              });
+            });
+          }
+        }
+
+        // Calle / Ciudad normales
+        dir[name] = v;
         return { ...f, direccion: dir };
-      }
-
-     // ZIP: al tener 5 dígitos → fija estado/ciudad usando mapa local y lookup online
-if (name === "zip") {
-  const zip = String(v).replace(/\D/g, "").slice(0, 5);
-  dir.zip = zip;
-
-  if (zip.length === 5) {
-    // Si corresponde a Massachusetts, fija MA
-    if (isMA(zip)) {
-      dir.estado = "MA";
-      setEstadoInput("MA");
-      setEstadoOpciones(estadosUSA.filter((s) => s.startsWith("MA")));
-    }
-
-    // 1) Mapa local (siempre pisamos para reflejar el ZIP nuevo)
-    const local = zipToCiudadEstado(zip);
-    if (local.ciudad || local.estado) {
-      dir.ciudad = local.ciudad || "";
-      dir.estado = (local.estado || dir.estado || "").toUpperCase();
-      setEstadoInput(dir.estado);
-      setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(dir.estado)));
-    }
-
-    // 2) Lookup online (también pisa, pero cuidamos carreras si el ZIP cambió)
-    lookupZipOnline(zip).then((z) => {
-      if (!z) return;
-      setForm((f2) => {
-        const cur = f2.direccion || {};
-        if ((cur.zip || "") !== zip) return f2; // el usuario cambió el ZIP mientras llegaba la respuesta
-
-        const next = {
-          ...cur,
-          ciudad: z.ciudad || cur.ciudad || "",
-          estado: (z.estado || cur.estado || "").toUpperCase(),
-        };
-        setEstadoInput(next.estado);
-        setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(next.estado)));
-        return { ...f2, direccion: next };
       });
-    });
+      return;
+    }
+
+    // Resto de campos
+    setForm((f) => ({ ...f, [name]: value ?? "" }));
   }
-
-  return { ...f, direccion: dir };
-}
-
-
-      // Calle / Ciudad normales
-      dir[name] = v;
-      return { ...f, direccion: dir };
-    });
-    return;
-  }
-
-  // Resto de campos
-  setForm((f) => ({ ...f, [name]: value ?? "" }));
-}
-
 
   async function handleGuardar(e) {
     e.preventDefault();
@@ -900,7 +885,7 @@ if (name === "zip") {
         setCxcByClient((prev) => ({ ...prev, [clienteSeleccionado.id]: info }));
       }
     };
-  }, [clienteSeleccionado?.id]); // eslint-disable-line
+  }, [clienteSeleccionado?.id]);
 
   useEffect(() => {
     if (!clienteSeleccionado?.id) return;
@@ -957,7 +942,7 @@ if (name === "zip") {
         realtimeUnsubRef.current = null;
       }
     };
-  }, [clienteSeleccionado?.id, refreshCreditoActivo]); // eslint-disable-line
+  }, [clienteSeleccionado?.id, refreshCreditoActivo]);
 
   useEffect(() => {
     async function cargarResumen() {
@@ -1030,11 +1015,8 @@ if (name === "zip") {
     doc.setFontSize(12);
     doc.text(`Full Name: ${clienteSeleccionado.nombre || ""}`, 14, 53);
     doc.text(`Business Name: ${clienteSeleccionado.negocio || ""}`, 14, 60);
-    // ⬇️ Dirección: soportar string u objeto
-const dirTxt = prettyAddress(clienteSeleccionado.direccion);
-doc.text(`Address: ${dirTxt}`, 14, 67);
-
-    // ✅ Mostrar teléfono sin asteriscos, formateado
+    const dirTxt = prettyAddress(clienteSeleccionado.direccion);
+    doc.text(`Address: ${dirTxt}`, 14, 67);
     doc.text(`Phone: ${formatPhoneForInput(clienteSeleccionado.telefono) || ""}`, 14, 74);
 
     doc.setLineWidth(0.5);
@@ -1074,10 +1056,10 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
         <div className="mb-4 sm:mb-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 sm:gap-4">
             <div>
-              <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              <h1 className="text-xl sm:text-2xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 Client Management
               </h1>
-              <p className="text-gray-600 mt-1 sm:mt-2 text-sm sm:text-base">Manage your clients and track their payments</p>
+              <p className="text-gray-600 mt-1 sm:mt-2 text-xs sm:text-sm md:text-base">Manage your clients and track their payments</p>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
               {clienteSeleccionado?.id && (
@@ -1090,60 +1072,60 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                       setTimeout(() => setMensaje(""), 1200);
                     }
                   })}
-                  className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm text-sm"
+                  className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm text-sm sm:text-base"
                   title="Refresh credit"
                 >
                   <RefreshCcw size={18} />
-                  Refresh
+                  <span className="hidden sm:inline">Refresh</span>
                 </button>
               )}
               <button
                 onClick={() => { abrirNuevoCliente(); navigate("/clientes/nuevo"); }}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base"
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-xs sm:text-base"
                 title="New Client (⌘/Ctrl+N)"
               >
                 <Plus size={20} />
-                New Client
+                <span className="hidden sm:inline">New Client</span>
               </button>
             </div>
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-6 mt-4 sm:mt-8">
-            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 mt-4 sm:mt-8">
+            <div className="bg-white rounded-2xl p-3 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-gray-500 text-xs sm:text-sm font-medium">Total Clients</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-gray-800">{totales.totalClients}</p>
+                  <p className="text-xl sm:text-3xl font-bold text-gray-800">{totales.totalClients}</p>
                 </div>
                 <div className="bg-blue-100 p-2 sm:p-3 rounded-full">
-                  <User className="text-blue-600" size={22} />
+                  <User className="text-blue-600" size={18} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+            <div className="bg-white rounded-2xl p-3 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-gray-500 text-xs sm:text-sm font-medium">Clients with Debt</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-orange-600">{totales.withDebt}</p>
+                  <p className="text-xl sm:text-3xl font-bold text-orange-600">{totales.withDebt}</p>
                 </div>
                 <div className="bg-orange-100 p-2 sm:p-3 rounded-full">
-                  <TrendingUp className="text-orange-600" size={22} />
+                  <TrendingUp className="text-orange-600" size={18} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+            <div className="bg-white rounded-2xl p-3 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-gray-500 text-xs sm:text-sm font-medium">Total Outstanding</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-red-600">
+                  <p className="text-xl sm:text-3xl font-bold text-red-600">
                     {fmtSafe(totales.totalOutstanding)}
                   </p>
                 </div>
                 <div className="bg-red-100 p-2 sm:p-3 rounded-full">
-                  <DollarSign className="text-red-600" size={22} />
+                  <DollarSign className="text-red-600" size={18} />
                 </div>
               </div>
             </div>
@@ -1153,12 +1135,12 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
         {/* Main card */}
         <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
           {/* Search */}
-          <div className="p-4 sm:p-6 bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">
+          <div className="p-3 sm:p-6 bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input
                 ref={searchRef}
-                className="w-full pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white shadow-sm text-sm sm:text-base"
+                className="w-full pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white shadow-sm text-xs sm:text-base"
                 placeholder="Search clients by name, phone, email or business..."
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value ?? "")}
@@ -1169,7 +1151,7 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
 
           {/* Loading */}
           {isLoading && (
-            <div className="flex justify-center items-center py-10 sm:py-12">
+            <div className="flex justify-center items-center py-8 sm:py-12">
               <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
             </div>
           )}
@@ -1177,8 +1159,8 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
           {/* --- PANEL STICKY DE BALANCES EN MÓVIL --- */}
           {busqueda.trim() !== "" && !isLoading && clientes.length > 0 && (
             <div className="md:hidden sticky top-0 z-20 bg-white border-b border-gray-200">
-              <div className="px-4 py-2">
-                <div className="text-[11px] text-gray-500 mb-1">
+              <div className="px-3 py-2">
+                <div className="text-[10px] text-gray-500 mb-1">
                   Resultados: {clientes.length} • Balances rápidos
                 </div>
 
@@ -1193,63 +1175,63 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                         className={`shrink-0 min-w-[240px] max-w-[280px] p-3 rounded-xl border
                 ${saldo > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}
                       >
-                        {/* Header: Nombre + botón Payment */}
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-semibold text-gray-800 truncate">
-                              {c.nombre || "—"}
-                            </div>
-                            {c.negocio && (
-                              <div className="text-[10px] text-gray-600 truncate">
-                                {c.negocio}
-                              </div>
-                            )}
-                            {c.telefono && (
-                              <div className="text-[10px] text-gray-500 truncate">
-                                {formatPhoneForInput(c.telefono)}
-                              </div>
-                            )}
-                          </div>
+  {/* Header: Nombre + botón Payment */}
+<div className="flex items-start justify-between gap-2">
+  <div className="min-w-0">
+    <div className="text-[11px] font-semibold text-gray-800 truncate">
+      {c.nombre || "—"}
+    </div>
+    {c.negocio && (
+      <div className="text-[10px] text-gray-600 truncate">
+        {c.negocio}
+      </div>
+    )}
+    {c.telefono && (
+      <div className="text-[10px] text-gray-500 truncate">
+        {formatPhoneForInput(c.telefono)}
+      </div>
+    )}
+  </div>
 
-                          {/* Botón directo a Abono */}
-                          <button
-                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
-                             bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const info = await safeGetCxc(c.id);
-                              setClienteSeleccionado(c);
-                              setResumen((r) => ({
-                                ...r,
-                                balance: typeof info?.saldo === "number" ? info.saldo : (c.balance || 0),
-                                cxc: info || null,
-                              }));
-                              setMostrarAbono(true);
-                            }}
-                            title="Registrar pago"
-                          >
-                            <DollarSign size={14} />
-                            Payment
-                          </button>
-                        </div>
+  {/* Botón directo a Abono */}
+  <button
+    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
+               bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
+    onClick={async (e) => {
+      e.stopPropagation();
+      const info = await safeGetCxc(c.id);
+      setClienteSeleccionado(c);
+      setResumen((r) => ({
+        ...r,
+        balance: info ? info.saldo : (c?.balance ?? 0),
+        cxc: info ?? null,
+      }));
+      setMostrarAbono(true);
+    }}
+    title="Registrar pago"
+  >
+    <DollarSign size={14} />
+    <span className="hidden sm:inline">Payment</span>
+  </button>
+</div>  {/* ← CERRAR DIV AQUÍ */}
 
-                        {/* Balance y abrir Stats tocando el cuerpo */}
-                        <button
-                          className="mt-2 w-full text-left"
-                          onClick={() => {
-                            setClienteSeleccionado(c);
-                            setMostrarStats(true);
-                          }}
-                        >
-                          <div
-                            className={`text-sm font-bold ${
-                              saldo > 0 ? "text-rose-600" : "text-emerald-600"
-                            }`}
-                          >
-                            {fmtSafe(saldo)}
-                          </div>
-                          <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
-                        </button>
+{/* Balance y abrir Stats tocando el cuerpo */}
+<button
+  className="mt-2 w-full text-left"
+  onClick={() => {
+    setClienteSeleccionado(c);
+    setMostrarStats(true);
+  }}
+>
+  <div
+    className={`text-sm font-bold ${
+      saldo > 0 ? "text-rose-600" : "text-emerald-600"
+    }`}
+  >
+    {fmtSafe(saldo)}
+  </div>
+  <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
+</button>
                       </div>
                     );
                   })}
@@ -1261,7 +1243,126 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
           {/* Table */}
           {!isLoading && (
             <>
-              <div className="overflow-x-auto">
+              {/* Mobile View - Cards */}
+              <div className="md:hidden space-y-3 p-3 sm:p-4">
+                {clientes.map((c) => {
+                  // Dirección: aceptar string u objeto
+                  const dRaw = c.direccion;
+                  let dObj = null;
+                  if (typeof dRaw === "string" && dRaw) {
+                    try { dObj = JSON.parse(dRaw); } catch { dObj = null; }
+                  } else if (dRaw && typeof dRaw === "object") {
+                    dObj = dRaw;
+                  }
+                  const d = dObj || { calle: "", ciudad: "", estado: "", zip: "" };
+
+                  const cxc = cxcByClient[c.id];
+                  const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
+                  const disp = typeof cxc?.disponible === "number" ? cxc.disponible : null;
+
+                  return (
+                    <div
+                      key={c.id}
+                      className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                      onClick={() => {
+                        setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
+                        setMostrarStats(true);
+                      }}
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-blue-100 rounded-full p-2">
+                            <User className="text-blue-600" size={16} />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-gray-900 text-lg">{c.nombre}</h3>
+                            {c.negocio && (
+                              <p className="text-sm text-gray-600 flex items-center gap-1">
+                                <Building2 size={12} />
+                                {c.negocio}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+<button
+  onClick={async (e) => {
+    e.stopPropagation();
+    const info = await safeGetCxc(c.id);
+    setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
+    setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info || null }));
+    setMostrarAbono(true);
+  }}
+  className="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
+>
+  <DollarSign size={14} />
+  Payment
+</button>
+</div>  {/* ✅ AGREGAR ESTE CIERRE AQUÍ */}
+
+<div className="grid grid-cols-2 gap-3 mb-3">
+                        <div>
+                          <p className="text-xs text-gray-500">Phone</p>
+                          <p className="text-sm font-medium">{formatPhoneForInput(c.telefono)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500">Email</p>
+                          <p className="text-sm font-medium truncate">{c.email}</p>
+                        </div>
+                      </div>
+
+                      <div className="mb-3">
+                        <p className="text-xs text-gray-500 mb-1">Address</p>
+                        <p className="text-sm text-gray-800 truncate">{prettyAddress(c.direccion)}</p>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="text-xs text-gray-500">Balance</p>
+                          <span
+                            className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                              safe2(saldo) > 0 ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
+                            }`}
+                          >
+                            {fmtSafe(saldo)}
+                          </span>
+                        </div>
+                        {disp !== null && (
+                          <div>
+                            <p className="text-xs text-gray-500">Available</p>
+                            <span
+                              className={`text-sm font-semibold ${
+                                Number(disp) >= 0 ? "text-emerald-600" : "text-red-600"
+                              }`}
+                            >
+                              {fmtSafe(disp)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {cxc?.limite_manual_aplicado && (
+                        <div className="mt-2">
+                          <span className="text-[10px] uppercase tracking-wide text-blue-500">
+                            Manual limit active
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {clientes.length === 0 && (
+                  <div className="text-center py-8">
+                    <div className="bg-gray-100 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
+                      <Search className="text-gray-400" size={24} />
+                    </div>
+                    <p className="text-gray-500 font-medium">No clients found</p>
+                    <p className="text-gray-400 text-sm">Try adjusting your search criteria</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Desktop View - Table */}
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-xs sm:text-sm">
                   <thead className="bg-gray-50">
                     <tr>
@@ -1275,7 +1376,7 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {clientes.map((c) => {
-                      // ⬇️ Dirección: aceptar string u objeto
+                      // Dirección: aceptar string u objeto
                       const dRaw = c.direccion;
                       let dObj = null;
                       if (typeof dRaw === "string" && dRaw) {
@@ -1294,8 +1395,6 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                           key={c.id}
                           className="hover:bg-blue-50 cursor-pointer transition-colors duration-150"
                           onClick={() => {
-                            // Si era string plano, preservamos el string en el seleccionado;
-                            // si era objeto, pasamos el objeto normalizado.
                             setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
                             setMostrarStats(true);
                           }}
@@ -1318,7 +1417,7 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                           </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <div className="space-y-1">
-                              { c.telefono && (
+                              {c.telefono && (
                                 <div className="text-sm text-gray-900 flex items-center gap-2">
                                   <Phone size={12} className="text-gray-400" />
                                   {formatPhoneForInput(c.telefono)}
@@ -1332,13 +1431,12 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                               )}
                             </div>
                           </td>
-                        <td className="px-4 sm:px-6 py-3 sm:py-4 hidden md:table-cell">
-  <div className="text-sm text-gray-900 flex items-start gap-2">
-    <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
-    <div>{prettyAddress(c.direccion)}</div>
-  </div>
-</td>
-
+                          <td className="px-4 sm:px-6 py-3 sm:py-4 hidden md:table-cell">
+                            <div className="text-sm text-gray-900 flex items-start gap-2">
+                              <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
+                              <div>{prettyAddress(c.direccion)}</div>
+                            </div>
+                          </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <span
                               className={`inline-flex items-center px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold ${
@@ -1365,19 +1463,19 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                             )}
                           </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
-                            <button
-                              className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duración-150"
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                const info = await safeGetCxc(c.id);
-                                setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
-                                setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info || null }));
-                                setMostrarAbono(true);
-                              }}
-                            >
-                              <DollarSign size={14} />
-                              Payment
-                            </button>
+   <button
+  className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duration-200"
+  onClick={async (e) => {  // ✅ Agregar async
+    e.stopPropagation();
+    const info = await safeGetCxc(c.id);
+    setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
+    setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info || null }));
+    setMostrarAbono(true);
+  }}
+>
+  <DollarSign size={14} />
+  <span className="hidden sm:inline">Payment</span>
+</button>
                           </td>
                         </tr>
                       );
@@ -1409,7 +1507,7 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
                 <div className="flex items-center gap-3">
                   <label className="text-gray-600">Page size</label>
                   <select
-                    className="px-3 py-2 border rounded-lg"
+                    className="px-3 py-2 border rounded-lg text-sm"
                     value={pageSize}
                     onChange={(e) => setPageSize(Number(e.target.value))}
                   >
@@ -1455,14 +1553,14 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
         {/* Mensajes */}
         {mensaje && (
           <div
-            className={`fixed top-4 right-4 px-4 sm:px-6 py-3 sm:py-4 rounded-xl shadow-lg z-50 transition-all duration-300 text-sm sm:text-base ${
+            className={`fixed top-4 right-4 px-4 sm:px-6 py-3 sm:py-4 rounded-xl shadow-lg z-50 transition-all duration-300 text-xs sm:text-base ${
               mensaje.includes("Error") || mensaje.includes("invalid")
                 ? "bg-red-500 text-white"
                 : "bg-green-500 text-white"
             }`}
           >
             <div className="flex items-center gap-2">
-              {mensaje.includes("Error") ? <X size={20} /> : <Check size={20} />}
+              {mensaje.includes("Error") ? <X size={16} /> : <Check size={16} />}
               {mensaje}
             </div>
           </div>
@@ -1489,190 +1587,189 @@ doc.text(`Address: ${dirTxt}`, 14, 67);
       )}
 
       {/* Modal edición */}
-{mostrarEdicion && (
-  <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-    <form
-      onSubmit={handleGuardar}
-      className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[90vh] overflow-hidden"
-    >
-      <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
-        <h3 className="text-xl sm:text-2xl font-bold">
-          {clienteSeleccionado ? "Edit Client" : "New Client"}
-        </h3>
-        <p className="text-blue-100 mt-1 text-sm">
-          {clienteSeleccionado ? "Update client information" : "Add a new client to your system"}
-        </p>
-      </div>
+      {mostrarEdicion && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+          <form
+            onSubmit={handleGuardar}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[90vh] overflow-hidden"
+          >
+            <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+              <h3 className="text-xl sm:text-2xl font-bold">
+                {clienteSeleccionado ? "Edit Client" : "New Client"}
+              </h3>
+              <p className="text-blue-100 mt-1 text-xs sm:text-sm">
+                {clienteSeleccionado ? "Update client information" : "Add a new client to your system"}
+              </p>
+            </div>
 
-      <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-          <div className="md:col-span-2">
-            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-              <User size={16} />
-              Full Name *
-            </label>
-            <input
-              name="nombre"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-              value={form.nombre ?? ""}
-              onChange={handleChange}
-              required
-              placeholder="Enter full name"
-            />
-          </div>
+            <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                <div className="md:col-span-2">
+                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+                    <User size={16} />
+                    Full Name *
+                  </label>
+                  <input
+                    name="nombre"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    value={form.nombre ?? ""}
+                    onChange={handleChange}
+                    required
+                    placeholder="Enter full name"
+                  />
+                </div>
 
-          <div>
-            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-              <Phone size={16} />
-              Phone
-            </label>
-            <input
-              name="telefono"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-              value={form.telefono ?? ""}
-              onChange={handleChange}
-              placeholder="(555) 123-4567"
-            />
-          </div>
+                <div>
+                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+                    <Phone size={16} />
+                    Phone
+                  </label>
+                  <input
+                    name="telefono"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    value={form.telefono ?? ""}
+                    onChange={handleChange}
+                    placeholder="(555) 123-4567"
+                  />
+                </div>
 
-          <div>
-            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-              <Mail size={16} />
-              Email
-            </label>
-            <input
-              name="email"
-              type="email"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-              value={form.email ?? ""}
-              onChange={handleChange}
-              placeholder="email@example.com"
-            />
-          </div>
+                <div>
+                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+                    <Mail size={16} />
+                    Email
+                  </label>
+                  <input
+                    name="email"
+                    type="email"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    value={form.email ?? ""}
+                    onChange={handleChange}
+                    placeholder="email@example.com"
+                  />
+                </div>
 
-          <div className="md:col-span-2">
-            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-              <Building2 size={16} />
-              Business
-            </label>
-            <input
-              name="negocio"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-              value={form.negocio ?? ""}
-              onChange={handleChange}
-              placeholder="Business name"
-            />
-          </div>
+                <div className="md:col-span-2">
+                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+                    <Building2 size={16} />
+                    Business
+                  </label>
+                  <input
+                    name="negocio"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    value={form.negocio ?? ""}
+                    onChange={handleChange}
+                    placeholder="Business name"
+                  />
+                </div>
 
-          {/* Address Information */}
-          <div className="md:col-span-2">
-            <h4 className="flex items-center gap-2 font-semibold text-gray-700 mb-4">
-              <MapPin size={16} />
-              Address Information
-            </h4>
+                {/* Address Information */}
+                <div className="md:col-span-2">
+                  <h4 className="flex items-center gap-2 font-semibold text-gray-700 mb-4">
+                    <MapPin size={16} />
+                    Address Information
+                  </h4>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Street */}
-              <div className="md:col-span-2">
-                <label className="font-medium text-gray-600 mb-1 block">Street</label>
-                <input
-                  name="calle"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  value={form.direccion?.calle ?? ""}
-                  onChange={handleChange}
-                  placeholder="123 Main St"
-                />
-              </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Street */}
+                    <div className="md:col-span-2">
+                      <label className="font-medium text-gray-600 mb-1 block">Street</label>
+                      <input
+                        name="calle"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        value={form.direccion?.calle ?? ""}
+                        onChange={handleChange}
+                        placeholder="123 Main St"
+                      />
+                    </div>
 
-              {/* ZIP (al escribir 5 dígitos autollenará ciudad/estado) */}
-              <div>
-                <label className="font-medium text-gray-600 mb-1 block">ZIP Code</label>
-                <input
-                  name="zip"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  value={form.direccion?.zip ?? ""}
-                  onChange={handleChange}
-                  maxLength={5}
-                  placeholder="02118"
-                  inputMode="numeric"
-                  pattern="\d{5}"
-                />
-              </div>
+                    {/* ZIP (al escribir 5 dígitos autollenará ciudad/estado) */}
+                    <div>
+                      <label className="font-medium text-gray-600 mb-1 block">ZIP Code</label>
+                      <input
+                        name="zip"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        value={form.direccion?.zip ?? ""}
+                        onChange={handleChange}
+                        maxLength={5}
+                        placeholder="02118"
+                        inputMode="numeric"
+                        pattern="\d{5}"
+                      />
+                    </div>
 
-              {/* City */}
-              <div>
-                <label className="font-medium text-gray-600 mb-1 block">City</label>
-                <input
-                  name="ciudad"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  value={form.direccion?.ciudad ?? ""}
-                  onChange={handleChange}
-                  placeholder="Boston"
-                />
-              </div>
+                    {/* City */}
+                    <div>
+                      <label className="font-medium text-gray-600 mb-1 block">City</label>
+                      <input
+                        name="ciudad"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        value={form.direccion?.ciudad ?? ""}
+                        onChange={handleChange}
+                        placeholder="Boston"
+                      />
+                    </div>
 
-              {/* State (con datalist) */}
-              <div>
-                <label className="font-medium text-gray-600 mb-1 block">State</label>
-                <input
-                  name="estado"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  placeholder="MA"
-                  value={estadoInput ?? ""}
-                  onChange={handleChange}
-                  list="estados-lista"
-                  autoComplete="off"
-                  maxLength={2}
-                  style={{ textTransform: "uppercase" }}
-                />
-                <datalist id="estados-lista">
-                  {estadoOpciones.map((e) => (
-                    <option value={e} key={e}>
-                      {e}
-                    </option>
-                  ))}
-                </datalist>
+                    {/* State (con datalist) */}
+                    <div>
+                      <label className="font-medium text-gray-600 mb-1 block">State</label>
+                      <input
+                        name="estado"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        placeholder="MA"
+                        value={estadoInput ?? ""}
+                        onChange={handleChange}
+                        list="estados-lista"
+                        autoComplete="off"
+                        maxLength={2}
+                        style={{ textTransform: "uppercase" }}
+                      />
+                      <datalist id="estados-lista">
+                        {estadoOpciones.map((e) => (
+                          <option value={e} key={e}>
+                            {e}
+                          </option>
+                        ))}
+                      </datalist>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-          {/* FIN Address Information */}
-        </div>
-      </div>
 
-      <div className="p-4 sm:p-6 bg-gray-50 border-t border-gray-200 flex gap-3">
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
-        >
-          {isLoading ? (
-            <>
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-              Saving...
-            </>
-          ) : (
-            <>
-              <Check size={16} />
-              Save Client
-            </>
-          )}
-        </button>
-        <button
-          type="button"
-          className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
-          onClick={() => {
-            setMostrarEdicion(false);
-            navigate("/clientes");
-          }}
-          disabled={isLoading}
-        >
-          <X size={16} />
-          Cancel
-        </button>
-      </div>
-    </form>
-  </div>
-)}
+            <div className="p-4 sm:p-6 bg-gray-50 border-t border-gray-200 flex gap-3">
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-sm"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check size={16} />
+                    Save Client
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-sm"
+                onClick={() => {
+                  setMostrarEdicion(false);
+                  navigate("/clientes");
+                }}
+                disabled={isLoading}
+              >
+                <X size={16} />
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Modal Abono */}
       {mostrarAbono && clienteSeleccionado && (
@@ -1693,6 +1790,9 @@ function ClienteStatsModal({
   open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete, generatePDF, onRefreshCredito
 }) {
   if (!open || !cliente) return null;
+
+  // 🆕 Estado para controlar si se muestran todas las transacciones
+  const [mostrarTodas, setMostrarTodas] = useState(false);
 
   const comprasPorMes = {};
   let lifetimeTotal = 0;
@@ -1716,30 +1816,41 @@ function ClienteStatsModal({
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const saldo = Number(resumen?.balance ?? 0);
 
+  // 🆕 Filtrar y limitar ventas
+  const ventasFiltradas = mesSeleccionado 
+    ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado))
+    : (resumen.ventas || []);
+  
+  const ventasMostrar = mostrarTodas 
+    ? ventasFiltradas 
+    : ventasFiltradas.slice(0, 10);
+  
+  const hayMasVentas = ventasFiltradas.length > 10;
+
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
-        {/* Header */}
-        <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white relative sticky top-0 z-20">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-4xl h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header - STICKY */}
+        <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-20 shrink-0">
           <button className="absolute right-4 top-4 text-white/80 hover:text-white transition-colors p-1" onClick={onClose}>
             <X size={24} />
           </button>
 
           <button
-            className="absolute right-16 top-4 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1"
+            className="absolute right-16 top-4 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-1"
             onClick={() => onEdit && onEdit()}
           >
             <Edit size={16} />
-            Edit
+            <span className="hidden sm:inline">Edit</span>
           </button>
 
           <div className="flex items-start gap-4">
-            <div className="bg-white/20 rounded-full p-3">
+            <div className="bg-white/20 rounded-full p-3 shrink-0">
               <User size={24} />
             </div>
-            <div className="flex-1">
-              <h3 className="text-xl sm:text-2xl font-bold">{cliente.nombre}</h3>
-              <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-xl sm:text-2xl font-bold truncate">{cliente.nombre}</h3>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                 <div className="bg-white/10 rounded-lg p-3">
                   <div className="uppercase tracking-wide text-xs text-white/70">Current Balance</div>
                   <div className="text-xl font-bold">{saldo >= 0 ? `$${saldo.toFixed(2)}` : `-$${Math.abs(saldo).toFixed(2)}`}</div>
@@ -1757,11 +1868,11 @@ function ClienteStatsModal({
                 <div className="mt-2 text-[11px] uppercase tracking-wide text-yellow-200">Manual limit applied for this client</div>
               )}
 
-              <div className="mt-3 text-blue-100 flex items-center gap-3 flex-wrap">
+              <div className="mt-3 text-blue-100 flex items-center gap-3 flex-wrap text-xs sm:text-sm">
                 {cliente.email && (
-                  <div className="flex items-center gap-2">
-                    <Mail size={14} />
-                    {cliente.email}
+                  <div className="flex items-center gap-2 truncate">
+                    <Mail size={14} className="shrink-0" />
+                    <span className="truncate">{cliente.email}</span>
                   </div>
                 )}
                 {cliente.telefono && (
@@ -1771,173 +1882,220 @@ function ClienteStatsModal({
                   </div>
                 )}
                 {cliente.negocio && (
-                  <div className="flex items-center gap-2">
-                    <Building2 size={14} />
-                    {cliente.negocio}
+                  <div className="flex items-center gap-2 truncate">
+                    <Building2 size={14} className="shrink-0" />
+                    <span className="truncate">{cliente.negocio}</span>
                   </div>
                 )}
                 {cliente.direccion && (
-  <div className="flex items-center gap-2">
-    <MapPin size={14} />
-    {prettyAddress(cliente.direccion)}
-  </div>
-)}
+                  <div className="flex items-center gap-2 truncate">
+                    <MapPin size={14} className="shrink-0" />
+                    <span className="truncate max-w-xs">{prettyAddress(cliente.direccion)}</span>
+                  </div>
+                )}
 
                 <button
                   onClick={onRefreshCredito}
-                  className="ml-auto bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1"
+                  className="ml-auto bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1 shrink-0"
                   title="Refresh credit"
                 >
                   <RefreshCcw size={14} />
-                  Refresh Credit
+                  <span className="hidden sm:inline">Refresh</span>
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-green-600 text-sm font-medium">Lifetime Sales</p>
-                  <p className="text-2xl font-bold text-green-700">${(resumen.ventas || []).reduce((s,v)=>s+Number(v.total_venta||0),0).toFixed(2)}</p>
+        {/* Body - SCROLLABLE */}
+        <div 
+          className="flex-1 overflow-y-auto overscroll-contain"
+          style={{ 
+            WebkitOverflowScrolling: 'touch',
+            paddingBottom: 'max(env(safe-area-inset-bottom), 24px)'
+          }}
+        >
+          <div className="p-4 sm:p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-green-600 text-sm font-medium">Lifetime Sales</p>
+                    <p className="text-2xl font-bold text-green-700">${(resumen.ventas || []).reduce((s,v)=>s+Number(v.total_venta||0),0).toFixed(2)}</p>
+                  </div>
+                  <TrendingUp className="text-green-600" size={20} />
                 </div>
-                <TrendingUp className="text-green-600" size={20} />
+              </div>
+
+              <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-blue-600 text-sm font-medium">Total Orders</p>
+                    <p className="text-2xl font-bold text-blue-700">{(resumen.ventas || []).length}</p>
+                  </div>
+                  <FileText className="text-blue-600" size={20} />
+                </div>
+              </div>
+
+              <div className={`bg-gradient-to-br ${(resumen?.balance ?? 0) > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
+                    <p className={`text-2xl font-bold ${(resumen?.balance ?? 0) > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
+                  </div>
+                  <DollarSign className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
+                </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-200 rounded-xl p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-blue-600 text-sm font-medium">Total Orders</p>
-                  <p className="text-2xl font-bold text-blue-700">{(resumen.ventas || []).length}</p>
-                </div>
-                <FileText className="text-blue-600" size={20} />
+            {/* Filtro por mes */}
+            <div className="mb-6">
+              <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
+                <Calendar size={16} />
+                Filter by Month
+              </label>
+              <select
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white text-sm"
+                value={mesSeleccionado || ""}
+                onChange={e => {
+                  setMesSeleccionado(e.target.value || null);
+                  setMostrarTodas(false); // Reset al cambiar filtro
+                }}
+              >
+                <option value="">All months</option>
+                {Object.keys(comprasPorMes).sort().reverse().map(mes => (
+                  <option key={mes} value={mes}>{mes}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Chart */}
+            <div className="bg-gray-50 rounded-xl p-4 sm:p-6 mb-6">
+              <h4 className="font-bold mb-4 text-gray-800 flex items-center gap-2 text-sm sm:text-base">
+                <BarChart3 size={20} />
+                Sales Trend (Last 12 Months)
+              </h4>
+              <div className="h-64 sm:h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dataChart}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="mes" fontSize={12} stroke="#6b7280" tickLine={false} />
+                    <YAxis fontSize={12} stroke="#6b7280" tickLine={false} />
+                    <Tooltip
+                      formatter={v => [`$${Number(v).toFixed(2)}`, "Sales"]}
+                      labelStyle={{ color: '#374151' }}
+                      contentStyle={{
+                        backgroundColor: 'white',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                      }}
+                    />
+                    <Bar dataKey="compras" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </div>
 
-            <div className={`bg-gradient-to-br ${(resumen?.balance ?? 0) > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
-                  <p className={`text-2xl font-bold ${(resumen?.balance ?? 0) > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
-                </div>
-                <DollarSign className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
+            {/* 🆕 Tabla ventas con límite de 10 */}
+            <div className="bg-gray-50 rounded-xl p-4 sm:p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-bold text-gray-800 flex items-center gap-2 text-sm sm:text-base">
+                  <FileText size={20} />
+                  Sales History {mesSeleccionado ? `for ${mesSeleccionado}` : "(all)"}
+                  <span className="text-xs font-normal text-gray-500">
+                    ({ventasMostrar.length} of {ventasFiltradas.length})
+                  </span>
+                </h4>
+                
+                {/* 🆕 Botón Ver más/menos */}
+                {hayMasVentas && (
+                  <button
+                    onClick={() => setMostrarTodas(!mostrarTodas)}
+                    className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors"
+                  >
+                    {mostrarTodas ? (
+                      <>
+                        <ChevronUp size={14} />
+                        Show Less
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={14} />
+                        View All ({ventasFiltradas.length})
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
-            </div>
-          </div>
 
-          {/* Filtro por mes */}
-          <div className="mb-6">
-            <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-              <Calendar size={16} />
-              Filter by Month
-            </label>
-            <select
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duración-200 bg-white"
-              value={mesSeleccionado || ""}
-              onChange={e => setMesSeleccionado(e.target.value || null)}
-            >
-              <option value="">All months</option>
-              {Object.keys(comprasPorMes).sort().reverse().map(mes => (
-                <option key={mes} value={mes}>{mes}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Chart */}
-          <div className="bg-gray-50 rounded-xl p-6 mb-6">
-            <h4 className="font-bold mb-4 text-gray-800 flex items-center gap-2">
-              <BarChart3 size={20} />
-              Sales Trend (Last 12 Months)
-            </h4>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={dataChart}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="mes" fontSize={12} stroke="#6b7280" tickLine={false} />
-                <YAxis fontSize={12} stroke="#6b7280" tickLine={false} />
-                <Tooltip
-                  formatter={v => [`${Number(v).toFixed(2)}`, "Sales"]}
-                  labelStyle={{ color: '#374151' }}
-                  contentStyle={{
-                    backgroundColor: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                  }}
-                />
-                <Bar dataKey="compras" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Tabla ventas */}
-          <div className="bg-gray-50 rounded-xl p-6">
-            <h4 className="font-bold mb-4 text-gray-800 flex items-center gap-2">
-              <FileText size={20} />
-              Sales History {mesSeleccionado ? `for ${mesSeleccionado}` : "(all)"}
-            </h4>
-            {(mesSeleccionado ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado)) : (resumen.ventas || [])).length === 0 ? (
-              <div className="text-center py-8">
-                <div className="bg-gray-200 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
-                  <FileText className="text-gray-400" size={24} />
+              {ventasFiltradas.length === 0 ? (
+                <div className="text-center py-8">
+                  <div className="bg-gray-200 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
+                    <FileText className="text-gray-400" size={24} />
+                  </div>
+                  <p className="text-gray-500 font-medium">No sales found</p>
+                  <p className="text-gray-400 text-sm">This client hasn't made any purchases yet</p>
                 </div>
-                <p className="text-gray-500 font-medium">No sales found</p>
-                <p className="text-gray-400 text-sm">This client hasn't made any purchases yet</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 font-semibold text-gray-600 text-sm">Order ID</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-600 text-sm">Date</th>
-                      <th className="text-right py-3 px-4 font-semibold text-gray-600 text-sm">Total</th>
-                      <th className="text-right py-3 px-4 font-semibold text-gray-600 text-sm">Paid</th>
-                      <th className="text-center py-3 px-4 font-semibold text-gray-600 text-sm">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(mesSeleccionado ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado)) : (resumen.ventas || [])).map((v) => (
-                      <tr key={v.id} className="border-b border-gray-100 hover:bg-white transition-colors">
-                        <td className="py-3 px-4">
-                          <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">{v.id.slice(0, 8)}…</span>
-                        </td>
-                        <td className="py-3 px-4 text-sm text-gray-700">{v.fecha?.slice(0, 10)}</td>
-                        <td className="py-3 px-4 text-right font-semibold">${(v.total_venta || 0).toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right font-semibold text-green-600">${(v.total_pagado || 0).toFixed(2)}</td>
-                        <td className="py-3 px-4 text-center">
-                          <span
-                            className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                              v.estado_pago === "Paid"
-                                ? "bg-green-100 text-green-800"
-                                : v.estado_pago === "Partial"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-gray-100 text-gray-800"
-                            }`}
-                          >
-                            {v.estado_pago || "Pending"}
-                          </span>
-                        </td>
+              ) : (
+                <div className="overflow-x-auto -mx-4 sm:mx-0">
+                  <table className="w-full text-xs sm:text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-3 px-4 font-semibold text-gray-600">Order ID</th>
+                        <th className="text-left py-3 px-4 font-semibold text-gray-600">Date</th>
+                        <th className="text-right py-3 px-4 font-semibold text-gray-600">Total</th>
+                        <th className="text-right py-3 px-4 font-semibold text-gray-600">Paid</th>
+                        <th className="text-center py-3 px-4 font-semibold text-gray-600">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                    </thead>
+                    <tbody>
+                      {ventasMostrar.map((v) => (
+                        <tr key={v.id} className="border-b border-gray-100 hover:bg-white transition-colors">
+                          <td className="py-3 px-4">
+                            <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">{v.id.slice(0, 8)}…</span>
+                          </td>
+                          <td className="py-3 px-4 text-gray-700">{v.fecha?.slice(0, 10)}</td>
+                          <td className="py-3 px-4 text-right font-semibold">${(v.total_venta || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4 text-right font-semibold text-green-600">${(v.total_pagado || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span
+                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                v.estado_pago === "Paid"
+                                  ? "bg-green-100 text-green-800"
+                                  : v.estado_pago === "Partial"
+                                  ? "bg-yellow-100 text-yellow-800"
+                                  : "bg-gray-100 text-gray-800"
+                              }`}
+                            >
+                              {v.estado_pago || "Pending"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
 
-          {/* Acciones secundarias */}
-          <div className="flex items-center justify-end gap-3 mt-6">
-            <button onClick={generatePDF} className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium">
-              Export PDF
-            </button>
-            <button onClick={() => onDelete?.(cliente)} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium">
-              Delete Client
-            </button>
+            {/* Acciones secundarias */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
+              <button 
+                onClick={generatePDF} 
+                className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+              >
+                <FileText size={16} />
+                Export PDF
+              </button>
+              <button 
+                onClick={() => onDelete?.(cliente)} 
+                className="bg-red-500 hover:bg-red-600 text-white px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+              >
+                <X size={16} />
+                Delete Client
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1969,7 +2127,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
     return () => { alive = false; };
   }, [cliente.id]);
 
-  // 🔒 Candado anti doble submit (inmediato, no depende de setState)
+  // 🔒 Candado anti doble submit
   const submitLockRef = useRef(false);
 
   function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
@@ -1998,103 +2156,116 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const saldoActual = Number(saldoBase ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const limite = Number(resumen?.cxc?.limite ?? 0);
- const montoNum = Number(monto || 0);
+  const montoNum = Number(monto || 0);
 
-// === Cálculo robusto en centavos ===
-const prevCents = Math.max(0, Math.round(saldoActual * 100));
-const payCents  = Math.max(0, Math.round(montoNum   * 100));
+  // Cálculo robusto en centavos
+  const prevCents = Math.max(0, Math.round(saldoActual * 100));
+  const payCents = Math.max(0, Math.round(montoNum * 100));
+  const excedenteCents = Math.max(0, payCents - prevCents);
+  const excedente = excedenteCents / 100;
 
-const excedenteCents = Math.max(0, payCents - prevCents);
-const excedente = excedenteCents / 100;
+  // Función guardarAbono corregida
+  async function guardarAbono(e) {
+    e.preventDefault();
 
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    setGuardando(true);
+    setMensaje("");
 
-// 🔁 REEMPLAZA COMPLETA la función guardarAbono por esta versión
-async function guardarAbono(e) {
-  e.preventDefault();
-
-  if (submitLockRef.current) return;
-  submitLockRef.current = true;
-  setGuardando(true);
-  setMensaje("");
-
-  try {
-    if (!van || !van.id) throw new Error("You must select a VAN before adding a payment.");
-
-    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-
-    const saldoActualUI   = round2(Number(saldoBase ?? resumen?.balance ?? cliente?.balance ?? 0));
-    const montoIngresado  = round2(Number(monto || 0));
-    if (!montoIngresado || montoIngresado <= 0) throw new Error("Invalid amount. Must be greater than 0.");
-    if (saldoActualUI <= 0) { setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`); return; }
-
-    const pagoAplicado   = round2(Math.min(montoIngresado, saldoActualUI));
-    const cambioDevuelto = round2(montoIngresado - pagoAplicado);
-
-    let rpcOk = false;
     try {
-      const { error } = await supabase.rpc("cxc_registrar_pago", {
-        p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_idem: makeUUID(),
-      });
-      if (!error) rpcOk = true;
-    } catch (err) {
-      const msg = String(err?.message || "");
-      if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
-        const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
-          p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_fecha: new Date().toISOString(),
+      if (!van || !van.id) throw new Error("You must select a VAN before adding a payment.");
+
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+      const saldoActualUI = round2(Number(saldoBase ?? resumen?.balance ?? cliente?.balance ?? 0));
+      const montoIngresado = round2(Number(monto || 0));
+      if (!montoIngresado || montoIngresado <= 0) throw new Error("Invalid amount. Must be greater than 0.");
+      if (saldoActualUI <= 0) { setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`); return; }
+
+      const pagoAplicado = round2(Math.min(montoIngresado, saldoActualUI));
+      const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+
+      let rpcOk = false;
+      try {
+        const { error } = await supabase.rpc("cxc_registrar_pago", {
+          p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_idem: makeUUID(),
         });
-        if (!e2) rpcOk = true; else if (e2.code && e2.code !== "42883") throw e2;
-      } else if (err?.code && err.code !== "42883") { throw err; }
+        if (!error) rpcOk = true;
+      } catch (err) {
+        const msg = String(err?.message || "");
+        if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
+          // Usar una función asíncrona para manejar el await
+          const handleSecondCall = async () => {
+            try {
+              const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
+                p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_fecha: new Date().toISOString(),
+              });
+              if (!e2) {
+                rpcOk = true;
+              } else if (e2.code && e2.code !== "42883") {
+                throw e2;
+              }
+            } catch (e2) {
+              if (e2.code && e2.code !== "42883") {
+                throw e2;
+              }
+              rpcOk = true;
+            }
+          };
+          await handleSecondCall();
+        } else if (err?.code && err.code !== "42883") { 
+          throw err; 
+        }
+      }
+
+      if (!rpcOk) {
+        const { error: insErr } = await supabase.from("pagos").insert([{
+          cliente_id: cliente.id, monto: pagoAplicado, metodo_pago: metodo, fecha_pago: new Date().toISOString(),
+        }]);
+        if (insErr) throw insErr;
+      }
+
+      const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
+      setSaldoBase(saldoDespues);
+
+      // limpiar input
+      setMonto("");
+
+      // refrescar CxC/tabla
+      const info = await safeGetCxc(cliente.id);
+      if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
+      if (typeof refresh === "function") await refresh();
+
+      // mensaje
+      setMensaje(cambioDevuelto > 0
+        ? `Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`
+        : "Payment registered!"
+      );
+
+      // recibo
+      const receiptPayload = {
+        clientName: cliente?.nombre || "",
+        creditNumber: getCreditNumber(cliente),
+        dateStr: new Date().toLocaleString(),
+        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+        amount: pagoAplicado,
+        prevBalance: saldoActualUI,
+        newBalance: saldoDespues,
+      };
+      try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
+
+      // cerrar el modal
+      if (typeof onClose === "function") onClose();
+
+    } catch (err) {
+      setMensaje("Error saving payment: " + (err?.message || "unknown"));
+    } finally {
+      setGuardando(false);
+      submitLockRef.current = false;
+      setTimeout(() => setMensaje(""), 1200);
     }
-
-    if (!rpcOk) {
-      const { error: insErr } = await supabase.from("pagos").insert([{
-        cliente_id: cliente.id, monto: pagoAplicado, metodo_pago: metodo, fecha_pago: new Date().toISOString(),
-      }]);
-      if (insErr) throw insErr;
-    }
-
-    const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
-    setSaldoBase(saldoDespues);
-
-    // ✅ limpiar input para que el banner no recalcule con el monto anterior
-    setMonto("");
-
-    // refrescar CxC/tabla
-    const info = await safeGetCxc(cliente.id);
-    if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
-    if (typeof refresh === "function") await refresh();
-
-    // opcional: mensaje
-    setMensaje(cambioDevuelto > 0
-      ? `Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`
-      : "Payment registered!"
-    );
-
-    // recibo (no afecta el UI)
-    const receiptPayload = {
-      clientName: cliente?.nombre || "",
-      creditNumber: getCreditNumber(cliente),
-      dateStr: new Date().toLocaleString(),
-      pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
-      amount: pagoAplicado,
-      prevBalance: saldoActualUI,
-      newBalance: saldoDespues,
-    };
-    try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
-
-    // ✅ cerrar el modal al terminar
-    if (typeof onClose === "function") onClose();
-
-  } catch (err) {
-    setMensaje("Error saving payment: " + (err?.message || "unknown"));
-  } finally {
-    setGuardando(false);
-    submitLockRef.current = false;
-    setTimeout(() => setMensaje(""), 1200);
   }
-}
-
-
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
@@ -2104,7 +2275,7 @@ async function guardarAbono(e) {
             <DollarSign size={20} />
             Payment for {cliente.nombre}
           </h3>
-          <p className="text-green-100 mt-1 text-sm">Record a new payment from this client</p>
+          <p className="text-green-100 mt-1 text-xs sm:text-sm">Record a new payment from this client</p>
         </div>
 
         <form onSubmit={guardarAbono} className="flex-1 flex flex-col min-h-0">
@@ -2126,9 +2297,9 @@ async function guardarAbono(e) {
 
             <div className="space-y-3 sm:space-y-4 mb-2">
               <div>
-                <label className="font-semibold text-gray-700 mb-2 block text-sm">Payment Amount</label>
+                <label className="font-semibold text-gray-700 mb-2 block text-xs sm:text-sm">Payment Amount</label>
                 <input
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duración-200 text-lg"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 text-lg"
                   placeholder="0.00"
                   type="number" min="0.01" step="0.01"
                   value={monto}
@@ -2138,9 +2309,9 @@ async function guardarAbono(e) {
               </div>
 
               <div>
-                <label className="font-semibold text-gray-700 mb-2 block text-sm">Payment Method</label>
+                <label className="font-semibold text-gray-700 mb-2 block text-xs sm:text-sm">Payment Method</label>
                 <select
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transición-all duración-200 bg-white"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 bg-white"
                   value={metodo}
                   onChange={e => setMetodo(e.target.value)}
                 >
@@ -2152,32 +2323,31 @@ async function guardarAbono(e) {
             </div>
 
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 sm:p-4 mb-4">
-  {montoNum <= 0 ? (
-    <span className="text-sm">Enter a payment amount to see details.</span>
-  ) : excedente > 0 ? (
-    <div className="text-sm">
-      The payment exceeds the current balance by <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
-    </div>
-  ) : (
-    (() => {
-      // Reusa los centavos ya calculados arriba:
-      const newCents   = Math.max(0, prevCents - payCents);
-      const newBalance = (newCents / 100).toFixed(2);
-      return (
-        <div className="text-sm">
-          Payment will reduce balance to <span className="font-bold">${newBalance}</span>.
-        </div>
-      );
-    })()
-  )}
-</div>
-
+              {montoNum <= 0 ? (
+                <span className="text-xs sm:text-sm">Enter a payment amount to see details.</span>
+              ) : excedente > 0 ? (
+                <div className="text-xs sm:text-sm">
+                  The payment exceeds the current balance by <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
+                </div>
+              ) : (
+                (() => {
+                  // Reusa los centavos ya calculados arriba:
+                  const newCents = Math.max(0, prevCents - payCents);
+                  const newBalance = (newCents / 100).toFixed(2);
+                  return (
+                    <div className="text-xs sm:text-sm">
+                      Payment will reduce balance to <span className="font-bold">${newBalance}</span>.
+                    </div>
+                  );
+                })()
+              )}
+            </div>
 
             {mensaje && (
               <div className={`mb-4 p-4 rounded-xl ${mensaje.includes("Error") || mensaje.includes("invalid") ? "bg-red-50 text-red-700 border border-red-200" : "bg-green-50 text-green-700 border border-green-200"}`}>
                 <div className="flex items-center gap-2">
                   {mensaje.includes("Error") ? <X size={16} /> : <Check size={16} />}
-                  <span className="text-sm font-medium">{mensaje}</span>
+                  <span className="text-xs sm:text-sm font-medium">{mensaje}</span>
                 </div>
               </div>
             )}
@@ -2191,14 +2361,14 @@ async function guardarAbono(e) {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-600 mb-2">Monthly Purchases:</p>
+                  <p className="text-xs sm:text-sm font-medium text-gray-600 mb-2">Monthly Purchases:</p>
                   <div className="max-h-32 overflow-y-auto space-y-1">
                     {Object.keys(comprasPorMes).length === 0 ? (
-                      <p className="text-gray-500 text-sm italic">No sales registered</p>
+                      <p className="text-gray-500 text-xs italic">No sales registered</p>
                     ) : (
                       Object.entries(comprasPorMes).sort((a,b) => b[0].localeCompare(a[0])).map(([mes, total]) => (
                         <div key={mes} className="flex justify-between items-center py-1">
-                          <span className="text-sm text-gray-600">{mes}</span>
+                          <span className="text-xs sm:text-sm text-gray-600">{mes}</span>
                           <span className="font-semibold text-blue-600">${total.toFixed(2)}</span>
                         </div>
                       ))
@@ -2207,14 +2377,14 @@ async function guardarAbono(e) {
                 </div>
 
                 <div>
-                  <p className="text-sm font-medium text-gray-600 mb-2">Recent Payments:</p>
+                  <p className="text-xs sm:text-sm font-medium text-gray-600 mb-2">Recent Payments:</p>
                   <div className="max-h-32 overflow-y-auto space-y-1">
                     {resumen.pagos?.length === 0 ? (
-                      <p className="text-gray-500 text-sm italic">No previous payments</p>
+                      <p className="text-gray-500 text-xs italic">No previous payments</p>
                     ) : (
                       resumen.pagos.map(p => (
                         <div key={p.id} className="flex justify-between items-center py-1">
-                          <span className="text-sm text-gray-600">{p.fecha_pago?.slice(0,10)}</span>
+                          <span className="text-xs sm:text-sm text-gray-600">{p.fecha_pago?.slice(0,10)}</span>
                           <span className="font-semibold text-green-600">${(p.monto || 0).toFixed(2)}</span>
                         </div>
                       ))
@@ -2242,7 +2412,7 @@ async function guardarAbono(e) {
               <button
                 type="submit"
                 disabled={guardando}
-                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
+                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-xs sm:text-sm"
               >
                 {guardando ? (
                   <>
@@ -2258,7 +2428,7 @@ async function guardarAbono(e) {
               </button>
               <button
                 type="button"
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duración-200 flex items-center justify-center gap-2"
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-xs sm:text-sm"
                 onClick={onClose}
                 disabled={guardando}
               >
