@@ -19,9 +19,8 @@ const MIN_PAYMENT_CENTS = 50; // $0.50
 /* ---------------- Email helper (Edge Function) ---------------- */
 async function sendOrderEmail({ to, subject, html }) {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-order-email`;
-  const payload = { to, subject, html }; // 👈 solo HTML
+  const payload = { to, subject, html };
 
-  // Fetch directo (evita headers extra del SDK)
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -38,7 +37,6 @@ async function sendOrderEmail({ to, subject, html }) {
     console.error("[send-order-email] fetch error:", e);
   }
 
-  // Fallback al SDK (por si estás en otro entorno)
   try {
     const { data, error } = await supabase.functions.invoke("send-order-email", {
       body: payload,
@@ -78,7 +76,6 @@ function buildOrderEmail({ orderId, amounts, items, shipping, paymentIntent }) {
     .map(escapeHtml)
     .join("<br>");
 
-  // Filas con 4 columnas: Item | Qty | Unit | Total + marca/código como subtítulo
   const itemRows = (items || [])
     .map((it, idx) => {
       const title = escapeHtml(it.producto?.nombre || it.nombre || `#${it.producto_id}`);
@@ -236,11 +233,9 @@ function buildOrderEmail({ orderId, amounts, items, shipping, paymentIntent }) {
   return { html, text };
 }
 
-// Validadores simples (solo aviso UX)
 const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
 const isValidPhone = (s) => String(s || "").replace(/[^\d]/g, "").length >= 7;
 
-/* ==== NUEVO: helpers de teléfono y estados ==== */
 const phoneDigits = (s) => String(s || "").replace(/\D/g, "");
 function formatPhoneUS(s) {
   const d = phoneDigits(s).slice(0, 10);
@@ -249,7 +244,6 @@ function formatPhoneUS(s) {
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
-// Lista completa de estados (incluye DC y PR)
 const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
   "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
@@ -293,7 +287,6 @@ async function ensureCart() {
   return inserted.id;
 }
 
-/** Lee líneas del carrito + precio y STOCK online (normaliza qty y corrige en DB si es necesario) */
 async function fetchCartItems(cartId) {
   const { data: items, error: itErr } = await supabase
     .from("cart_items")
@@ -324,10 +317,8 @@ async function fetchCartItems(cartId) {
     const originalQty = Number(i.qty || 0);
     let qty = Number.isFinite(originalQty) && originalQty > 0 ? originalQty : 1;
 
-    // Normalizamos: mínimo 1, máximo 999 y no mayor al stock (si hay stock > 0)
     qty = Math.max(1, Math.min(qty, 999, stock > 0 ? stock : qty));
 
-    // Si cambió, lo corregimos silenciosamente en la base
     if (qty !== originalQty) {
       try {
         await supabase
@@ -357,7 +348,6 @@ async function fetchCartItems(cartId) {
   return result;
 }
 
-/* ---------------- shipping & taxes ---------------- */
 const SHIPPING_METHODS = [
   { key: "pickup",   label: "Pickup in store",        calc: () => 0, note: "Free" },
   { key: "standard", label: "Standard (3–7 days)",    calc: (sub) => (sub >= 75 ? 0 : 6.99), note: "Free over $75" },
@@ -371,12 +361,12 @@ function calcShipping(methodKey, subtotal, freeShippingOverride = false) {
   const m = SHIPPING_METHODS.find((x) => x.key === methodKey) || SHIPPING_METHODS[1];
   return Number(m.calc(subtotal) || 0);
 }
+
 function calcTax(taxableSubtotal, stateCode) {
   const rate = STATE_TAX[(stateCode || "").toUpperCase()] || 0;
   return taxableSubtotal * rate;
 }
 
-/* -------------- helpers extra -------------- */
 async function getOnlineVanId() {
   const { data, error } = await supabase
     .from("vans")
@@ -387,7 +377,6 @@ async function getOnlineVanId() {
   return data?.id ?? null;
 }
 
-/* ---------------- promo codes ---------------- */
 const LOCAL_CODES = [
   { code: "SAVE10", type: "percent", value: 10, active: true },
   { code: "WELCOME5", type: "amount",  value: 5, active: true },
@@ -455,7 +444,7 @@ export default function Checkout() {
   const { state } = useLocation();
   const cidFromNav = state?.cid ?? null;
 
-  const [phase, setPhase] = useState("checkout"); // 'checkout' | 'success'
+  const [phase, setPhase] = useState("checkout");
   const [success, setSuccess] = useState(null);
 
   const [cartId, setCartId] = useState(null);
@@ -479,7 +468,6 @@ export default function Checkout() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  /* ==== NUEVO: Prefill con datos del usuario logueado ==== */
   useEffect(() => {
     (async () => {
       try {
@@ -508,7 +496,6 @@ export default function Checkout() {
     })();
   }, []);
 
-  // Campos obligatorios OK? (solo aviso UX; no bloquea el pago)
   const requiredOk = useMemo(() => {
     const ok =
       String(shipping.name || "").trim().length > 1 &&
@@ -517,7 +504,6 @@ export default function Checkout() {
     return ok;
   }, [shipping.name, shipping.email, shipping.phone]);
 
-  // Cargar carrito
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -538,7 +524,6 @@ export default function Checkout() {
     return () => (cancel = true);
   }, [cidFromNav]);
 
-  // Totales en UI
   const subtotal = useMemo(
     () => items.reduce((s, it) => s + Number(it.qty) * Number(it.producto?.precio || 0), 0),
     [items]
@@ -560,7 +545,6 @@ export default function Checkout() {
     [subAfterDiscount, shippingCost, taxes]
   );
 
-  // Detecta líneas que exceden stock (tras normalización debería ser raro)
   const stockIssues = useMemo(
     () => items.filter((it) => Number(it.qty) > Number(it.producto?.stock ?? Infinity)),
     [items]
@@ -573,7 +557,6 @@ export default function Checkout() {
     return m ? m[1] : "";
   };
 
-  // Crear PaymentIntent — disponible si hay items, sin exceso de stock y total >= $0.50
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -606,7 +589,7 @@ export default function Checkout() {
           },
           shipping: {
             name: shipping.name || "Guest",
-            phone: phoneDigits(shipping.phone) || undefined, // 👈 solo dígitos
+            phone: phoneDigits(shipping.phone) || undefined,
             address: {
               line1: shipping.address1 || "N/A",
               line2: shipping.address2 || undefined,
@@ -656,7 +639,6 @@ export default function Checkout() {
     freeShippingOverride, promo?.code, hasStockIssues,
   ]);
 
-  // SUCCESS: crear orden + descontar stock + enviar email
   async function handlePaid(paymentIntent) {
     try {
       const cid = cartId || (await ensureCart());
@@ -693,7 +675,6 @@ export default function Checkout() {
         country: shipping.country || "US",
       };
 
-      // RPC preferido (transaccional)
       let orderIdFromRpc = null;
       try {
         const { data: newOrderId, error: rpcErr } = await supabase.rpc(
@@ -703,7 +684,7 @@ export default function Checkout() {
             p_currency: paymentIntent.currency || "usd",
             p_name: shipping.name || null,
             p_email: shipping.email || null,
-            p_phone: phoneDigits(shipping.phone) || null, // 👈 solo dígitos
+            p_phone: phoneDigits(shipping.phone) || null,
             p_address: addressJson,
             p_amount_subtotal: amounts.subtotal,
             p_amount_shipping: amounts.shipping,
@@ -736,7 +717,7 @@ export default function Checkout() {
             await sendOrderEmail({
               to: String(shipping.email).trim(),
               subject,
-              html,         // 👈 solo HTML
+              html,
             });
           } catch (e) {
             console.error("Email send failed:", e);
@@ -747,7 +728,6 @@ export default function Checkout() {
         setPhase("success");
       };
 
-      // Fallback simple
       const { data: order, error: e1 } = await supabase
         .from("orders")
         .insert({
@@ -759,7 +739,7 @@ export default function Checkout() {
           amount_discount: amounts.discount || 0,
           currency: paymentIntent.currency || "usd",
           email: shipping?.email || null,
-          phone: phoneDigits(shipping?.phone) || null, // 👈 solo dígitos
+          phone: phoneDigits(shipping?.phone) || null,
           name: shipping?.name || null,
           address_json: addressJson,
           status: "pending",
@@ -885,7 +865,6 @@ export default function Checkout() {
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
-            {/* NOMBRE OBLIGATORIO */}
             <input
               className="border rounded-lg px-3 py-2"
               placeholder="Full name"
@@ -894,7 +873,6 @@ export default function Checkout() {
               required
             />
 
-            {/* Email más ancho + Tel con formato numérico */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <input
                 className="border rounded-lg px-3 py-2 sm:col-span-2"
@@ -937,7 +915,6 @@ export default function Checkout() {
                 value={shipping.city}
                 onChange={(e) => setShipping({ ...shipping, city: e.target.value })}
               />
-              {/* ESTADOS: lista completa */}
               <select
                 className="border rounded-lg px-3 py-2"
                 value={shipping.state}
@@ -955,7 +932,6 @@ export default function Checkout() {
               />
             </div>
 
-            {/* Shipping method */}
             <div className="space-y-2">
               <div className="font-medium text-sm">Shipping method</div>
               <div className="grid gap-2">
@@ -982,7 +958,6 @@ export default function Checkout() {
               </div>
             </div>
 
-            {/* Promo code */}
             <div className="mt-2">
               <div className="font-medium text-sm mb-1">Promo code</div>
               <div className="flex gap-2">
@@ -1018,7 +993,6 @@ export default function Checkout() {
                 </div>
               )}
 
-              {/* Aviso, pero sin bloquear */}
               {!requiredOk && (
                 <div className="mt-2 text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
                   Please complete <b>name</b>, a valid <b>email</b> and <b>phone</b>. Payment is available,
@@ -1029,8 +1003,91 @@ export default function Checkout() {
           </div>
         </section>
 
-        {/* Summary + Payment */}
+        {/* 🆕 PRODUCTOS DEL CARRITO + Summary + Payment */}
         <section className="space-y-4">
+          {/* 🆕 SECCIÓN DE PRODUCTOS */}
+          {items.length > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm p-4">
+              <h2 className="font-semibold mb-3 flex items-center justify-between">
+                <span>Items in cart</span>
+                <span className="bg-blue-100 text-blue-800 text-sm px-2 py-1 rounded-full">
+                  {items.length}
+                </span>
+              </h2>
+              <div className="space-y-3 max-h-80 overflow-y-auto">
+                {items.map((item) => {
+                  const producto = item.producto || {};
+                  const nombre = producto.nombre || `Product #${item.producto_id}`;
+                  const marca = producto.marca || "";
+                  const codigo = producto.codigo || "";
+                  const qty = Number(item.qty || 0);
+                  const unit = Number(producto.precio || 0);
+                  const subtotal = qty * unit;
+                  const stock = Number(producto.stock ?? 0);
+                  const isLowStock = stock > 0 && stock < 5;
+                  const isOutOfStock = stock === 0;
+                  const exceedsStock = qty > stock;
+
+                  return (
+                    <div 
+                      key={item.producto_id} 
+                      className={`flex gap-3 pb-3 border-b last:border-b-0 ${
+                        exceedsStock ? 'bg-red-50 p-2 rounded-lg' : ''
+                      }`}
+                    >
+                      {/* Imagen placeholder */}
+                      <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <span className="text-2xl">📦</span>
+                      </div>
+
+                      {/* Detalles del producto */}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm truncate">{nombre}</div>
+                        
+                        {(marca || codigo) && (
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {[marca, codigo].filter(Boolean).join(" • ")}
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-sm text-gray-600">Qty: {qty}</span>
+                          <span className="text-xs text-gray-400">×</span>
+                          <span className="text-sm text-gray-600">${fmt(unit)}</span>
+                        </div>
+
+                        {exceedsStock && (
+                          <div className="text-xs text-red-700 font-semibold mt-1">
+                            ⚠️ Exceeds stock ({stock} available)
+                          </div>
+                        )}
+                        {isOutOfStock && !exceedsStock && (
+                          <div className="text-xs text-red-700 font-semibold mt-1">
+                            ⚠️ Out of stock
+                          </div>
+                        )}
+                        {isLowStock && !exceedsStock && (
+                          <div className="text-xs text-amber-700 mt-1">
+                            ⚡ Only {stock} left
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Subtotal */}
+                      <div className="text-right flex-shrink-0">
+                        <div className="font-bold text-sm">${fmt(subtotal)}</div>
+                        {qty > 1 && (
+                          <div className="text-xs text-gray-500">${fmt(unit)} each</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Order summary */}
           <div className="bg-white rounded-2xl shadow-sm p-4">
             <h2 className="font-semibold mb-2">Order summary</h2>
             <div className="space-y-1 text-sm">
@@ -1057,7 +1114,6 @@ export default function Checkout() {
 
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
 
-          {/* Si hay exceso de stock, bloqueamos el pago */}
           {hasStockIssues ? (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">
@@ -1090,7 +1146,6 @@ export default function Checkout() {
   );
 }
 
-/* ---------------- NUEVO: handler de retorno ---------------- */
 function ReturnHandler({ onPaid }) {
   const stripe = useStripe();
   const { search } = useLocation();
@@ -1108,7 +1163,6 @@ function ReturnHandler({ onPaid }) {
       }
       if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
         await onPaid(paymentIntent);
-        // limpia query params
         const url = new URL(window.location.href);
         url.searchParams.delete("payment_intent_client_secret");
         url.searchParams.delete("redirect_status");
@@ -1120,12 +1174,10 @@ function ReturnHandler({ onPaid }) {
   return null;
 }
 
-/* ---------------- Payment UI ---------------- */
 function PaymentBlock({ onPaid, total }) {
   return (
     <div className="space-y-3">
       <AppleGooglePayButton total={total} />
-      {/* NUEVO: maneja el retorno de CashApp/Klarna/Amazon Pay */}
       <ReturnHandler onPaid={onPaid} />
       <PaymentForm onPaid={onPaid} />
     </div>
@@ -1192,7 +1244,6 @@ function PaymentForm({ onPaid }) {
     setError("");
     const { error: err, paymentIntent } = await stripe.confirmPayment({
       elements,
-      // NUEVO: indispensable para Cash App Pay / Klarna / Amazon Pay
       confirmParams: {
         return_url: `${window.location.origin}/checkout`,
       },
