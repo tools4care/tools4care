@@ -5,7 +5,7 @@ const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = "#cxcadmin2025";
 
 // 🔹 Carga diferida del simulador real desde src/creditoSimulador.jsx
-const SimuladorCredito = lazy(() => import("./creditoSimulador"));
+const SimuladorCredito = lazy(() => import("./CreditoSimulador"));
 
 /* ====================== Helpers ====================== */
 function currency(n) {
