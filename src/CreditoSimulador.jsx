@@ -7,11 +7,26 @@ import {
 } from "recharts";
 import {
   Search, TrendingUp, TrendingDown, DollarSign,
-  AlertCircle, CheckCircle, XCircle, Target, Zap
+  AlertCircle, CheckCircle, XCircle, Target, Zap, Clock, Award
 } from "lucide-react";
 
 /* ==================== HELPERS ==================== */
 const fmt = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// 🆕 Límites de crédito según score
+const CREDIT_LIMITS_BY_SCORE = [
+  { minScore: 750, maxScore: 850, limit: 5000, label: "Excelente", color: "emerald" },
+  { minScore: 650, maxScore: 749, limit: 3000, label: "Muy Bueno", color: "green" },
+  { minScore: 550, maxScore: 649, limit: 2000, label: "Bueno", color: "yellow" },
+  { minScore: 400, maxScore: 549, limit: 1000, label: "Regular", color: "orange" },
+  { minScore: 300, maxScore: 399, limit: 500, label: "Malo", color: "red" }
+];
+
+// Función para obtener el límite según score
+const getLimitByScore = (score) => {
+  const tier = CREDIT_LIMITS_BY_SCORE.find(t => score >= t.minScore && score <= t.maxScore);
+  return tier || CREDIT_LIMITS_BY_SCORE[CREDIT_LIMITS_BY_SCORE.length - 1];
+};
 
 // Colores por rango de score
 const getScoreColor = (score) => {
@@ -30,9 +45,8 @@ const getScoreLabel = (score) => {
   return "Malo";
 };
 
-/* ==================== LÓGICA DE SCORE ==================== */
+/* ==================== LÓGICA DE SCORE MEJORADA ==================== */
 function calculateScoreImpact(currentSaldo, currentScore, scenario) {
-  // Parámetros base
   const SCORE_MIN = 300;
   const SCORE_MAX = 850;
   
@@ -44,7 +58,7 @@ function calculateScoreImpact(currentSaldo, currentScore, scenario) {
     case "PAGO_COMPLETO":
       newSaldo = 0;
       scoreDelta = Math.min(150, currentSaldo > 0 ? 100 + (currentSaldo / 100) : 0);
-      description = `Pagar toda la deuda aumenta significativamente el score (${scoreDelta > 100 ? 'impacto mayor' : 'impacto moderado'})`;
+      description = `Liquidar toda la deuda mejora significativamente tu historial crediticio`;
       break;
 
     case "PAGO_PARCIAL":
@@ -52,33 +66,33 @@ function calculateScoreImpact(currentSaldo, currentScore, scenario) {
       newSaldo = Math.max(0, currentSaldo - montoPago);
       const percentPaid = currentSaldo > 0 ? (montoPago / currentSaldo) : 0;
       scoreDelta = Math.round(percentPaid * 80);
-      description = `Reducir ${Math.round(percentPaid * 100)}% de la deuda mejora el score en ${scoreDelta} puntos`;
+      description = `Reducir ${Math.round(percentPaid * 100)}% de la deuda (${fmt(montoPago)}) mejora tu score`;
       break;
 
     case "NUEVA_COMPRA":
       const montoCompra = scenario.amount || 0;
       newSaldo = currentSaldo + montoCompra;
       scoreDelta = -Math.round(montoCompra / 50);
-      description = `Nueva deuda de ${fmt(montoCompra)} reduce el score`;
+      description = `Nueva compra de ${fmt(montoCompra)} aumenta tu saldo y reduce ligeramente tu score`;
       break;
 
-    case "MORA":
-      const mesesMora = scenario.months || 1;
-      scoreDelta = -Math.round(mesesMora * 35);
-      newSaldo = currentSaldo * (1 + mesesMora * 0.05);
-      description = `${mesesMora} mes${mesesMora > 1 ? 'es' : ''} sin pagar genera intereses y reduce score severamente`;
+    case "SIN_PAGAR":
+      const periodos = scenario.periods || 1;
+      const unidad = scenario.unit || "weeks";
+      scoreDelta = unidad === "weeks" 
+        ? -Math.round(periodos * 8)  // -8 puntos por semana
+        : -Math.round(periodos * 35); // -35 puntos por mes
+      newSaldo = currentSaldo; // Sin mora, pero score baja
+      description = `${periodos} ${unidad === "weeks" ? "semana" : "mes"}${periodos > 1 ? (unidad === "weeks" ? "s" : "es") : ""} sin actividad afecta negativamente tu historial`;
       break;
 
     case "HISTORIAL_PERFECTO":
-      const mesesPerfecto = scenario.months || 1;
-      scoreDelta = Math.round(mesesPerfecto * 15);
-      description = `${mesesPerfecto} mes${mesesPerfecto > 1 ? 'es' : ''} de pagos puntuales aumenta la confianza crediticia`;
-      break;
-
-    case "LIMITE_AUMENTADO":
-      const nuevoLimite = scenario.newLimit || 0;
-      scoreDelta = Math.round((nuevoLimite - (scenario.currentLimit || 0)) / 100);
-      description = `Aumento de límite refleja mejor capacidad crediticia`;
+      const periodo = scenario.periods || 1;
+      const unit = scenario.unit || "weeks";
+      scoreDelta = unit === "weeks"
+        ? Math.round(periodo * 4)   // +4 puntos por semana
+        : Math.round(periodo * 15);  // +15 puntos por mes
+      description = `${periodo} ${unit === "weeks" ? "semana" : "mes"}${periodo > 1 ? (unit === "weeks" ? "s" : "es") : ""} de pagos puntuales fortalece tu crédito`;
       break;
 
     default:
@@ -103,13 +117,13 @@ export default function SimuladorCredito({ onClose }) {
   const [searching, setSearching] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
 
-  // Escenarios de simulación
+  // 🆕 Escenarios actualizados (sin MORA)
   const [scenarios, setScenarios] = useState([
     { id: 1, type: "PAGO_COMPLETO", label: "💳 Pago Total", active: false },
     { id: 2, type: "PAGO_PARCIAL", label: "💵 Pago Parcial", amount: 500, active: false },
     { id: 3, type: "NUEVA_COMPRA", label: "🛒 Nueva Compra", amount: 1000, active: false },
-    { id: 4, type: "MORA", label: "⏰ Mora", months: 1, active: false },
-    { id: 5, type: "HISTORIAL_PERFECTO", label: "⭐ Pagos Puntuales", months: 6, active: false }
+    { id: 4, type: "SIN_PAGAR", label: "⚠️ Sin Actividad", periods: 2, unit: "weeks", active: false },
+    { id: 5, type: "HISTORIAL_PERFECTO", label: "⭐ Pagos Puntuales", periods: 4, unit: "weeks", active: false }
   ]);
 
   // Buscar clientes
@@ -160,11 +174,11 @@ export default function SimuladorCredito({ onClose }) {
 
   const updateScenarioValue = (id, field, value) => {
     setScenarios(prev =>
-      prev.map(s => s.id === id ? { ...s, [field]: Number(value) } : s)
+      prev.map(s => s.id === id ? { ...s, [field]: field === "unit" ? value : Number(value) } : s)
     );
   };
 
-  // Calcular impactos de escenarios activos
+  // Calcular impactos de escenarios activos (RESPONSIVO EN TIEMPO REAL)
   const impacts = useMemo(() => {
     if (!selectedClient) return [];
 
@@ -184,7 +198,7 @@ export default function SimuladorCredito({ onClose }) {
       });
 
     return results;
-  }, [selectedClient, scenarios]);
+  }, [selectedClient, scenarios]); // 🔥 Se recalcula cada vez que cambien los escenarios
 
   // Score final después de todos los escenarios
   const finalScore = useMemo(() => {
@@ -199,44 +213,73 @@ export default function SimuladorCredito({ onClose }) {
     return impacts[impacts.length - 1].newSaldo;
   }, [selectedClient, impacts]);
 
+  // 🆕 Límite actual y proyectado según score
+  const currentLimit = useMemo(() => {
+    if (!selectedClient) return 0;
+    return getLimitByScore(selectedClient.score_base || 0).limit;
+  }, [selectedClient]);
+
+  const projectedLimit = useMemo(() => {
+    return getLimitByScore(finalScore).limit;
+  }, [finalScore]);
+
+  // 🆕 Crédito disponible actual y proyectado
+  const currentAvailable = useMemo(() => {
+    if (!selectedClient) return 0;
+    return Math.max(0, currentLimit - Number(selectedClient.saldo || 0));
+  }, [selectedClient, currentLimit]);
+
+  const projectedAvailable = useMemo(() => {
+    return Math.max(0, projectedLimit - finalSaldo);
+  }, [projectedLimit, finalSaldo]);
+
   // Datos para gráficas
   const scoreProgression = useMemo(() => {
     if (!selectedClient) return [];
 
     const data = [
-      { name: "Actual", score: selectedClient.score_base || 500 }
+      { name: "Actual", score: selectedClient.score_base || 500, limit: currentLimit }
     ];
 
     let currentScore = selectedClient.score_base || 500;
     impacts.forEach((impact, idx) => {
       currentScore = impact.newScore;
+      const limit = getLimitByScore(currentScore).limit;
       data.push({
         name: `Paso ${idx + 1}`,
-        score: currentScore
+        score: currentScore,
+        limit: limit
       });
     });
 
     return data;
-  }, [selectedClient, impacts]);
+  }, [selectedClient, impacts, currentLimit]);
 
   const saldoProgression = useMemo(() => {
     if (!selectedClient) return [];
 
     const data = [
-      { name: "Actual", saldo: Number(selectedClient.saldo || 0) }
+      { 
+        name: "Actual", 
+        saldo: Number(selectedClient.saldo || 0),
+        disponible: currentAvailable
+      }
     ];
 
     let currentSaldo = Number(selectedClient.saldo || 0);
     impacts.forEach((impact, idx) => {
       currentSaldo = impact.newSaldo;
+      const limit = getLimitByScore(impact.newScore).limit;
+      const disponible = Math.max(0, limit - currentSaldo);
       data.push({
         name: `Paso ${idx + 1}`,
-        saldo: currentSaldo
+        saldo: currentSaldo,
+        disponible: disponible
       });
     });
 
     return data;
-  }, [selectedClient, impacts]);
+  }, [selectedClient, impacts, currentAvailable]);
 
   if (!selectedClient) {
     return (
@@ -266,6 +309,8 @@ export default function SimuladorCredito({ onClose }) {
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {searchResults.map(client => {
               const scoreColors = getScoreColor(client.score_base || 0);
+              const limitInfo = getLimitByScore(client.score_base || 0);
+              
               return (
                 <button
                   key={client.cliente_id}
@@ -288,6 +333,9 @@ export default function SimuladorCredito({ onClose }) {
                         {client.score_base || 0}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">Saldo: {fmt(client.saldo)}</div>
+                      <div className="text-xs text-indigo-600 font-semibold mt-0.5">
+                        Límite: {fmt(limitInfo.limit)}
+                      </div>
                     </div>
                   </div>
                 </button>
@@ -306,7 +354,33 @@ export default function SimuladorCredito({ onClose }) {
         {searchQuery.trim().length < 2 && (
           <div className="text-center py-8">
             <div className="text-4xl mb-2">👥</div>
-            <p className="text-gray-500">Escribe al menos 2 caracteres para buscar</p>
+            <p className="text-gray-500 mb-4">Escribe al menos 2 caracteres para buscar</p>
+            
+            {/* 🆕 Tabla de límites de crédito */}
+            <div className="mt-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-6">
+              <h4 className="font-bold text-gray-900 mb-4 flex items-center justify-center gap-2">
+                <Award className="text-indigo-600" size={20} />
+                Límites de Crédito por Score
+              </h4>
+              <div className="space-y-2">
+                {CREDIT_LIMITS_BY_SCORE.map((tier, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex items-center justify-between p-3 rounded-lg border-2 bg-${tier.color}-50 border-${tier.color}-200`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`text-2xl font-bold text-${tier.color}-700`}>
+                        {tier.minScore}-{tier.maxScore}
+                      </div>
+                      <div className="text-sm text-gray-600">{tier.label}</div>
+                    </div>
+                    <div className={`text-xl font-bold text-${tier.color}-700`}>
+                      {fmt(tier.limit)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -316,6 +390,8 @@ export default function SimuladorCredito({ onClose }) {
   // Vista de simulación con cliente seleccionado
   const currentColors = getScoreColor(selectedClient.score_base || 0);
   const finalColors = getScoreColor(finalScore);
+  const currentTier = getLimitByScore(selectedClient.score_base || 0);
+  const projectedTier = getLimitByScore(finalScore);
 
   return (
     <div className="max-h-[80vh] overflow-y-auto">
@@ -343,7 +419,12 @@ export default function SimuladorCredito({ onClose }) {
               <div className={`text-2xl font-bold ${currentColors.text}`}>
                 {selectedClient.score_base || 0}
               </div>
-              <div className="text-xs text-gray-600">{getScoreLabel(selectedClient.score_base || 0)}</div>
+              <div className="text-xs text-gray-600">{currentTier.label}</div>
+            </div>
+
+            <div className="bg-white rounded-lg p-3 border border-indigo-200">
+              <div className="text-xs text-gray-500 uppercase">Límite</div>
+              <div className="text-lg font-bold text-indigo-600">{fmt(currentLimit)}</div>
             </div>
 
             <div className="bg-white rounded-lg p-3 border border-indigo-200">
@@ -352,13 +433,8 @@ export default function SimuladorCredito({ onClose }) {
             </div>
 
             <div className="bg-white rounded-lg p-3 border border-indigo-200">
-              <div className="text-xs text-gray-500 uppercase">Límite</div>
-              <div className="text-lg font-bold text-gray-900">{fmt(selectedClient.limite_politica)}</div>
-            </div>
-
-            <div className="bg-white rounded-lg p-3 border border-indigo-200">
               <div className="text-xs text-gray-500 uppercase">Disponible</div>
-              <div className="text-lg font-bold text-green-600">{fmt(selectedClient.credito_disponible)}</div>
+              <div className="text-lg font-bold text-green-600">{fmt(currentAvailable)}</div>
             </div>
           </div>
         </div>
@@ -380,41 +456,54 @@ export default function SimuladorCredito({ onClose }) {
                     : "border-gray-300 bg-white hover:border-indigo-300"
                 }`}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-start gap-3">
                   <input
                     type="checkbox"
                     checked={scenario.active}
                     onChange={() => toggleScenario(scenario.id)}
-                    className="w-5 h-5 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
+                    className="w-5 h-5 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500 mt-1"
                   />
                   <div className="flex-1">
                     <div className="font-semibold text-gray-900">{scenario.label}</div>
                     {scenario.active && (
-                      <div className="mt-2 flex items-center gap-2">
+                      <div className="mt-2 space-y-2">
                         {(scenario.type === "PAGO_PARCIAL" || scenario.type === "NUEVA_COMPRA") && (
                           <div className="flex items-center gap-2">
-                            <label className="text-sm text-gray-600">Monto:</label>
+                            <label className="text-sm text-gray-600 min-w-[60px]">Monto:</label>
                             <input
                               type="number"
                               min="0"
                               step="100"
                               value={scenario.amount || 0}
                               onChange={(e) => updateScenarioValue(scenario.id, "amount", e.target.value)}
-                              className="w-32 px-3 py-1 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
                             />
                           </div>
                         )}
-                        {(scenario.type === "MORA" || scenario.type === "HISTORIAL_PERFECTO") && (
-                          <div className="flex items-center gap-2">
-                            <label className="text-sm text-gray-600">Meses:</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max="12"
-                              value={scenario.months || 1}
-                              onChange={(e) => updateScenarioValue(scenario.id, "months", e.target.value)}
-                              className="w-20 px-3 py-1 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
-                            />
+                        {(scenario.type === "SIN_PAGAR" || scenario.type === "HISTORIAL_PERFECTO") && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <label className="text-sm text-gray-600 min-w-[60px]">Período:</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="12"
+                                value={scenario.periods || 1}
+                                onChange={(e) => updateScenarioValue(scenario.id, "periods", e.target.value)}
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <label className="text-sm text-gray-600 min-w-[60px]">Unidad:</label>
+                              <select
+                                value={scenario.unit || "weeks"}
+                                onChange={(e) => updateScenarioValue(scenario.id, "unit", e.target.value)}
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none bg-white"
+                              >
+                                <option value="weeks">Semanas</option>
+                                <option value="months">Meses</option>
+                              </select>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -437,37 +526,44 @@ export default function SimuladorCredito({ onClose }) {
               </h4>
               
               <div className="space-y-2">
-                {impacts.map((impact, idx) => (
-                  <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900 mb-1">{impact.label}</div>
-                        <div className="text-sm text-gray-600">{impact.description}</div>
-                      </div>
-                      <div className="ml-4 text-right">
-                        {impact.scoreDelta !== 0 && (
-                          <div className={`flex items-center gap-1 font-bold ${
-                            impact.scoreDelta > 0 ? "text-green-600" : "text-red-600"
-                          }`}>
-                            {impact.scoreDelta > 0 ? (
-                              <TrendingUp size={16} />
-                            ) : (
-                              <TrendingDown size={16} />
-                            )}
-                            {impact.scoreDelta > 0 ? "+" : ""}{impact.scoreDelta}
+                {impacts.map((impact, idx) => {
+                  const impactLimit = getLimitByScore(impact.newScore).limit;
+                  
+                  return (
+                    <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="font-semibold text-gray-900 mb-1">{impact.label}</div>
+                          <div className="text-sm text-gray-600">{impact.description}</div>
+                        </div>
+                        <div className="ml-4 text-right space-y-1">
+                          {impact.scoreDelta !== 0 && (
+                            <div className={`flex items-center gap-1 font-bold ${
+                              impact.scoreDelta > 0 ? "text-green-600" : "text-red-600"
+                            }`}>
+                              {impact.scoreDelta > 0 ? (
+                                <TrendingUp size={16} />
+                              ) : (
+                                <TrendingDown size={16} />
+                              )}
+                              {impact.scoreDelta > 0 ? "+" : ""}{impact.scoreDelta} pts
+                            </div>
+                          )}
+                          <div className="text-xs text-indigo-600 font-semibold">
+                            Límite: {fmt(impactLimit)}
                           </div>
-                        )}
-                        {impact.saldoDelta !== 0 && (
-                          <div className={`text-sm ${
-                            impact.saldoDelta < 0 ? "text-green-600" : "text-red-600"
-                          }`}>
-                            Saldo: {fmt(impact.newSaldo)}
-                          </div>
-                        )}
+                          {impact.saldoDelta !== 0 && (
+                            <div className={`text-sm ${
+                              impact.saldoDelta < 0 ? "text-green-600" : "text-red-600"
+                            }`}>
+                              Saldo: {fmt(impact.newSaldo)}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -481,7 +577,10 @@ export default function SimuladorCredito({ onClose }) {
                   <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold ${currentColors.bg} ${currentColors.text} border-2 ${currentColors.border}`}>
                     {selectedClient.score_base || 0}
                   </div>
-                  <div className="text-xs text-gray-600 mt-1">{getScoreLabel(selectedClient.score_base || 0)}</div>
+                  <div className="text-xs text-gray-600 mt-1">{currentTier.label}</div>
+                  <div className="text-xs font-semibold text-indigo-600 mt-1">
+                    Límite: {fmt(currentLimit)}
+                  </div>
                 </div>
 
                 <div className="text-center">
@@ -489,11 +588,14 @@ export default function SimuladorCredito({ onClose }) {
                   <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold ${finalColors.bg} ${finalColors.text} border-2 ${finalColors.border}`}>
                     {finalScore}
                   </div>
-                  <div className="text-xs text-gray-600 mt-1">{getScoreLabel(finalScore)}</div>
+                  <div className="text-xs text-gray-600 mt-1">{projectedTier.label}</div>
+                  <div className="text-xs font-semibold text-indigo-600 mt-1">
+                    Límite: {fmt(projectedLimit)}
+                  </div>
                 </div>
               </div>
 
-              <div className="text-center">
+              <div className="text-center mb-4">
                 <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg ${
                   finalScore > (selectedClient.score_base || 0)
                     ? "bg-green-100 text-green-700 border-2 border-green-300"
@@ -505,12 +607,22 @@ export default function SimuladorCredito({ onClose }) {
                   {finalScore < (selectedClient.score_base || 0) && <XCircle size={20} />}
                   {finalScore === (selectedClient.score_base || 0) && <AlertCircle size={20} />}
                   
-                  Cambio: {finalScore > (selectedClient.score_base || 0) ? "+" : ""}
+                  Score: {finalScore > (selectedClient.score_base || 0) ? "+" : ""}
                   {finalScore - (selectedClient.score_base || 0)} puntos
                 </div>
+                
+                {projectedLimit !== currentLimit && (
+                  <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm mt-2 ${
+                    projectedLimit > currentLimit
+                      ? "bg-emerald-100 text-emerald-700 border-2 border-emerald-300"
+                      : "bg-orange-100 text-orange-700 border-2 border-orange-300"
+                  }`}>
+                    {projectedLimit > currentLimit ? "↑" : "↓"} Límite: {fmt(Math.abs(projectedLimit - currentLimit))}
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="bg-white rounded-lg p-3 border-2 border-purple-200">
                   <div className="text-xs text-gray-500 uppercase">Saldo Final</div>
                   <div className="text-xl font-bold text-red-600">{fmt(finalSaldo)}</div>
@@ -523,10 +635,13 @@ export default function SimuladorCredito({ onClose }) {
                 <div className="bg-white rounded-lg p-3 border-2 border-purple-200">
                   <div className="text-xs text-gray-500 uppercase">Crédito Disponible</div>
                   <div className="text-xl font-bold text-green-600">
-                    {fmt(Math.max(0, Number(selectedClient.limite_politica || 0) - finalSaldo))}
+                    {fmt(projectedAvailable)}
                   </div>
-                  <div className="text-xs text-gray-500">
-                    Límite: {fmt(selectedClient.limite_politica)}
+                  <div className={`text-xs ${
+                    projectedAvailable > currentAvailable ? "text-green-600" : "text-red-600"
+                  }`}>
+                    {projectedAvailable > currentAvailable ? "↑" : "↓"}
+                    {fmt(Math.abs(projectedAvailable - currentAvailable))}
                   </div>
                 </div>
               </div>
@@ -534,14 +649,15 @@ export default function SimuladorCredito({ onClose }) {
 
             {/* Gráficas */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Progresión del Score */}
+              {/* Progresión del Score y Límite */}
               <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
-                <h5 className="font-bold text-gray-900 mb-3 text-center">📈 Evolución del Score</h5>
+                <h5 className="font-bold text-gray-900 mb-3 text-center">📈 Evolución del Score y Límite</h5>
                 <ResponsiveContainer width="100%" height={250}>
                   <LineChart data={scoreProgression}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="name" fontSize={12} stroke="#6b7280" />
-                    <YAxis domain={[300, 850]} fontSize={12} stroke="#6b7280" />
+                    <YAxis yAxisId="left" domain={[300, 850]} fontSize={12} stroke="#6b7280" />
+                    <YAxis yAxisId="right" orientation="right" fontSize={12} stroke="#6366f1" />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: 'white',
@@ -550,20 +666,32 @@ export default function SimuladorCredito({ onClose }) {
                       }}
                     />
                     <Line
+                      yAxisId="left"
                       type="monotone"
                       dataKey="score"
                       stroke="#6366f1"
                       strokeWidth={3}
                       dot={{ fill: '#6366f1', r: 5 }}
                       activeDot={{ r: 7 }}
+                      name="Score"
+                    />
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="limit"
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={{ fill: '#10b981', r: 4 }}
+                      name="Límite"
                     />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Progresión del Saldo */}
+              {/* Progresión del Saldo y Disponible */}
               <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
-                <h5 className="font-bold text-gray-900 mb-3 text-center">💰 Evolución del Saldo</h5>
+                <h5 className="font-bold text-gray-900 mb-3 text-center">💰 Saldo vs Disponible</h5>
                 <ResponsiveContainer width="100%" height={250}>
                   <BarChart data={saldoProgression}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -577,16 +705,17 @@ export default function SimuladorCredito({ onClose }) {
                         borderRadius: '8px'
                       }}
                     />
-                    <Bar dataKey="saldo" fill="#ef4444" radius={[8, 8, 0, 0]} />
+                    <Bar dataKey="saldo" fill="#ef4444" radius={[8, 8, 0, 0]} name="Saldo" />
+                    <Bar dataKey="disponible" fill="#10b981" radius={[8, 8, 0, 0]} name="Disponible" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* 🆕 COMPARATIVA MEJORADA */}
+            {/* Comparativa detallada */}
             <div className="bg-white border-2 border-gray-200 rounded-xl p-6">
               <h5 className="font-bold text-gray-900 mb-6 text-center text-xl">
-                🎯 Comparativa: Actual vs Proyectado
+                🎯 Comparativa Detallada
               </h5>
               
               <div className="space-y-6">
@@ -608,7 +737,7 @@ export default function SimuladorCredito({ onClose }) {
                       <div className="text-xs text-gray-500 mb-2">Actual</div>
                       <div className={`px-4 py-3 rounded-lg ${currentColors.bg} ${currentColors.text} border-2 ${currentColors.border}`}>
                         <div className="text-3xl font-bold">{selectedClient.score_base || 0}</div>
-                        <div className="text-xs mt-1">{getScoreLabel(selectedClient.score_base || 0)}</div>
+                        <div className="text-xs mt-1">{currentTier.label}</div>
                       </div>
                     </div>
                     
@@ -616,12 +745,11 @@ export default function SimuladorCredito({ onClose }) {
                       <div className="text-xs text-gray-500 mb-2">Proyectado</div>
                       <div className={`px-4 py-3 rounded-lg ${finalColors.bg} ${finalColors.text} border-2 ${finalColors.border}`}>
                         <div className="text-3xl font-bold">{finalScore}</div>
-                        <div className="text-xs mt-1">{getScoreLabel(finalScore)}</div>
+                        <div className="text-xs mt-1">{projectedTier.label}</div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Barra visual de cambio */}
                   <div className="mt-3">
                     <div className="relative h-8 bg-gray-100 rounded-lg overflow-hidden">
                       <div
@@ -643,85 +771,54 @@ export default function SimuladorCredito({ onClose }) {
                   </div>
                 </div>
 
-                {/* Saldo Comparison */}
+                {/* Límite de Crédito */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <DollarSign className="text-red-600" size={20} />
-                      <span className="font-semibold text-gray-700">Saldo Pendiente</span>
+                      <Award className="text-indigo-600" size={20} />
+                      <span className="font-semibold text-gray-700">Límite de Crédito</span>
                     </div>
                     <div className="text-sm text-gray-500">
-                      Diferencia: {fmt(Math.abs(finalSaldo - Number(selectedClient.saldo || 0)))}
+                      Cambio: {fmt(projectedLimit - currentLimit)}
                     </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-red-50 border-2 border-red-200 rounded-lg p-3">
-                      <div className="text-xs text-red-600 uppercase font-semibold mb-1">Actual</div>
-                      <div className="text-2xl font-bold text-red-700">{fmt(selectedClient.saldo)}</div>
+                    <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg p-3">
+                      <div className="text-xs text-indigo-600 uppercase font-semibold mb-1">Actual</div>
+                      <div className="text-2xl font-bold text-indigo-700">{fmt(currentLimit)}</div>
                     </div>
                     
                     <div className={`border-2 rounded-lg p-3 ${
-                      finalSaldo < Number(selectedClient.saldo || 0)
-                        ? "bg-green-50 border-green-200"
-                        : finalSaldo > Number(selectedClient.saldo || 0)
-                        ? "bg-red-50 border-red-200"
+                      projectedLimit > currentLimit
+                        ? "bg-emerald-50 border-emerald-200"
+                        : projectedLimit < currentLimit
+                        ? "bg-orange-50 border-orange-200"
                         : "bg-gray-50 border-gray-200"
                     }`}>
                       <div className={`text-xs uppercase font-semibold mb-1 ${
-                        finalSaldo < Number(selectedClient.saldo || 0)
-                          ? "text-green-600"
-                          : finalSaldo > Number(selectedClient.saldo || 0)
-                          ? "text-red-600"
+                        projectedLimit > currentLimit
+                          ? "text-emerald-600"
+                          : projectedLimit < currentLimit
+                          ? "text-orange-600"
                           : "text-gray-600"
                       }`}>
                         Proyectado
                       </div>
                       <div className={`text-2xl font-bold ${
-                        finalSaldo < Number(selectedClient.saldo || 0)
-                          ? "text-green-700"
-                          : finalSaldo > Number(selectedClient.saldo || 0)
-                          ? "text-red-700"
+                        projectedLimit > currentLimit
+                          ? "text-emerald-700"
+                          : projectedLimit < currentLimit
+                          ? "text-orange-700"
                           : "text-gray-700"
                       }`}>
-                        {fmt(finalSaldo)}
+                        {fmt(projectedLimit)}
                       </div>
-                    </div>
-                  </div>
-
-                  {/* Barra de comparación visual */}
-                  <div className="mt-3">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-6 bg-red-200 rounded-lg overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-red-500 to-red-600 transition-all duration-500"
-                          style={{
-                            width: `${Math.min(100, ((Number(selectedClient.saldo || 0) / Number(selectedClient.limite_politica || 1)) * 100))}%`
-                          }}
-                        />
-                      </div>
-                      <span className="text-xs font-semibold text-gray-600 w-16">Actual</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-2 mt-2">
-                      <div className="flex-1 h-6 bg-gray-100 rounded-lg overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-500 ${
-                            finalSaldo < Number(selectedClient.saldo || 0)
-                              ? "bg-gradient-to-r from-green-500 to-emerald-600"
-                              : "bg-gradient-to-r from-red-500 to-red-600"
-                          }`}
-                          style={{
-                            width: `${Math.min(100, ((finalSaldo / Number(selectedClient.limite_politica || 1)) * 100))}%`
-                          }}
-                        />
-                      </div>
-                      <span className="text-xs font-semibold text-gray-600 w-16">Proyec.</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Crédito Disponible Comparison */}
+                {/* Crédito Disponible */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -729,7 +826,7 @@ export default function SimuladorCredito({ onClose }) {
                       <span className="font-semibold text-gray-700">Crédito Disponible</span>
                     </div>
                     <div className="text-sm text-gray-500">
-                      Límite: {fmt(selectedClient.limite_politica)}
+                      Cambio: {fmt(projectedAvailable - currentAvailable)}
                     </div>
                   </div>
                   
@@ -737,34 +834,34 @@ export default function SimuladorCredito({ onClose }) {
                     <div className="bg-green-50 border-2 border-green-200 rounded-lg p-3">
                       <div className="text-xs text-green-600 uppercase font-semibold mb-1">Actual</div>
                       <div className="text-2xl font-bold text-green-700">
-                        {fmt(selectedClient.credito_disponible)}
+                        {fmt(currentAvailable)}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        {Math.round((Number(selectedClient.credito_disponible || 0) / Number(selectedClient.limite_politica || 1)) * 100)}% disponible
+                        {Math.round((currentAvailable / currentLimit) * 100)}% del límite
                       </div>
                     </div>
                     
                     <div className={`border-2 rounded-lg p-3 ${
-                      (Number(selectedClient.limite_politica || 0) - finalSaldo) > Number(selectedClient.credito_disponible || 0)
+                      projectedAvailable > currentAvailable
                         ? "bg-emerald-50 border-emerald-200"
                         : "bg-orange-50 border-orange-200"
                     }`}>
                       <div className={`text-xs uppercase font-semibold mb-1 ${
-                        (Number(selectedClient.limite_politica || 0) - finalSaldo) > Number(selectedClient.credito_disponible || 0)
+                        projectedAvailable > currentAvailable
                           ? "text-emerald-600"
                           : "text-orange-600"
                       }`}>
                         Proyectado
                       </div>
                       <div className={`text-2xl font-bold ${
-                        (Number(selectedClient.limite_politica || 0) - finalSaldo) > Number(selectedClient.credito_disponible || 0)
+                        projectedAvailable > currentAvailable
                           ? "text-emerald-700"
                           : "text-orange-700"
                       }`}>
-                        {fmt(Math.max(0, Number(selectedClient.limite_politica || 0) - finalSaldo))}
+                        {fmt(projectedAvailable)}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        {Math.round((Math.max(0, Number(selectedClient.limite_politica || 0) - finalSaldo) / Number(selectedClient.limite_politica || 1)) * 100)}% disponible
+                        {Math.round((projectedAvailable / projectedLimit) * 100)}% del límite
                       </div>
                     </div>
                   </div>
@@ -775,30 +872,30 @@ export default function SimuladorCredito({ onClose }) {
                       <div
                         className="bg-gradient-to-r from-red-500 to-red-600 transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, ((finalSaldo / Number(selectedClient.limite_politica || 1)) * 100))}%`
+                          width: `${Math.min(100, ((finalSaldo / projectedLimit) * 100))}%`
                         }}
                       />
                       <div
                         className="bg-gradient-to-r from-green-500 to-emerald-600 transition-all duration-500"
                         style={{
-                          width: `${Math.max(0, 100 - ((finalSaldo / Number(selectedClient.limite_politica || 1)) * 100))}%`
+                          width: `${Math.max(0, 100 - ((finalSaldo / projectedLimit) * 100))}%`
                         }}
                       />
                     </div>
                   </div>
                   <div className="flex justify-between text-xs text-gray-500 mt-1">
                     <span>Usado: {fmt(finalSaldo)}</span>
-                    <span>Disponible: {fmt(Math.max(0, Number(selectedClient.limite_politica || 0) - finalSaldo))}</span>
+                    <span>Disponible: {fmt(projectedAvailable)}</span>
                   </div>
                 </div>
 
                 {/* Resumen del impacto */}
                 <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-4">
                   <div className="text-center">
-                    <div className="text-sm text-gray-600 mb-2">Resumen del Impacto</div>
+                    <div className="text-sm text-gray-600 mb-3 font-semibold">Resumen del Impacto</div>
                     <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <div className="text-xs text-gray-500">Score</div>
+                        <div className="text-xs text-gray-500 mb-1">Score</div>
                         <div className={`text-lg font-bold ${
                           finalScore > (selectedClient.score_base || 0)
                             ? "text-green-600"
@@ -811,27 +908,27 @@ export default function SimuladorCredito({ onClose }) {
                         </div>
                       </div>
                       <div>
-                        <div className="text-xs text-gray-500">Saldo</div>
+                        <div className="text-xs text-gray-500 mb-1">Límite</div>
                         <div className={`text-lg font-bold ${
-                          finalSaldo < Number(selectedClient.saldo || 0)
+                          projectedLimit > currentLimit
                             ? "text-green-600"
-                            : finalSaldo > Number(selectedClient.saldo || 0)
+                            : projectedLimit < currentLimit
                             ? "text-red-600"
                             : "text-gray-600"
                         }`}>
-                          {finalSaldo < Number(selectedClient.saldo || 0) ? "↓" : finalSaldo > Number(selectedClient.saldo || 0) ? "↑" : "→"}
-                          {fmt(Math.abs(finalSaldo - Number(selectedClient.saldo || 0)))}
+                          {projectedLimit > currentLimit ? "↑" : projectedLimit < currentLimit ? "↓" : "→"}
+                          {fmt(Math.abs(projectedLimit - currentLimit))}
                         </div>
                       </div>
                       <div>
-                        <div className="text-xs text-gray-500">Disponible</div>
+                        <div className="text-xs text-gray-500 mb-1">Disponible</div>
                         <div className={`text-lg font-bold ${
-                          (Number(selectedClient.limite_politica || 0) - finalSaldo) > Number(selectedClient.credito_disponible || 0)
+                          projectedAvailable > currentAvailable
                             ? "text-green-600"
                             : "text-red-600"
                         }`}>
-                          {(Number(selectedClient.limite_politica || 0) - finalSaldo) > Number(selectedClient.credito_disponible || 0) ? "↑" : "↓"}
-                          {fmt(Math.abs((Number(selectedClient.limite_politica || 0) - finalSaldo) - Number(selectedClient.credito_disponible || 0)))}
+                          {projectedAvailable > currentAvailable ? "↑" : "↓"}
+                          {fmt(Math.abs(projectedAvailable - currentAvailable))}
                         </div>
                       </div>
                     </div>
@@ -846,7 +943,7 @@ export default function SimuladorCredito({ onClose }) {
           <div className="text-center py-12">
             <div className="text-6xl mb-4">🎯</div>
             <p className="text-gray-500 font-semibold">Selecciona uno o más escenarios para simular</p>
-            <p className="text-sm text-gray-400 mt-2">Activa los checkboxes de arriba para ver el impacto</p>
+            <p className="text-sm text-gray-400 mt-2">Activa los checkboxes de arriba para ver el impacto en tiempo real</p>
           </div>
         )}
       </div>
