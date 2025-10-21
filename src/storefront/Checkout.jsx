@@ -287,6 +287,7 @@ async function ensureCart() {
   return inserted.id;
 }
 
+// 🆕 ACTUALIZADO: Incluye imagen_url
 async function fetchCartItems(cartId) {
   const { data: items, error: itErr } = await supabase
     .from("cart_items")
@@ -298,9 +299,10 @@ async function fetchCartItems(cartId) {
   const ids = (items || []).map((i) => i.producto_id);
   if (!ids.length) return [];
 
+  // 🆕 AGREGADA imagen_url a la consulta
   const { data: prods, error: pErr } = await supabase
     .from("online_products_v")
-    .select("id, codigo, nombre, marca, price_base, price_online, stock")
+    .select("id, codigo, nombre, marca, price_base, price_online, stock, imagen_url")
     .in("id", ids);
 
   if (pErr) throw pErr;
@@ -341,6 +343,7 @@ async function fetchCartItems(cartId) {
         marca: p.marca,
         precio: unit,
         stock,
+        imagen_url: p.imagen_url, // 🆕 AGREGADA
       },
     });
   }
@@ -1005,7 +1008,7 @@ export default function Checkout() {
 
         {/* 🆕 PRODUCTOS DEL CARRITO + Summary + Payment */}
         <section className="space-y-4">
-          {/* 🆕 SECCIÓN DE PRODUCTOS */}
+          {/* 🆕 SECCIÓN DE PRODUCTOS CON IMÁGENES */}
           {items.length > 0 && (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <h2 className="font-semibold mb-3 flex items-center justify-between">
@@ -1027,6 +1030,9 @@ export default function Checkout() {
                   const isLowStock = stock > 0 && stock < 5;
                   const isOutOfStock = stock === 0;
                   const exceedsStock = qty > stock;
+                  
+                  // 🆕 OBTENER IMAGEN URL
+                  const imagenUrl = producto.imagen_url;
 
                   return (
                     <div 
@@ -1035,9 +1041,34 @@ export default function Checkout() {
                         exceedsStock ? 'bg-red-50 p-2 rounded-lg' : ''
                       }`}
                     >
-                      {/* Imagen placeholder */}
-                      <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <span className="text-2xl">📦</span>
+                      {/* 🆕 IMAGEN REAL CON MANEJO DE ERRORES */}
+                      <div className="w-16 h-16 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0 border border-gray-200 relative">
+                        {imagenUrl ? (
+                          <>
+                            {/* Skeleton loader */}
+                            <div className="absolute inset-0 bg-gray-200 animate-pulse" id={`skeleton-${item.producto_id}`} />
+                            <img 
+                              src={imagenUrl} 
+                              alt={nombre}
+                              className="w-full h-full object-cover relative z-10"
+                              loading="lazy"
+                              onLoad={(e) => {
+                                const skeleton = document.getElementById(`skeleton-${item.producto_id}`);
+                                if (skeleton) skeleton.style.display = 'none';
+                              }}
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                const skeleton = document.getElementById(`skeleton-${item.producto_id}`);
+                                if (skeleton) skeleton.style.display = 'none';
+                                e.target.parentElement.innerHTML = '<div class="w-full h-full flex items-center justify-center bg-gray-100"><span class="text-2xl">📦</span></div>';
+                              }}
+                            />
+                          </>
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <span className="text-2xl">📦</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Detalles del producto */}
