@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { supabase } from "./supabaseClient";
-import CreditoSimulador from './CreditoSimulador';
+import CreditoSimulador from './CreditoSimulador'; 
 const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = "#cxcadmin2025";
 
