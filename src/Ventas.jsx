@@ -1,4 +1,4 @@
-// src/Ventas.jsx - PARTE 1 DE 4 (Imports, Constantes, Helpers)
+// src/Ventas.jsx - PARTE 1 DE 3 (Imports, Constantes, Helpers)
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
@@ -528,10 +528,9 @@ function composeReceiptMessageEN(payload) {
     lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
   }
   lines.push("");
-    lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
-   return lines.join("\n");
-}
- // src/Ventas.jsx - PARTE 2 DE 4 (Componente Principal, Estados y useEffects) - CORREGIDA
+  lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
+  return lines.join("\n");
+}// src/Ventas.jsx - PARTE 2 DE 3 (Componente Principal, Estados y useEffects)
 
 /* ========================= Componente Principal ========================= */
 export default function Sales() {
@@ -552,7 +551,7 @@ export default function Sales() {
   const [topProducts, setTopProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [allProductsLoading, setAllProductsLoading] = useState(false);
-  const [productsLoaded, setProductsLoaded] = useState(false); // ✅ SOLO UNA VEZ
+  const [productsLoaded, setProductsLoaded] = useState(false);
   const [productError, setProductError] = useState("");
   const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState("");
@@ -573,8 +572,8 @@ export default function Sales() {
     pagos: 0,
     loading: false,
   });
-// === Dirección: detección de forma (JSON vs texto) ===
-const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
+
+  const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
 
   // ---- CxC de cliente actual
   const [cxcLimit, setCxcLimit] = useState(null);
@@ -601,6 +600,10 @@ const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
   const [qrPollingActive, setQRPollingActive] = useState(false);
   const qrPollingIntervalRef = useRef(null);
 
+  // 🆕 ESTADOS PARA FEE DE TARJETA
+  const [applyCardFee, setApplyCardFee] = useState({});
+  const [cardFeePercentage, setCardFeePercentage] = useState(3);
+
   // ---- DASHBOARD Y CLIENTES RECIENTES
   const [recentClients, setRecentClients] = useState([]);
   const [todayStats, setTodayStats] = useState({
@@ -609,10 +612,10 @@ const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
     total: 0
   });
 
-  // ---- 🆕 CACHE DE BÚSQUEDA DE CLIENTES
+  // ---- CACHE DE BÚSQUEDA DE CLIENTES
   const [clientCache, setClientCache] = useState(new Map());
 
-  // ---- 🆕 AUTO-FILL PAYMENT
+  // ---- AUTO-FILL PAYMENT
   const [paymentAutoFilled, setPaymentAutoFilled] = useState(false);
 
   /* ---------- Debounce del buscador de cliente ---------- */
@@ -690,275 +693,250 @@ const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
     
     loadTodayStats();
   }, [van?.id]);
-useEffect(() => {
-  // Se ejecuta SOLO una vez para detectar si `direccion` viene como JSON o texto.
-  async function probeAddressShape() {
-    try {
-      // Trae poquitas filas para inspeccionar
-      const { data } = await supabase
-        .from("clientes_balance")
-        .select("direccion")
-        .limit(5);
 
-      if (!data || data.length === 0) return;
+  useEffect(() => {
+    async function probeAddressShape() {
+      try {
+        const { data } = await supabase
+          .from("clientes_balance")
+          .select("direccion")
+          .limit(5);
 
-      let jsonCount = 0;
-      let textCount = 0;
-      const keys = new Set();
+        if (!data || data.length === 0) return;
 
-      for (const row of data) {
-        const v = row?.direccion;
-        if (v == null) continue;
+        let jsonCount = 0;
+        let textCount = 0;
+        const keys = new Set();
 
-        // 1) ¿Es objeto JSON?
-        if (typeof v === "object") {
-          jsonCount++;
-          ["calle", "ciudad", "estado", "zip"].forEach(k => {
-            if (v[k] != null) keys.add(k);
-          });
-          continue;
-        }
+        for (const row of data) {
+          const v = row?.direccion;
+          if (v == null) continue;
 
-        // 2) ¿Es string con JSON?
-        if (typeof v === "string") {
-          const s = v.trim();
-          if (s.startsWith("{") && s.endsWith("}")) {
-            try {
-              const obj = JSON.parse(s);
-              if (obj && typeof obj === "object") {
-                jsonCount++;
-                ["calle", "ciudad", "estado", "zip"].forEach(k => {
-                  if (obj[k] != null) keys.add(k);
-                });
-                continue;
-              }
-            } catch {}
+          if (typeof v === "object") {
+            jsonCount++;
+            ["calle", "ciudad", "estado", "zip"].forEach(k => {
+              if (v[k] != null) keys.add(k);
+            });
+            continue;
           }
-          // 3) Si no, lo contamos como texto plano
-          textCount++;
-        }
-      }
 
-      if (jsonCount > textCount) {
-        setAddrSpec({ type: "json", fields: Array.from(keys) });
-      } else if (textCount > 0) {
-        setAddrSpec({ type: "text", fields: [] });
-      } else {
+          if (typeof v === "string") {
+            const s = v.trim();
+            if (s.startsWith("{") && s.endsWith("}")) {
+              try {
+                const obj = JSON.parse(s);
+                if (obj && typeof obj === "object") {
+                  jsonCount++;
+                  ["calle", "ciudad", "estado", "zip"].forEach(k => {
+                    if (obj[k] != null) keys.add(k);
+                  });
+                  continue;
+                }
+              } catch {}
+            }
+            textCount++;
+          }
+        }
+
+        if (jsonCount > textCount) {
+          setAddrSpec({ type: "json", fields: Array.from(keys) });
+        } else if (textCount > 0) {
+          setAddrSpec({ type: "text", fields: [] });
+        } else {
+          setAddrSpec({ type: "unknown", fields: [] });
+        }
+      } catch (e) {
+        console.warn("No se pudo sondear `direccion`:", e?.message || e);
         setAddrSpec({ type: "unknown", fields: [] });
       }
-    } catch (e) {
-      console.warn("No se pudo sondear `direccion`:", e?.message || e);
-      setAddrSpec({ type: "unknown", fields: [] });
-    }
-  }
-
-  probeAddressShape();
-}, []);
-
-
-/* ---------- 🆕 CLIENTES (búsqueda OPTIMIZADA con CACHE, dirección y fallback 42703) ---------- */
-useEffect(() => {
-  async function loadClients() {
-    const term = String(debouncedClientSearch || "").trim();
-
-    // evita llamadas vacías
-    if (term.length < 2) {
-      setClients([]);
-      return;
     }
 
-    // cache primero
-    if (clientCache.has(term)) {
-      setClients(clientCache.get(term));
-      return;
-    }
+    probeAddressShape();
+  }, []);
 
-    setClientLoading(true);
-    try {
-      // ⚠️ quitar caracteres que rompen el or= (coma, paréntesis, %)
-      const safe = term.replace(/[(),%]/g, "").slice(0, 80);
+  /* ---------- CLIENTES (búsqueda OPTIMIZADA con CACHE) ---------- */
+  useEffect(() => {
+    async function loadClients() {
+      const term = String(debouncedClientSearch || "").trim();
 
-      // --- CONSTRUCCIÓN DINÁMICA DE CAMPOS SEGÚN TIPO DE DIRECCIÓN ---
-      let primaryFields = ["nombre", "apellido", "negocio", "telefono", "email"];
-      let primaryCols = "id,nombre,apellido,negocio,telefono,email,direccion,balance";
-      
-      // Si la dirección es texto plano, agregar al OR
-      if (addrSpec.type === "text") {
-        primaryFields.push("direccion");
-      }
-      
-      // Si la dirección es JSON, intentar buscar en sub-campos
-      // Nota: Supabase no permite buscar dentro de JSON con OR directo,
-      // así que haremos búsquedas separadas después
-      
-      const primaryOr = primaryFields.map(f => `${f}.ilike.%${safe}%`).join(",");
-
-      let baseData = [];
-      let needFallbackNoApellido = false;
-
-      let { data: d1, error: e1 } = await supabase
-        .from("clientes_balance")
-        .select(primaryCols)
-        .or(primaryOr)
-        .limit(20);
-
-      if (e1) {
-        // Si la vista no tiene 'apellido' (42703) reintentamos sin ese campo
-        if (e1.code === "42703") {
-          needFallbackNoApellido = true;
-        } else {
-          console.warn("OR principal falló:", e1);
-        }
-      } else {
-        baseData = d1 || [];
+      if (term.length < 2) {
+        setClients([]);
+        return;
       }
 
-      // --- fallback: sin apellido (lo quita del select y del OR)
-      if (needFallbackNoApellido || baseData.length === 0) {
-        let fbFields = ["nombre", "negocio", "telefono", "email"];
+      if (clientCache.has(term)) {
+        setClients(clientCache.get(term));
+        return;
+      }
+
+      setClientLoading(true);
+      try {
+        const safe = term.replace(/[(),%]/g, "").slice(0, 80);
+
+        let primaryFields = ["nombre", "apellido", "negocio", "telefono", "email"];
+        let primaryCols = "id,nombre,apellido,negocio,telefono,email,direccion,balance";
+        
         if (addrSpec.type === "text") {
-          fbFields.push("direccion");
+          primaryFields.push("direccion");
         }
         
-        const fbCols = "id,nombre,negocio,telefono,email,direccion,balance";
-        const fbOr = fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
+        const primaryOr = primaryFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
-        const { data: d2, error: e2 } = await supabase
+        let baseData = [];
+        let needFallbackNoApellido = false;
+
+        let { data: d1, error: e1 } = await supabase
           .from("clientes_balance")
-          .select(fbCols)
-          .or(fbOr)
+          .select(primaryCols)
+          .or(primaryOr)
           .limit(20);
 
-        if (e2) {
-          console.warn("Fallback OR sin apellido también falló:", e2);
-        } else {
-          baseData = d2 || baseData;
-        }
-      }
-
-      // --- 🆕 BÚSQUEDA ADICIONAL EN DIRECCIÓN JSON ---
-      let jsonAddressData = [];
-      if (addrSpec.type === "json" && addrSpec.fields.length > 0) {
-        // Para direcciones JSON, hacemos una búsqueda más amplia y filtramos en memoria
-        try {
-          const { data: allData, error: eAll } = await supabase
-            .from("clientes_balance")
-            .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
-            .not("direccion", "is", null)
-            .limit(100); // Límite más alto para filtrar después
-
-          if (!eAll && allData) {
-            // Filtrar en memoria por dirección JSON
-            jsonAddressData = allData.filter(client => {
-              if (!client.direccion) return false;
-              
-              let addr = client.direccion;
-              
-              // Si viene como string JSON, parsearlo
-              if (typeof addr === "string") {
-                try {
-                  addr = JSON.parse(addr);
-                } catch {
-                  return false;
-                }
-              }
-              
-              // Si no es objeto, no buscar
-              if (typeof addr !== "object") return false;
-              
-              // Buscar en los campos de dirección
-              const searchLower = safe.toLowerCase();
-              return addrSpec.fields.some(field => {
-                const value = String(addr[field] || "").toLowerCase();
-                return value.includes(searchLower);
-              });
-            });
-          }
-        } catch (e) {
-          console.warn("Búsqueda en dirección JSON falló:", e);
-        }
-      }
-
-      // --- búsqueda adicional: nombre + apellido por tokens
-      let andData = [];
-      const tokens = safe.split(/\s+/).filter(Boolean);
-      if (tokens.length >= 2) {
-        const first = tokens[0];
-        const rest = tokens.slice(1).join(" ");
-
-        try {
-          const { data: dAnd, error: eAnd } = await supabase
-            .from("clientes_balance")
-            .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
-            .ilike("nombre", `%${first}%`)
-            .ilike("apellido", `%${rest}%`)
-            .limit(10);
-
-          if (eAnd) {
-            if (eAnd.code !== "42703") console.warn("AND nombre+apellido falló:", eAnd);
+        if (e1) {
+          if (e1.code === "42703") {
+            needFallbackNoApellido = true;
           } else {
-            andData = dAnd || [];
+            console.warn("OR principal falló:", e1);
           }
-        } catch (e) {
-          // ignora si no existe 'apellido' en esta vista
+        } else {
+          baseData = d1 || [];
         }
+
+        if (needFallbackNoApellido || baseData.length === 0) {
+          let fbFields = ["nombre", "negocio", "telefono", "email"];
+          if (addrSpec.type === "text") {
+            fbFields.push("direccion");
+          }
+          
+          const fbCols = "id,nombre,negocio,telefono,email,direccion,balance";
+          const fbOr = fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
+
+          const { data: d2, error: e2 } = await supabase
+            .from("clientes_balance")
+            .select(fbCols)
+            .or(fbOr)
+            .limit(20);
+
+          if (e2) {
+            console.warn("Fallback OR sin apellido también falló:", e2);
+          } else {
+            baseData = d2 || baseData;
+          }
+        }
+
+        let jsonAddressData = [];
+        if (addrSpec.type === "json" && addrSpec.fields.length > 0) {
+          try {
+            const { data: allData, error: eAll } = await supabase
+              .from("clientes_balance")
+              .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
+              .not("direccion", "is", null)
+              .limit(100);
+
+            if (!eAll && allData) {
+              jsonAddressData = allData.filter(client => {
+                if (!client.direccion) return false;
+                
+                let addr = client.direccion;
+                
+                if (typeof addr === "string") {
+                  try {
+                    addr = JSON.parse(addr);
+                  } catch {
+                    return false;
+                  }
+                }
+                
+                if (typeof addr !== "object") return false;
+                
+                const searchLower = safe.toLowerCase();
+                return addrSpec.fields.some(field => {
+                  const value = String(addr[field] || "").toLowerCase();
+                  return value.includes(searchLower);
+                });
+              });
+            }
+          } catch (e) {
+            console.warn("Búsqueda en dirección JSON falló:", e);
+          }
+        }
+
+        let andData = [];
+        const tokens = safe.split(/\s+/).filter(Boolean);
+        if (tokens.length >= 2) {
+          const first = tokens[0];
+          const rest = tokens.slice(1).join(" ");
+
+          try {
+            const { data: dAnd, error: eAnd } = await supabase
+              .from("clientes_balance")
+              .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
+              .ilike("nombre", `%${first}%`)
+              .ilike("apellido", `%${rest}%`)
+              .limit(10);
+
+            if (eAnd) {
+              if (eAnd.code !== "42703") console.warn("AND nombre+apellido falló:", eAnd);
+            } else {
+              andData = dAnd || [];
+            }
+          } catch (e) {
+            // ignora
+          }
+        }
+
+        const byId = new Map();
+        for (const row of [...(baseData || []), ...andData, ...jsonAddressData]) {
+          if (row && row.id != null) byId.set(row.id, row);
+        }
+        const merged = Array.from(byId.values());
+
+        const ids = merged.map((c) => c.id).filter(Boolean);
+        let enriched = merged;
+
+        if (ids.length > 0 && ids.length <= 10) {
+          const { data: cxcRows, error: eCx } = await supabase
+            .from("v_cxc_cliente_detalle")
+            .select("cliente_id,saldo")
+            .in("cliente_id", ids);
+
+          if (eCx) console.warn("Enriquecimiento saldo falló:", eCx);
+
+          const saldoMap = new Map(
+            (cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)])
+          );
+
+          enriched = merged.map((c) => ({
+            ...c,
+            _saldo_real: saldoMap.has(c.id)
+              ? saldoMap.get(c.id)
+              : Number(c.balance || 0),
+          }));
+        } else {
+          enriched = merged.map((c) => ({
+            ...c,
+            _saldo_real: Number(c.balance || 0),
+          }));
+        }
+
+        setClientCache((prev) => {
+          const next = new Map(prev);
+          next.set(term, enriched);
+          if (next.size > 12) next.delete(next.keys().next().value);
+          return next;
+        });
+
+        setClients(enriched);
+      } catch (err) {
+        console.error("Error searching clients:", err);
+        setClients([]);
+      } finally {
+        setClientLoading(false);
       }
-
-      // --- merge único por id
-      const byId = new Map();
-      for (const row of [...(baseData || []), ...andData, ...jsonAddressData]) {
-        if (row && row.id != null) byId.set(row.id, row);
-      }
-      const merged = Array.from(byId.values());
-
-      // --- enriquecer con saldo real cuando hay pocos (rápido)
-      const ids = merged.map((c) => c.id).filter(Boolean);
-      let enriched = merged;
-
-      if (ids.length > 0 && ids.length <= 10) {
-        const { data: cxcRows, error: eCx } = await supabase
-          .from("v_cxc_cliente_detalle")
-          .select("cliente_id,saldo")
-          .in("cliente_id", ids);
-
-        if (eCx) console.warn("Enriquecimiento saldo falló:", eCx);
-
-        const saldoMap = new Map(
-          (cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)])
-        );
-
-        enriched = merged.map((c) => ({
-          ...c,
-          _saldo_real: saldoMap.has(c.id)
-            ? saldoMap.get(c.id)
-            : Number(c.balance || 0),
-        }));
-      } else {
-        enriched = merged.map((c) => ({
-          ...c,
-          _saldo_real: Number(c.balance || 0),
-        }));
-      }
-
-      // --- cache (LRU simple)
-      setClientCache((prev) => {
-        const next = new Map(prev);
-        next.set(term, enriched);
-        if (next.size > 12) next.delete(next.keys().next().value);
-        return next;
-      });
-
-      setClients(enriched);
-    } catch (err) {
-      console.error("Error searching clients:", err);
-      setClients([]);
-    } finally {
-      setClientLoading(false);
     }
-  }
 
-  loadClients();
-}, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length]);
+    loadClients();
+  }, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length]);
+
   /* ---------- Historial al seleccionar cliente ---------- */
   useEffect(() => {
     async function fetchHistory() {
@@ -978,7 +956,7 @@ useEffect(() => {
     fetchHistory();
   }, [selectedClient?.id]);
 
-  /* ---------- Traer límite/disponible/saldo (con auto refresh + realtime) ---------- */
+  /* ---------- Traer límite/disponible/saldo ---------- */
   useEffect(() => {
     let disposed = false;
     let sub = null;
@@ -1227,7 +1205,7 @@ useEffect(() => {
     loadTopProducts();
   }, [van?.id, invTick]);
 
-  /* ---------- 🆕 INVENTARIO COMPLETO - LAZY LOADING ---------- */
+  /* ---------- INVENTARIO COMPLETO - LAZY LOADING ---------- */
   useEffect(() => {
     if (productSearch.trim().length === 0) {
       setAllProductsLoading(false);
@@ -1382,7 +1360,7 @@ useEffect(() => {
     }
   }, [selectedClient, cartSafe, payments, notes, step]);
 
-  /* ---------- 🆕 AUTO-FILL del monto de pago con el total a pagar ---------- */
+  /* ---------- AUTO-FILL del monto de pago ---------- */
   useEffect(() => {
     if (
       step === 3 && 
@@ -1412,27 +1390,46 @@ useEffect(() => {
       }
     };
   }, []);
-  /* ========== STRIPE QR FUNCTIONS ========== */
+
+  /* ========== STRIPE QR FUNCTIONS (🆕 CON FEE) ========== */
 
   // 📱 Genera QR para pago con Stripe
   async function handleGenerateQR(paymentIndex) {
     const payment = payments[paymentIndex];
-    const amount = Number(payment.monto);
+    let amount = Number(payment.monto);
 
     if (!amount || amount <= 0) {
       alert("⚠️ Ingresa un monto válido antes de generar el QR");
       return;
     }
 
-    setQRPaymentIndex(paymentIndex);
-    setQRAmount(amount);
+    // 🆕 APLICAR FEE DE TARJETA SI ESTÁ ACTIVADO
+    const shouldApplyFee = applyCardFee[paymentIndex] || false;
+    const feeAmount = shouldApplyFee ? amount * (cardFeePercentage / 100) : 0;
+    const totalAmount = amount + feeAmount;
 
-    // 1️⃣ Crear sesión de pago (Checkout Session en Stripe)
+    setQRPaymentIndex(paymentIndex);
+    setQRAmount(totalAmount);
+
+    // Mostrar confirmación si hay fee
+    if (shouldApplyFee) {
+      const confirmed = window.confirm(
+        `💳 Card Fee Applied:\n\n` +
+        `Base amount: ${fmt(amount)}\n` +
+        `Card fee (${cardFeePercentage}%): ${fmt(feeAmount)}\n` +
+        `Total to charge: ${fmt(totalAmount)}\n\n` +
+        `Continue?`
+      );
+      if (!confirmed) return;
+    }
+
+    // 1️⃣ Crear sesión de pago
     let checkoutUrl, sessionId;
     try {
       const created = await createStripeCheckoutSession(
-        amount,
-        `Pago ${selectedClient?.nombre || "venta rápida"} - ${van?.nombre || "Van"}`
+        totalAmount,
+        `Pago ${selectedClient?.nombre || "venta rápida"} - ${van?.nombre || "Van"}` +
+        (shouldApplyFee ? ` (incluye ${cardFeePercentage}% fee)` : "")
       );
 
       checkoutUrl = created.url;
@@ -1442,24 +1439,24 @@ useEffect(() => {
       return;
     }
 
-    // 2️⃣ Generar el código QR con la URL real de Stripe
+    // 2️⃣ Generar el código QR
     const qrData = await generateQRCode(checkoutUrl);
     if (!qrData) {
       alert("❌ Error generando código QR");
       return;
     }
 
-    // 3️⃣ Mostrar el modal con el QR y activar polling
+    // 3️⃣ Mostrar el modal
     setQRCodeData(qrData);
     setShowQRModal(true);
     setQRPollingActive(true);
 
-    // 4️⃣ Iniciar verificación automática del pago
-    startCheckoutPolling(sessionId, paymentIndex);
+    // 4️⃣ Iniciar verificación
+    startCheckoutPolling(sessionId, paymentIndex, shouldApplyFee, amount, feeAmount);
   }
 
-  // ⏱️ Polling de la Checkout Session con timeout de 5 minutos
-  function startCheckoutPolling(sessionId, paymentIndex) {
+  // ⏱️ Polling de la Checkout Session (🆕 CON FEE)
+  function startCheckoutPolling(sessionId, paymentIndex, hasFee, baseAmount, feeAmount) {
     if (qrPollingIntervalRef.current) {
       clearInterval(qrPollingIntervalRef.current);
     }
@@ -1513,15 +1510,20 @@ useEffect(() => {
           setQRPollingActive(false);
 
           const paidAmount = Number(res.amount || 0) / 100;
-          if (Number.isFinite(paidAmount) && paidAmount > 0) {
-            handleChangePayment(paymentIndex, "monto", paidAmount);
+          
+          // 🆕 SI HAY FEE, ACTUALIZAR EL MONTO BASE (SIN FEE)
+          const amountToSet = hasFee ? baseAmount : paidAmount;
+          
+          if (Number.isFinite(amountToSet) && amountToSet > 0) {
+            handleChangePayment(paymentIndex, "monto", amountToSet);
           }
 
           setShowQRModal(false);
 
           alert(
             "✅ Payment confirmed with Stripe!\n\n" +
-            `💰 Amount: ${fmt(paidAmount)}\n\n` +
+            `💰 Amount charged: ${fmt(paidAmount)}\n` +
+            (hasFee ? `📊 Base amount: ${fmt(baseAmount)}\n💳 Card fee (${cardFeePercentage}%): ${fmt(feeAmount)}\n\n` : "") +
             "👉 Review the details and click 'Save Sale' to complete."
           );
 
@@ -1588,6 +1590,8 @@ useEffect(() => {
     setSaving(false);
     setStep(1);
     window.pendingSaleId = null;
+    // 🆕 Limpiar fees
+    setApplyCardFee({});
   }
 
   async function requestAndSendNotifications({ client, payload }) {
@@ -1986,12 +1990,18 @@ useEffect(() => {
     } finally {
       setSaving(false);
     }
-  }
+  }// src/Ventas.jsx - PARTE 3 DE 3 (Modales y Renderizado de UI)
 
   /* ======================== MODALES ======================== */
 
+  // 🆕 MODAL QR CON FEE MEJORADO
   function renderQRModal() {
     if (!showQRModal) return null;
+
+    const paymentIdx = qrPaymentIndex;
+    const hasFee = paymentIdx !== null && applyCardFee[paymentIdx];
+    const baseAmount = paymentIdx !== null ? Number(payments[paymentIdx]?.monto || 0) : 0;
+    const feeAmount = hasFee ? baseAmount * (cardFeePercentage / 100) : 0;
 
     return (
       <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
@@ -2009,9 +2019,25 @@ useEffect(() => {
           </div>
 
           <div className="p-6 text-center space-y-4">
-            <div className="text-2xl font-bold text-gray-900">
-              Monto a Pagar: {fmt(qrAmount)}
-            </div>
+            {/* 🆕 MOSTRAR DESGLOSE SI HAY FEE */}
+            {hasFee ? (
+              <div className="space-y-2">
+                <div className="text-sm text-gray-600">Base Amount</div>
+                <div className="text-xl font-semibold text-gray-900">{fmt(baseAmount)}</div>
+                
+                <div className="text-sm text-purple-600">+ Card Fee ({cardFeePercentage}%)</div>
+                <div className="text-lg font-semibold text-purple-600">{fmt(feeAmount)}</div>
+                
+                <div className="border-t-2 border-gray-300 pt-2 mt-2">
+                  <div className="text-sm text-gray-600">Total to Charge</div>
+                  <div className="text-3xl font-bold text-gray-900">{fmt(qrAmount)}</div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-gray-900">
+                Monto a Pagar: {fmt(qrAmount)}
+              </div>
+            )}
 
             {qrCodeData && (
               <div className="bg-white p-4 rounded-xl border-4 border-purple-200 inline-block">
@@ -2030,6 +2056,11 @@ useEffect(() => {
               <p className="text-sm text-gray-600">
                 El cliente puede pagar de forma segura con su tarjeta
               </p>
+              {hasFee && (
+                <p className="text-xs text-purple-600 font-semibold">
+                  ⚠️ El monto incluye el {cardFeePercentage}% de cargo por procesamiento
+                </p>
+              )}
             </div>
 
             {qrPollingActive && (
@@ -2107,9 +2138,9 @@ useEffect(() => {
         </div>
       </div>
     );
-  }// src/Ventas.jsx - PARTE 4 DE 4 (UI Completa - Renderizado de Pasos y Root)
+  }
 
-  /* ======================== Paso 1: Cliente (CON MEJORAS) ======================== */
+  /* ======================== Paso 1: Cliente ======================== */
   function renderStepClient() {
     const clientsSafe = Array.isArray(clients) ? clients : [];
     const creditNum = getCreditNumber(selectedClient);
@@ -2213,7 +2244,6 @@ useEffect(() => {
                 )}
               </div>
 
-              {/* Panel crédito */}
               <div className="bg-white rounded-lg border shadow-sm p-4 min-w-0 lg:min-w-[280px]">
                 <div className="grid grid-cols-1 gap-3">
                   <div>
@@ -2303,7 +2333,6 @@ useEffect(() => {
       );
     }
 
-    // Sin cliente seleccionado: BUSCADOR CON MEJORAS
     return (
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
@@ -2334,7 +2363,6 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* 🆕 MINI DASHBOARD DEL DÍA */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3">
           <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-3 border-2 border-blue-200">
             <div className="text-[10px] sm:text-xs text-blue-600 font-semibold uppercase">Today</div>
@@ -2353,7 +2381,6 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* 🆕 ÚLTIMOS CLIENTES (ACCESO RÁPIDO) */}
         {recentClients.length > 0 && (
           <div className="bg-white rounded-lg border-2 border-gray-200 p-3">
             <div className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-2">
@@ -2391,7 +2418,6 @@ useEffect(() => {
           </div>
         )}
 
-        {/* BUSCADOR */}
         <div className="relative">
           <input
             type="text"
@@ -2416,7 +2442,6 @@ useEffect(() => {
           )}
         </div>
 
-        {/* 🆕 HINT DE BÚSQUEDA ACTIVA */}
         {debouncedClientSearch.length > 0 && (
           <div className="flex items-center gap-2 text-xs text-gray-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
             <span>🔍 Searching in:</span>
@@ -2430,7 +2455,6 @@ useEffect(() => {
           </div>
         )}
 
-        {/* RESULTADOS MEJORADOS */}
         <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2 border border-gray-200">
           {clientsSafe.length === 0 && debouncedClientSearch.length < 3 && (
             <div className="text-gray-400 text-center py-8">
@@ -2460,7 +2484,6 @@ useEffect(() => {
                 }}
               >
                 <div className="space-y-2">
-                  {/* Línea 1: Nombre + Badge Deuda */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-gray-900 flex items-center gap-2 flex-wrap">
@@ -2482,7 +2505,6 @@ useEffect(() => {
                     )}
                   </div>
 
-                  {/* Línea 2: Info de contacto */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                     <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded px-2 py-1.5">
                       <span className="text-green-600">📞</span>
@@ -2501,7 +2523,6 @@ useEffect(() => {
                     )}
                   </div>
 
-                  {/* Línea 3: Dirección */}
                   {c.direccion && (
                     <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
                       <span className="text-amber-600 text-sm mt-0.5">📍</span>
@@ -2511,7 +2532,6 @@ useEffect(() => {
                     </div>
                   )}
 
-                  {/* Línea 4: Credit info */}
                   {(clientHistory.has || balance !== 0) && (
                     <div className="flex items-center justify-between pt-1 border-t border-gray-200">
                       <div className="flex items-center gap-3 text-xs text-gray-600">
@@ -2535,7 +2555,6 @@ useEffect(() => {
           })}
         </div>
 
-        {/* QUICK SALE */}
         <div className="space-y-3">
           <button
             onClick={() => {
@@ -2687,7 +2706,6 @@ useEffect(() => {
           })}
         </div>
 
-        {/* Carrito */}
         {cartSafe.length > 0 && (
           <div className="rounded-xl p-4 shadow-lg ring-2 ring-blue-300 bg-white border border-blue-200">
             <div className="flex items-center justify-between mb-4">
@@ -2772,7 +2790,6 @@ useEffect(() => {
           />
         </div>
 
-        {/* Resumen crédito */}
         {selectedClient && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {balanceBefore > 0 && (
@@ -2822,7 +2839,7 @@ useEffect(() => {
     );
   }
 
-  /* ======================== Paso 3: Pago ======================== */
+  /* ======================== Paso 3: Pago (🆕 CON FEE) ======================== */
   function renderStepPayment() {
     return (
       <div className="space-y-6">
@@ -2911,6 +2928,52 @@ useEffect(() => {
                     </button>
                   )}
                 </div>
+                
+                {/* 🆕 CHECKBOX PARA FEE DE TARJETA */}
+                {p.forma === "tarjeta" && (
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={applyCardFee[i] || false}
+                        onChange={(e) => {
+                          setApplyCardFee(prev => ({
+                            ...prev,
+                            [i]: e.target.checked
+                          }));
+                        }}
+                        className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
+                      />
+                      <span className="text-sm text-gray-700">
+                        💳 Apply card fee ({cardFeePercentage}%)
+                        {applyCardFee[i] && Number(p.monto) > 0 && (
+                          <span className="ml-2 font-semibold text-purple-600">
+                            → Total: {fmt(Number(p.monto) * (1 + cardFeePercentage / 100))}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                    
+                    {/* 🆕 INPUT PARA PERSONALIZAR EL PORCENTAJE */}
+                    {applyCardFee[i] && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <label className="text-xs text-gray-600">Fee %:</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="10"
+                          step="0.1"
+                          value={cardFeePercentage}
+                          onChange={(e) => setCardFeePercentage(Math.max(0, Math.min(10, Number(e.target.value))))}
+                          className="w-16 border rounded px-2 py-1 text-sm"
+                        />
+                        <span className="text-xs text-gray-500">
+                          (Fee: {fmt(Number(p.monto) * (cardFeePercentage / 100))})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
