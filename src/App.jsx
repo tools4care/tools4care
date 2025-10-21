@@ -13,6 +13,7 @@ import CierreVan from "./CierreVan";
 import PreCierreVan from "./PreCierreVan";
 import Facturas from "./Facturas";
 import CuentasPorCobrar from "./CuentasPorCobrar.jsx";
+import CreditoSimulador from "./CreditoSimulador";
 
 // === Online ===
 import OnlineLayout from "./online/OnlineLayout";
@@ -164,6 +165,8 @@ export default function App() {
             <Route path="cierres/van" element={<CierreVan />} />
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
+            <Route path="cxc/sim" element={<CreditoSimulador />} />
+
 
             {/* 👇 NUEVO: ruta al módulo de Suplidores */}
             <Route path="suplidores" element={<Suplidores />} />
