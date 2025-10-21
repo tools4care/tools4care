@@ -7,45 +7,71 @@ import {
 } from "recharts";
 import {
   Search, TrendingUp, TrendingDown, DollarSign,
-  AlertCircle, CheckCircle, XCircle, Target, Zap, Clock, Award
+  AlertCircle, CheckCircle, XCircle, Target, Zap, Award
 } from "lucide-react";
 
 /* ==================== HELPERS ==================== */
 const fmt = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-// 🆕 Límites de crédito según score
+// 🆕 Límites de crédito según tu política
 const CREDIT_LIMITS_BY_SCORE = [
-  { minScore: 750, maxScore: 850, limit: 5000, label: "Excelente", color: "emerald" },
-  { minScore: 650, maxScore: 749, limit: 3000, label: "Muy Bueno", color: "green" },
-  { minScore: 550, maxScore: 649, limit: 2000, label: "Bueno", color: "yellow" },
-  { minScore: 400, maxScore: 549, limit: 1000, label: "Regular", color: "orange" },
-  { minScore: 300, maxScore: 399, limit: 500, label: "Malo", color: "red" }
+  { minScore: 800, maxScore: 850, limit: 800, label: "Excelente", color: "emerald" },
+  { minScore: 750, maxScore: 799, limit: 500, label: "Muy Bueno", color: "green" },
+  { minScore: 700, maxScore: 749, limit: 350, label: "Bueno", color: "lime" },
+  { minScore: 650, maxScore: 699, limit: 200, label: "Aceptable", color: "yellow" },
+  { minScore: 600, maxScore: 649, limit: 150, label: "Regular", color: "orange" },
+  { minScore: 550, maxScore: 599, limit: 80, label: "Bajo", color: "amber" },
+  { minScore: 500, maxScore: 549, limit: 30, label: "Muy Bajo", color: "red" },
+  { minScore: 300, maxScore: 499, limit: 0, label: "Sin Crédito", color: "gray" }
 ];
 
-// Función para obtener el límite según score
+// Función para obtener el límite según score (usa tu lógica exacta)
+function policyLimit(score) {
+  const s = Number(score ?? 600);
+  if (s < 500) return 0;
+  if (s < 550) return 30;
+  if (s < 600) return 80;
+  if (s < 650) return 150;
+  if (s < 700) return 200;
+  if (s < 750) return 350;
+  if (s < 800) return 500;
+  return 800;
+}
+
 const getLimitByScore = (score) => {
+  const limit = policyLimit(score);
   const tier = CREDIT_LIMITS_BY_SCORE.find(t => score >= t.minScore && score <= t.maxScore);
-  return tier || CREDIT_LIMITS_BY_SCORE[CREDIT_LIMITS_BY_SCORE.length - 1];
+  return { 
+    limit, 
+    label: tier?.label || "Sin Clasificar", 
+    color: tier?.color || "gray" 
+  };
 };
 
 // Colores por rango de score
 const getScoreColor = (score) => {
-  if (score >= 750) return { bg: "bg-emerald-100", text: "text-emerald-700", border: "border-emerald-300" };
-  if (score >= 650) return { bg: "bg-green-100", text: "text-green-700", border: "border-green-300" };
-  if (score >= 550) return { bg: "bg-yellow-100", text: "text-yellow-700", border: "border-yellow-300" };
-  if (score >= 400) return { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300" };
-  return { bg: "bg-red-100", text: "text-red-700", border: "border-red-300" };
+  if (score >= 800) return { bg: "bg-emerald-100", text: "text-emerald-700", border: "border-emerald-300" };
+  if (score >= 750) return { bg: "bg-green-100", text: "text-green-700", border: "border-green-300" };
+  if (score >= 700) return { bg: "bg-lime-100", text: "text-lime-700", border: "border-lime-300" };
+  if (score >= 650) return { bg: "bg-yellow-100", text: "text-yellow-700", border: "border-yellow-300" };
+  if (score >= 600) return { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300" };
+  if (score >= 550) return { bg: "bg-amber-100", text: "text-amber-700", border: "border-amber-300" };
+  if (score >= 500) return { bg: "bg-red-100", text: "text-red-700", border: "border-red-300" };
+  return { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-300" };
 };
 
 const getScoreLabel = (score) => {
-  if (score >= 750) return "Excelente";
-  if (score >= 650) return "Muy Bueno";
-  if (score >= 550) return "Bueno";
-  if (score >= 400) return "Regular";
-  return "Malo";
+  if (score >= 800) return "Excelente";
+  if (score >= 750) return "Muy Bueno";
+  if (score >= 700) return "Bueno";
+  if (score >= 650) return "Aceptable";
+  if (score >= 600) return "Regular";
+  if (score >= 550) return "Bajo";
+  if (score >= 500) return "Muy Bajo";
+  return "Sin Crédito";
 };
 
-/* ==================== LÓGICA DE SCORE MEJORADA ==================== */
+/* ==================== LÓGICA DE SCORE ==================== */
 function calculateScoreImpact(currentSaldo, currentScore, scenario) {
   const SCORE_MIN = 300;
   const SCORE_MAX = 850;
@@ -80,9 +106,9 @@ function calculateScoreImpact(currentSaldo, currentScore, scenario) {
       const periodos = scenario.periods || 1;
       const unidad = scenario.unit || "weeks";
       scoreDelta = unidad === "weeks" 
-        ? -Math.round(periodos * 8)  // -8 puntos por semana
-        : -Math.round(periodos * 35); // -35 puntos por mes
-      newSaldo = currentSaldo; // Sin mora, pero score baja
+        ? -Math.round(periodos * 8)
+        : -Math.round(periodos * 35);
+      newSaldo = currentSaldo;
       description = `${periodos} ${unidad === "weeks" ? "semana" : "mes"}${periodos > 1 ? (unidad === "weeks" ? "s" : "es") : ""} sin actividad afecta negativamente tu historial`;
       break;
 
@@ -90,8 +116,8 @@ function calculateScoreImpact(currentSaldo, currentScore, scenario) {
       const periodo = scenario.periods || 1;
       const unit = scenario.unit || "weeks";
       scoreDelta = unit === "weeks"
-        ? Math.round(periodo * 4)   // +4 puntos por semana
-        : Math.round(periodo * 15);  // +15 puntos por mes
+        ? Math.round(periodo * 4)
+        : Math.round(periodo * 15);
       description = `${periodo} ${unit === "weeks" ? "semana" : "mes"}${periodo > 1 ? (unit === "weeks" ? "s" : "es") : ""} de pagos puntuales fortalece tu crédito`;
       break;
 
@@ -117,11 +143,10 @@ export default function SimuladorCredito({ onClose }) {
   const [searching, setSearching] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
 
-  // 🆕 Escenarios actualizados (sin MORA)
   const [scenarios, setScenarios] = useState([
     { id: 1, type: "PAGO_COMPLETO", label: "💳 Pago Total", active: false },
-    { id: 2, type: "PAGO_PARCIAL", label: "💵 Pago Parcial", amount: 500, active: false },
-    { id: 3, type: "NUEVA_COMPRA", label: "🛒 Nueva Compra", amount: 1000, active: false },
+    { id: 2, type: "PAGO_PARCIAL", label: "💵 Pago Parcial", amount: 50, active: false },
+    { id: 3, type: "NUEVA_COMPRA", label: "🛒 Nueva Compra", amount: 100, active: false },
     { id: 4, type: "SIN_PAGAR", label: "⚠️ Sin Actividad", periods: 2, unit: "weeks", active: false },
     { id: 5, type: "HISTORIAL_PERFECTO", label: "⭐ Pagos Puntuales", periods: 4, unit: "weeks", active: false }
   ]);
@@ -178,7 +203,7 @@ export default function SimuladorCredito({ onClose }) {
     );
   };
 
-  // Calcular impactos de escenarios activos (RESPONSIVO EN TIEMPO REAL)
+  // Calcular impactos (RESPONSIVO EN TIEMPO REAL)
   const impacts = useMemo(() => {
     if (!selectedClient) return [];
 
@@ -198,9 +223,8 @@ export default function SimuladorCredito({ onClose }) {
       });
 
     return results;
-  }, [selectedClient, scenarios]); // 🔥 Se recalcula cada vez que cambien los escenarios
+  }, [selectedClient, scenarios]);
 
-  // Score final después de todos los escenarios
   const finalScore = useMemo(() => {
     if (!selectedClient) return 0;
     if (impacts.length === 0) return selectedClient.score_base || 500;
@@ -213,17 +237,17 @@ export default function SimuladorCredito({ onClose }) {
     return impacts[impacts.length - 1].newSaldo;
   }, [selectedClient, impacts]);
 
-  // 🆕 Límite actual y proyectado según score
+  // Límites actual y proyectado
   const currentLimit = useMemo(() => {
     if (!selectedClient) return 0;
-    return getLimitByScore(selectedClient.score_base || 0).limit;
+    return policyLimit(selectedClient.score_base || 0);
   }, [selectedClient]);
 
   const projectedLimit = useMemo(() => {
-    return getLimitByScore(finalScore).limit;
+    return policyLimit(finalScore);
   }, [finalScore]);
 
-  // 🆕 Crédito disponible actual y proyectado
+  // Crédito disponible actual y proyectado
   const currentAvailable = useMemo(() => {
     if (!selectedClient) return 0;
     return Math.max(0, currentLimit - Number(selectedClient.saldo || 0));
@@ -244,7 +268,7 @@ export default function SimuladorCredito({ onClose }) {
     let currentScore = selectedClient.score_base || 500;
     impacts.forEach((impact, idx) => {
       currentScore = impact.newScore;
-      const limit = getLimitByScore(currentScore).limit;
+      const limit = policyLimit(currentScore);
       data.push({
         name: `Paso ${idx + 1}`,
         score: currentScore,
@@ -269,7 +293,7 @@ export default function SimuladorCredito({ onClose }) {
     let currentSaldo = Number(selectedClient.saldo || 0);
     impacts.forEach((impact, idx) => {
       currentSaldo = impact.newSaldo;
-      const limit = getLimitByScore(impact.newScore).limit;
+      const limit = policyLimit(impact.newScore);
       const disponible = Math.max(0, limit - currentSaldo);
       data.push({
         name: `Paso ${idx + 1}`,
@@ -356,11 +380,11 @@ export default function SimuladorCredito({ onClose }) {
             <div className="text-4xl mb-2">👥</div>
             <p className="text-gray-500 mb-4">Escribe al menos 2 caracteres para buscar</p>
             
-            {/* 🆕 Tabla de límites de crédito */}
+            {/* Tabla de límites de crédito */}
             <div className="mt-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-6">
               <h4 className="font-bold text-gray-900 mb-4 flex items-center justify-center gap-2">
                 <Award className="text-indigo-600" size={20} />
-                Límites de Crédito por Score
+                Política de Límites de Crédito
               </h4>
               <div className="space-y-2">
                 {CREDIT_LIMITS_BY_SCORE.map((tier, idx) => (
@@ -369,13 +393,13 @@ export default function SimuladorCredito({ onClose }) {
                     className={`flex items-center justify-between p-3 rounded-lg border-2 bg-${tier.color}-50 border-${tier.color}-200`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`text-2xl font-bold text-${tier.color}-700`}>
+                      <div className={`text-xl font-bold text-${tier.color}-700`}>
                         {tier.minScore}-{tier.maxScore}
                       </div>
                       <div className="text-sm text-gray-600">{tier.label}</div>
                     </div>
                     <div className={`text-xl font-bold text-${tier.color}-700`}>
-                      {fmt(tier.limit)}
+                      {tier.limit === 0 ? "Sin crédito" : fmt(tier.limit)}
                     </div>
                   </div>
                 ))}
@@ -473,7 +497,7 @@ export default function SimuladorCredito({ onClose }) {
                             <input
                               type="number"
                               min="0"
-                              step="100"
+                              step="10"
                               value={scenario.amount || 0}
                               onChange={(e) => updateScenarioValue(scenario.id, "amount", e.target.value)}
                               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
@@ -527,7 +551,7 @@ export default function SimuladorCredito({ onClose }) {
               
               <div className="space-y-2">
                 {impacts.map((impact, idx) => {
-                  const impactLimit = getLimitByScore(impact.newScore).limit;
+                  const impactLimit = policyLimit(impact.newScore);
                   
                   return (
                     <div key={idx} className="bg-white border-2 border-gray-200 rounded-xl p-4">
@@ -683,7 +707,7 @@ export default function SimuladorCredito({ onClose }) {
                       strokeWidth={2}
                       strokeDasharray="5 5"
                       dot={{ fill: '#10b981', r: 4 }}
-                      name="Límite"
+                      name="Límite ($)"
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -837,7 +861,7 @@ export default function SimuladorCredito({ onClose }) {
                         {fmt(currentAvailable)}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        {Math.round((currentAvailable / currentLimit) * 100)}% del límite
+                        {currentLimit > 0 ? Math.round((currentAvailable / currentLimit) * 100) : 0}% del límite
                       </div>
                     </div>
                     
@@ -861,7 +885,7 @@ export default function SimuladorCredito({ onClose }) {
                         {fmt(projectedAvailable)}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        {Math.round((projectedAvailable / projectedLimit) * 100)}% del límite
+                        {projectedLimit > 0 ? Math.round((projectedAvailable / projectedLimit) * 100) : 0}% del límite
                       </div>
                     </div>
                   </div>
@@ -872,13 +896,13 @@ export default function SimuladorCredito({ onClose }) {
                       <div
                         className="bg-gradient-to-r from-red-500 to-red-600 transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, ((finalSaldo / projectedLimit) * 100))}%`
+                          width: projectedLimit > 0 ? `${Math.min(100, ((finalSaldo / projectedLimit) * 100))}%` : "0%"
                         }}
                       />
                       <div
                         className="bg-gradient-to-r from-green-500 to-emerald-600 transition-all duration-500"
                         style={{
-                          width: `${Math.max(0, 100 - ((finalSaldo / projectedLimit) * 100))}%`
+                          width: projectedLimit > 0 ? `${Math.max(0, 100 - ((finalSaldo / projectedLimit) * 100))}%` : "0%"
                         }}
                       />
                     </div>
