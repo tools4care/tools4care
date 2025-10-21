@@ -1,9 +1,11 @@
-// src/CuentasPorCobrar.jsx
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { supabase } from "./supabaseClient";
 
 const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = "#cxcadmin2025";
+
+// 🔹 Carga diferida del simulador real desde src/creditoSimulador.jsx
+const SimuladorCredito = lazy(() => import("./creditoSimulador"));
 
 /* ====================== Helpers ====================== */
 function currency(n) {
@@ -30,10 +32,10 @@ const openWhatsAppWith = (telefono, texto) => {
 };
 
 /* ========= Config ========= */
-const COMPANY_NAME     = import.meta.env?.VITE_COMPANY_NAME     || "Care Beauty Supply";
-const PAY_URL          = import.meta.env?.VITE_PAY_URL          || "https://carebeautysupply.carrd.co/";
-const CONTACT_EMAIL    = import.meta.env?.VITE_CONTACT_EMAIL    || "tools4care@gmail.com";
-const CONTACT_PHONE    = import.meta.env?.VITE_CONTACT_PHONE    || "+1 (781) 953-1475";
+const COMPANY_NAME  = import.meta.env?.VITE_COMPANY_NAME  || "Care Beauty Supply";
+const PAY_URL       = import.meta.env?.VITE_PAY_URL       || "https://carebeautysupply.carrd.co/";
+const CONTACT_EMAIL = import.meta.env?.VITE_CONTACT_EMAIL || "tools4care@gmail.com";
+const CONTACT_PHONE = import.meta.env?.VITE_CONTACT_PHONE || "+1 (781) 953-1475";
 
 /* ========= Plantillas simplificadas ========= */
 const DEFAULT_TEMPLATES = [
@@ -93,12 +95,10 @@ function DetalleClienteModal({ cliente, onClose }) {
   const [tel, setTel] = useState("");
   const [clienteInfo, setClienteInfo] = useState(null);
   const [templates, setTemplates] = useState([...DEFAULT_TEMPLATES, ...loadUserTemplates()]);
-  const [tplKey, setTplKey] = useState("es_pro"); // Cambiado a español por defecto
+  const [tplKey, setTplKey] = useState("es_pro"); // por defecto español
   const [generated, setGenerated] = useState(false);
 
-  // Cargar info adicional del cliente
   useEffect(() => {
-    // Usar los datos que ya vienen del cliente
     setClienteInfo({
       telefono: cliente?.telefono || "",
       direccion: cliente?.direccion || "",
@@ -110,7 +110,6 @@ function DetalleClienteModal({ cliente, onClose }) {
   const currentContext = () => {
     const nombre = cliente?.cliente_nombre || cliente?.cliente || "Cliente";
     const saldoRow = Number(cliente?.saldo || 0);
-
     return {
       cliente: nombre,
       saldo: saldoRow,
@@ -120,14 +119,6 @@ function DetalleClienteModal({ cliente, onClose }) {
       email: CONTACT_EMAIL,
       phone: CONTACT_PHONE,
     };
-  };
-
-  const generarSugerencia = () => {
-    const ctx = currentContext();
-    const tpl = templates.find(t => t.key === tplKey) || DEFAULT_TEMPLATES[0];
-    const msg = renderTemplate(tpl.body, { ...ctx });
-    setMensaje(msg);
-    setGenerated(true);
   };
 
   const applyTemplateAndGenerate = (templateKey) => {
@@ -159,15 +150,9 @@ function DetalleClienteModal({ cliente, onClose }) {
         <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between shadow-md z-10">
           <div className="flex-1 min-w-0">
             <div className="font-bold text-lg truncate">{cliente?.cliente_nombre || cliente?.cliente}</div>
-            {tel && (
-              <div className="text-sm text-blue-100 truncate">📞 {tel}</div>
-            )}
-            {clienteInfo?.direccion && (
-              <div className="text-sm text-blue-100 truncate">📍 {clienteInfo.direccion}</div>
-            )}
-            {clienteInfo?.nombre_negocio && (
-              <div className="text-sm text-blue-100 truncate">🏪 {clienteInfo.nombre_negocio}</div>
-            )}
+            {tel && <div className="text-sm text-blue-100 truncate">📞 {tel}</div>}
+            {clienteInfo?.direccion && <div className="text-sm text-blue-100 truncate">📍 {clienteInfo.direccion}</div>}
+            {clienteInfo?.nombre_negocio && <div className="text-sm text-blue-100 truncate">🏪 {clienteInfo.nombre_negocio}</div>}
             {!tel && !clienteInfo?.direccion && !clienteInfo?.nombre_negocio && (
               <div className="text-xs text-blue-200 mt-1">⚠️ Sin información de contacto</div>
             )}
@@ -179,9 +164,7 @@ function DetalleClienteModal({ cliente, onClose }) {
           {/* Recordatorio */}
           <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <div className="font-bold text-gray-900 flex items-center gap-2">
-                💬 Mensaje de recordatorio
-              </div>
+              <div className="font-bold text-gray-900 flex items-center gap-2">💬 Mensaje de recordatorio</div>
             </div>
 
             {/* Selector de plantilla */}
@@ -289,6 +272,39 @@ function DetalleClienteModal({ cliente, onClose }) {
   );
 }
 
+/* ====================== Modal contenedor del Simulador (usa tu módulo real) ====================== */
+function SimuladorCreditoModal({ onClose, initialAmount, initialMonths, customerName, customerId }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white w-full h-auto sm:max-w-2xl sm:rounded-2xl shadow-2xl overflow-hidden">
+        <div className="px-4 py-4 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white flex items-center justify-between">
+          <div className="font-bold text-lg">📈 Simulador de Crédito</div>
+          <button onClick={onClose} className="text-white hover:text-indigo-200 text-2xl font-bold">✕</button>
+        </div>
+
+        <div className="p-0">
+          <Suspense
+            fallback={
+              <div className="p-6">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-4 border-indigo-600 mx-auto mb-4"></div>
+                <div className="text-center text-gray-600">Cargando simulador…</div>
+              </div>
+            }
+          >
+            <SimuladorCredito
+              onClose={onClose}
+              initialAmount={initialAmount}
+              initialMonths={initialMonths}
+              customerName={customerName}
+              customerId={customerId}
+            />
+          </Suspense>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ====================== Página principal ====================== */
 export default function CuentasPorCobrar() {
   const [q, setQ] = useState("");
@@ -321,6 +337,15 @@ export default function CuentasPorCobrar() {
 
   const [selected, setSelected] = useState(null);
   const [openReminder, setOpenReminder] = useState(false);
+
+  // 🔹 Estado para el simulador (solo botón general)
+  const [openSimulador, setOpenSimulador] = useState(false);
+  const [simInit, setSimInit] = useState({
+    amount: 0,
+    months: 12,
+    customerName: "",
+    customerId: "",
+  });
 
   function tryUnlockBySecret(value) {
     const typed = (value || "").trim();
@@ -371,7 +396,6 @@ export default function CuentasPorCobrar() {
     async function load() {
       setLoading(true);
       try {
-        // Cargar datos de CXC con información del cliente incluida
         let query = supabase
           .from("v_cxc_cliente_detalle_ext")
           .select("cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual, telefono, direccion, nombre_negocio", 
@@ -399,7 +423,6 @@ export default function CuentasPorCobrar() {
             setRows([]);
             setTotal(0);
           } else {
-            console.log("✅ Datos cargados completos:", result.data?.length, "registros de", result.count);
             setRows(result.data || []);
             setTotal(result.count || 0);
           }
@@ -429,86 +452,108 @@ export default function CuentasPorCobrar() {
     return { saldoTotal, avgScore, clientes: total };
   }, [rows, total]);
 
+  // 🔹 Botón general: abre simulador sin cliente
+  const openSimuladorGlobal = () => {
+    setSimInit({
+      amount: 0,
+      months: 12,
+      customerName: "",
+      customerId: "",
+    });
+    setOpenSimulador(true);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-20">
       <div className="max-w-6xl mx-auto p-3 sm:p-6">
         {/* Header */}
         <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 mb-4">
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4">💰 Accounts Receivable</h1>
-
-          {/* Buscador */}
-          <div className="space-y-3">
-            <div className="relative">
-              <input
-                value={q}
-                onChange={(e) => {
-                  setQ(e.target.value);
-                  setPage(1);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    tryUnlockBySecret(e.currentTarget.value);
-                    if (e.currentTarget.value.trim() === CXC_SECRET) {
-                      e.currentTarget.value = "";
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }
-                  }
-                }}
-                placeholder="🔍 Buscar cliente..."
-                className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 pr-10 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none"
-              />
-              {adminMode && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-100 text-purple-700 border border-purple-300 text-xs font-bold">
-                    🔒 Admin
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Filtros de score */}
-            <div className="overflow-x-auto pb-2 -mx-2 px-2">
-              <div className="flex gap-2 min-w-max">
-                {["ALL", "0-399", "400-549", "550-649", "650-749", "750+"].map((k) => (
-                  <button
-                    key={k}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${
-                      scoreFilter === k
-                        ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md"
-                        : "bg-white text-gray-700 border-2 border-gray-300 hover:border-blue-400"
-                    }`}
-                    onClick={() => {
-                      setScoreFilter(k);
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">💰 Accounts Receivable</h1>
+              
+              {/* Buscador */}
+              <div className="space-y-3">
+                <div className="relative">
+                  <input
+                    value={q}
+                    onChange={(e) => {
+                      setQ(e.target.value);
                       setPage(1);
                     }}
-                  >
-                    {k === "ALL" ? "📊 Todos" : `${k}`}
-                  </button>
-                ))}
-              </div>
-            </div>
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        tryUnlockBySecret(e.currentTarget.value);
+                        if (e.currentTarget.value.trim() === CXC_SECRET) {
+                          e.currentTarget.value = "";
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }
+                    }}
+                    placeholder="🔍 Buscar cliente..."
+                    className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 pr-10 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none"
+                  />
+                  {/* Badge Admin */}
+                  {adminMode && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-100 text-purple-700 border border-purple-300 text-xs font-bold">
+                        🔒 Admin
+                      </span>
+                    </div>
+                  )}
+                </div>
 
-            {/* Controles */}
-            <div className="flex flex-wrap gap-2 items-center">
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value));
-                  setPage(1);
-                }}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
-              >
-                {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={n}>{n} por página</option>
-                ))}
-              </select>
-              <button
-                onClick={() => setReloadTick((t) => t + 1)}
-                className="border-2 border-gray-300 rounded-lg px-4 py-2 text-sm bg-white hover:bg-gray-50 font-semibold"
-              >
-                🔄 Recargar
-              </button>
+                {/* Filtros de score */}
+                <div className="overflow-x-auto pb-2 -mx-2 px-2">
+                  <div className="flex gap-2 min-w-max">
+                    {["ALL", "0-399", "400-549", "550-649", "650-749", "750+"].map((k) => (
+                      <button
+                        key={k}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all ${
+                          scoreFilter === k
+                            ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md"
+                            : "bg-white text-gray-700 border-2 border-gray-300 hover:border-blue-400"
+                        }`}
+                        onClick={() => {
+                          setScoreFilter(k);
+                          setPage(1);
+                        }}
+                      >
+                        {k === "ALL" ? "📊 Todos" : `${k}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Controles */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+                  >
+                    {[10, 25, 50, 100].map((n) => (
+                      <option key={n} value={n}>{n} por página</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => setReloadTick((t) => t + 1)}
+                    className="border-2 border-gray-300 rounded-lg px-4 py-2 text-sm bg-white hover:bg-gray-50 font-semibold"
+                  >
+                    🔄 Recargar
+                  </button>
+                  <button
+                    onClick={openSimuladorGlobal}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold shadow-md"
+                  >
+                    📈 Simular Crédito
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -546,22 +591,16 @@ export default function CuentasPorCobrar() {
             </div>
           )}
 
-          {/* MÓVIL: Cards */}
+          {/* MÓVIL: Cards (sin botón de Simular por fila) */}
           <div className="block lg:hidden space-y-3">
             {!loading && rows.map((r) => (
               <div key={r.cliente_id} className="bg-white border-2 border-gray-200 rounded-xl shadow-md overflow-hidden">
                 <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-3">
                   <div className="font-bold text-lg">{r.cliente_nombre}</div>
                   <div className="text-sm text-blue-100">#{r.cliente_id?.slice?.(0, 8)}...</div>
-                  {r.nombre_negocio && (
-                    <div className="text-sm text-blue-100 mt-1">🏪 {r.nombre_negocio}</div>
-                  )}
-                  {r.direccion && (
-                    <div className="text-xs text-blue-200 mt-0.5">📍 {r.direccion}</div>
-                  )}
-                  {r.telefono && (
-                    <div className="text-xs text-blue-200 mt-0.5">📞 {r.telefono}</div>
-                  )}
+                  {r.nombre_negocio && <div className="text-sm text-blue-100 mt-1">🏪 {r.nombre_negocio}</div>}
+                  {r.direccion && <div className="text-xs text-blue-200 mt-0.5">📍 {r.direccion}</div>}
+                  {r.telefono && <div className="text-xs text-blue-200 mt-0.5">📞 {r.telefono}</div>}
                 </div>
 
                 <div className="p-4 space-y-3">
@@ -615,7 +654,7 @@ export default function CuentasPorCobrar() {
             ))}
           </div>
 
-          {/* DESKTOP: Tabla */}
+          {/* DESKTOP: Tabla (sin botón de Simular por fila) */}
           <div className="hidden lg:block bg-white border-2 border-gray-200 rounded-xl overflow-hidden shadow-lg">
             <div className="overflow-x-auto">
               <table className="min-w-full">
@@ -635,15 +674,9 @@ export default function CuentasPorCobrar() {
                       <td className="px-4 py-3">
                         <div className="font-semibold text-gray-900">{r.cliente_nombre}</div>
                         <div className="text-xs text-gray-500">#{r.cliente_id?.slice?.(0, 8)}...</div>
-                        {r.nombre_negocio && (
-                          <div className="text-xs text-gray-600 mt-0.5">🏪 {r.nombre_negocio}</div>
-                        )}
-                        {r.direccion && (
-                          <div className="text-xs text-gray-500 mt-0.5">📍 {r.direccion}</div>
-                        )}
-                        {r.telefono && (
-                          <div className="text-xs text-gray-500 mt-0.5">📞 {r.telefono}</div>
-                        )}
+                        {r.nombre_negocio && <div className="text-xs text-gray-600 mt-0.5">🏪 {r.nombre_negocio}</div>}
+                        {r.direccion && <div className="text-xs text-gray-500 mt-0.5">📍 {r.direccion}</div>}
+                        {r.telefono && <div className="text-xs text-gray-500 mt-0.5">📞 {r.telefono}</div>}
                         <div className="mt-1 flex items-center gap-2">
                           {adminMode && (
                             <button
@@ -669,12 +702,15 @@ export default function CuentasPorCobrar() {
                       <td className="px-4 py-3 text-right font-semibold">{fmt(r.limite_politica)}</td>
                       <td className="px-4 py-3 text-right font-bold text-green-600">{fmt(r.credito_disponible)}</td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          className="px-4 py-2 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-sm font-semibold shadow-md"
-                          onClick={() => { setSelected(r); setOpenReminder(true); }}
-                        >
-                          💬 Recordatorio
-                        </button>
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            className="px-4 py-2 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-sm font-semibold shadow-md"
+                            onClick={() => { setSelected(r); setOpenReminder(true); }}
+                          >
+                            💬 Recordatorio
+                          </button>
+                          {/* (Simular por fila eliminado) */}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -784,6 +820,17 @@ export default function CuentasPorCobrar() {
         <DetalleClienteModal
           cliente={selected}
           onClose={() => { setOpenReminder(false); setSelected(null); }}
+        />
+      )}
+
+      {/* Modal de simulador de crédito (solo botón general) */}
+      {openSimulador && (
+        <SimuladorCreditoModal
+          onClose={() => setOpenSimulador(false)}
+          initialAmount={simInit.amount}
+          initialMonths={simInit.months}
+          customerName={simInit.customerName}
+          customerId={simInit.customerId}
         />
       )}
     </div>
