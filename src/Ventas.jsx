@@ -1288,6 +1288,31 @@ export default function Sales() {
     
     setSearchingInDB(true);
     try {
+      // Generar variantes del código para búsqueda flexible
+      const filterVariants = [];
+      filterVariants.push(filter); // Original
+      
+      // Sin ceros iniciales
+      const withoutZeros = filter.replace(/^0+/, '');
+      if (withoutZeros && withoutZeros !== filter) {
+        filterVariants.push(withoutZeros);
+      }
+      
+      // Con un cero inicial (si no lo tiene)
+      if (!filter.startsWith('0')) {
+        filterVariants.push('0' + filter);
+      }
+      
+      // Con dos ceros iniciales
+      if (!filter.startsWith('00')) {
+        filterVariants.push('00' + filter);
+      }
+
+      // Construir condición OR con todas las variantes
+      const codigoConditions = filterVariants
+        .map(v => `codigo.ilike.%${v}%`)
+        .join(',');
+
       const { data, error } = await supabase
         .from("stock_van")
         .select(`
@@ -1306,12 +1331,16 @@ export default function Sales() {
         `)
         .eq("van_id", van.id)
         .gt("cantidad", 0)
-        .or(`nombre.ilike.%${filter}%,codigo.ilike.%${filter}%,marca.ilike.%${filter}%`, { foreignTable: 'productos' })
+        .or(
+          `nombre.ilike.%${filter}%,${codigoConditions},marca.ilike.%${filter}%`,
+          { foreignTable: 'productos' }
+        )
         .limit(50);
 
       if (error) {
         console.error("Error buscando productos:", error);
         
+        // Fallback: buscar sin join
         const { data: stockData } = await supabase
           .from("stock_van")
           .select("producto_id, cantidad")
@@ -1325,7 +1354,7 @@ export default function Sales() {
             .from("productos")
             .select("id, nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price")
             .in("id", productIds)
-          .or(`nombre.ilike.%${filter}%,codigo.ilike.%${filter}%,marca.ilike.%${filter}%`)
+            .or(`nombre.ilike.%${filter}%,${codigoConditions},marca.ilike.%${filter}%`);
 
           if (productsData) {
             const stockMap = new Map(stockData.map(s => [s.producto_id, s.cantidad]));
@@ -1782,11 +1811,10 @@ export default function Sales() {
   }
 
   function handleBarcodeScanned(code) {
-    let cleanedCode = code.replace(/^0+/, '');
-    if (cleanedCode === '') cleanedCode = '0';
-    setProductSearch(cleanedCode);
-    setShowScanner(false);
-  }
+  // Usar el código tal cual - la búsqueda manejará las variantes
+  setProductSearch(code.trim());
+  setShowScanner(false);
+}
 
   function handleSelectPendingSale(sale) {
     setSelectedClient(sale.client);
