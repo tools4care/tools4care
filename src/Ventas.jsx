@@ -591,6 +591,9 @@ export default function Sales() {
   const [invTick, setInvTick] = useState(0);
   const reloadInventory = () => setInvTick(n => n + 1);
 
+  const [searchingInDB, setSearchingInDB] = useState(false);
+
+
   // ---- STRIPE QR Estados
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrCodeData, setQRCodeData] = useState(null);
@@ -1270,25 +1273,116 @@ export default function Sales() {
   }, [step]);
 
   /* ---------- Filtro del buscador ---------- */
-  useEffect(() => {
-    const filter = productSearch.trim().toLowerCase();
-    const searchActive = filter.length > 0;
-    const base = searchActive ? allProducts : topProducts;
+ useEffect(() => {
+  const filter = productSearch.trim().toLowerCase();
+  const searchActive = filter.length > 0;
+  
+  if (!searchActive) {
+    setProducts(topProducts.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0));
+    setNoProductFound("");
+    return;
+  }
 
-    let filtered = !searchActive
-      ? base
-      : base.filter((row) => {
-          const n = (row.productos?.nombre || row.nombre || "").toLowerCase();
-          const c = (row.productos?.codigo || row.codigo || "").toLowerCase();
-          const m = (row.productos?.marca || row.marca || "").toLowerCase();
-          return n.includes(filter) || c.includes(filter) || m.includes(filter);
-        });
+  async function searchInDatabase() {
+    if (!van?.id) return;
+    
+    setSearchingInDB(true);
+    try {
+      const { data, error } = await supabase
+        .from("stock_van")
+        .select(`
+          producto_id,
+          cantidad,
+          productos:productos!inner(
+            id,
+            nombre,
+            precio,
+            codigo,
+            marca,
+            descuento_pct,
+            bulk_min_qty,
+            bulk_unit_price
+          )
+        `)
+        .eq("van_id", van.id)
+        .gt("cantidad", 0)
+        .or(`nombre.ilike.%${filter}%,codigo.ilike.%${filter}%,marca.ilike.%${filter}%`, { foreignTable: 'productos' })
+        .limit(50);
 
-    filtered = filtered.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0);
+      if (error) {
+        console.error("Error buscando productos:", error);
+        
+        const { data: stockData } = await supabase
+          .from("stock_van")
+          .select("producto_id, cantidad")
+          .eq("van_id", van.id)
+          .gt("cantidad", 0);
 
-    setProducts(filtered);
-    setNoProductFound(searchActive && filtered.length === 0 ? productSearch.trim() : "");
-  }, [productSearch, topProducts, allProducts]);
+        if (stockData) {
+          const productIds = stockData.map(s => s.producto_id);
+          
+          const { data: productsData } = await supabase
+            .from("productos")
+            .select("id, nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price")
+            .in("id", productIds)
+          .or(`nombre.ilike.%${filter}%,codigo.ilike.%${filter}%,marca.ilike.%${filter}%`)
+
+          if (productsData) {
+            const stockMap = new Map(stockData.map(s => [s.producto_id, s.cantidad]));
+            
+            const results = productsData.map(p => ({
+              producto_id: p.id,
+              cantidad: stockMap.get(p.id) || 0,
+              productos: p,
+              nombre: p.nombre,
+              precio: p.precio,
+              codigo: p.codigo,
+              marca: p.marca
+            }));
+
+            setProducts(results);
+            setNoProductFound(results.length === 0 ? filter : "");
+            return;
+          }
+        }
+        
+        setProducts([]);
+        setNoProductFound(filter);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const results = data.map(row => ({
+          producto_id: row.producto_id,
+          cantidad: Number(row.cantidad || 0),
+          productos: row.productos,
+          nombre: row.productos?.nombre || "",
+          precio: Number(row.productos?.precio || 0),
+          codigo: row.productos?.codigo || "",
+          marca: row.productos?.marca || ""
+        }));
+
+        setProducts(results);
+        setNoProductFound("");
+      } else {
+        setProducts([]);
+        setNoProductFound(filter);
+      }
+    } catch (err) {
+      console.error("Error en búsqueda:", err);
+      setProducts([]);
+      setNoProductFound(filter);
+    } finally {
+      setSearchingInDB(false);
+    }
+  }
+
+  const timer = setTimeout(() => {
+    searchInDatabase();
+  }, 500);
+
+  return () => clearTimeout(timer);
+}, [productSearch, van?.id, topProducts]);
 
   /* ---------- Totales & crédito ---------- */
   const cartSafe = Array.isArray(cart) ? cart : [];
@@ -2627,7 +2721,7 @@ export default function Sales() {
 
           {products.length === 0 && !noProductFound && (
             <div className="text-gray-400 text-center py-8">
-              {searchActive ? (allProductsLoading ? "⏳ Searching…" : "🔍 No products match your search") : "📦 No top sellers available for this van"}
+              {searchActive ? (searchingInDB ? "⏳ Buscando en inventario..." : "🔍 No se encontraron productos") : "📦 No hay productos destacados para esta van"}
             </div>
           )}
 
