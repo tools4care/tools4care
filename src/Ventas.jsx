@@ -1492,7 +1492,7 @@ export default function Sales() {
       payments.length === 1 && 
       Number(payments[0].monto) === 0
     ) {
-      setPayments([{ ...payments[0], monto: totalAPagar }]);
+      setPayments([{ ...payments[0], monto: saleTotal }]);
       setPaymentAutoFilled(true);
     }
 
@@ -1802,9 +1802,16 @@ export default function Sales() {
     setPayments((arr) => arr.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
   }
 
-  function handleAddPayment() {
-    setPayments([...payments, { forma: "efectivo", monto: 0 }]);
-  }
+ function handleAddPayment() {
+  // Calcula cuánto falta por pagar
+  const alreadyPaid = payments.reduce((sum, p) => sum + Number(p.monto || 0), 0);
+  const remaining = Math.max(0, totalAPagar - alreadyPaid);
+  
+  // Si es el primer pago, usar saleTotal, si no, usar lo que falta
+  const initialAmount = payments.length === 0 ? saleTotal : remaining;
+  
+  setPayments([...payments, { forma: "efectivo", monto: initialAmount }]);
+}
 
   function handleRemovePayment(index) {
     setPayments((ps) => (ps.length === 1 ? ps : ps.filter((_, i) => i !== index)));
