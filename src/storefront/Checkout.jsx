@@ -833,10 +833,10 @@ export default function Checkout() {
               </div>
             </div>
           ) : clientSecret ? (
-            <Elements key={clientSecret} options={{ clientSecret, locale: "en" }} stripe={stripePromise}>
-              <PaymentBlock onPaid={handlePaid} total={total} />
-            </Elements>
-          ) : (
+  <Elements key={clientSecret} options={{ clientSecret, locale: "en" }} stripe={stripePromise}>
+    <PaymentBlock onPaid={handlePaid} total={total} clientSecret={clientSecret} />
+  </Elements>
+) : (
             <div className="bg-white rounded-2xl p-4 shadow-sm">{loading || creating ? "Preparing payment…" : items.length === 0 ? "Add items to cart to pay." : "Update shipping/details to pay."}</div>
           )}
         </section>
@@ -867,21 +867,26 @@ function ReturnHandler({ onPaid }) {
   return null;
 }
 
-function PaymentBlock({ onPaid, total }) {
+function PaymentBlock({ onPaid, total, clientSecret }) {
   return (
     <div className="space-y-3">
-      <AppleGooglePayButton total={total} onPaid={onPaid} />
+      <AppleGooglePayButton total={total} onPaid={onPaid} clientSecret={clientSecret} />
       <ReturnHandler onPaid={onPaid} />
       <PaymentForm onPaid={onPaid} />
     </div>
   );
 }
 
-function AppleGooglePayButton({ total, onPaid }) {
+
+function AppleGooglePayButton({ total, onPaid, clientSecret }) {
   const stripe = useStripe();
   const [pr, setPr] = useState(null);
+
   useEffect(() => {
-    if (!stripe || !Number.isFinite(total)) return;
+    if (!stripe) return;
+    if (!Number.isFinite(total)) return;
+    if (!clientSecret) return;
+
     const paymentRequest = stripe.paymentRequest({
       country: "US",
       currency: "usd",
@@ -890,40 +895,55 @@ function AppleGooglePayButton({ total, onPaid }) {
       requestPayerEmail: true,
       requestShipping: false,
     });
+
     paymentRequest.on("paymentmethod", async (ev) => {
       try {
-        const cs = (await stripe.retrievePaymentIntent(ev.paymentIntent?.client_secret || "")).paymentIntent?.client_secret || ev.paymentIntent?.client_secret || "";
-        const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(cs, { payment_method: ev.paymentMethod.id }, { handleActions: false });
+        const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
+          clientSecret,
+          { payment_method: ev.paymentMethod.id },
+          { handleActions: false }
+        );
+
         if (confirmError) {
           ev.complete("fail");
+          console.error("[Apple/Google Pay] Error:", confirmError);
           return;
         }
+
         if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
           ev.complete("success");
           await onPaid(paymentIntent);
         } else if (paymentIntent?.status === "requires_action") {
-          const { error: actionError } = await stripe.confirmCardPayment(paymentIntent.client_secret);
+          const { error: actionError, paymentIntent: afterAction } = await stripe.confirmCardPayment(
+            clientSecret
+          );
           if (actionError) {
             ev.complete("fail");
+            console.error("[Apple/Google Pay] Action error:", actionError);
           } else {
             ev.complete("success");
-            await onPaid(paymentIntent);
+            await onPaid(afterAction);
           }
         } else {
           ev.complete("fail");
+          console.error("[Apple/Google Pay] Unexpected status:", paymentIntent?.status);
         }
-      } catch {
+      } catch (err) {
         ev.complete("fail");
+        console.error("[Apple/Google Pay] Exception:", err);
       }
     });
+
     paymentRequest.canMakePayment().then((result) => {
       if (result) setPr(paymentRequest);
+      else setPr(null);
     });
-    return () => {
-      paymentRequest.off("paymentmethod");
-    };
-  }, [stripe, total, onPaid]);
+
+    return () => paymentRequest.off("paymentmethod");
+  }, [stripe, total, clientSecret, onPaid]);
+
   if (!pr) return null;
+
   return (
     <div className="bg-white rounded-2xl shadow-sm p-4">
       <PaymentRequestButtonElement
@@ -932,7 +952,9 @@ function AppleGooglePayButton({ total, onPaid }) {
           style: { paymentRequestButton: { type: "buy", theme: "dark", height: "44px" } },
         }}
       />
-      <div className="mt-2 text-xs text-gray-500">Apple Pay / Google Pay will appear if supported by the device and browser.</div>
+      <div className="mt-2 text-xs text-gray-500">
+        Apple Pay / Google Pay will appear if supported by the device and browser.
+      </div>
     </div>
   );
 }
