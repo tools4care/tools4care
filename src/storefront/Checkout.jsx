@@ -1338,36 +1338,27 @@ function AppleGooglePayButton({ total, onPaid }) {
       requestShipping: false,
     });
 
-    // ⭐ EVENTO CRÍTICO: Se dispara cuando el usuario autoriza el pago
+    // Evento cuando el usuario autoriza el pago
     paymentRequest.on("paymentmethod", async (ev) => {
       try {
-        // Confirmar el pago con Stripe
+        // Confirmar el pago
         const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
           ev.paymentIntent?.client_secret || "",
-          {
-            payment_method: ev.paymentMethod.id,
-          },
-          {
-            handleActions: false,
-          }
+          { payment_method: ev.paymentMethod.id },
+          { handleActions: false }
         );
 
         if (confirmError) {
-          // Notificar al usuario del error
           ev.complete("fail");
-          console.error("[Apple/Google Pay] Confirmation error:", confirmError);
+          console.error("[Apple/Google Pay] Error:", confirmError);
           return;
         }
 
-        // Verificar el estado del pago
+        // Verificar estado del pago
         if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
-          // ✅ Notificar éxito al usuario
           ev.complete("success");
-          
-          // ✅ Llamar a onPaid para registrar en la base de datos
           await onPaid(paymentIntent);
         } else if (paymentIntent?.status === "requires_action") {
-          // Manejar autenticación 3D Secure si es necesaria
           const { error: actionError } = await stripe.confirmCardPayment(
             paymentIntent.client_secret
           );
@@ -1389,12 +1380,12 @@ function AppleGooglePayButton({ total, onPaid }) {
       }
     });
 
-    // Verificar si Apple Pay/Google Pay está disponible
+    // Verificar disponibilidad
     paymentRequest.canMakePayment().then((result) => {
       if (result) setPr(paymentRequest);
     });
 
-    // Cleanup: remover listeners cuando el componente se desmonte
+    // Cleanup
     return () => {
       paymentRequest.off("paymentmethod");
     };
