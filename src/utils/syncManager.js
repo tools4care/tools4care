@@ -1,5 +1,5 @@
 // src/utils/syncManager.js
-import { supabase } from '../supabase';
+import { supabase } from '../supabaseClient';
 import { obtenerVentasPendientes, marcarVentaSincronizada } from './offlineDB';
 
 // Sincroniza todas las ventas pendientes
