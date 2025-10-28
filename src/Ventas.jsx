@@ -7,6 +7,11 @@ import { useNavigate } from "react-router-dom";
 import { BarcodeScanner } from "./BarcodeScanner";
 import QRCode from "qrcode"; // npm install qrcode
 
+// 🆕 MODO OFFLINE - Agregar estas 3 líneas
+import { useOffline } from "./hooks/useOffline";
+import { useSync } from "./hooks/useSync";
+import { guardarVentaOffline } from "./utils/offlineDB";
+
 /* ========================= Config & Constantes ========================= */
 const PAYMENT_METHODS = [
   { key: "efectivo", label: "💵 Cash" },
@@ -537,6 +542,10 @@ export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
+
+ // 🆕 HOOKS MODO OFFLINE - Agregar estas 2 líneas
+  const { isOffline } = useOffline();
+  const { sincronizar, ventasPendientes } = useSync();
 
   /* ---- Estado base ---- */
   const [clientSearch, setClientSearch] = useState("");
@@ -1871,7 +1880,53 @@ export default function Sales() {
         );
         return;
       }
+// ============== MODO OFFLINE ==============
+    if (isOffline) {
+      try {
+        // Preparar venta para guardar localmente
+        const ventaOffline = {
+          cliente_id: selectedClient?.id ?? null,
+          van_id: van.id,
+          usuario_id: usuario.id,
+          total: Number(saleTotal.toFixed(2)),
+          estado_pago: "pendiente", // Offline siempre pendiente
+          notas: `${notes || ""} [VENTA OFFLINE - Pendiente de sincronización]`.trim(),
+          items: cartSafe.map((p) => ({
+            producto_id: p.producto_id,
+            nombre: p.nombre,
+            cantidad: p.cantidad,
+            precio_unitario: p.precio_unitario,
+          })),
+          payments: payments.filter((p) => Number(p.monto) > 0),
+          fecha_venta: new Date().toISOString(),
+        };
 
+        // Guardar localmente
+        await guardarVentaOffline(ventaOffline);
+
+        // Actualizar inventario local (optimista)
+        for (const item of cartSafe) {
+          // Aquí podrías descontar del inventario local si lo implementas
+          console.log(`📦 Producto ${item.nombre} descontado localmente`);
+        }
+
+        alert(
+          `📵 VENTA GUARDADA OFFLINE\n\n` +
+          `Total: ${fmt(saleTotal)}\n` +
+          `Cliente: ${selectedClient?.nombre || 'Venta rápida'}\n\n` +
+          `✅ Se sincronizará automáticamente cuando vuelva la conexión.`
+        );
+
+        removePendingFromLSById(currentPendingId);
+        clearSale();
+        return; // ⚠️ IMPORTANTE: Salir aquí para no ejecutar el código de Supabase
+      } catch (offlineError) {
+        setPaymentError("❌ Error guardando offline: " + offlineError.message);
+        console.error("Error offline:", offlineError);
+        return;
+      }
+    }
+    // ============== FIN MODO OFFLINE ==============
       if (amountToCredit > 0) {
         const ok = window.confirm(
           `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
