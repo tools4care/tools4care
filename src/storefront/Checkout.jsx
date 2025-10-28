@@ -1177,14 +1177,14 @@ function ReturnHandler({ onPaid }) {
 function PaymentBlock({ onPaid, total }) {
   return (
     <div className="space-y-3">
-      <AppleGooglePayButton total={total} />
+      <AppleGooglePayButton total={total} onPaid={onPaid} />
       <ReturnHandler onPaid={onPaid} />
       <PaymentForm onPaid={onPaid} />
     </div>
   );
 }
 
-function AppleGooglePayButton({ total }) {
+function AppleGooglePayButton({ total, onPaid }) {
   const stripe = useStripe();
   const [pr, setPr] = useState(null);
 
@@ -1200,10 +1200,67 @@ function AppleGooglePayButton({ total }) {
       requestShipping: false,
     });
 
+    // ⭐ EVENTO CRÍTICO: Se dispara cuando el usuario autoriza el pago
+    paymentRequest.on("paymentmethod", async (ev) => {
+      try {
+        // Confirmar el pago con Stripe
+        const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
+          ev.paymentIntent?.client_secret || "",
+          {
+            payment_method: ev.paymentMethod.id,
+          },
+          {
+            handleActions: false,
+          }
+        );
+
+        if (confirmError) {
+          // Notificar al usuario del error
+          ev.complete("fail");
+          console.error("[Apple/Google Pay] Confirmation error:", confirmError);
+          return;
+        }
+
+        // Verificar el estado del pago
+        if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
+          // ✅ Notificar éxito al usuario
+          ev.complete("success");
+          
+          // ✅ Llamar a onPaid para registrar en la base de datos
+          await onPaid(paymentIntent);
+        } else if (paymentIntent?.status === "requires_action") {
+          // Manejar autenticación 3D Secure si es necesaria
+          const { error: actionError } = await stripe.confirmCardPayment(
+            paymentIntent.client_secret
+          );
+          
+          if (actionError) {
+            ev.complete("fail");
+            console.error("[Apple/Google Pay] Action error:", actionError);
+          } else {
+            ev.complete("success");
+            await onPaid(paymentIntent);
+          }
+        } else {
+          ev.complete("fail");
+          console.error("[Apple/Google Pay] Unexpected status:", paymentIntent?.status);
+        }
+      } catch (err) {
+        ev.complete("fail");
+        console.error("[Apple/Google Pay] Exception:", err);
+      }
+    });
+
+    // Verificar si Apple Pay/Google Pay está disponible
     paymentRequest.canMakePayment().then((result) => {
       if (result) setPr(paymentRequest);
     });
-  }, [stripe, total]);
+
+    // Cleanup: remover listeners cuando el componente se desmonte
+    return () => {
+      paymentRequest.off("paymentmethod");
+    };
+  }, [stripe, total, onPaid]);
 
   if (!pr) return null;
 
