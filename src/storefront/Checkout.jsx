@@ -196,6 +196,122 @@ function buildOrderEmail({ orderId, amounts, items, shipping, paymentIntent }) {
   </table>
 </body>
 </html>`;
+function buildAdminNotificationEmail({ orderId, amounts, items, shipping, paymentIntent }) {
+  const when = new Date().toLocaleString("en-US", { hour12: true });
+  const name = escapeHtml(shipping?.name || "Customer");
+  const email = escapeHtml(shipping?.email || "—");
+  const phone = escapeHtml(shipping?.phone || "—");
+  
+  const addr = [
+    shipping?.address1,
+    shipping?.address2,
+    [shipping?.city, shipping?.state, shipping?.zip].filter(Boolean).join(", "),
+    shipping?.country || "US",
+  ]
+    .filter(Boolean)
+    .map(escapeHtml)
+    .join("<br>");
+
+  const itemsList = (items || [])
+    .map((it) => {
+      const title = escapeHtml(it.producto?.nombre || it.nombre || `#${it.producto_id}`);
+      const qty = Number(it.qty || 0);
+      const unit = Number(it.producto?.precio ?? it.precio_unit ?? 0);
+      const line = qty * unit;
+      return `<li><b>${qty}x</b> ${title} — $${fmt(unit)} = <b>$${fmt(line)}</b></li>`;
+    })
+    .join("");
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>🔔 New Order #${orderId}</title>
+</head>
+<body style="margin:0;background:#f6f7f9;font-family:system-ui,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;">
+          <tr>
+            <td style="padding:20px 24px;background:#059669;color:#fff;font-size:20px;font-weight:700;">
+              🔔 New Order Alert!
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px;color:#111827;">
+              <h1 style="margin:0 0 8px;font-size:22px;color:#059669;">Order #${orderId}</h1>
+              <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">New order placed on ${escapeHtml(when)}</p>
+              <table width="100%" style="border-collapse:collapse;font-size:14px;margin-bottom:20px;">
+                <tr>
+                  <td style="padding:8px 0;color:#6b7280;width:140px;">Payment ID</td>
+                  <td style="padding:8px 0;"><code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px;">${escapeHtml(paymentIntent?.id || "-")}</code></td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#6b7280;">Customer</td>
+                  <td style="padding:8px 0;"><b>${name}</b></td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#6b7280;">Email</td>
+                  <td style="padding:8px 0;">${email}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#6b7280;">Phone</td>
+                  <td style="padding:8px 0;">${phone}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#6b7280;vertical-align:top;">Address</td>
+                  <td style="padding:8px 0;line-height:1.5;">${addr || "—"}</td>
+                </tr>
+              </table>
+              <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />
+              <h3 style="margin:0 0 12px;font-size:16px;">Items Ordered</h3>
+              <ul style="list-style:none;padding:0;margin:0 0 20px;font-size:14px;">
+                ${itemsList || "<li style='color:#6b7280;'>No items</li>"}
+              </ul>
+              <table width="100%" style="border-collapse:collapse;font-size:14px;background:#f9fafb;padding:12px;border-radius:8px;">
+                <tr>
+                  <td style="padding:6px 0;color:#374151;">Subtotal</td>
+                  <td align="right" style="padding:6px 0;">$${fmt(amounts.subtotal)}</td>
+                </tr>
+                ${amounts.discount ? `
+                <tr>
+                  <td style="padding:6px 0;color:#b91c1c;">Discount</td>
+                  <td align="right" style="padding:6px 0;color:#b91c1c;">- $${fmt(amounts.discount)}</td>
+                </tr>` : ""}
+                <tr>
+                  <td style="padding:6px 0;color:#374151;">Shipping</td>
+                  <td align="right" style="padding:6px 0;">$${fmt(amounts.shipping)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0;color:#374151;">Taxes</td>
+                  <td align="right" style="padding:6px 0;">$${fmt(amounts.taxes)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;border-top:2px solid #059669;font-weight:700;font-size:16px;">TOTAL</td>
+                  <td align="right" style="padding:8px 0;border-top:2px solid #059669;font-weight:700;font-size:16px;color:#059669;">$${fmt(amounts.total)}</td>
+                </tr>
+              </table>
+              <div style="margin-top:20px;padding:12px;background:#fef3c7;border-left:4px solid #f59e0b;border-radius:4px;">
+                <div style="font-weight:600;color:#92400e;margin-bottom:4px;">⚡ Action Required</div>
+                <div style="color:#78350f;font-size:13px;">Process this order and prepare for shipping.</div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 24px;background:#f9fafb;color:#6b7280;font-size:12px;text-align:center;">
+              Automated notification from Tools4care admin system
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return { html };
+}
 
   const text = [
     `Order #${orderId} confirmed`,
@@ -723,7 +839,29 @@ export default function Checkout() {
             console.error("Email send failed:", e);
           }
         }
+  // Email al administrador (NUEVO)
+      const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
+      if (adminEmail) {
+        const adminSubject = `🔔 New Order #${oid} - $${fmt(amounts.total)}`;
+        const { html: adminHtml } = buildAdminNotificationEmail({
+          orderId: oid,
+          amounts,
+          items: list,
+          shipping,
+          paymentIntent,
+        });
 
+        try {
+          await sendOrderEmail({
+            to: String(adminEmail).trim(),
+            subject: adminSubject,
+            html: adminHtml,
+          });
+          console.log(`✅ Admin notification sent for order #${oid}`);
+        } catch (e) {
+          console.error("⚠️ Admin email send failed:", e);
+        }
+      }
         setSuccess({ paymentIntent, orderId: oid, amounts });
         setPhase("success");
       };
@@ -1220,6 +1358,64 @@ function AppleGooglePayButton({ total, onPaid }) {
           console.error("[Apple/Google Pay] Confirmation error:", confirmError);
           return;
         }
+
+        // Verificar el estado del pago
+        if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
+          // ✅ Notificar éxito al usuario
+          ev.complete("success");
+          
+          // ✅ Llamar a onPaid para registrar en la base de datos
+          await onPaid(paymentIntent);
+        } else if (paymentIntent?.status === "requires_action") {
+          // Manejar autenticación 3D Secure si es necesaria
+          const { error: actionError } = await stripe.confirmCardPayment(
+            paymentIntent.client_secret
+          );
+          
+          if (actionError) {
+            ev.complete("fail");
+            console.error("[Apple/Google Pay] Action error:", actionError);
+          } else {
+            ev.complete("success");
+            await onPaid(paymentIntent);
+          }
+        } else {
+          ev.complete("fail");
+          console.error("[Apple/Google Pay] Unexpected status:", paymentIntent?.status);
+        }
+      } catch (err) {
+        ev.complete("fail");
+        console.error("[Apple/Google Pay] Exception:", err);
+      }
+    });
+
+    // Verificar si Apple Pay/Google Pay está disponible
+    paymentRequest.canMakePayment().then((result) => {
+      if (result) setPr(paymentRequest);
+    });
+
+    // Cleanup: remover listeners cuando el componente se desmonte
+    return () => {
+      paymentRequest.off("paymentmethod");
+    };
+  }, [stripe, total, onPaid]);
+
+  if (!pr) return null;
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm p-4">
+      <PaymentRequestButtonElement
+        options={{
+          paymentRequest: pr,
+          style: { paymentRequestButton: { type: "buy", theme: "dark", height: "44px" } },
+        }}
+      />
+      <div className="mt-2 text-xs text-gray-500">
+        Apple Pay / Google Pay will appear if supported by the device and browser.
+      </div>
+    </div>
+  );
+}
 
         // Verificar el estado del pago
         if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
