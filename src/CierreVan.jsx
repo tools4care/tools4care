@@ -887,24 +887,48 @@ export default function CierreVan() {
     return map;
   }, [pagosDecor]);
 
-  const ventasDecor = useMemo(
-    () =>
-      (ventas || []).map((v) => {
-        const ficha = clientesDic[v.cliente_id];
-        let propio = breakdownPorMetodo(v);
-        const fallback = bkPorVenta.get(v.id) || { cash: 0, card: 0, transfer: 0 };
-        const derivado = (propio.cash + propio.card + propio.transfer > 0) ? propio : fallback;
+// 🆕 DEBUG: Ver campos reales que vienen del RPC
+useEffect(() => {
+  if (ventas.length > 0) {
+    console.log('📊 ESTRUCTURA DE VENTA RAW:', ventas[0]);
+    console.log('📊 CAMPOS DISPONIBLES:', Object.keys(ventas[0]));
+  }
+}, [ventas]);
+const ventasDecor = useMemo(
+  () =>
+    (ventas || []).map((v) => {
+      const ficha = clientesDic[v.cliente_id];
+      let propio = breakdownPorMetodo(v);
+      const fallback = bkPorVenta.get(v.id) || { cash: 0, card: 0, transfer: 0 };
+      const derivado = (propio.cash + propio.card + propio.transfer > 0) ? propio : fallback;
 
-        return {
-          ...v,
-          _bk: derivado,
-          cliente_nombre:
-            v.cliente_nombre ||
-            (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
-        };
-      }),
-    [ventas, clientesDic, bkPorVenta]
-  );
+      // 🆕 CALCULAR total_venta si viene null o 0
+      let totalVentaCalculado = Number(v.total_venta || 0);
+      
+      // Si total_venta es 0 o null, calcularlo desde total_pagado + crédito pendiente
+      if (totalVentaCalculado === 0) {
+        const totalPagado = Number(v.total_pagado || 0);
+        const cashPagado = derivado.cash;
+        const cardPagado = derivado.card;
+        const transferPagado = derivado.transfer;
+        const totalPagadoReal = Math.max(totalPagado, cashPagado + cardPagado + transferPagado);
+        
+        // Si no tenemos items, usar total_pagado como mínimo
+        // (una venta al menos debe valer lo que se pagó)
+        totalVentaCalculado = totalPagadoReal;
+      }
+
+      return {
+        ...v,
+        total_venta: totalVentaCalculado, // 🆕 Sobrescribir con valor calculado
+        _bk: derivado,
+        cliente_nombre:
+          v.cliente_nombre ||
+          (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
+      };
+    }),
+  [ventas, clientesDic, bkPorVenta]
+);
 
   const ventasIdSet = useMemo(
     () => new Set((ventas || []).map((v) => v.id)),
@@ -938,19 +962,30 @@ export default function CierreVan() {
     pago_transferencia: Number(expected.transfer || 0),
   };
 
-  const cuentasCobrar = Number(
-    ventasDecor
-      .reduce(
-        (t, v) => {
-          const venta = Number(v.total_venta) || 0;
-          const pagado = Number(v.total_pagado) || 0;
-          const credito = venta - pagado;
-          return t + (credito > 0 ? credito : 0);
-        },
-        0
-      )
-      .toFixed(2)
-  );
+ const cuentasCobrar = Number(
+  ventasDecor
+    .reduce(
+      (t, v) => {
+        const venta = Number(v.total_venta) || 0;
+        const pagado = Number(v.total_pagado) || 0;
+        const credito = venta - pagado;
+        
+        // 🆕 DEBUG - Ver qué datos llegan
+        console.log('🔍 VENTA DEBUG:', {
+          id: v.id,
+          cliente: v.cliente_nombre,
+          total_venta: venta,
+          total_pagado: pagado,
+          credito: credito,
+          venta_completa: v
+        });
+        
+        return t + (credito > 0 ? credito : 0);
+      },
+      0
+    )
+    .toFixed(2)
+);
 
   const [openDesglose, setOpenDesglose] = useState(false);
   const [reales, setReales] = useState({
