@@ -1,12 +1,12 @@
 {
-  "name": "TOOLS4CARE Storefront",
-  "short_name": "T4C Store",
-  "description": "Compra rápida desde tu teléfono. Integrado a tu VAN Online.",
-  "start_url": "/storefront",
-  "scope": "/storefront/",
+  "name": "Tools4Care Ventas",
+  "short_name": "T4C Ventas",
+  "description": "Sistema de ventas móvil para empleados. Funciona offline.",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0ea5e9",
+  "background_color": "#f9fafb",
+  "theme_color": "#2563eb",
   "icons": [
     { 
       "src": "/icons/icon-192.png", 
@@ -27,6 +27,6 @@
       "purpose": "maskable" 
     }
   ],
-  "categories": ["shopping"],
+  "categories": ["business", "productivity"],
   "orientation": "portrait"
 }
