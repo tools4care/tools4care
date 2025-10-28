@@ -3263,10 +3263,38 @@ export default function Sales() {
   }
 
   /* ======================== Render raíz ======================== */
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
-      <div className="w-full max-w-4xl mx-auto">
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
+ return (
+  <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
+    <div className="w-full max-w-4xl mx-auto">
+      
+      {/* 🆕 BANNER DE VENTAS PENDIENTES */}
+      {ventasPendientes > 0 && (
+        <div className="mb-4 bg-orange-50 border-2 border-orange-300 rounded-xl p-4 shadow-md">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="text-2xl">📵</div>
+              <div>
+                <div className="font-bold text-orange-900">
+                  {ventasPendientes} venta{ventasPendientes !== 1 ? 's' : ''} pendiente{ventasPendientes !== 1 ? 's' : ''} de sincronización
+                </div>
+                <div className="text-sm text-orange-700">
+                  Se sincronizarán automáticamente cuando vuelva la conexión
+                </div>
+              </div>
+            </div>
+            {!isOffline && (
+              <button
+                onClick={sincronizar}
+                className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg font-semibold transition-colors"
+              >
+                🔄 Sincronizar ahora
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
           {modalPendingSales && renderPendingSalesModal()}
           {showQRModal && renderQRModal()}
           {step === 1 && renderStepClient()}
