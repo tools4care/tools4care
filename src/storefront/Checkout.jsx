@@ -847,23 +847,17 @@ export default function Checkout() {
 
 function ReturnHandler({ onPaid }) {
   const stripe = useStripe();
-  const { search } = useLocation();
+  const [searchParams] = useSearchParams();
   useEffect(() => {
-    const params = new URLSearchParams(search);
-    const clientSecret = params.get("payment_intent_client_secret");
-    if (!stripe || !clientSecret) return;
-    (async () => {
-      const { paymentIntent, error } = await stripe.retrievePaymentIntent(clientSecret);
-      if (error) return;
+    if (!stripe) return;
+    const clientSecret = searchParams.get("payment_intent_client_secret");
+    if (!clientSecret) return;
+    stripe.retrievePaymentIntent(clientSecret).then(({ paymentIntent }) => {
       if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
-        await onPaid(paymentIntent);
-        const url = new URL(window.location.href);
-        url.searchParams.delete("payment_intent_client_secret");
-        url.searchParams.delete("redirect_status");
-        window.history.replaceState({}, "", url.toString());
+        onPaid(paymentIntent);
       }
-    })();
-  }, [stripe, search, onPaid]);
+    });
+  }, [stripe]);
   return null;
 }
 
