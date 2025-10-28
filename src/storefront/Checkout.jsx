@@ -1,4 +1,3 @@
-// src/storefront/Checkout.jsx
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { loadStripe } from "@stripe/stripe-js";
@@ -14,13 +13,11 @@ import { getAnonId } from "../utils/anon";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
-const MIN_PAYMENT_CENTS = 50; // $0.50
+const MIN_PAYMENT_CENTS = 50;
 
-/* ---------------- Email helper (Edge Function) ---------------- */
 async function sendOrderEmail({ to, subject, html }) {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-order-email`;
   const payload = { to, subject, html };
-
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -32,11 +29,7 @@ async function sendOrderEmail({ to, subject, html }) {
       body: JSON.stringify(payload),
     });
     if (res.ok) return { ok: true, data: await res.json() };
-    console.error("[send-order-email] fetch failed:", await res.text());
-  } catch (e) {
-    console.error("[send-order-email] fetch error:", e);
-  }
-
+  } catch {}
   try {
     const { data, error } = await supabase.functions.invoke("send-order-email", {
       body: payload,
@@ -48,7 +41,6 @@ async function sendOrderEmail({ to, subject, html }) {
   }
 }
 
-/* ---------- Email template helpers ---------- */
 const escapeHtml = (s) =>
   String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -75,7 +67,6 @@ function buildOrderEmail({ orderId, amounts, items, shipping, paymentIntent }) {
     .filter(Boolean)
     .map(escapeHtml)
     .join("<br>");
-
   const itemRows = (items || [])
     .map((it, idx) => {
       const title = escapeHtml(it.producto?.nombre || it.nombre || `#${it.producto_id}`);
@@ -98,110 +89,50 @@ function buildOrderEmail({ orderId, amounts, items, shipping, paymentIntent }) {
         </tr>`;
     })
     .join("");
-
   const html = `<!doctype html>
 <html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Order #${orderId} confirmed</title>
-</head>
+<head><meta charset="UTF-8" /></head>
 <body style="margin:0;background:#f6f7f9;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9;padding:24px 12px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
-          <tr>
-            <td style="padding:20px 24px;background:#111827;color:#fff;font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:18px;font-weight:700;">
-              Tools4care
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:24px;font-family:system-ui,Segoe UI,Arial,sans-serif;color:#111827;">
-              <h1 style="margin:0 0 8px;font-size:22px;">Order #${orderId} confirmed 🎉</h1>
-              <p style="margin:0 0 16px;color:#374151;font-size:14px;">Thanks, <b>${name}</b>. We received your order.</p>
-
-              <table width="100%" style="border-collapse:collapse;font-size:14px;color:#111827;">
-                <tr>
-                  <td style="padding:8px 0;color:#6b7280;">Date</td>
-                  <td align="right" style="padding:8px 0;">${escapeHtml(when)}</td>
-                </tr>
-                <tr>
-                  <td style="padding:8px 0;color:#6b7280;">Payment ID</td>
-                  <td align="right" style="padding:8px 0;">${escapeHtml(paymentIntent?.id || "-")}</td>
-                </tr>
-              </table>
-
-              <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
-
-              <h3 style="margin:0 0 8px;font-size:16px;">Items</h3>
-              <table width="100%" style="border-collapse:collapse;font-size:14px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-                <thead>
-                  <tr style="background:#f3f4f6">
-                    <th align="left"  style="text-align:left;padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Item</th>
-                    <th align="right" style="padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Qty</th>
-                    <th align="right" style="padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Unit</th>
-                    <th align="right" style="padding:10px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-weight:600;">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${itemRows || `<tr><td style="padding:10px 8px;color:#6b7280;">(No items)</td><td></td><td></td><td></td></tr>`}
-                </tbody>
-              </table>
-
-              <table width="100%" style="border-collapse:collapse;font-size:14px;margin-top:12px;">
-                <tr>
-                  <td style="padding:6px 0;color:#374151;">Subtotal</td>
-                  <td align="right" style="padding:6px 0;">$${fmt(amounts.subtotal)}</td>
-                </tr>
-                ${amounts.discount ? `
-                <tr>
-                  <td style="padding:6px 0;color:#b91c1c;">Discount</td>
-                  <td align="right" style="padding:6px 0;color:#b91c1c;">- $${fmt(amounts.discount)}</td>
-                </tr>` : ""}
-                <tr>
-                  <td style="padding:6px 0;color:#374151;">Shipping</td>
-                  <td align="right" style="padding:6px 0;">$${fmt(amounts.shipping)}</td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 0;color:#374151;">Taxes</td>
-                  <td align="right" style="padding:6px 0;">$${fmt(amounts.taxes)}</td>
-                </tr>
-                <tr>
-                  <td style="padding:8px 0;border-top:1px solid #e5e7eb;"><b>Total</b></td>
-                  <td align="right" style="padding:8px 0;border-top:1px solid #e5e7eb;"><b>$${fmt(amounts.total)}</b></td>
-                </tr>
-              </table>
-
-              <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
-
-              <h3 style="margin:0 0 8px;font-size:16px;">Shipping address</h3>
-              <div style="color:#374151;font-size:14px;line-height:1.5;">
-                ${addr || "—"}
-              </div>
-
-              <div style="margin-top:20px;font-size:13px;color:#6b7280;">
-                If you have questions, just reply to this email.
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:16px 24px;background:#f9fafb;color:#6b7280;font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:12px;">
-              © ${new Date().getFullYear()} Tools4care — All rights reserved.
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9;padding:24px 12px;">
+    <tr><td align="center">
+      <table width="600" style="max-width:600px;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+        <tr><td style="padding:20px 24px;background:#111827;color:#fff;font-family:sans-serif;font-size:18px;font-weight:700;">Tools4care</td></tr>
+        <tr><td style="padding:24px;font-family:sans-serif;color:#111827;">
+          <h1 style="margin:0 0 8px;font-size:22px;">Order #${orderId} confirmed 🎉</h1>
+          <p style="margin:0 0 16px;color:#374151;font-size:14px;">Thanks, <b>${name}</b>. We received your order.</p>
+          <table width="100%" style="font-size:14px;color:#111827;">
+            <tr><td style="padding:8px 0;color:#6b7280;">Date</td><td align="right">${escapeHtml(when)}</td></tr>
+            <tr><td style="padding:8px 0;color:#6b7280;">Payment ID</td><td align="right">${escapeHtml(paymentIntent?.id || "-")}</td></tr>
+          </table>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
+          <h3 style="margin:0 0 8px;font-size:16px;">Items</h3>
+          <table width="100%" style="border-collapse:collapse;font-size:14px;border:1px solid #e5e7eb;border-radius:8px;">
+            <thead><tr style="background:#f3f4f6"><th align="left" style="padding:10px 8px;color:#6b7280;">Item</th><th align="right" style="padding:10px 8px;color:#6b7280;">Qty</th><th align="right" style="padding:10px 8px;color:#6b7280;">Unit</th><th align="right" style="padding:10px 8px;color:#6b7280;">Total</th></tr></thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+          <table width="100%" style="font-size:14px;margin-top:12px;">
+            <tr><td>Subtotal</td><td align="right">$${fmt(amounts.subtotal)}</td></tr>
+            ${amounts.discount ? `<tr><td style="color:#b91c1c;">Discount</td><td align="right" style="color:#b91c1c;">- $${fmt(amounts.discount)}</td></tr>` : ""}
+            <tr><td>Shipping</td><td align="right">$${fmt(amounts.shipping)}</td></tr>
+            <tr><td>Taxes</td><td align="right">$${fmt(amounts.taxes)}</td></tr>
+            <tr><td style="border-top:1px solid #e5e7eb;"><b>Total</b></td><td align="right" style="border-top:1px solid #e5e7eb;"><b>$${fmt(amounts.total)}</b></td></tr>
+          </table>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
+          <h3 style="margin:0 0 8px;font-size:16px;">Shipping address</h3>
+          <div style="color:#374151;font-size:14px;line-height:1.5;">${addr || "—"}</div>
+        </td></tr>
+      </table>
+    </td></tr>
   </table>
 </body>
 </html>`;
+  return { html };
+}
 function buildAdminNotificationEmail({ orderId, amounts, items, shipping, paymentIntent }) {
   const when = new Date().toLocaleString("en-US", { hour12: true });
   const name = escapeHtml(shipping?.name || "Customer");
   const email = escapeHtml(shipping?.email || "—");
   const phone = escapeHtml(shipping?.phone || "—");
-  
   const addr = [
     shipping?.address1,
     shipping?.address2,
@@ -211,7 +142,6 @@ function buildAdminNotificationEmail({ orderId, amounts, items, shipping, paymen
     .filter(Boolean)
     .map(escapeHtml)
     .join("<br>");
-
   const itemsList = (items || [])
     .map((it) => {
       const title = escapeHtml(it.producto?.nombre || it.nombre || `#${it.producto_id}`);
@@ -221,137 +151,44 @@ function buildAdminNotificationEmail({ orderId, amounts, items, shipping, paymen
       return `<li><b>${qty}x</b> ${title} — $${fmt(unit)} = <b>$${fmt(line)}</b></li>`;
     })
     .join("");
-
   const html = `<!doctype html>
 <html>
-<head>
-  <meta charset="UTF-8" />
-  <title>🔔 New Order #${orderId}</title>
-</head>
-<body style="margin:0;background:#f6f7f9;font-family:system-ui,Arial,sans-serif;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9;padding:24px 12px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;">
-          <tr>
-            <td style="padding:20px 24px;background:#059669;color:#fff;font-size:20px;font-weight:700;">
-              🔔 New Order Alert!
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:24px;color:#111827;">
-              <h1 style="margin:0 0 8px;font-size:22px;color:#059669;">Order #${orderId}</h1>
-              <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">New order placed on ${escapeHtml(when)}</p>
-              <table width="100%" style="border-collapse:collapse;font-size:14px;margin-bottom:20px;">
-                <tr>
-                  <td style="padding:8px 0;color:#6b7280;width:140px;">Payment ID</td>
-                  <td style="padding:8px 0;"><code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px;">${escapeHtml(paymentIntent?.id || "-")}</code></td>
-                </tr>
-                <tr>
-                  <td style="padding:8px 0;color:#6b7280;">Customer</td>
-                  <td style="padding:8px 0;"><b>${name}</b></td>
-                </tr>
-                <tr>
-                  <td style="padding:8px 0;color:#6b7280;">Email</td>
-                  <td style="padding:8px 0;">${email}</td>
-                </tr>
-                <tr>
-                  <td style="padding:8px 0;color:#6b7280;">Phone</td>
-                  <td style="padding:8px 0;">${phone}</td>
-                </tr>
-                <tr>
-                  <td style="padding:8px 0;color:#6b7280;vertical-align:top;">Address</td>
-                  <td style="padding:8px 0;line-height:1.5;">${addr || "—"}</td>
-                </tr>
-              </table>
-              <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />
-              <h3 style="margin:0 0 12px;font-size:16px;">Items Ordered</h3>
-              <ul style="list-style:none;padding:0;margin:0 0 20px;font-size:14px;">
-                ${itemsList || "<li style='color:#6b7280;'>No items</li>"}
-              </ul>
-              <table width="100%" style="border-collapse:collapse;font-size:14px;background:#f9fafb;padding:12px;border-radius:8px;">
-                <tr>
-                  <td style="padding:6px 0;color:#374151;">Subtotal</td>
-                  <td align="right" style="padding:6px 0;">$${fmt(amounts.subtotal)}</td>
-                </tr>
-                ${amounts.discount ? `
-                <tr>
-                  <td style="padding:6px 0;color:#b91c1c;">Discount</td>
-                  <td align="right" style="padding:6px 0;color:#b91c1c;">- $${fmt(amounts.discount)}</td>
-                </tr>` : ""}
-                <tr>
-                  <td style="padding:6px 0;color:#374151;">Shipping</td>
-                  <td align="right" style="padding:6px 0;">$${fmt(amounts.shipping)}</td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 0;color:#374151;">Taxes</td>
-                  <td align="right" style="padding:6px 0;">$${fmt(amounts.taxes)}</td>
-                </tr>
-                <tr>
-                  <td style="padding:8px 0;border-top:2px solid #059669;font-weight:700;font-size:16px;">TOTAL</td>
-                  <td align="right" style="padding:8px 0;border-top:2px solid #059669;font-weight:700;font-size:16px;color:#059669;">$${fmt(amounts.total)}</td>
-                </tr>
-              </table>
-              <div style="margin-top:20px;padding:12px;background:#fef3c7;border-left:4px solid #f59e0b;border-radius:4px;">
-                <div style="font-weight:600;color:#92400e;margin-bottom:4px;">⚡ Action Required</div>
-                <div style="color:#78350f;font-size:13px;">Process this order and prepare for shipping.</div>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:16px 24px;background:#f9fafb;color:#6b7280;font-size:12px;text-align:center;">
-              Automated notification from Tools4care admin system
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
+<head><meta charset="UTF-8" /></head>
+<body style="margin:0;background:#f6f7f9;font-family:sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9;padding:24px 12px;">
+    <tr><td align="center">
+      <table width="600" style="max-width:600px;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:20px 24px;background:#059669;color:#fff;font-size:20px;font-weight:700;">New Order</td></tr>
+        <tr><td style="padding:24px;color:#111827;">
+          <h1 style="margin:0 0 8px;font-size:22px;color:#059669;">Order #${orderId}</h1>
+          <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">${escapeHtml(when)}</p>
+          <table width="100%" style="font-size:14px;margin-bottom:20px;">
+            <tr><td style="padding:8px 0;color:#6b7280;width:140px;">Payment ID</td><td style="padding:8px 0;"><code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px;">${escapeHtml(paymentIntent?.id || "-")}</code></td></tr>
+            <tr><td style="padding:8px 0;color:#6b7280;">Customer</td><td style="padding:8px 0;"><b>${name}</b></td></tr>
+            <tr><td style="padding:8px 0;color:#6b7280;">Email</td><td style="padding:8px 0;">${email}</td></tr>
+            <tr><td style="padding:8px 0;color:#6b7280;">Phone</td><td style="padding:8px 0;">${phone}</td></tr>
+            <tr><td style="padding:8px 0;color:#6b7280;vertical-align:top;">Address</td><td style="padding:8px 0;line-height:1.5;">${addr || "—"}</td></tr>
+          </table>
+          <h3 style="margin:0 0 12px;font-size:16px;">Items</h3>
+          <ul style="list-style:none;padding:0;margin:0 0 20px;font-size:14px;">${itemsList || "<li>No items</li>"}</ul>
+          <table width="100%" style="font-size:14px;background:#f9fafb;padding:12px;border-radius:8px;">
+            <tr><td style="padding:6px 0;">Subtotal</td><td align="right" style="padding:6px 0;">$${fmt(amounts.subtotal)}</td></tr>
+            ${amounts.discount ? `<tr><td style="padding:6px 0;color:#b91c1c;">Discount</td><td align="right" style="padding:6px 0;color:#b91c1c;">- $${fmt(amounts.discount)}</td></tr>` : ""}
+            <tr><td style="padding:6px 0;">Shipping</td><td align="right" style="padding:6px 0;">$${fmt(amounts.shipping)}</td></tr>
+            <tr><td style="padding:6px 0;">Taxes</td><td align="right" style="padding:6px 0;">$${fmt(amounts.taxes)}</td></tr>
+            <tr><td style="padding:8px 0;border-top:2px solid #059669;font-weight:700;">TOTAL</td><td align="right" style="padding:8px 0;border-top:2px solid #059669;font-weight:700;color:#059669;">$${fmt(amounts.total)}</td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </td></tr>
   </table>
 </body>
 </html>`;
-
   return { html };
-}
-
-  const text = [
-    `Order #${orderId} confirmed`,
-    `Date: ${when}`,
-    `Payment ID: ${paymentIntent?.id || "-"}`,
-    "",
-    "Items:",
-    ...(items || []).map((it) => {
-      const title = it.producto?.nombre || it.nombre || `#${it.producto_id}`;
-      const brand = it.producto?.marca || it.marca || "";
-      const code = it.producto?.codigo || it.codigo || "";
-      const meta = [brand, code].filter(Boolean).join(" • ");
-      const qty = Number(it.qty || 0);
-      const unit = Number(it.producto?.precio ?? it.precio_unit ?? 0);
-      const line = qty * unit;
-      return ` - ${title}${meta ? ` (${meta})` : ""} — ${qty} × $${fmt(unit)} = $${fmt(line)}`;
-    }),
-    "",
-    `Subtotal: $${fmt(amounts.subtotal)}`,
-    ...(amounts.discount ? [`Discount: -$${fmt(amounts.discount)}`] : []),
-    `Shipping: $${fmt(amounts.shipping)}`,
-    `Taxes: $${fmt(amounts.taxes)}`,
-    `Total: $${fmt(amounts.total)}`,
-    "",
-    "Ship to:",
-    shipping?.address1 || "",
-    shipping?.address2 || "",
-    `${shipping?.city || ""}, ${shipping?.state || ""} ${shipping?.zip || ""}`,
-    shipping?.country || "US",
-    "",
-    "If you have questions, just reply to this email.",
-    "Tools4care",
-  ].join("\n");
-
-  return { html, text };
 }
 
 const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
 const isValidPhone = (s) => String(s || "").replace(/[^\d]/g, "").length >= 7;
-
 const phoneDigits = (s) => String(s || "").replace(/\D/g, "");
 function formatPhoneUS(s) {
   const d = phoneDigits(s).slice(0, 10);
@@ -359,115 +196,60 @@ function formatPhoneUS(s) {
   if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
+const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"];
 
-const US_STATES = [
-  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
-  "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
-  "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
-  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
-  "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"
-];
-
-/* ---------------- helpers de carrito ---------------- */
 async function ensureCart() {
   const { data: session } = await supabase.auth.getSession();
   const userId = session?.session?.user?.id ?? null;
   const col = userId ? "user_id" : "anon_id";
   const val = userId ?? getAnonId();
-
-  const { data: found, error: selErr } = await supabase
-    .from("carts")
-    .select("id")
-    .eq(col, val)
-    .maybeSingle();
-
+  const { data: found, error: selErr } = await supabase.from("carts").select("id").eq(col, val).maybeSingle();
   if (selErr && selErr.code !== "PGRST116") throw selErr;
   if (found?.id) return found.id;
-
-  const { data: inserted, error: insErr } = await supabase
-    .from("carts")
-    .insert({ [col]: val })
-    .select("id")
-    .single();
-
+  const { data: inserted, error: insErr } = await supabase.from("carts").insert({ [col]: val }).select("id").single();
   if (insErr && String(insErr.code) === "23505") {
-    const { data: again } = await supabase
-      .from("carts")
-      .select("id")
-      .eq(col, val)
-      .maybeSingle();
+    const { data: again } = await supabase.from("carts").select("id").eq(col, val).maybeSingle();
     if (again?.id) return again.id;
   }
   if (insErr) throw insErr;
-
   return inserted.id;
 }
 
 async function fetchCartItems(cartId) {
-  const { data: items, error: itErr } = await supabase
-    .from("cart_items")
-    .select("producto_id, qty")
-    .eq("cart_id", cartId);
-
+  const { data: items, error: itErr } = await supabase.from("cart_items").select("producto_id, qty").eq("cart_id", cartId);
   if (itErr) throw itErr;
-
   const ids = (items || []).map((i) => i.producto_id);
   if (!ids.length) return [];
-
-  const { data: prods, error: pErr } = await supabase
-    .from("online_products_v")
-    .select("id, codigo, nombre, marca, price_base, price_online, stock")
-    .in("id", ids);
-
+  const { data: prods, error: pErr } = await supabase.from("online_products_v").select("id, codigo, nombre, marca, price_base, price_online, stock").in("id", ids);
   if (pErr) throw pErr;
-
   const idx = new Map((prods || []).map((p) => [p.id, p]));
   const result = [];
-
   for (const i of items || []) {
     const p = idx.get(i.producto_id);
     if (!p) continue;
-
     const unit = Number(p.price_online ?? p.price_base ?? 0);
     const stock = Number(p.stock ?? 0);
     const originalQty = Number(i.qty || 0);
     let qty = Number.isFinite(originalQty) && originalQty > 0 ? originalQty : 1;
-
     qty = Math.max(1, Math.min(qty, 999, stock > 0 ? stock : qty));
-
     if (qty !== originalQty) {
       try {
-        await supabase
-          .from("cart_items")
-          .update({ qty })
-          .eq("cart_id", cartId)
-          .eq("producto_id", i.producto_id);
-      } catch (e) {
-        console.warn("Failed to normalize qty in DB:", e?.message || e);
-      }
+        await supabase.from("cart_items").update({ qty }).eq("cart_id", cartId).eq("producto_id", i.producto_id);
+      } catch {}
     }
-
     result.push({
       producto_id: i.producto_id,
       qty,
-      producto: {
-        id: p.id,
-        codigo: p.codigo,
-        nombre: p.nombre,
-        marca: p.marca,
-        precio: unit,
-        stock,
-      },
+      producto: { id: p.id, codigo: p.codigo, nombre: p.nombre, marca: p.marca, precio: unit, stock },
     });
   }
-
   return result;
 }
 
 const SHIPPING_METHODS = [
-  { key: "pickup",   label: "Pickup in store",        calc: () => 0, note: "Free" },
-  { key: "standard", label: "Standard (3–7 days)",    calc: (sub) => (sub >= 75 ? 0 : 6.99), note: "Free over $75" },
-  { key: "express",  label: "Express (1–2 days)",     calc: () => 14.99, note: null },
+  { key: "pickup", label: "Pickup in store", calc: () => 0, note: "Free" },
+  { key: "standard", label: "Standard (3–7 days)", calc: (sub) => (sub >= 75 ? 0 : 6.99), note: "Free over $75" },
+  { key: "express", label: "Express (1–2 days)", calc: () => 14.99, note: null },
 ];
 
 const STATE_TAX = { FL:0.06, NY:0.08875, NJ:0.06625, CA:0.0725, TX:0.0625, MA:0.0625 };
@@ -484,61 +266,37 @@ function calcTax(taxableSubtotal, stateCode) {
 }
 
 async function getOnlineVanId() {
-  const { data, error } = await supabase
-    .from("vans")
-    .select("id, nombre_van")
-    .ilike("nombre_van", "%online%")
-    .maybeSingle();
+  const { data, error } = await supabase.from("vans").select("id, nombre_van").ilike("nombre_van", "%online%").maybeSingle();
   if (error) return null;
   return data?.id ?? null;
 }
 
 const LOCAL_CODES = [
   { code: "SAVE10", type: "percent", value: 10, active: true },
-  { code: "WELCOME5", type: "amount",  value: 5, active: true },
+  { code: "WELCOME5", type: "amount", value: 5, active: true },
   { code: "FREESHIP", type: "free_shipping", value: 0, active: true },
 ];
 
 async function resolvePromo(codeInput) {
   const code = String(codeInput || "").trim().toUpperCase();
   if (!code) return null;
-
   try {
-    const { data, error } = await supabase
-      .from("discount_codes")
-      .select("code, percent, active, expires_at, max_uses, times_used")
-      .ilike("code", code)
-      .maybeSingle();
-
+    const { data, error } = await supabase.from("discount_codes").select("code, percent, active, expires_at, max_uses, times_used").ilike("code", code).maybeSingle();
     if (!error && data) {
       const now = new Date();
       const expired = data.expires_at ? new Date(data.expires_at) < now : false;
-      const overUsed =
-        typeof data.max_uses === "number" &&
-        typeof data.times_used === "number" &&
-        data.max_uses > 0 &&
-        data.times_used >= data.max_uses;
-
+      const overUsed = typeof data.max_uses === "number" && typeof data.times_used === "number" && data.max_uses > 0 && data.times_used >= data.max_uses;
       if (data.active === false) throw new Error("This code is not active.");
       if (expired) throw new Error("This code is expired.");
       if (overUsed) throw new Error("This code has reached its limit.");
-
       const pct = Number(data.percent || 0);
       if (pct <= 0) throw new Error("Invalid promo code.");
       return { code: data.code.toUpperCase(), type: "percent", value: pct, freeShipping: false };
     }
-  } catch {
-    // respaldo local
-  }
-
+  } catch {}
   const local = LOCAL_CODES.find((c) => c.code === code && c.active);
   if (!local) throw new Error("Invalid or inactive promo code.");
-  return {
-    code: local.code,
-    type: local.type,
-    value: Number(local.value || 0),
-    freeShipping: local.type === "free_shipping",
-  };
+  return { code: local.code, type: local.type, value: Number(local.value || 0), freeShipping: local.type === "free_shipping" };
 }
 
 function computeDiscount(subtotal, promo) {
@@ -555,31 +313,19 @@ function computeDiscount(subtotal, promo) {
   return 0;
 }
 
-/* ----------------------------- Main Component ------------------------------ */
 export default function Checkout() {
   const { state } = useLocation();
   const cidFromNav = state?.cid ?? null;
-
   const [phase, setPhase] = useState("checkout");
   const [success, setSuccess] = useState(null);
-
   const [cartId, setCartId] = useState(null);
   const [items, setItems] = useState([]);
-
-  const [shipping, setShipping] = useState({
-    name: "", email: "", phone: "",
-    address1: "", address2: "",
-    city: "", state: "MA", zip: "", country: "US",
-    method: "standard",
-  });
-
+  const [shipping, setShipping] = useState({ name: "", email: "", phone: "", address1: "", address2: "", city: "", state: "MA", zip: "", country: "US", method: "standard" });
   const [promoInput, setPromoInput] = useState("");
   const [promo, setPromo] = useState(null);
   const [promoError, setPromoError] = useState("");
-
   const [clientSecret, setClientSecret] = useState("");
   const [paymentIntentId, setPaymentIntentId] = useState("");
-
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -590,41 +336,27 @@ export default function Checkout() {
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user;
         if (!user) return;
-
         const meta = user.user_metadata || {};
         const fullName =
           meta.full_name ||
           meta.name ||
-          [meta.first_name || meta.given_name, meta.last_name || meta.family_name]
-            .filter(Boolean)
-            .join(" ") ||
+          [meta.first_name || meta.given_name, meta.last_name || meta.family_name].filter(Boolean).join(" ") ||
           (user.email ? user.email.split("@")[0].replace(/[._-]/g, " ") : "");
-
-        setShipping((s) => ({
-          ...s,
-          name: s.name || fullName || "",
-          email: s.email || user.email || "",
-          phone: s.phone || meta.phone || s.phone || "",
-        }));
-      } catch {
-        // ignore
-      }
+        setShipping((s) => ({ ...s, name: s.name || fullName || "", email: s.email || user.email || "", phone: s.phone || meta.phone || s.phone || "" }));
+      } catch {}
     })();
   }, []);
 
   const requiredOk = useMemo(() => {
-    const ok =
-      String(shipping.name || "").trim().length > 1 &&
-      isValidEmail(shipping.email) &&
-      isValidPhone(shipping.phone);
-    return ok;
+    return String(shipping.name || "").trim().length > 1 && isValidEmail(shipping.email) && isValidPhone(shipping.phone);
   }, [shipping.name, shipping.email, shipping.phone]);
 
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        setLoading(true); setError("");
+        setLoading(true);
+        setError("");
         const cid = cidFromNav || (await ensureCart());
         if (cancel) return;
         setCartId(cid);
@@ -640,31 +372,14 @@ export default function Checkout() {
     return () => (cancel = true);
   }, [cidFromNav]);
 
-  const subtotal = useMemo(
-    () => items.reduce((s, it) => s + Number(it.qty) * Number(it.producto?.precio || 0), 0),
-    [items]
-  );
+  const subtotal = useMemo(() => items.reduce((s, it) => s + Number(it.qty) * Number(it.producto?.precio || 0), 0), [items]);
   const discount = useMemo(() => computeDiscount(subtotal, promo), [subtotal, promo]);
   const subAfterDiscount = useMemo(() => Math.max(0, subtotal - discount), [subtotal, discount]);
-
   const freeShippingOverride = promo?.freeShipping === true;
-  const shippingCost = useMemo(
-    () => calcShipping(shipping.method, subAfterDiscount, freeShippingOverride),
-    [shipping.method, subAfterDiscount, freeShippingOverride]
-  );
-  const taxes = useMemo(
-    () => calcTax(subAfterDiscount, shipping.state),
-    [subAfterDiscount, shipping.state]
-  );
-  const total = useMemo(
-    () => Math.max(0, subAfterDiscount + shippingCost + taxes),
-    [subAfterDiscount, shippingCost, taxes]
-  );
-
-  const stockIssues = useMemo(
-    () => items.filter((it) => Number(it.qty) > Number(it.producto?.stock ?? Infinity)),
-    [items]
-  );
+  const shippingCost = useMemo(() => calcShipping(shipping.method, subAfterDiscount, freeShippingOverride), [shipping.method, subAfterDiscount, freeShippingOverride]);
+  const taxes = useMemo(() => calcTax(subAfterDiscount, shipping.state), [subAfterDiscount, shipping.state]);
+  const total = useMemo(() => Math.max(0, subAfterDiscount + shippingCost + taxes), [subAfterDiscount, shippingCost, taxes]);
+  const stockIssues = useMemo(() => items.filter((it) => Number(it.qty) > Number(it.producto?.stock ?? Infinity)), [items]);
   const hasStockIssues = stockIssues.length > 0;
 
   const extractPiId = (secret) => {
@@ -688,9 +403,8 @@ export default function Checkout() {
           setPaymentIntentId("");
           return;
         }
-
-        setCreating(true); setError("");
-
+        setCreating(true);
+        setError("");
         const payload = {
           amount: amountCents,
           metadata: {
@@ -717,21 +431,11 @@ export default function Checkout() {
             carrier: shipping.method,
           },
         };
-
         const res = await fetch(FN_URL, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
-          body: JSON.stringify({
-            amount: payload.amount,
-            currency: "usd",
-            metadata: payload.metadata,
-            shipping: payload.shipping,
-          }),
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+          body: JSON.stringify({ amount: payload.amount, currency: "usd", metadata: payload.metadata, shipping: payload.shipping }),
         });
-
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
           throw new Error(errText || `Edge Function error (${res.status})`);
@@ -749,31 +453,41 @@ export default function Checkout() {
     })();
     return () => (cancel = true);
   }, [
-    items, subtotal, discount, subAfterDiscount, shippingCost, taxes, total,
-    cartId, shipping.name, shipping.phone, shipping.address1, shipping.address2,
-    shipping.city, shipping.state, shipping.zip, shipping.country, shipping.method,
-    freeShippingOverride, promo?.code, hasStockIssues,
+    items,
+    subtotal,
+    discount,
+    subAfterDiscount,
+    shippingCost,
+    taxes,
+    total,
+    cartId,
+    shipping.name,
+    shipping.phone,
+    shipping.address1,
+    shipping.address2,
+    shipping.city,
+    shipping.state,
+    shipping.zip,
+    shipping.country,
+    shipping.method,
+    freeShippingOverride,
+    promo?.code,
+    hasStockIssues,
   ]);
 
   async function handlePaid(paymentIntent) {
     try {
       const cid = cartId || (await ensureCart());
       const list = await fetchCartItems(cid);
-
       const meta = paymentIntent?.metadata || {};
-
       const amounts = {
         subtotal: Number(meta.subtotal_cents ?? 0) / 100 || subtotal,
         discount: Number(meta.discount_cents ?? 0) / 100 || discount,
-        sub_after_discount:
-          Number(meta.subtotal_after_discount_cents ?? 0) / 100 || subAfterDiscount,
+        sub_after_discount: Number(meta.subtotal_after_discount_cents ?? 0) / 100 || subAfterDiscount,
         shipping: Number(meta.shipping_cents ?? 0) / 100 || shippingCost,
         taxes: Number(meta.taxes_cents ?? 0) / 100 || taxes,
       };
-      amounts.total = Number(
-        (amounts.sub_after_discount + amounts.shipping + amounts.taxes).toFixed(2)
-      );
-
+      amounts.total = Number((amounts.sub_after_discount + amounts.shipping + amounts.taxes).toFixed(2));
       const itemsPayload = list.map((it) => ({
         producto_id: it.producto_id,
         qty: Number(it.qty || 0),
@@ -790,82 +504,47 @@ export default function Checkout() {
         postal_code: shipping.zip || null,
         country: shipping.country || "US",
       };
-
       let orderIdFromRpc = null;
       try {
-        const { data: newOrderId, error: rpcErr } = await supabase.rpc(
-          "sp_create_order_and_discount",
-          {
-            p_payment_intent_id: paymentIntent.id,
-            p_currency: paymentIntent.currency || "usd",
-            p_name: shipping.name || null,
-            p_email: shipping.email || null,
-            p_phone: phoneDigits(shipping.phone) || null,
-            p_address: addressJson,
-            p_amount_subtotal: amounts.subtotal,
-            p_amount_shipping: amounts.shipping,
-            p_amount_taxes: amounts.taxes,
-            p_amount_total: amounts.total,
-            p_items: itemsPayload,
-            p_discount_amount: amounts.discount || 0,
-            p_promo_code: promo?.code || null,
-          }
-        );
+        const { data: newOrderId, error: rpcErr } = await supabase.rpc("sp_create_order_and_discount", {
+          p_payment_intent_id: paymentIntent.id,
+          p_currency: paymentIntent.currency || "usd",
+          p_name: shipping.name || null,
+          p_email: shipping.email || null,
+          p_phone: phoneDigits(shipping.phone) || null,
+          p_address: addressJson,
+          p_amount_subtotal: amounts.subtotal,
+          p_amount_shipping: amounts.shipping,
+          p_amount_taxes: amounts.taxes,
+          p_amount_total: amounts.total,
+          p_items: itemsPayload,
+          p_discount_amount: amounts.discount || 0,
+          p_promo_code: promo?.code || null,
+        });
         if (!rpcErr) orderIdFromRpc = newOrderId || null;
-      } catch {
-        // ignore
-      }
-
+      } catch {}
       const finalizeAndEmail = async (oid) => {
-        try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
-
+        try {
+          await supabase.from("cart_items").delete().eq("cart_id", cid);
+        } catch {}
         if (shipping.email) {
           const subject = `Order #${oid} confirmed`;
-          const { html } = buildOrderEmail({
-            orderId: oid,
-            amounts,
-            items: list,
-            shipping,
-            paymentIntent,
-          });
-
+          const { html } = buildOrderEmail({ orderId: oid, amounts, items: list, shipping, paymentIntent });
           try {
-            await sendOrderEmail({
-              to: String(shipping.email).trim(),
-              subject,
-              html,
-            });
-          } catch (e) {
-            console.error("Email send failed:", e);
-          }
+            await sendOrderEmail({ to: String(shipping.email).trim(), subject, html });
+          } catch {}
         }
-  // Email al administrador (NUEVO)
-      const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
-      if (adminEmail) {
-        const adminSubject = `🔔 New Order #${oid} - $${fmt(amounts.total)}`;
-        const { html: adminHtml } = buildAdminNotificationEmail({
-          orderId: oid,
-          amounts,
-          items: list,
-          shipping,
-          paymentIntent,
-        });
-
-        try {
-          await sendOrderEmail({
-            to: String(adminEmail).trim(),
-            subject: adminSubject,
-            html: adminHtml,
-          });
-          console.log(`✅ Admin notification sent for order #${oid}`);
-        } catch (e) {
-          console.error("⚠️ Admin email send failed:", e);
+        const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
+        if (adminEmail) {
+          const adminSubject = `New Order #${oid} - $${fmt(amounts.total)}`;
+          const { html: adminHtml } = buildAdminNotificationEmail({ orderId: oid, amounts, items: list, shipping, paymentIntent });
+          try {
+            await sendOrderEmail({ to: String(adminEmail).trim(), subject: adminSubject, html: adminHtml });
+          } catch {}
         }
-      }
         setSuccess({ paymentIntent, orderId: oid, amounts });
         setPhase("success");
       };
-
       const { data: order, error: e1 } = await supabase
         .from("orders")
         .insert({
@@ -887,7 +566,6 @@ export default function Checkout() {
         .single();
       if (e1) throw new Error(e1.message);
       const orderId = order.id;
-
       const rows = list.map((it) => ({
         order_id: orderId,
         producto_id: it.producto_id,
@@ -900,34 +578,22 @@ export default function Checkout() {
       }));
       const { error: oiErr } = await supabase.from("order_items").insert(rows);
       if (oiErr) throw oiErr;
-
       try {
         const onlineVanId = await getOnlineVanId();
         if (onlineVanId) {
           for (const it of list) {
             const qty = Number(it.qty || 0);
             if (qty > 0) {
-              await supabase.rpc("decrement_stock_van", {
-                p_van_id: onlineVanId,
-                p_producto_id: it.producto_id,
-                p_delta: qty,
-              });
+              await supabase.rpc("decrement_stock_van", { p_van_id: onlineVanId, p_producto_id: it.producto_id, p_delta: qty });
             }
           }
         }
-      } catch (e) {
-        console.error("Fallback stock decrement error:", e?.message || e);
-      }
-
-      try { await supabase.from("cart_items").delete().eq("cart_id", cid); } catch {}
-
-      const { error: upErr } = await supabase
-        .from("orders")
-        .update({ status: "paid" })
-        .eq("id", orderId)
-        .neq("status", "paid");
+      } catch {}
+      try {
+        await supabase.from("cart_items").delete().eq("cart_id", cid);
+      } catch {}
+      const { error: upErr } = await supabase.from("orders").update({ status: "paid" }).eq("id", orderId).neq("status", "paid");
       if (upErr) throw upErr;
-
       await finalizeAndEmail(orderId);
     } catch (e) {
       setError(e.message || "Payment was approved, but we couldn't finalize the order.");
@@ -944,7 +610,11 @@ export default function Checkout() {
       setPromoError(e.message || "Invalid promo code.");
     }
   }
-  function clearPromo() { setPromo(null); setPromoInput(""); setPromoError(""); }
+  function clearPromo() {
+    setPromo(null);
+    setPromoInput("");
+    setPromoError("");
+  }
 
   if (phase === "success") {
     const { paymentIntent: pi, amounts } = success;
@@ -965,22 +635,34 @@ export default function Checkout() {
           )}
           <div className="mt-4">
             <div className="border rounded-lg p-3 text-sm space-y-1">
-              <div className="flex justify-between"><span>Subtotal</span><b>${fmt(amounts.subtotal)}</b></div>
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <b>${fmt(amounts.subtotal)}</b>
+              </div>
               {amounts.discount ? (
                 <div className="flex justify-between text-rose-700">
                   <span>Discount{promo?.code ? ` (${promo.code})` : ""}</span>
                   <b>- ${fmt(amounts.discount)}</b>
                 </div>
               ) : null}
-              <div className="flex justify-between"><span>Shipping</span><b>${fmt(amounts.shipping)}</b></div>
-              <div className="flex justify-between"><span>Taxes</span><b>${fmt(amounts.taxes)}</b></div>
+              <div className="flex justify-between">
+                <span>Shipping</span>
+                <b>${fmt(amounts.shipping)}</b>
+              </div>
+              <div className="flex justify-between">
+                <span>Taxes</span>
+                <b>${fmt(amounts.taxes)}</b>
+              </div>
               <div className="flex justify-between border-t pt-2">
-                <span>Total</span><b>${fmt(amounts.total)}</b>
+                <span>Total</span>
+                <b>${fmt(amounts.total)}</b>
               </div>
             </div>
           </div>
           <div className="pt-2">
-            <Link to="/storefront" className="text-blue-600 hover:underline">Back to store →</Link>
+            <Link to="/storefront" className="text-blue-600 hover:underline">
+              Back to store →
+            </Link>
           </div>
         </div>
       </div>
@@ -997,96 +679,35 @@ export default function Checkout() {
           </Link>
         </div>
       </header>
-
       <main className="max-w-4xl mx-auto p-4 grid lg:grid-cols-2 gap-4">
-        {/* Shipping */}
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
-            <input
-              className="border rounded-lg px-3 py-2"
-              placeholder="Full name"
-              value={shipping.name}
-              onChange={(e) => setShipping({ ...shipping, name: e.target.value })}
-              required
-            />
-
+            <input className="border rounded-lg px-3 py-2" placeholder="Full name" value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })} required />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <input
-                className="border rounded-lg px-3 py-2 sm:col-span-2"
-                placeholder="Email (required)"
-                value={shipping.email}
-                onChange={(e) => setShipping({ ...shipping, email: e.target.value })}
-                required
-                type="email"
-              />
-              <input
-                className="border rounded-lg px-3 py-2"
-                placeholder="Phone (required)"
-                value={shipping.phone}
-                onChange={(e) =>
-                  setShipping({ ...shipping, phone: formatPhoneUS(e.target.value) })
-                }
-                required
-                type="tel"
-                inputMode="numeric"
-                pattern="\d*"
-              />
+              <input className="border rounded-lg px-3 py-2 sm:col-span-2" placeholder="Email (required)" value={shipping.email} onChange={(e) => setShipping({ ...shipping, email: e.target.value })} required type="email" />
+              <input className="border rounded-lg px-3 py-2" placeholder="Phone (required)" value={shipping.phone} onChange={(e) => setShipping({ ...shipping, phone: formatPhoneUS(e.target.value) })} required type="tel" inputMode="numeric" pattern="\d*" />
             </div>
-
-            <input
-              className="border rounded-lg px-3 py-2"
-              placeholder="Address line 1"
-              value={shipping.address1}
-              onChange={(e) => setShipping({ ...shipping, address1: e.target.value })}
-            />
-            <input
-              className="border rounded-lg px-3 py-2"
-              placeholder="Address line 2 (optional)"
-              value={shipping.address2}
-              onChange={(e) => setShipping({ ...shipping, address2: e.target.value })}
-            />
+            <input className="border rounded-lg px-3 py-2" placeholder="Address line 1" value={shipping.address1} onChange={(e) => setShipping({ ...shipping, address1: e.target.value })} />
+            <input className="border rounded-lg px-3 py-2" placeholder="Address line 2 (optional)" value={shipping.address2} onChange={(e) => setShipping({ ...shipping, address2: e.target.value })} />
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <input
-                className="border rounded-lg px-3 py-2 col-span-2"
-                placeholder="City"
-                value={shipping.city}
-                onChange={(e) => setShipping({ ...shipping, city: e.target.value })}
-              />
-              <select
-                className="border rounded-lg px-3 py-2"
-                value={shipping.state}
-                onChange={(e) => setShipping({ ...shipping, state: e.target.value })}
-              >
+              <input className="border rounded-lg px-3 py-2 col-span-2" placeholder="City" value={shipping.city} onChange={(e) => setShipping({ ...shipping, city: e.target.value })} />
+              <select className="border rounded-lg px-3 py-2" value={shipping.state} onChange={(e) => setShipping({ ...shipping, state: e.target.value })}>
                 {US_STATES.map((st) => (
-                  <option key={st} value={st}>{st}</option>
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
                 ))}
               </select>
-              <input
-                className="border rounded-lg px-3 py-2"
-                placeholder="ZIP"
-                value={shipping.zip}
-                onChange={(e) => setShipping({ ...shipping, zip: e.target.value })}
-              />
+              <input className="border rounded-lg px-3 py-2" placeholder="ZIP" value={shipping.zip} onChange={(e) => setShipping({ ...shipping, zip: e.target.value })} />
             </div>
-
             <div className="space-y-2">
               <div className="font-medium text-sm">Shipping method</div>
               <div className="grid gap-2">
                 {SHIPPING_METHODS.map((m) => (
-                  <label
-                    key={m.key}
-                    className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${
-                      shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""
-                    }`}
-                  >
+                  <label key={m.key} className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""}`}>
                     <div className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="shipmethod"
-                        checked={shipping.method === m.key}
-                        onChange={() => setShipping({ ...shipping, method: m.key })}
-                      />
+                      <input type="radio" name="shipmethod" checked={shipping.method === m.key} onChange={() => setShipping({ ...shipping, method: m.key })} />
                       <span>{m.label}</span>
                       {m.note && <span className="text-xs text-emerald-700">({m.note})</span>}
                     </div>
@@ -1095,28 +716,16 @@ export default function Checkout() {
                 ))}
               </div>
             </div>
-
             <div className="mt-2">
               <div className="font-medium text-sm mb-1">Promo code</div>
               <div className="flex gap-2">
-                <input
-                  className="border rounded-lg px-3 py-2 flex-1"
-                  placeholder="Enter code (e.g. SAVE10)"
-                  value={promoInput}
-                  onChange={(e) => setPromoInput(e.target.value)}
-                />
+                <input className="border rounded-lg px-3 py-2 flex-1" placeholder="Enter code (e.g. SAVE10)" value={promoInput} onChange={(e) => setPromoInput(e.target.value)} />
                 {!promo ? (
-                  <button
-                    onClick={applyPromo}
-                    className="rounded-lg bg-gray-900 text-white px-4 py-2 hover:bg-black/80"
-                  >
+                  <button onClick={applyPromo} className="rounded-lg bg-gray-900 text-white px-4 py-2 hover:bg-black/80">
                     Apply
                   </button>
                 ) : (
-                  <button
-                    onClick={clearPromo}
-                    className="rounded-lg border px-4 py-2 hover:bg-gray-50"
-                  >
+                  <button onClick={clearPromo} className="rounded-lg border px-4 py-2 hover:bg-gray-50">
                     Remove
                   </button>
                 )}
@@ -1130,27 +739,16 @@ export default function Checkout() {
                   {promo.type === "free_shipping" && ` (Free shipping)`}
                 </div>
               )}
-
-              {!requiredOk && (
-                <div className="mt-2 text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                  Please complete <b>name</b>, a valid <b>email</b> and <b>phone</b>. Payment is available,
-                  but we need your contact to confirm the order.
-                </div>
-              )}
+              {!requiredOk && <div className="mt-2 text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">Please complete <b>name</b>, a valid <b>email</b> and <b>phone</b>.</div>}
             </div>
           </div>
         </section>
-
-        {/* 🆕 PRODUCTOS DEL CARRITO + Summary + Payment */}
         <section className="space-y-4">
-          {/* 🆕 SECCIÓN DE PRODUCTOS */}
           {items.length > 0 && (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <h2 className="font-semibold mb-3 flex items-center justify-between">
                 <span>Items in cart</span>
-                <span className="bg-blue-100 text-blue-800 text-sm px-2 py-1 rounded-full">
-                  {items.length}
-                </span>
+                <span className="bg-blue-100 text-blue-800 text-sm px-2 py-1 rounded-full">{items.length}</span>
               </h2>
               <div className="space-y-3 max-h-80 overflow-y-auto">
                 {items.map((item) => {
@@ -1160,63 +758,31 @@ export default function Checkout() {
                   const codigo = producto.codigo || "";
                   const qty = Number(item.qty || 0);
                   const unit = Number(producto.precio || 0);
-                  const subtotal = qty * unit;
+                  const line = qty * unit;
                   const stock = Number(producto.stock ?? 0);
+                  const exceedsStock = qty > stock;
                   const isLowStock = stock > 0 && stock < 5;
                   const isOutOfStock = stock === 0;
-                  const exceedsStock = qty > stock;
-
                   return (
-                    <div 
-                      key={item.producto_id} 
-                      className={`flex gap-3 pb-3 border-b last:border-b-0 ${
-                        exceedsStock ? 'bg-red-50 p-2 rounded-lg' : ''
-                      }`}
-                    >
-                      {/* Imagen placeholder */}
+                    <div key={item.producto_id} className={`flex gap-3 pb-3 border-b last:border-b-0 ${exceedsStock ? "bg-red-50 p-2 rounded-lg" : ""}`}>
                       <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
                         <span className="text-2xl">📦</span>
                       </div>
-
-                      {/* Detalles del producto */}
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-sm truncate">{nombre}</div>
-                        
-                        {(marca || codigo) && (
-                          <div className="text-xs text-gray-500 mt-0.5">
-                            {[marca, codigo].filter(Boolean).join(" • ")}
-                          </div>
-                        )}
-
+                        {(marca || codigo) && <div className="text-xs text-gray-500 mt-0.5">{[marca, codigo].filter(Boolean).join(" • ")}</div>}
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-sm text-gray-600">Qty: {qty}</span>
                           <span className="text-xs text-gray-400">×</span>
                           <span className="text-sm text-gray-600">${fmt(unit)}</span>
                         </div>
-
-                        {exceedsStock && (
-                          <div className="text-xs text-red-700 font-semibold mt-1">
-                            ⚠️ Exceeds stock ({stock} available)
-                          </div>
-                        )}
-                        {isOutOfStock && !exceedsStock && (
-                          <div className="text-xs text-red-700 font-semibold mt-1">
-                            ⚠️ Out of stock
-                          </div>
-                        )}
-                        {isLowStock && !exceedsStock && (
-                          <div className="text-xs text-amber-700 mt-1">
-                            ⚡ Only {stock} left
-                          </div>
-                        )}
+                        {exceedsStock && <div className="text-xs text-red-700 font-semibold mt-1">⚠️ Exceeds stock ({stock} available)</div>}
+                        {isOutOfStock && !exceedsStock && <div className="text-xs text-red-700 font-semibold mt-1">⚠️ Out of stock</div>}
+                        {isLowStock && !exceedsStock && <div className="text-xs text-amber-700 mt-1">Only {stock} left</div>}
                       </div>
-
-                      {/* Subtotal */}
                       <div className="text-right flex-shrink-0">
-                        <div className="font-bold text-sm">${fmt(subtotal)}</div>
-                        {qty > 1 && (
-                          <div className="text-xs text-gray-500">${fmt(unit)} each</div>
-                        )}
+                        <div className="font-bold text-sm">${fmt(line)}</div>
+                        {qty > 1 && <div className="text-xs text-gray-500">${fmt(unit)} each</div>}
                       </div>
                     </div>
                   );
@@ -1224,12 +790,13 @@ export default function Checkout() {
               </div>
             </div>
           )}
-
-          {/* Order summary */}
           <div className="bg-white rounded-2xl shadow-sm p-4">
             <h2 className="font-semibold mb-2">Order summary</h2>
             <div className="space-y-1 text-sm">
-              <div className="flex justify-between"><span>Subtotal</span><b>${fmt(subtotal)}</b></div>
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <b>${fmt(subtotal)}</b>
+              </div>
               {discount > 0 && (
                 <div className="flex justify-between text-rose-700">
                   <span>Discount{promo?.code ? ` (${promo.code})` : ""}</span>
@@ -1240,18 +807,18 @@ export default function Checkout() {
                 <span>Shipping{freeShippingOverride ? " (overridden by promo)" : ""}</span>
                 <b>${fmt(shippingCost)}</b>
               </div>
-              <div className="flex justify-between"><span>Taxes</span><b>${fmt(taxes)}</b></div>
-              <div className="flex justify-between border-t pt-2 text-base"><span>Total</span><b>${fmt(total)}</b></div>
-            </div>
-            {items.length === 0 && (
-              <div className="mt-2 text-sm text-amber-700">
-                Your cart is empty. Add items to cart to pay.
+              <div className="flex justify-between">
+                <span>Taxes</span>
+                <b>${fmt(taxes)}</b>
               </div>
-            )}
+              <div className="flex justify-between border-t pt-2 text-base">
+                <span>Total</span>
+                <b>${fmt(total)}</b>
+              </div>
+            </div>
+            {items.length === 0 && <div className="mt-2 text-sm text-amber-700">Your cart is empty. Add items to cart to pay.</div>}
           </div>
-
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
-
           {hasStockIssues ? (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">
@@ -1270,13 +837,7 @@ export default function Checkout() {
               <PaymentBlock onPaid={handlePaid} total={total} />
             </Elements>
           ) : (
-            <div className="bg-white rounded-2xl p-4 shadow-sm">
-              {loading || creating
-                ? "Preparing payment…"
-                : (items.length === 0
-                    ? "Add items to cart to pay."
-                    : "Update shipping/details to pay.")}
-            </div>
+            <div className="bg-white rounded-2xl p-4 shadow-sm">{loading || creating ? "Preparing payment…" : items.length === 0 ? "Add items to cart to pay." : "Update shipping/details to pay."}</div>
           )}
         </section>
       </main>
@@ -1287,18 +848,13 @@ export default function Checkout() {
 function ReturnHandler({ onPaid }) {
   const stripe = useStripe();
   const { search } = useLocation();
-
   useEffect(() => {
     const params = new URLSearchParams(search);
     const clientSecret = params.get("payment_intent_client_secret");
     if (!stripe || !clientSecret) return;
-
     (async () => {
       const { paymentIntent, error } = await stripe.retrievePaymentIntent(clientSecret);
-      if (error) {
-        console.error("[return] retrievePaymentIntent error:", error);
-        return;
-      }
+      if (error) return;
       if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
         await onPaid(paymentIntent);
         const url = new URL(window.location.href);
@@ -1308,7 +864,6 @@ function ReturnHandler({ onPaid }) {
       }
     })();
   }, [stripe, search, onPaid]);
-
   return null;
 }
 
@@ -1325,10 +880,8 @@ function PaymentBlock({ onPaid, total }) {
 function AppleGooglePayButton({ total, onPaid }) {
   const stripe = useStripe();
   const [pr, setPr] = useState(null);
-
   useEffect(() => {
     if (!stripe || !Number.isFinite(total)) return;
-
     const paymentRequest = stripe.paymentRequest({
       country: "US",
       currency: "usd",
@@ -1337,62 +890,40 @@ function AppleGooglePayButton({ total, onPaid }) {
       requestPayerEmail: true,
       requestShipping: false,
     });
-
-    // Evento cuando el usuario autoriza el pago
     paymentRequest.on("paymentmethod", async (ev) => {
       try {
-        // Confirmar el pago
-        const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
-          ev.paymentIntent?.client_secret || "",
-          { payment_method: ev.paymentMethod.id },
-          { handleActions: false }
-        );
-
+        const cs = (await stripe.retrievePaymentIntent(ev.paymentIntent?.client_secret || "")).paymentIntent?.client_secret || ev.paymentIntent?.client_secret || "";
+        const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(cs, { payment_method: ev.paymentMethod.id }, { handleActions: false });
         if (confirmError) {
           ev.complete("fail");
-          console.error("[Apple/Google Pay] Error:", confirmError);
           return;
         }
-
-        // Verificar estado del pago
         if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
           ev.complete("success");
           await onPaid(paymentIntent);
         } else if (paymentIntent?.status === "requires_action") {
-          const { error: actionError } = await stripe.confirmCardPayment(
-            paymentIntent.client_secret
-          );
-          
+          const { error: actionError } = await stripe.confirmCardPayment(paymentIntent.client_secret);
           if (actionError) {
             ev.complete("fail");
-            console.error("[Apple/Google Pay] Action error:", actionError);
           } else {
             ev.complete("success");
             await onPaid(paymentIntent);
           }
         } else {
           ev.complete("fail");
-          console.error("[Apple/Google Pay] Unexpected status:", paymentIntent?.status);
         }
-      } catch (err) {
+      } catch {
         ev.complete("fail");
-        console.error("[Apple/Google Pay] Exception:", err);
       }
     });
-
-    // Verificar disponibilidad
     paymentRequest.canMakePayment().then((result) => {
       if (result) setPr(paymentRequest);
     });
-
-    // Cleanup
     return () => {
       paymentRequest.off("paymentmethod");
     };
   }, [stripe, total, onPaid]);
-
   if (!pr) return null;
-
   return (
     <div className="bg-white rounded-2xl shadow-sm p-4">
       <PaymentRequestButtonElement
@@ -1401,67 +932,7 @@ function AppleGooglePayButton({ total, onPaid }) {
           style: { paymentRequestButton: { type: "buy", theme: "dark", height: "44px" } },
         }}
       />
-      <div className="mt-2 text-xs text-gray-500">
-        Apple Pay / Google Pay will appear if supported by the device and browser.
-      </div>
-    </div>
-  );
-}
-
-        // Verificar el estado del pago
-        if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
-          // ✅ Notificar éxito al usuario
-          ev.complete("success");
-          
-          // ✅ Llamar a onPaid para registrar en la base de datos
-          await onPaid(paymentIntent);
-        } else if (paymentIntent?.status === "requires_action") {
-          // Manejar autenticación 3D Secure si es necesaria
-          const { error: actionError } = await stripe.confirmCardPayment(
-            paymentIntent.client_secret
-          );
-          
-          if (actionError) {
-            ev.complete("fail");
-            console.error("[Apple/Google Pay] Action error:", actionError);
-          } else {
-            ev.complete("success");
-            await onPaid(paymentIntent);
-          }
-        } else {
-          ev.complete("fail");
-          console.error("[Apple/Google Pay] Unexpected status:", paymentIntent?.status);
-        }
-      } catch (err) {
-        ev.complete("fail");
-        console.error("[Apple/Google Pay] Exception:", err);
-      }
-    });
-
-    // Verificar si Apple Pay/Google Pay está disponible
-    paymentRequest.canMakePayment().then((result) => {
-      if (result) setPr(paymentRequest);
-    });
-
-    // Cleanup: remover listeners cuando el componente se desmonte
-    return () => {
-      paymentRequest.off("paymentmethod");
-    };
-  }, [stripe, total, onPaid]);
-
-  if (!pr) return null;
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm p-4">
-      <PaymentRequestButtonElement
-        options={{
-          paymentRequest: pr,
-          style: { paymentRequestButton: { type: "buy", theme: "dark", height: "44px" } },
-        }}
-      />
-      <div className="mt-2 text-xs text-gray-500">
-        Apple Pay / Google Pay will appear if supported by the device and browser.
-      </div>
+      <div className="mt-2 text-xs text-gray-500">Apple Pay / Google Pay will appear if supported by the device and browser.</div>
     </div>
   );
 }
@@ -1471,29 +942,21 @@ function PaymentForm({ onPaid }) {
   const elements = useElements();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!stripe || !elements) return;
-
     const pe = elements.getElement(PaymentElement);
     if (!pe) {
-      setError(
-        "Payment form not available. Verify your Stripe keys (pk/sk) belong to the same account & mode."
-      );
+      setError("Payment form not available. Verify your Stripe keys belong to the same account & mode.");
       return;
     }
-
     setLoading(true);
     setError("");
     const { error: err, paymentIntent } = await stripe.confirmPayment({
       elements,
-      confirmParams: {
-        return_url: `${window.location.origin}/checkout`,
-      },
+      confirmParams: { return_url: `${window.location.origin}/checkout` },
       redirect: "if_required",
     });
-
     if (err) {
       setError(err.message || "Payment failed. Please try another method.");
       setLoading(false);
@@ -1506,15 +969,11 @@ function PaymentForm({ onPaid }) {
     }
     setLoading(false);
   };
-
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
       <PaymentElement />
       {error && <div className="p-2 bg-red-50 text-red-700 rounded text-sm">{error}</div>}
-      <button
-        disabled={!stripe || loading}
-        className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-semibold"
-      >
+      <button disabled={!stripe || loading} className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-semibold">
         {loading ? "Processing…" : "Pay now"}
       </button>
     </form>
