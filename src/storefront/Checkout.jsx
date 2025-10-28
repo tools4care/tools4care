@@ -819,57 +819,82 @@ export default function Checkout() {
             {items.length === 0 && <div className="mt-2 text-sm text-amber-700">Your cart is empty. Add items to cart to pay.</div>}
           </div>
           {error && <div className="mb-3 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
-          {hasStockIssues ? (
-            <div className="bg-white rounded-2xl shadow-sm p-4">
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">
-                Some items exceed available stock. Please reduce quantities:
-                <ul className="list-disc ml-5 mt-1">
-                  {stockIssues.map((it) => (
-                    <li key={it.producto_id}>
-                      {it.producto?.nombre || it.producto_id}: requested {it.qty}, in stock {it.producto?.stock ?? 0}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          ) : clientSecret ? (
-  <Elements key={clientSecret} options={{ clientSecret, locale: "en" }} stripe={stripePromise}>
-    <PaymentBlock onPaid={handlePaid} total={total} clientSecret={clientSecret} />
+    {hasStockIssues ? (
+  <div className="bg-white rounded-2xl shadow-sm p-4">
+    <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">
+      Some items exceed available stock. Please reduce quantities:
+      <ul className="list-disc ml-5 mt-1">
+        {stockIssues.map((it) => (
+          <li key={it.producto_id}>
+            {it.producto?.nombre || it.producto_id}: requested {it.qty}, in stock {it.producto?.stock ?? 0}
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+) : clientSecret ? (
+  <Elements
+    key={clientSecret}
+    options={{ clientSecret, locale: "en" }}
+    stripe={stripePromise}
+  >
+    <PaymentBlock
+      onPaid={handlePaid}
+      total={total}
+      clientSecret={clientSecret}
+    />
   </Elements>
 ) : (
-            <div className="bg-white rounded-2xl p-4 shadow-sm">{loading || creating ? "Preparing payment…" : items.length === 0 ? "Add items to cart to pay." : "Update shipping/details to pay."}</div>
-          )}
-        </section>
-      </main>
-    </div>
-  );
-}
+  <div className="bg-white rounded-2xl p-4 shadow-sm">
+    {loading || creating
+      ? "Preparing payment…"
+      : items.length === 0
+        ? "Add items to cart to pay."
+        : "Update shipping/details to pay."}
+  </div>
+)}
 
-function ReturnHandler({ onPaid }) {
+
+function ReturnHandler({ onPaid, clientSecret: csFromProps }) {
   const stripe = useStripe();
-  const [searchParams] = useSearchParams();
+  const { search } = useLocation();
+
   useEffect(() => {
     if (!stripe) return;
-    const clientSecret = searchParams.get("payment_intent_client_secret");
-    if (!clientSecret) return;
-    stripe.retrievePaymentIntent(clientSecret).then(({ paymentIntent }) => {
-      if (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing") {
-        onPaid(paymentIntent);
+
+    const params = new URLSearchParams(search);
+    const cs = csFromProps || params.get("payment_intent_client_secret");
+    if (!cs) return;
+
+    (async () => {
+      const { paymentIntent, error } = await stripe.retrievePaymentIntent(cs);
+      if (!error && (paymentIntent?.status === "succeeded" || paymentIntent?.status === "processing")) {
+        await onPaid(paymentIntent);
+
+        const url = new URL(window.location.href);
+        url.searchParams.delete("payment_intent_client_secret");
+        url.searchParams.delete("payment_intent");
+        url.searchParams.delete("redirect_status");
+        window.history.replaceState({}, "", url.toString());
       }
-    });
-  }, [stripe]);
+    })();
+  }, [stripe, search, csFromProps, onPaid]);
+
   return null;
 }
+
 
 function PaymentBlock({ onPaid, total, clientSecret }) {
   return (
     <div className="space-y-3">
       <AppleGooglePayButton total={total} onPaid={onPaid} clientSecret={clientSecret} />
-      <ReturnHandler onPaid={onPaid} />
+      <ReturnHandler onPaid={onPaid} clientSecret={clientSecret} />
       <PaymentForm onPaid={onPaid} />
     </div>
   );
 }
+
+
 
 
 function AppleGooglePayButton({ total, onPaid, clientSecret }) {
@@ -892,9 +917,9 @@ function AppleGooglePayButton({ total, onPaid, clientSecret }) {
 
     paymentRequest.on("paymentmethod", async (ev) => {
       try {
-        const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
-          clientSecret,
-          { payment_method: ev.paymentMethod.id },
+       const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
+  ev.paymentIntent?.client_secret || "",  // ✅ CORRECTO
+  { payment_method: ev.paymentMethod.id },
           { handleActions: false }
         );
 

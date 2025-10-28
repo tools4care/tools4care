@@ -23,6 +23,8 @@ import OnlineCatalog from "./online/OnlineCatalog";
 import Checkout from "./storefront/Checkout";
 import OnlineDiscounts from "./online/Discounts";
 
+import NetworkIndicator from "./components/NetworkIndicator";
+
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
 import AuthCallback from "./storefront/AuthCallback";
@@ -85,6 +87,9 @@ function PrivateRouteWithVan({ children }) {
 function LayoutPrivado() {
   return (
     <div className="min-h-screen bg-gray-50 flex lg:flex-row flex-col">
+      {/* 🆕 Indicador de red */}
+      <NetworkIndicator />
+      
       <div className="hidden lg:block">
         <Sidebar />
       </div>
