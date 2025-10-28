@@ -853,7 +853,11 @@ export default function Checkout() {
         : "Update shipping/details to pay."}
   </div>
 )}
-
+        </section>
+      </main>
+    </div>
+  );
+}
 
 function ReturnHandler({ onPaid, clientSecret: csFromProps }) {
   const stripe = useStripe();
@@ -918,7 +922,7 @@ function AppleGooglePayButton({ total, onPaid, clientSecret }) {
     paymentRequest.on("paymentmethod", async (ev) => {
       try {
        const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
-  ev.paymentIntent?.client_secret || "",  // ✅ CORRECTO
+  clientSecret,
   { payment_method: ev.paymentMethod.id },
           { handleActions: false }
         );
