@@ -93,7 +93,56 @@ export async function obtenerClientesCache() {
     return [];
   }
 }
+// ==================== CACHE DE INVENTARIO (para ventas offline) ====================
 
+export async function guardarInventarioVan(vanId, productos) {
+  try {
+    await localforage.setItem(`inventario_van_${vanId}`, {
+      data: productos,
+      timestamp: new Date().toISOString(),
+      vanId
+    });
+    console.log(`✅ Inventario de van ${vanId} guardado en caché`);
+  } catch (error) {
+    console.error('Error guardando inventario de van:', error);
+  }
+}
+
+export async function obtenerInventarioVan(vanId) {
+  try {
+    const cache = await localforage.getItem(`inventario_van_${vanId}`);
+    if (cache?.data) {
+      console.log(`📦 Inventario de van ${vanId} cargado desde caché`);
+      return cache.data;
+    }
+    return [];
+  } catch (error) {
+    console.error('Error obteniendo inventario de van:', error);
+    return [];
+  }
+}
+
+export async function guardarTopProductos(vanId, productos) {
+  try {
+    await localforage.setItem(`top_productos_${vanId}`, {
+      data: productos,
+      timestamp: new Date().toISOString()
+    });
+    console.log(`✅ Top productos guardados en caché`);
+  } catch (error) {
+    console.error('Error guardando top productos:', error);
+  }
+}
+
+export async function obtenerTopProductos(vanId) {
+  try {
+    const cache = await localforage.getItem(`top_productos_${vanId}`);
+    return cache?.data || [];
+  } catch (error) {
+    console.error('Error obteniendo top productos:', error);
+    return [];
+  }
+}
 // ==================== LIMPIEZA ====================
 
 export async function limpiarDatosOffline() {

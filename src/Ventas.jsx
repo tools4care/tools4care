@@ -10,7 +10,13 @@ import QRCode from "qrcode"; // npm install qrcode
 // 🆕 MODO OFFLINE - Agregar estas 3 líneas
 import { useOffline } from "./hooks/useOffline";
 import { useSync } from "./hooks/useSync";
-import { guardarVentaOffline } from "./utils/offlineDB";
+import { 
+  guardarVentaOffline,
+  guardarInventarioVan,
+  obtenerInventarioVan,
+  guardarTopProductos,
+  obtenerTopProductos
+} from "./utils/offlineDB";
 
 /* ========================= Config & Constantes ========================= */
 const PAYMENT_METHODS = [
@@ -1084,111 +1090,74 @@ export default function Sales() {
     });
   }
 
-  useEffect(() => {
-    async function loadTopProducts() {
-      setProductError("");
-      setTopProducts([]);
-      if (!van?.id) return;
+ 
+useEffect(() => {
+  async function loadTopProducts() {
+    setProductError("");
+    setTopProducts([]);
+    if (!van?.id) return;
 
-      try {
-        const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
-          van_id_param: van.id,
-          dias: 30,
-          limite: 10,
-        });
-        if (error) throw error;
-
-        if (Array.isArray(data) && data.length > 0) {
-          let rows = normalizeFromRpc(data);
-          rows = await enrichTopWithCatalog(rows);
-
-          const ids = rows.map(r => r.producto_id).filter(Boolean);
-          const stockMap = await getStockMapForVan(van.id, ids);
-          rows = rows.map(r => ({ ...r, cantidad: stockMap.get(r.producto_id) ?? 0 }));
-          rows = rows.filter(r => Number(r.cantidad) > 0);
-
-          setTopProducts(rows);
-          return;
-        }
-        console.warn("RPC productos_mas_vendidos_por_van devolvió vacío.");
-      } catch (err) {
-        console.warn("RPC productos_mas_vendidos_por_van falló. Fallback a join.", err?.message || err);
+    // 🆕 Si está offline, intentar cargar desde caché
+    if (isOffline) {
+      console.log('📵 Offline: Cargando productos desde caché...');
+      const cachedProducts = await obtenerTopProductos(van.id);
+      if (cachedProducts.length > 0) {
+        setTopProducts(cachedProducts);
+        console.log(`✅ ${cachedProducts.length} productos cargados desde caché`);
+        return;
+      } else {
+        setProductError("📵 Sin conexión y no hay productos en caché. Conecta internet para cargar productos.");
+        return;
       }
+    }
 
-      try {
-        const { data, error } = await supabase
-          .from("stock_van")
-          .select(
-            "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)"
-          )
-          .eq("van_id", van.id)
-          .gt("cantidad", 0)
-          .order("cantidad", { ascending: false })
-          .limit(10);
+    try {
+      const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
+        van_id_param: van.id,
+        dias: 30,
+        limite: 10,
+      });
+      if (error) throw error;
 
-        if (error) throw error;
+      if (Array.isArray(data) && data.length > 0) {
+        let rows = normalizeFromRpc(data);
+        rows = await enrichTopWithCatalog(rows);
 
-        if (Array.isArray(data) && data.length > 0) {
-          const rows = data.map(row => {
-            const p = row.productos || {};
-            const producto_id = row.producto_id ?? p.id ?? null;
-            return {
-              producto_id,
-              cantidad: Number(row.cantidad || 0),
-              productos: {
-                id: producto_id,
-                nombre: p.nombre ?? "",
-                precio: Number(p.precio || 0),
-                codigo: p.codigo ?? null,
-                marca: p.marca ?? null,
-                descuento_pct: p.descuento_pct ?? null,
-                bulk_min_qty: p.bulk_min_qty ?? null,
-                bulk_unit_price: p.bulk_unit_price ?? null,
-              },
-              nombre: p.nombre ?? "",
-              precio: Number(p.precio || 0),
-              codigo: p.codigo ?? null,
-              marca: p.marca ?? null,
-            };
-          });
-          setTopProducts(rows);
-          return;
-        }
-        console.warn("Join stock_van→productos devolvió vacío. Fallback a 2 pasos.");
-      } catch (err) {
-        console.warn("Join stock_van→productos falló. Fallback a 2 pasos.", err?.message || err);
+        const ids = rows.map(r => r.producto_id).filter(Boolean);
+        const stockMap = await getStockMapForVan(van.id, ids);
+        rows = rows.map(r => ({ ...r, cantidad: stockMap.get(r.producto_id) ?? 0 }));
+        rows = rows.filter(r => Number(r.cantidad) > 0);
+
+        setTopProducts(rows);
+        // 🆕 Guardar en caché para uso offline
+        await guardarTopProductos(van.id, rows);
+        return;
       }
+      console.warn("RPC productos_mas_vendidos_por_van devolvió vacío.");
+    } catch (err) {
+      console.warn("RPC productos_mas_vendidos_por_van falló. Fallback a join.", err?.message || err);
+    }
 
-      try {
-        const { data: stock, error: e1 } = await supabase
-          .from("stock_van")
-          .select("producto_id,cantidad")
-          .eq("van_id", van.id)
-          .gt("cantidad", 0)
-          .order("cantidad", { ascending: false })
-          .limit(10);
-        if (e1) throw e1;
+    try {
+      const { data, error } = await supabase
+        .from("stock_van")
+        .select(
+          "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)"
+        )
+        .eq("van_id", van.id)
+        .gt("cantidad", 0)
+        .order("cantidad", { ascending: false })
+        .limit(10);
 
-        const ids = (stock || []).map((r) => r.producto_id);
-        if (ids.length === 0) {
-          setTopProducts([]);
-          setProductError("No hay stock para esta van.");
-          return;
-        }
+      if (error) throw error;
 
-        const { data: prods, error: e2 } = await supabase
-          .from("productos")
-          .select("id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price")
-          .in("id", ids);
-        if (e2) throw e2;
-
-        const m = new Map((prods || []).map((p) => [p.id, p]));
-        const rows = (stock || []).map((s) => {
-          const p = m.get(s.producto_id) || {};
-          const producto_id = s.producto_id ?? p.id ?? null;
+      if (Array.isArray(data) && data.length > 0) {
+        const rows = data.map(row => {
+          const p = row.productos || {};
+          const producto_id = row.producto_id ?? p.id ?? null;
           return {
             producto_id,
-            cantidad: Number(s.cantidad || 0),
+            cantidad: Number(row.cantidad || 0),
             productos: {
               id: producto_id,
               nombre: p.nombre ?? "",
@@ -1205,77 +1174,161 @@ export default function Sales() {
             marca: p.marca ?? null,
           };
         });
-
         setTopProducts(rows);
-      } catch (err) {
-        console.error("Todos los fallbacks de TOP fallaron:", err?.message || err);
-        setTopProducts([]);
-        setProductError("No se pudieron cargar los productos (TOP).");
+        // 🆕 Guardar en caché para uso offline
+        await guardarTopProductos(van.id, rows);
+        return;
       }
+      console.warn("Join stock_van→productos devolvió vacío. Fallback a 2 pasos.");
+    } catch (err) {
+      console.warn("Join stock_van→productos falló. Fallback a 2 pasos.", err?.message || err);
     }
 
-    loadTopProducts();
-  }, [van?.id, invTick]);
+    try {
+      const { data: stock, error: e1 } = await supabase
+        .from("stock_van")
+        .select("producto_id,cantidad")
+        .eq("van_id", van.id)
+        .gt("cantidad", 0)
+        .order("cantidad", { ascending: false })
+        .limit(10);
+      if (e1) throw e1;
 
-  /* ---------- INVENTARIO COMPLETO - LAZY LOADING ---------- */
-  useEffect(() => {
-    if (productSearch.trim().length === 0) {
-      setAllProductsLoading(false);
-      setProductsLoaded(false);
-      return;
-    }
+      const ids = (stock || []).map((r) => r.producto_id);
+      if (ids.length === 0) {
+        setTopProducts([]);
+        setProductError("No hay stock para esta van.");
+        return;
+      }
 
-    if (productsLoaded && allProducts.length > 0) {
-      return;
-    }
+      const { data: prods, error: e2 } = await supabase
+        .from("productos")
+        .select("id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price")
+        .in("id", ids);
+      if (e2) throw e2;
 
-    async function loadAllProducts() {
-      setAllProducts([]);
-      setAllProductsLoading(true);
-      if (!van?.id) return setAllProductsLoading(false);
-
-      try {
-        const { data, error } = await supabase
-          .from("stock_van")
-          .select("producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca)")
-          .eq("van_id", van.id)
-          .gt("cantidad", 0)
-          .order("nombre", { ascending: true, foreignTable: "productos" })
-          .limit(100);
-
-        if (error) throw error;
-
-        const rows = (data || []).map((row) => ({
-          producto_id: row.producto_id,
-          cantidad: Number(row.cantidad) || 0,
+      const m = new Map((prods || []).map((p) => [p.id, p]));
+      const rows = (stock || []).map((s) => {
+        const p = m.get(s.producto_id) || {};
+        const producto_id = s.producto_id ?? p.id ?? null;
+        return {
+          producto_id,
+          cantidad: Number(s.cantidad || 0),
           productos: {
-            id: row.productos?.id,
-            nombre: row.productos?.nombre,
-            precio: Number(row.productos?.precio) || 0,
-            codigo: row.productos?.codigo,
-            marca: row.productos?.marca ?? "",
+            id: producto_id,
+            nombre: p.nombre ?? "",
+            precio: Number(p.precio || 0),
+            codigo: p.codigo ?? null,
+            marca: p.marca ?? null,
+            descuento_pct: p.descuento_pct ?? null,
+            bulk_min_qty: p.bulk_min_qty ?? null,
+            bulk_unit_price: p.bulk_unit_price ?? null,
           },
-        }));
-        
-        setAllProducts(rows);
+          nombre: p.nombre ?? "",
+          precio: Number(p.precio || 0),
+          codigo: p.codigo ?? null,
+          marca: p.marca ?? null,
+        };
+      });
+
+      setTopProducts(rows);
+      // 🆕 Guardar en caché para uso offline
+      await guardarTopProductos(van.id, rows);
+    } catch (err) {
+      console.error("Todos los fallbacks de TOP fallaron:", err?.message || err);
+      setTopProducts([]);
+      setProductError("No se pudieron cargar los productos (TOP).");
+    }
+  }
+
+  loadTopProducts();
+}, [van?.id, invTick, isOffline]); // 🆕 Agregado isOffline a dependencias
+/* ---------- INVENTARIO COMPLETO - LAZY LOADING ---------- */
+useEffect(() => {
+  if (productSearch.trim().length === 0) {
+    setAllProductsLoading(false);
+    setProductsLoaded(false);
+    return;
+  }
+
+  if (productsLoaded && allProducts.length > 0) {
+    return;
+  }
+
+  async function loadAllProducts() {
+    setAllProducts([]);
+    setAllProductsLoading(true);
+    if (!van?.id) return setAllProductsLoading(false);
+
+    // 🆕 Si está offline, cargar desde caché
+    if (isOffline) {
+      console.log('📵 Offline: Cargando inventario completo desde caché...');
+      const cachedInventory = await obtenerInventarioVan(van.id);
+      if (cachedInventory.length > 0) {
+        setAllProducts(cachedInventory);
         setProductsLoaded(true);
         setAllProductsLoading(false);
+        console.log(`✅ ${cachedInventory.length} productos cargados desde caché (inventario completo)`);
         return;
-      } catch (err) {
-        console.warn("Inventario completo falló:", err?.message || err);
+      } else {
+        console.warn('⚠️ No hay inventario completo en caché');
         setAllProducts([]);
         setProductsLoaded(false);
-      } finally {
         setAllProductsLoading(false);
+        return;
       }
     }
 
-    const timer = setTimeout(() => {
-      loadAllProducts();
-    }, 300);
+    try {
+      const { data, error } = await supabase
+        .from("stock_van")
+        .select("producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)")
+        .eq("van_id", van.id)
+        .gt("cantidad", 0)
+        .order("nombre", { ascending: true, foreignTable: "productos" })
+        .limit(500); // 🆕 Aumentado de 100 a 500 para tener más productos en caché
 
-    return () => clearTimeout(timer);
-  }, [van?.id, productSearch, invTick, productsLoaded, allProducts.length]);
+      if (error) throw error;
+
+      const rows = (data || []).map((row) => ({
+        producto_id: row.producto_id,
+        cantidad: Number(row.cantidad) || 0,
+        productos: {
+          id: row.productos?.id,
+          nombre: row.productos?.nombre,
+          precio: Number(row.productos?.precio) || 0,
+          codigo: row.productos?.codigo,
+          marca: row.productos?.marca ?? "",
+          descuento_pct: row.productos?.descuento_pct ?? null,
+          bulk_min_qty: row.productos?.bulk_min_qty ?? null,
+          bulk_unit_price: row.productos?.bulk_unit_price ?? null,
+        },
+      }));
+      
+      setAllProducts(rows);
+      setProductsLoaded(true);
+      setAllProductsLoading(false);
+      
+      // 🆕 Guardar inventario completo en caché
+      await guardarInventarioVan(van.id, rows);
+      console.log(`✅ ${rows.length} productos guardados en caché (inventario completo)`);
+      
+      return;
+    } catch (err) {
+      console.warn("Inventario completo falló:", err?.message || err);
+      setAllProducts([]);
+      setProductsLoaded(false);
+    } finally {
+      setAllProductsLoading(false);
+    }
+  }
+
+  const timer = setTimeout(() => {
+    loadAllProducts();
+  }, 300);
+
+  return () => clearTimeout(timer);
+}, [van?.id, productSearch, invTick, productsLoaded, allProducts.length, isOffline]); // 🆕 Agregado isOffline
 
   useEffect(() => {
     if (step === 2) reloadInventory();
