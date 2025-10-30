@@ -36,13 +36,15 @@ import PaymentCancelled from "./PaymentCancelled";
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
 import { VanProvider, useVan } from "./hooks/VanContext";
 
-// 👇 NUEVO: módulo de Suplidores
+// Suplidores
 import Suplidores from "./Suplidores";
 
+// 💰 Comisiones (NUEVO)
+import ComisionesPage from './pages/ComisionesPage';
+
 function PrivateRoute({ children }) {
-  const { usuario, cargando } = useUsuario(); // ✅ Agregado: cargando
+  const { usuario, cargando } = useUsuario();
   
-  // ✅ Espera a que termine de cargar
   if (cargando) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -59,10 +61,9 @@ function PrivateRoute({ children }) {
 }
 
 function PrivateRouteWithVan({ children }) {
-  const { usuario, cargando } = useUsuario(); // ✅ Agregado: cargando
+  const { usuario, cargando } = useUsuario();
   const { van } = useVan();
   
-  // ✅ Espera a que termine de cargar
   if (cargando) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -87,7 +88,6 @@ function PrivateRouteWithVan({ children }) {
 function LayoutPrivado() {
   return (
     <div className="min-h-screen bg-gray-50 flex lg:flex-row flex-col">
-      {/* 🆕 Indicador de red */}
       <NetworkIndicator />
       
       <div className="hidden lg:block">
@@ -114,7 +114,7 @@ export default function App() {
           <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* 🆕 Payment Success/Cancel Pages */}
+          {/* Payment Success/Cancel Pages */}
           <Route path="/payment-success" element={<PaymentSuccess />} />
           <Route path="/payment-cancelled" element={<PaymentCancelled />} />
 
@@ -171,10 +171,10 @@ export default function App() {
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
             <Route path="cxc/sim" element={<CreditoSimulador />} />
-
-
-            {/* 👇 NUEVO: ruta al módulo de Suplidores */}
             <Route path="suplidores" element={<Suplidores />} />
+            
+            {/* 💰 COMISIONES (NUEVO) */}
+            <Route path="comisiones" element={<ComisionesPage />} />
 
             <Route path="*" element={<Navigate to="/" />} />
           </Route>

@@ -13,7 +13,8 @@ import {
   Repeat,
   LogOut,
   CreditCard,
-  UserCircle2, // 👈 NUEVO
+  UserCircle2,
+  DollarSign, // 👈 NUEVO para Comisiones
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -33,8 +34,12 @@ export default function Sidebar() {
     { to: "/inventario", icon: <Boxes size={ICON_SIZE} className="text-teal-500" />, text: "Inventory" },
     { to: "/cierres", icon: <Repeat size={ICON_SIZE} className="text-cyan-600" />, text: "Van Closeout" },
     { to: "/cxc", icon: <CreditCard size={ICON_SIZE} className="text-orange-400" />, text: "Accounts Receivable" },
-    // 👇 NUEVO: Suplidores
     { to: "/suplidores", icon: <UserCircle2 size={ICON_SIZE} className="text-indigo-400" />, text: "Suppliers" },
+  ];
+
+  // 💰 Menú solo para admins
+  const adminMenu = [
+    { to: "/comisiones", icon: <DollarSign size={ICON_SIZE} className="text-emerald-400" />, text: "Commissions" },
   ];
 
   function handleLogout() {
@@ -43,6 +48,7 @@ export default function Sidebar() {
   }
 
   const showChangeVan = usuario?.rol === "admin";
+  const isAdmin = usuario?.rol === "admin";
 
   return (
     <aside className="bg-[#162941] text-white min-h-screen w-[220px] flex flex-col justify-between py-5 px-3">
@@ -61,6 +67,28 @@ export default function Sidebar() {
               <span>{text}</span>
             </Link>
           ))}
+
+          {/* 💰 Sección Admin (solo visible para admins) */}
+          {isAdmin && (
+            <>
+              <div className="h-px bg-gray-600 my-2"></div>
+              <div className="text-xs text-gray-400 px-3 py-1 font-semibold uppercase tracking-wide">
+                Admin
+              </div>
+              {adminMenu.map(({ to, icon, text }) => (
+                <Link
+                  key={to}
+                  to={to}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium hover:bg-[#23395d] transition ${
+                    location.pathname === to ? "bg-[#23395d]" : ""
+                  }`}
+                >
+                  {icon}
+                  <span>{text}</span>
+                </Link>
+              ))}
+            </>
+          )}
         </nav>
       </div>
 
