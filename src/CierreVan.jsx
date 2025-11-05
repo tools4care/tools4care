@@ -124,7 +124,9 @@ function breakdownPorMetodo(item) {
     if (!cand) continue;
     try {
       if (typeof cand === "string") cand = JSON.parse(cand);
-    } catch {}
+    } catch (e) {
+      console.warn("Error parsing JSON in breakdownPorMetodo:", e);
+    }
 
     if (Array.isArray(cand)) {
       for (const r of cand) {
@@ -164,59 +166,73 @@ function breakdownPorMetodo(item) {
 // 1) Fechas con actividad (vista ya filtra por van y días activos) - INCLUYE CERRADAS
 function useFechasPendientes(van_id) {
   const [fechas, setFechas] = useState([]);
+  const [error, setError] = useState(null);
   useEffect(() => {
     if (!van_id) {
       setFechas([]);
       return;
     }
     (async () => {
-      const hoy = new Date();
-      const desde = new Date(hoy);
-      desde.setDate(hoy.getDate() - 90);
-      const toISO = (d) => d.toISOString().slice(0, 10);
+      try {
+        const hoy = new Date();
+        const desde = new Date(hoy);
+        desde.setDate(hoy.getDate() - 90);
+        const toISO = (d) => d.toISOString().slice(0, 10);
 
-      const { data, error } = await supabase
-        .from("vw_expected_por_dia_van")
-        .select("dia")
-        .eq("van_id", van_id)
-        .gte("dia", toISO(desde))
-        .lte("dia", toISO(hoy))
-        .order("dia", { ascending: false });
+        const { data, error } = await supabase
+          .from("vw_expected_por_dia_van")
+          .select("dia")
+          .eq("van_id", van_id)
+          .gte("dia", toISO(desde))
+          .lte("dia", toISO(hoy))
+          .order("dia", { ascending: false });
 
-      if (error) {
+        if (error) {
+          setError(error.message);
+          setFechas([]);
+          return;
+        }
+        setFechas((data || []).map((r) => r.dia).filter(isIsoDate));
+      } catch (e) {
+        setError(e.message);
         setFechas([]);
-        return;
       }
-      setFechas((data || []).map((r) => r.dia).filter(isIsoDate));
     })();
   }, [van_id]);
-  return fechas;
+  return { fechas, error };
 }
 
 // Hook para obtener fechas ya cerradas
 function useFechasCerradas(van_id) {
   const [fechasCerradas, setFechasCerradas] = useState([]);
+  const [error, setError] = useState(null);
   useEffect(() => {
     if (!van_id) {
       setFechasCerradas([]);
       return;
     }
     (async () => {
-      const { data, error } = await supabase
-        .from("cierres_van")
-        .select("fecha_inicio")
-        .eq("van_id", van_id);
-      
-      if (error) {
+      try {
+        const { data, error } = await supabase
+          .from("cierres_van")
+          .select("fecha_inicio")
+          .eq("van_id", van_id);
+        
+        if (error) {
+          setError(error.message);
+          setFechasCerradas([]);
+          return;
+        }
+        
+        const fechas = Array.from(new Set((data || []).map(item => item.fecha_inicio)));
+        setFechasCerradas(fechas);
+      } catch (e) {
+        setError(e.message);
         setFechasCerradas([]);
-        return;
       }
-      
-      const fechas = Array.from(new Set((data || []).map(item => item.fecha_inicio)));
-      setFechasCerradas(fechas);
     })();
   }, [van_id]);
-  return fechasCerradas;
+  return { fechasCerradas, error };
 }
 
 // 2) Movimientos no cerrados (tus RPCs)
@@ -224,6 +240,7 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   useEffect(() => {
     if (!van_id || !isIsoDate(fechaInicio) || !isIsoDate(fechaFin)) {
       setVentas([]);
@@ -231,80 +248,108 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
       return;
     }
     setLoading(true);
+    setError(null);
     (async () => {
       try {
-        const { data: ventasPend } = await supabase.rpc("ventas_no_cerradas_por_van_by_id", {
+        const { data: ventasPend, error: ventasError } = await supabase.rpc("ventas_no_cerradas_por_van_by_id", {
           van_id_param: van_id,
           fecha_inicio: fechaInicio,
           fecha_fin: fechaFin,
         });
-        const { data: pagosPend } = await supabase.rpc("pagos_no_cerrados_por_van_by_id", {
+        if (ventasError) {
+          setError(ventasError.message);
+          setLoading(false);
+          return;
+        }
+        const { data: pagosPend, error: pagosError } = await supabase.rpc("pagos_no_cerrados_por_van_by_id", {
           van_id_param: van_id,
           fecha_inicio: fechaInicio,
           fecha_fin: fechaFin,
         });
+        if (pagosError) {
+          setError(pagosError.message);
+          setLoading(false);
+          return;
+        }
         setVentas(ventasPend || []);
         setPagos(pagosPend || []);
+      } catch (e) {
+        setError(e.message);
       } finally {
         setLoading(false);
       }
     })();
   }, [van_id, fechaInicio, fechaFin]);
-  return { ventas, pagos, loading };
+  return { ventas, pagos, loading, error };
 }
 
 // 3) Expected por día (desde la vista)
 function useExpectedDia(van_id, dia) {
   const [exp, setExp] = useState({ cash: 0, card: 0, transfer: 0, mix: 0 });
+  const [error, setError] = useState(null);
   useEffect(() => {
     if (!van_id || !isIsoDate(dia)) {
       setExp({ cash: 0, card: 0, transfer: 0, mix: 0 });
       return;
     }
     (async () => {
-      const { data } = await supabase
-        .from("vw_expected_por_dia_van")
-        .select("cash_expected, card_expected, transfer_expected, mix_unallocated")
-        .eq("van_id", van_id)
-        .eq("dia", dia)
-        .maybeSingle();
+      try {
+        const { data, error } = await supabase
+          .from("vw_expected_por_dia_van")
+          .select("cash_expected, card_expected, transfer_expected, mix_unallocated")
+          .eq("van_id", van_id)
+          .eq("dia", dia)
+          .maybeSingle();
 
-      setExp({
-        cash: Number(data?.cash_expected || 0),
-        card: Number(data?.card_expected || 0),
-        transfer: Number(data?.transfer_expected || 0),
-        mix: Number(data?.mix_unallocated || 0),
-      });
+        if (error) {
+          setError(error.message);
+          return;
+        }
+
+        setExp({
+          cash: Number(data?.cash_expected || 0),
+          card: Number(data?.card_expected || 0),
+          transfer: Number(data?.transfer_expected || 0),
+          mix: Number(data?.mix_unallocated || 0),
+        });
+      } catch (e) {
+        setError(e.message);
+      }
     })();
   }, [van_id, dia]);
-  return exp;
+  return { exp, error };
 }
 
 // Hook para obtener información del cierre
 function useCierreInfo(van_id, fecha) {
   const [cierreInfo, setCierreInfo] = useState(null);
+  const [error, setError] = useState(null);
   useEffect(() => {
     if (!van_id || !isIsoDate(fecha)) {
       setCierreInfo(null);
       return;
     }
     (async () => {
-      const { data, error } = await supabase
-        .from("cierres_van")
-        .select("*")
-        .eq("van_id", van_id)
-        .eq("fecha_inicio", fecha)
-        .maybeSingle();
-      
-      if (error || !data) {
-        setCierreInfo(null);
-        return;
+      try {
+        const { data, error } = await supabase
+          .from("cierres_van")
+          .select("*")
+          .eq("van_id", van_id)
+          .eq("fecha_inicio", fecha)
+          .maybeSingle();
+        
+        if (error || !data) {
+          setCierreInfo(null);
+          return;
+        }
+        
+        setCierreInfo(data);
+      } catch (e) {
+        setError(e.message);
       }
-      
-      setCierreInfo(data);
     })();
   }, [van_id, fecha]);
-  return cierreInfo;
+  return { cierreInfo, error };
 }
 
 /* ======================= Tablas UI ======================= */
@@ -321,74 +366,73 @@ function TablaMovimientosPendientes({ ventas }) {
     <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
       <h3 className="font-bold mb-3 text-lg text-blue-800">Pending Closeout Movements</h3>
       <b>Pending Sales:</b>
-      <table className="w-full text-xs mb-3">
-        <thead>
-          <tr className="bg-blue-100">
-            <th className="p-1">Date</th>
-            <th className="p-1">Client</th>
-            <th className="p-1">Total Sale</th>
-            <th className="p-1">Cash Paid</th>
-            <th className="p-1">Card Paid</th>
-            <th className="p-1">Transfer Paid</th>
-            <th className="p-1">Total Paid</th>
-            <th className="p-1">Credit (A/R)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ventas.length === 0 && (
+      {ventas.length === 0 ? (
+        <div className="text-center py-4 text-gray-600">
+          No pending sales for this date
+        </div>
+      ) : (
+        <table className="w-full text-xs mb-3">
+          <thead>
+            <tr className="bg-blue-100">
+              <th className="p-1">Date</th>
+              <th className="p-1">Client</th>
+              <th className="p-1">Total Sale</th>
+              <th className="p-1">Total Paid</th>
+              <th className="p-1 font-bold text-red-600">Balance Due</th>
+              <th className="p-1">Cash Paid</th>
+              <th className="p-1">Card Paid</th>
+              <th className="p-1">Transfer Paid</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ventas.map((v) => {
+              const totalVenta = Number(v.total_venta) || 0;
+              const totalPagado = Number(v.total_pagado) || 0;
+              const balanceDue = totalVenta - totalPagado;
+              
+              return (
+                <tr key={v.id}>
+                  <td className="p-1">{toUSFormat(v.fecha) || "-"}</td>
+                  <td className="p-1">
+                    {v.cliente_nombre ||
+                      (v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE)}
+                  </td>
+                  <td className="p-1 font-semibold">${totalVenta.toFixed(2)}</td>
+                  <td className="p-1">${totalPagado.toFixed(2)}</td>
+                  <td className={`p-1 font-bold ${balanceDue > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    ${balanceDue.toFixed(2)}
+                  </td>
+                  <td className="p-1 text-green-700">${Number(v._bk?.cash || 0).toFixed(2)}</td>
+                  <td className="p-1 text-blue-700">${Number(v._bk?.card || 0).toFixed(2)}</td>
+                  <td className="p-1 text-purple-700">${Number(v._bk?.transfer || 0).toFixed(2)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot className="bg-blue-50 font-bold">
             <tr>
-              <td colSpan={8} className="text-gray-400 text-center">
-                No pending sales
+              <td className="p-1">Totals</td>
+              <td className="p-1"></td>
+              <td className="p-1">
+                ${ventas.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2)}
+              </td>
+              <td className="p-1">
+                ${ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
+              </td>
+              <td className="p-1 text-red-600 font-bold">${totalAR.toFixed(2)}</td>
+              <td className="p-1 text-green-700">
+                ${ventas.reduce((t, v) => t + Number(v._bk?.cash || 0), 0).toFixed(2)}
+              </td>
+              <td className="p-1 text-blue-700">
+                ${ventas.reduce((t, v) => t + Number(v._bk?.card || 0), 0).toFixed(2)}
+              </td>
+              <td className="p-1 text-purple-700">
+                ${ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2)}
               </td>
             </tr>
-          )}
-          {ventas.map((v) => {
-            const totalVenta = Number(v.total_venta || 0);
-            const totalPagado = Number(v.total_pagado || 0);
-            const credito = totalVenta - totalPagado;
-            
-            return (
-              <tr key={v.id}>
-                <td className="p-1">{toUSFormat(v.fecha) || "-"}</td>
-                <td className="p-1">
-                  {v.cliente_nombre ||
-                    (v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE)}
-                </td>
-                <td className="p-1 font-semibold">${totalVenta.toFixed(2)}</td>
-                <td className="p-1 text-green-700">${Number(v._bk?.cash || 0).toFixed(2)}</td>
-                <td className="p-1 text-blue-700">${Number(v._bk?.card || 0).toFixed(2)}</td>
-                <td className="p-1 text-purple-700">${Number(v._bk?.transfer || 0).toFixed(2)}</td>
-                <td className="p-1 font-semibold">${totalPagado.toFixed(2)}</td>
-                <td className="p-1 text-red-700 font-semibold">
-                  ${credito > 0 ? credito.toFixed(2) : "0.00"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-        <tfoot className="bg-blue-50 font-bold">
-          <tr>
-            <td className="p-1">Totals</td>
-            <td className="p-1"></td>
-            <td className="p-1">
-              ${ventas.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2)}
-            </td>
-            <td className="p-1 text-green-700">
-              ${ventas.reduce((t, v) => t + Number(v._bk?.cash || 0), 0).toFixed(2)}
-            </td>
-            <td className="p-1 text-blue-700">
-              ${ventas.reduce((t, v) => t + Number(v._bk?.card || 0), 0).toFixed(2)}
-            </td>
-            <td className="p-1 text-purple-700">
-              ${ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2)}
-            </td>
-            <td className="p-1">
-             ${ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
-           </td>
-            <td className="p-1 text-red-700">${totalAR.toFixed(2)}</td>
-          </tr>
-        </tfoot>
-      </table>
+          </tfoot>
+        </table>
+      )}
     </div>
   );
 }
@@ -399,70 +443,69 @@ function TablaAbonosPendientes({ pagos }) {
       <h3 className="font-bold mb-3 text-lg text-blue-800">
         Customer Payments/Advances Included in This Closing
       </h3>
-      <table className="w-full text-xs mb-3">
-        <thead>
-          <tr className="bg-blue-100">
-            <th className="p-1">Date</th>
-            <th className="p-1">Client</th>
-            <th className="p-1">Amount</th>
-            <th className="p-1">Cash</th>
-            <th className="p-1">Card</th>
-            <th className="p-1">Transfer</th>
-            <th className="p-1">Reference</th>
-            <th className="p-1">Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pagos.length === 0 && (
-            <tr>
-              <td colSpan={8} className="text-gray-400 text-center">
-                No pending payments/advances
-              </td>
+      {pagos.length === 0 ? (
+        <div className="text-center py-4 text-gray-600">
+          No pending payments/advances for this date
+        </div>
+      ) : (
+        <table className="w-full text-xs mb-3">
+          <thead>
+            <tr className="bg-blue-100">
+              <th className="p-1">Date</th>
+              <th className="p-1">Client</th>
+              <th className="p-1">Amount</th>
+              <th className="p-1">Cash</th>
+              <th className="p-1">Card</th>
+              <th className="p-1">Transfer</th>
+              <th className="p-1">Reference</th>
+              <th className="p-1">Notes</th>
             </tr>
-          )}
-          {pagos.map((p) => {
-            const cash = Number(p._bk?.cash || 0);
-            const card = Number(p._bk?.card || 0);
-            const transfer = Number(p._bk?.transfer || 0);
-            const amount = cash + card + transfer || Number(p.monto || 0);
+          </thead>
+          <tbody>
+            {pagos.map((p) => {
+              const cash = Number(p._bk?.cash || 0);
+              const card = Number(p._bk?.card || 0);
+              const transfer = Number(p._bk?.transfer || 0);
+              const amount = cash + card + transfer || Number(p.monto || 0);
 
-            return (
-              <tr key={p.id}>
-                <td className="p-1">{toUSFormat(pagoYMD(p)) || "-"}</td>
-                <td className="p-1">
-                  {p.cliente_nombre ||
-                    (p.cliente_id ? p.cliente_id.slice(0, 8) : NO_CLIENTE)}
-                </td>
-                <td className="p-1 font-semibold">${amount.toFixed(2)}</td>
-                <td className="p-1 text-green-700">${cash.toFixed(2)}</td>
-                <td className="p-1 text-blue-700">${card.toFixed(2)}</td>
-                <td className="p-1 text-purple-700">${transfer.toFixed(2)}</td>
-                <td className="p-1">{p.referencia || "-"}</td>
-                <td className="p-1">{p.notas || "-"}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-        <tfoot className="bg-blue-50 font-bold">
-          <tr>
-            <td className="p-1">Totals</td>
-            <td className="p-1"></td>
-            <td className="p-1">
-              ${pagos.reduce((t, p) => t + (Number(p._bk?.cash || 0) + Number(p._bk?.card || 0) + Number(p._bk?.transfer || 0) || Number(p.monto || 0)), 0).toFixed(2)}
-            </td>
-            <td className="p-1 text-green-700">
-              ${pagos.reduce((t, p) => t + Number(p._bk?.cash || 0), 0).toFixed(2)}
-            </td>
-            <td className="p-1 text-blue-700">
-              ${pagos.reduce((t, p) => t + Number(p._bk?.card || 0), 0).toFixed(2)}
-            </td>
-            <td className="p-1 text-purple-700">
-              ${pagos.reduce((t, p) => t + Number(p._bk?.transfer || 0), 0).toFixed(2)}
-            </td>
-            <td colSpan={2}></td>
-          </tr>
-        </tfoot>
-      </table>
+              return (
+                <tr key={p.id}>
+                  <td className="p-1">{toUSFormat(pagoYMD(p)) || "-"}</td>
+                  <td className="p-1">
+                    {p.cliente_nombre ||
+                      (p.cliente_id ? p.cliente_id.slice(0, 8) : NO_CLIENTE)}
+                  </td>
+                  <td className="p-1 font-semibold">${amount.toFixed(2)}</td>
+                  <td className="p-1 text-green-700">${cash.toFixed(2)}</td>
+                  <td className="p-1 text-blue-700">${card.toFixed(2)}</td>
+                  <td className="p-1 text-purple-700">${transfer.toFixed(2)}</td>
+                  <td className="p-1">{p.referencia || "-"}</td>
+                  <td className="p-1">{p.notas || "-"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot className="bg-blue-50 font-bold">
+            <tr>
+              <td className="p-1">Totals</td>
+              <td className="p-1"></td>
+              <td className="p-1">
+                ${pagos.reduce((t, p) => t + (Number(p._bk?.cash || 0) + Number(p._bk?.card || 0) + Number(p._bk?.transfer || 0) || Number(p.monto || 0)), 0).toFixed(2)}
+              </td>
+              <td className="p-1 text-green-700">
+                ${pagos.reduce((t, p) => t + Number(p._bk?.cash || 0), 0).toFixed(2)}
+              </td>
+              <td className="p-1 text-blue-700">
+                ${pagos.reduce((t, p) => t + Number(p._bk?.card || 0), 0).toFixed(2)}
+              </td>
+              <td className="p-1 text-purple-700">
+                ${pagos.reduce((t, p) => t + Number(p._bk?.transfer || 0), 0).toFixed(2)}
+              </td>
+              <td colSpan={2}></td>
+            </tr>
+          </tfoot>
+        </table>
+      )}
     </div>
   );
 }
@@ -528,8 +571,9 @@ function generarPDFCierreVan({
     doc.text(`Closeout Date: ${now.toLocaleDateString('en-US')} ${now.toLocaleTimeString('en-US')}`, 316, 146);
   }
 
+  // Resumen ampliado para incluir totales de ventas y pagos
   doc.setFillColor(azulSuave);
-  doc.roundedRect(36, 160, 520, 52, 8, 8, "F");
+  doc.roundedRect(36, 160, 520, 70, 8, 8, "F");
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
   doc.setFontSize(12);
@@ -537,22 +581,31 @@ function generarPDFCierreVan({
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(negro);
+  
+  // Totales de ventas
+  const totalVentas = ventas.reduce((t, v) => t + Number(v.total_venta || 0), 0);
+  const totalPagos = ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0);
+  const totalAR = totalVentas - totalPagos;
+  
   doc.text(`Expected Cash: $${Number(resumen.efectivo_esperado || 0).toFixed(2)}`, 44, 198);
   doc.text(`Expected Card: $${Number(resumen.tarjeta_esperado || 0).toFixed(2)}`, 220, 198);
   doc.text(
     `Expected Transfer: $${Number(resumen.transferencia_esperado || 0).toFixed(2)}`,
     370, 198
   );
-  doc.text(`A/R in Period: $${Number(resumen.cxc_periodo || 0).toFixed(2)}`, 44, 214);
+  doc.text(`A/R in Period: $${Number(resumen.cxc_periodo || 0).toFixed(2)}`, 44, 216);
+  doc.text(`Total Sales: $${totalVentas.toFixed(2)}`, 220, 216);
+  doc.text(`Total Paid: $${totalPagos.toFixed(2)}`, 370, 216);
+  doc.text(`Total Balance Due: $${totalAR.toFixed(2)}`, 44, 234);
 
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
   doc.setFontSize(13);
-  doc.text("Pending Sales Included in This Report", 36, 240);
+  doc.text("Pending Sales Included in This Report", 36, 260);
 
   autoTable(doc, {
-    startY: 250,
-    head: [["Date", "Client", "Total", "Cash", "Card", "Transfer", "Paid", "A/R"]],
+    startY: 270,
+    head: [["Date", "Client", "Total", "Cash", "Card", "Transfer", "Paid", "Balance Due"]],
     body:
       ventas.length === 0
         ? [["-", "-", "-", "-", "-", "-", "-", "-"]]
@@ -565,8 +618,7 @@ function generarPDFCierreVan({
             "$" + Number(v._bk?.card || 0).toFixed(2),
             "$" + Number(v._bk?.transfer || 0).toFixed(2),
             "$" + Number(v.total_pagado || 0).toFixed(2),
-            "$" +
-              Math.max(0, Number(v.total_venta || 0) - Number(v.total_pagado || 0)).toFixed(2),
+            "$" + Math.max(0, Number(v.total_venta || 0) - Number(v.total_pagado || 0)).toFixed(2),
           ]),
     theme: "grid",
     headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
@@ -574,7 +626,7 @@ function generarPDFCierreVan({
     margin: { left: 36, right: 36 },
   });
 
-  let yAbonos = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 260) + 20;
+  let yAbonos = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 280) + 20;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
   doc.setTextColor("#0B4A6F");
@@ -617,7 +669,7 @@ function generarPDFCierreVan({
   const totalTransfer = ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0) + 
                       pagos.reduce((t, p) => t + Number(p._bk?.transfer || 0), 0);
 
-  let yTotales = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 260) + 20;
+  let yTotales = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 280) + 20;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
   doc.setTextColor(azul);
@@ -784,12 +836,12 @@ export default function CierreVan() {
   const { usuario } = useUsuario();
   const { van } = useVan();
 
-  const fechasPendientes = useFechasPendientes(van?.id);
-  const fechasCerradas = useFechasCerradas(van?.id);
+  const { fechas: fechasPendientes, error: fechasError } = useFechasPendientes(van?.id);
+  const { fechasCerradas } = useFechasCerradas(van?.id);
   const hoy = new Date().toISOString().slice(0, 10);
   const [fechaSeleccionada, setFechaSeleccionada] = useState("");
 
-  const cierreInfo = useCierreInfo(van?.id, fechaSeleccionada);
+  const { cierreInfo } = useCierreInfo(van?.id, fechaSeleccionada);
 
   useEffect(() => {
     if (fechasPendientes.length === 0) {
@@ -812,7 +864,7 @@ export default function CierreVan() {
   const fechaInicio = fechaSeleccionada;
   const fechaFin = fechaSeleccionada;
 
-  const { ventas, pagos, loading } = useMovimientosNoCerrados(
+  const { ventas, pagos, loading, error: movimientosError } = useMovimientosNoCerrados(
     van?.id,
     fechaInicio,
     fechaFin
@@ -827,28 +879,41 @@ export default function CierreVan() {
   );
 
   const [clientesDic, setClientesDic] = useState({});
+  const [clientesError, setClientesError] = useState(null);
   useEffect(() => {
     if (!clienteKeys.length) {
       setClientesDic({});
       return;
     }
     (async () => {
-      const keys = Array.from(new Set(clienteKeys));
-      const dic = {};
-      const { data: a } = await supabase
-        .from("clientes")
-        .select("id, nombre, negocio")
-        .in("id", keys);
-      for (const c of a || []) dic[c.id] = c;
-      const missing = keys.filter((k) => !dic[k]);
-      if (missing.length) {
-        const { data: b } = await supabase
-          .from("clientes_balance")
+      try {
+        const keys = Array.from(new Set(clienteKeys));
+        const dic = {};
+        const { data: a, error: aError } = await supabase
+          .from("clientes")
           .select("id, nombre, negocio")
-          .in("id", missing);
-        for (const c of b || []) dic[c.id] = c;
+          .in("id", keys);
+        if (aError) {
+          setClientesError(aError.message);
+          return;
+        }
+        for (const c of a || []) dic[c.id] = c;
+        const missing = keys.filter((k) => !dic[k]);
+        if (missing.length) {
+          const { data: b, error: bError } = await supabase
+            .from("clientes_balance")
+            .select("id, nombre, negocio")
+            .in("id", missing);
+          if (bError) {
+            setClientesError(bError.message);
+            return;
+          }
+          for (const c of b || []) dic[c.id] = c;
+        }
+        setClientesDic(dic);
+      } catch (e) {
+        setClientesError(e.message);
       }
-      setClientesDic(dic);
     })();
   }, [clienteKeys.join(",")]);
 
@@ -890,19 +955,14 @@ export default function CierreVan() {
         const fallback = bkPorVenta.get(v.id) || { cash: 0, card: 0, transfer: 0 };
         const derivado = (propio.cash + propio.card + propio.transfer > 0) ? propio : fallback;
 
-        // ✅ CORREGIDO: Calcular total_venta de forma más robusta
+        // CORREGIDO: Calcular total_venta de forma más robusta
         let totalVentaCalculado = Number(v.total_venta || 0);
+        let totalPagadoCalculado = Number(v.total_pagado || 0);
         
-        // Si total_venta es 0 o null, calcularlo desde el mayor valor disponible
-        if (totalVentaCalculado === 0) {
-          const totalPagado = Number(v.total_pagado || 0);
-          const cashPagado = derivado.cash;
-          const cardPagado = derivado.card;
-          const transferPagado = derivado.transfer;
-          const totalPagadoBreakdown = cashPagado + cardPagado + transferPagado;
-          
-          // Usar el mayor entre total_pagado y el breakdown
-          totalVentaCalculado = Math.max(totalPagado, totalPagadoBreakdown);
+        // Si total_venta es 0 o menor que total_pagado, usar el mayor
+        if (totalVentaCalculado <= 0 || totalVentaCalculado < totalPagadoCalculado) {
+          const totalPagadoBreakdown = derivado.cash + derivado.card + derivado.transfer;
+          totalVentaCalculado = Math.max(totalPagadoCalculado, totalPagadoBreakdown);
         }
 
         return {
@@ -941,7 +1001,7 @@ export default function CierreVan() {
     });
   }, [pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
 
-  const expected = useExpectedDia(van?.id, fechaSeleccionada);
+  const { exp: expected, error: expectedError } = useExpectedDia(van?.id, fechaSeleccionada);
 
   const totalesEsperados = {
     pago_efectivo: Number(expected.cash || 0),
@@ -949,17 +1009,22 @@ export default function CierreVan() {
     pago_transferencia: Number(expected.transfer || 0),
   };
 
-  // ✅ CORREGIDO: Cálculo limpio de cuentas por cobrar sin console.logs
-  const cuentasCobrar = Number(
-    ventasDecor
-      .reduce((t, v) => {
-        const venta = Number(v.total_venta) || 0;
-        const pagado = Number(v.total_pagado) || 0;
-        const credito = venta - pagado;
-        return t + (credito > 0 ? credito : 0);
-      }, 0)
-      .toFixed(2)
-  );
+  // CORREGIDO: Cálculo limpio de cuentas por cobrar
+  const cuentasCobrar = useMemo(() => {
+    const totalVentas = ventasDecor.reduce((t, v) => t + Number(v.total_venta || 0), 0);
+    const totalPagos = ventasDecor.reduce((t, v) => t + Number(v.total_pagado || 0), 0);
+    const resultado = (totalVentas - totalPagos).toFixed(2);
+    
+    // Log para depuración en desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Cálculo de cuentas por cobrar:');
+      console.log('Total Ventas:', totalVentas);
+      console.log('Total Pagos:', totalPagos);
+      console.log('Resultado (A/R):', resultado);
+    }
+    
+    return resultado;
+  }, [ventasDecor]);
 
   const [openDesglose, setOpenDesglose] = useState(false);
   const [reales, setReales] = useState({
@@ -1084,6 +1149,21 @@ export default function CierreVan() {
     }
   };
 
+  // Mostrar errores si los hay
+  if (fechasError || movimientosError || clientesError || expectedError) {
+    return (
+      <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
+        <h2 className="font-bold text-xl mb-4 text-red-600">Error</h2>
+        <div className="text-red-600">
+          {fechasError && <p>Fechas pendientes: {fechasError}</p>}
+          {movimientosError && <p>Movimientos: {movimientosError}</p>}
+          {clientesError && <p>Clientes: {clientesError}</p>}
+          {expectedError && <p>Expected: {expectedError}</p>}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
       <h2 className="font-bold text-xl mb-6 text-blue-900">Van Closeout</h2>
@@ -1148,6 +1228,37 @@ export default function CierreVan() {
           )}
         </>
       )}
+
+      {/* Sección de resumen de cuentas por cobrar */}
+      <div className="mb-4 p-4 bg-red-50 rounded-lg border border-red-200">
+        <h3 className="font-bold text-lg text-red-800 mb-2">Accounts Receivable Summary</h3>
+        {ventasDecor.length === 0 ? (
+          <div className="text-center py-4 text-gray-600">
+            No sales found for this date
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-gray-600">Total Sales Amount:</p>
+              <p className="font-bold text-lg">
+                ${ventasDecor.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2)}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Total Amount Paid:</p>
+              <p className="font-bold text-lg text-green-700">
+                ${ventasDecor.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Total Balance Due (A/R):</p>
+              <p className="font-bold text-xl text-red-700">
+                ${cuentasCobrar}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="mb-2 p-3 rounded bg-blue-50 text-sm">
         <div className="font-bold text-blue-900 mb-1">Expected (from totals)</div>
