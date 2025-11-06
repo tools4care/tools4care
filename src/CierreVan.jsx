@@ -1,19 +1,13 @@
-// src/CierreVan.jsx
+// src/CierreVan_UPDATED.jsx
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
-import jsPDF from "jspdf";
+import jsPDF from "jsPDF";
 import autoTable from "jspdf-autotable";
 
-/* ======================= Constantes ======================= */
-const METODOS_PAGO = [
-  { campo: "pago_efectivo", label: "Cash" },
-  { campo: "pago_tarjeta", label: "Card" },
-  { campo: "pago_transferencia", label: "Transfer" },
-];
-
+/* ======================= CONSTANTES ======================= */
 const DENOMINACIONES = [
   { nombre: "$100", valor: 100 },
   { nombre: "$50", valor: 50 },
@@ -27,714 +21,158 @@ const DENOMINACIONES = [
   { nombre: "Pennies", valor: 0.01 },
 ];
 
-const NO_CLIENTE = "Quick sale / No client";
-const isIsoDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
-
-// Formato de fecha estadounidense MM/DD/YYYY
-const toUSFormat = (dateStr) => {
-  if (!dateStr) return "";
-  const d = new Date(dateStr + "T00:00:00");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const year = d.getFullYear();
-  return `${month}/${day}/${year}`;
+/* ======================= FECHAS Y FORMATO ======================= */
+const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const pad2 = (n) => String(n).padStart(2, "0");
+const isYMD = (str) => typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+const ymdFromDateLocal = (date) => {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+const toUSFromYMD = (ymd) => {
+  if (!isYMD(ymd)) return "—";
+  const [y, m, d] = ymd.split("-");
+  return `${m}/${d}/${y}`;
 };
 
-/* ======================= Helpers ======================= */
-function displayName(cli) {
-  if (!cli) return "";
-  const nombre = [cli.nombre, cli.apellido].filter(Boolean).join(" ").trim();
-  return cli.negocio ? `${nombre || cli.id} (${cli.negocio})` : nombre || cli.id;
-}
+/* ============ Helpers visuales para Expected y Delta (chips) ============ */
+const format = (n) => fmt.format(Number(n || 0));
 
-const normMetodo = (m) => {
-  const s = String(m || "").trim().toLowerCase();
-  if (["transfer", "transferencia", "wire", "zelle", "bank", "bank transfer"].includes(s)) return "transfer";
-  if (["cash", "efectivo"].includes(s)) return "cash";
-  if (["card", "tarjeta", "debit", "credit"].includes(s)) return "card";
-  if (["mix", "mixed", "mixto"].includes(s)) return "mix";
-  return s;
+const deltaInfo = (countedVal, expectedVal) => {
+  const c = Number(countedVal || 0);
+  const e = Number(expectedVal || 0);
+  const d = c - e;
+  if (!isFinite(d)) return { label: "", cls: "" };
+  if (Math.abs(d) < 0.005) return { label: "Match", cls: "bg-green-100 text-green-700 border-green-300" };
+  if (d < 0) return { label: `Short ${format(Math.abs(d))}`, cls: "bg-red-100 text-red-700 border-red-300" };
+  return { label: `Over ${format(Math.abs(d))}`, cls: "bg-amber-100 text-amber-700 border-amber-300" };
 };
 
-// helper: fecha local 'YYYY-MM-DD'
-const toLocalYMD = (d) => {
-  if (!d) return "";
-  const dt = new Date(d);
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-};
+const Pill = ({ children, className = "" }) => (
+  <span className={`inline-flex items-center px-2 py-[2px] rounded-full text-xs border ${className}`}>{children}</span>
+);
 
-// obtiene la fecha de un pago, tolerante a distintos nombres de campo
-const getPagoDate = (p) =>
-  p?.fecha_pago || p?.fecha || p?.fecha_abono || p?.created_at || p?.updated_at || "";
-
-// normaliza a 'YYYY-MM-DD' desde el registro de pago
-const pagoYMD = (p) => toLocalYMD(getPagoDate(p));
-
+/* ======================= UTILIDADES DE PAGO ======================= */
 function breakdownPorMetodo(item) {
-  const out = { cash: 0, card: 0, transfer: 0 };
-
-  // 1) columnas directas (si existieran en la fila)
-  ["efectivo", "tarjeta", "transferencia"].forEach((k) => {
-    const v = Number(item?.[`pago_${k}`] || 0);
-    if (k === "efectivo") out.cash += v;
-    if (k === "tarjeta") out.card += v;
-    if (k === "transferencia") out.transfer += v;
-  });
-
-  // 2) posibles campos de desglose (incluye el JSON 'pago' que guardamos en Ventas)
-  const candidates = [
-    item?.pago,
-    item?.pagos_detalle,
-    item?.detalle_pagos,
-    item?.payment_breakdown,
-    item?.payment_details,
-    item?.metodos,
-    item?.metodos_detalle,
-    item?.metodo_detalles,
-    item?.metodo_json,
-    item?.detalles,
-    item?.detalle,
-    item?.pago_detalle,
-    item?.pagos,
-  ];
-
-  const sumDict = (obj) => {
-    if (!obj || typeof obj !== "object") return;
-    const map = {
-      cash: "cash",
-      efectivo: "cash",
-      card: "card",
-      tarjeta: "card",
-      transfer: "transfer",
-      transferencia: "transfer",
-      wire: "transfer",
-      zelle: "transfer",
-      bank: "transfer",
-    };
-    for (const [k, v] of Object.entries(obj)) {
-      const key = map[k?.toLowerCase?.() || k] || "";
-      if (key) out[key] += Number(v || 0);
-    }
-  };
-
+  const out = { cash: 0, card: 0, transfer: 0, other: 0 };
+  if (item.pago_efectivo !== undefined) out.cash += Number(item.pago_efectivo || 0);
+  if (item.pago_tarjeta !== undefined) out.card += Number(item.pago_tarjeta || 0);
+  if (item.pago_transferencia !== undefined) out.transfer += Number(item.pago_transferencia || 0);
+  if (item.pago_otro !== undefined) out.other += Number(item.pago_otro || 0);
+  if (item.efectivo !== undefined) out.cash += Number(item.efectivo || 0);
+  if (item.tarjeta !== undefined) out.card += Number(item.tarjeta || 0);
+  if (item.transferencia !== undefined) out.transfer += Number(item.transferencia || 0);
+  const candidates = [item?.pago, item?.payment_details, item?.metodos];
   for (let cand of candidates) {
     if (!cand) continue;
-    try {
-      if (typeof cand === "string") cand = JSON.parse(cand);
-    } catch (e) {
-      console.warn("Error parsing JSON in breakdownPorMetodo:", e);
-    }
-
+    try { if (typeof cand === "string") cand = JSON.parse(cand); } catch {}
     if (Array.isArray(cand)) {
       for (const r of cand) {
-        const metodo = normMetodo(r?.metodo || r?.metodo_pago || r?.type);
-        const monto = Number(r?.monto ?? r?.amount ?? r?.total ?? r?.value ?? 0);
-        if (metodo === "cash") out.cash += monto;
-        else if (metodo === "card") out.card += monto;
-        else if (metodo === "transfer") out.transfer += monto;
-      }
-    } else if (typeof cand === "object") {
-      if (cand.map && typeof cand.map === "object") {
-        sumDict(cand.map);
-      } else {
-        sumDict(cand);
+        const metodo = String(r?.metodo || "").toLowerCase();
+        const monto = Number(r?.monto || 0);
+        if (metodo.includes("cash") || metodo.includes("efectivo")) out.cash += monto;
+        else if (metodo.includes("card") || metodo.includes("tarjeta")) out.card += monto;
+        else if (metodo.includes("transfer")) out.transfer += monto;
+        else out.other += monto;
       }
     }
   }
-
-  // 3) fallback por metodo_pago + monto (por si no hubo nada arriba)
-  if (out.cash + out.card + out.transfer === 0) {
-    const metodo = normMetodo(item?.metodo_pago);
-    const montoFallback = Number(
-      item?.monto ?? item?.amount ?? item?.total ?? item?.total_pagado ?? 0
-    );
-    if (montoFallback) {
-      if (metodo === "cash") out.cash += montoFallback;
-      else if (metodo === "card") out.card += montoFallback;
-      else if (metodo === "transfer") out.transfer += montoFallback;
-    }
-  }
-
+  return out;
+}
+function breakdownPago(pago) {
+  const out = { cash: 0, card: 0, transfer: 0, other: 0 };
+  const metodo = String(pago.metodo_pago || "").toLowerCase();
+  const monto = Number(pago.monto || 0);
+  if (metodo.includes("efectivo") || metodo.includes("cash")) out.cash = monto;
+  else if (metodo.includes("tarjeta") || metodo.includes("card")) out.card = monto;
+  else if (metodo.includes("transfer")) out.transfer = monto;
+  else out.other = monto;
   return out;
 }
 
-/* ======================= Hooks de datos ======================= */
-
-// 1) Fechas con actividad (vista ya filtra por van y días activos) - INCLUYE CERRADAS
-function useFechasPendientes(van_id) {
-  const [fechas, setFechas] = useState([]);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    if (!van_id) {
-      setFechas([]);
-      return;
-    }
-    (async () => {
-      try {
-        const hoy = new Date();
-        const desde = new Date(hoy);
-        desde.setDate(hoy.getDate() - 90);
-        const toISO = (d) => d.toISOString().slice(0, 10);
-
-        const { data, error } = await supabase
-          .from("vw_expected_por_dia_van")
-          .select("dia")
-          .eq("van_id", van_id)
-          .gte("dia", toISO(desde))
-          .lte("dia", toISO(hoy))
-          .order("dia", { ascending: false });
-
-        if (error) {
-          setError(error.message);
-          setFechas([]);
-          return;
-        }
-        setFechas((data || []).map((r) => r.dia).filter(isIsoDate));
-      } catch (e) {
-        setError(e.message);
-        setFechas([]);
-      }
-    })();
-  }, [van_id]);
-  return { fechas, error };
-}
-
-// Hook para obtener fechas ya cerradas
-function useFechasCerradas(van_id) {
-  const [fechasCerradas, setFechasCerradas] = useState([]);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    if (!van_id) {
-      setFechasCerradas([]);
-      return;
-    }
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("cierres_van")
-          .select("fecha_inicio")
-          .eq("van_id", van_id);
-        
-        if (error) {
-          setError(error.message);
-          setFechasCerradas([]);
-          return;
-        }
-        
-        const fechas = Array.from(new Set((data || []).map(item => item.fecha_inicio)));
-        setFechasCerradas(fechas);
-      } catch (e) {
-        setError(e.message);
-        setFechasCerradas([]);
-      }
-    })();
-  }, [van_id]);
-  return { fechasCerradas, error };
-}
-
-// 2) Movimientos no cerrados (tus RPCs)
-function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
+/* ======================= HOOK: DATOS CIERRE (modo normal) ======================= */
+function useDatosCierre(vanId, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
   useEffect(() => {
-    if (!van_id || !isIsoDate(fechaInicio) || !isIsoDate(fechaFin)) {
-      setVentas([]);
-      setPagos([]);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+    if (!vanId || !fechaInicio || !fechaFin) { setVentas([]); setPagos([]); return; }
+    setLoading(true); setError(null);
     (async () => {
       try {
-        const { data: ventasPend, error: ventasError } = await supabase.rpc("ventas_no_cerradas_por_van_by_id", {
-          van_id_param: van_id,
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-        });
-        if (ventasError) {
-          setError(ventasError.message);
-          setLoading(false);
-          return;
-        }
-        const { data: pagosPend, error: pagosError } = await supabase.rpc("pagos_no_cerrados_por_van_by_id", {
-          van_id_param: van_id,
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-        });
-        if (pagosError) {
-          setError(pagosError.message);
-          setLoading(false);
-          return;
-        }
-        setVentas(ventasPend || []);
-        setPagos(pagosPend || []);
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
+        const inicioYMD = isYMD(fechaInicio) ? fechaInicio : ymdFromDateLocal(fechaInicio);
+        const finYMD = isYMD(fechaFin) ? fechaFin : ymdFromDateLocal(fechaFin);
+        const inicioTS = `${inicioYMD} 00:00:00`;
+        const finTS = `${finYMD} 23:59:59.999`;
+
+        const { data: ventasData, error: ventasError } = await supabase
+          .from("ventas")
+          .select(`*, clientes!ventas_cliente_id_fkey(nombre)`)
+          .eq("van_id", vanId)
+          .gte("fecha", inicioTS)
+          .lte("fecha", finTS)
+          .is("cierre_id", null)
+          .order("fecha", { ascending: false });
+        if (ventasError) throw ventasError;
+
+        const { data: pagosData, error: pagosError } = await supabase
+          .from("pagos")
+          .select(`*, clientes!pagos_cliente_id_fkey(nombre)`)
+          .eq("van_id", vanId)
+          .gte("fecha_pago", inicioTS)
+          .lte("fecha_pago", finTS)
+          .is("cierre_id", null)
+          .order("fecha_pago", { ascending: false });
+        if (pagosError) throw pagosError;
+
+        setVentas(ventasData?.map((v) => ({ ...v, cliente_nombre: v.clientes?.nombre || "Sin nombre" })) || []);
+        setPagos(pagosData?.map((p) => ({ ...p, cliente_nombre: p.clientes?.nombre || "Sin nombre" })) || []);
+      } catch {
+        setError("Error al cargar los datos. Por favor, intente de nuevo.");
+      } finally { setLoading(false); }
     })();
-  }, [van_id, fechaInicio, fechaFin]);
+  }, [vanId, fechaInicio, fechaFin]);
+
   return { ventas, pagos, loading, error };
 }
 
-// 3) Expected por día (desde la vista)
-function useExpectedDia(van_id, dia) {
-  const [exp, setExp] = useState({ cash: 0, card: 0, transfer: 0, mix: 0 });
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    if (!van_id || !isIsoDate(dia)) {
-      setExp({ cash: 0, card: 0, transfer: 0, mix: 0 });
-      return;
-    }
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("vw_expected_por_dia_van")
-          .select("cash_expected, card_expected, transfer_expected, mix_unallocated")
-          .eq("van_id", van_id)
-          .eq("dia", dia)
-          .maybeSingle();
-
-        if (error) {
-          setError(error.message);
-          return;
-        }
-
-        setExp({
-          cash: Number(data?.cash_expected || 0),
-          card: Number(data?.card_expected || 0),
-          transfer: Number(data?.transfer_expected || 0),
-          mix: Number(data?.mix_unallocated || 0),
-        });
-      } catch (e) {
-        setError(e.message);
-      }
-    })();
-  }, [van_id, dia]);
-  return { exp, error };
-}
-
-// Hook para obtener información del cierre
-function useCierreInfo(van_id, fecha) {
-  const [cierreInfo, setCierreInfo] = useState(null);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    if (!van_id || !isIsoDate(fecha)) {
-      setCierreInfo(null);
-      return;
-    }
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("cierres_van")
-          .select("*")
-          .eq("van_id", van_id)
-          .eq("fecha_inicio", fecha)
-          .maybeSingle();
-        
-        if (error || !data) {
-          setCierreInfo(null);
-          return;
-        }
-        
-        setCierreInfo(data);
-      } catch (e) {
-        setError(e.message);
-      }
-    })();
-  }, [van_id, fecha]);
-  return { cierreInfo, error };
-}
-
-/* ======================= Tablas UI ======================= */
-function TablaMovimientosPendientes({ ventas }) {
-  // Calcular totales reales de A/R (solo crédito pendiente)
-  const totalAR = ventas.reduce((t, v) => {
-    const venta = Number(v.total_venta) || 0;
-    const pagado = Number(v.total_pagado) || 0;
-    const ar = venta - pagado;
-    return t + (ar > 0 ? ar : 0);
-  }, 0);
-  
-  return (
-    <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
-      <h3 className="font-bold mb-3 text-lg text-blue-800">Pending Closeout Movements</h3>
-      <b>Pending Sales:</b>
-      {ventas.length === 0 ? (
-        <div className="text-center py-4 text-gray-600">
-          No pending sales for this date
-        </div>
-      ) : (
-        <table className="w-full text-xs mb-3">
-          <thead>
-            <tr className="bg-blue-100">
-              <th className="p-1">Date</th>
-              <th className="p-1">Client</th>
-              <th className="p-1">Total Sale</th>
-              <th className="p-1">Total Paid</th>
-              <th className="p-1 font-bold text-red-600">Balance Due</th>
-              <th className="p-1">Cash Paid</th>
-              <th className="p-1">Card Paid</th>
-              <th className="p-1">Transfer Paid</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ventas.map((v) => {
-              const totalVenta = Number(v.total_venta) || 0;
-              const totalPagado = Number(v.total_pagado) || 0;
-              const balanceDue = totalVenta - totalPagado;
-              
-              return (
-                <tr key={v.id}>
-                  <td className="p-1">{toUSFormat(v.fecha) || "-"}</td>
-                  <td className="p-1">
-                    {v.cliente_nombre ||
-                      (v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE)}
-                  </td>
-                  <td className="p-1 font-semibold">${totalVenta.toFixed(2)}</td>
-                  <td className="p-1">${totalPagado.toFixed(2)}</td>
-                  <td className={`p-1 font-bold ${balanceDue > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                    ${balanceDue.toFixed(2)}
-                  </td>
-                  <td className="p-1 text-green-700">${Number(v._bk?.cash || 0).toFixed(2)}</td>
-                  <td className="p-1 text-blue-700">${Number(v._bk?.card || 0).toFixed(2)}</td>
-                  <td className="p-1 text-purple-700">${Number(v._bk?.transfer || 0).toFixed(2)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot className="bg-blue-50 font-bold">
-            <tr>
-              <td className="p-1">Totals</td>
-              <td className="p-1"></td>
-              <td className="p-1">
-                ${ventas.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2)}
-              </td>
-              <td className="p-1">
-                ${ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
-              </td>
-              <td className="p-1 text-red-600 font-bold">${totalAR.toFixed(2)}</td>
-              <td className="p-1 text-green-700">
-                ${ventas.reduce((t, v) => t + Number(v._bk?.cash || 0), 0).toFixed(2)}
-              </td>
-              <td className="p-1 text-blue-700">
-                ${ventas.reduce((t, v) => t + Number(v._bk?.card || 0), 0).toFixed(2)}
-              </td>
-              <td className="p-1 text-purple-700">
-                ${ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2)}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      )}
-    </div>
-  );
-}
-
-function TablaAbonosPendientes({ pagos }) {
-  return (
-    <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
-      <h3 className="font-bold mb-3 text-lg text-blue-800">
-        Customer Payments/Advances Included in This Closing
-      </h3>
-      {pagos.length === 0 ? (
-        <div className="text-center py-4 text-gray-600">
-          No pending payments/advances for this date
-        </div>
-      ) : (
-        <table className="w-full text-xs mb-3">
-          <thead>
-            <tr className="bg-blue-100">
-              <th className="p-1">Date</th>
-              <th className="p-1">Client</th>
-              <th className="p-1">Amount</th>
-              <th className="p-1">Cash</th>
-              <th className="p-1">Card</th>
-              <th className="p-1">Transfer</th>
-              <th className="p-1">Reference</th>
-              <th className="p-1">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pagos.map((p) => {
-              const cash = Number(p._bk?.cash || 0);
-              const card = Number(p._bk?.card || 0);
-              const transfer = Number(p._bk?.transfer || 0);
-              const amount = cash + card + transfer || Number(p.monto || 0);
-
-              return (
-                <tr key={p.id}>
-                  <td className="p-1">{toUSFormat(pagoYMD(p)) || "-"}</td>
-                  <td className="p-1">
-                    {p.cliente_nombre ||
-                      (p.cliente_id ? p.cliente_id.slice(0, 8) : NO_CLIENTE)}
-                  </td>
-                  <td className="p-1 font-semibold">${amount.toFixed(2)}</td>
-                  <td className="p-1 text-green-700">${cash.toFixed(2)}</td>
-                  <td className="p-1 text-blue-700">${card.toFixed(2)}</td>
-                  <td className="p-1 text-purple-700">${transfer.toFixed(2)}</td>
-                  <td className="p-1">{p.referencia || "-"}</td>
-                  <td className="p-1">{p.notas || "-"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot className="bg-blue-50 font-bold">
-            <tr>
-              <td className="p-1">Totals</td>
-              <td className="p-1"></td>
-              <td className="p-1">
-                ${pagos.reduce((t, p) => t + (Number(p._bk?.cash || 0) + Number(p._bk?.card || 0) + Number(p._bk?.transfer || 0) || Number(p.monto || 0)), 0).toFixed(2)}
-              </td>
-              <td className="p-1 text-green-700">
-                ${pagos.reduce((t, p) => t + Number(p._bk?.cash || 0), 0).toFixed(2)}
-              </td>
-              <td className="p-1 text-blue-700">
-                ${pagos.reduce((t, p) => t + Number(p._bk?.card || 0), 0).toFixed(2)}
-              </td>
-              <td className="p-1 text-purple-700">
-                ${pagos.reduce((t, p) => t + Number(p._bk?.transfer || 0), 0).toFixed(2)}
-              </td>
-              <td colSpan={2}></td>
-            </tr>
-          </tfoot>
-        </table>
-      )}
-    </div>
-  );
-}
-
-/* ======================= PDF ======================= */
-function generarPDFCierreVan({
-  empresa = {
-    nombre: "TOOLS4CARE",
-    direccion: "108 Lafayette St, Salem, MA 01970",
-    telefono: "(978) 594-1624",
-    email: "tools4care@gmail.com",
-  },
-  usuario,
-  vanNombre,
-  ventas = [],
-  pagos = [],
-  resumen = {},
-  fechaInicio,
-  fechaFin,
-  fechaCierre = null,
-  mode = "download",
-}) {
-  const doc = new jsPDF("p", "pt", "a4");
-  const azul = "#0B4A6F", azulSuave = "#e3f2fd", negro = "#222";
-
-  const xLeft = 36;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(22);
-  doc.setTextColor(azul);
-  doc.text(empresa.nombre, xLeft, 48);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(negro);
-  doc.text(`Address: ${empresa.direccion}`, xLeft, 65);
-  doc.text(`Phone: ${empresa.telefono}  |  Email: ${empresa.email}`, xLeft, 78);
-  doc.setLineWidth(1.1);
-  doc.setDrawColor(azul);
-  doc.line(36, 86, 560, 86);
-
-  const vanIdShort = (vanNombre || "").toString().slice(0, 8);
-  const vanLabel = [vanNombre || "-", `ID: ${vanIdShort}`]
-    .filter(Boolean)
-    .join(" — ");
-  const userLine = `${usuario?.nombre || usuario?.email || "-"}${
-    usuario?.email ? " | " + usuario.email : ""
-  }${usuario?.id ? " (ID: " + usuario.id + ")" : ""}`;
-
-  doc.setFontSize(14);
-  doc.setTextColor(azul);
-  doc.text("Van Closeout - Executive Report", 36, 110);
-  doc.setFontSize(10);
-  doc.setTextColor(negro);
-  doc.text(`Period: ${toUSFormat(fechaInicio)} to ${toUSFormat(fechaFin)}`, 36, 130);
-  doc.text(doc.splitTextToSize(`Responsible: ${userLine}`, 240), 36, 146);
-  doc.text(doc.splitTextToSize(`Van: ${vanLabel}`, 220), 316, 130);
-  
-  if (fechaCierre) {
-    doc.text(`Closeout Date: ${toUSFormat(fechaCierre)}`, 316, 146);
-  } else {
-    const now = new Date();
-    doc.text(`Closeout Date: ${now.toLocaleDateString('en-US')} ${now.toLocaleTimeString('en-US')}`, 316, 146);
-  }
-
-  // Resumen ampliado para incluir totales de ventas y pagos
-  doc.setFillColor(azulSuave);
-  doc.roundedRect(36, 160, 520, 70, 8, 8, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(azul);
-  doc.setFontSize(12);
-  doc.text("Executive Summary", 44, 180);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(negro);
-  
-  // Totales de ventas
-  const totalVentas = ventas.reduce((t, v) => t + Number(v.total_venta || 0), 0);
-  const totalPagos = ventas.reduce((t, v) => t + Number(v.total_pagado || 0), 0);
-  const totalAR = totalVentas - totalPagos;
-  
-  doc.text(`Expected Cash: $${Number(resumen.efectivo_esperado || 0).toFixed(2)}`, 44, 198);
-  doc.text(`Expected Card: $${Number(resumen.tarjeta_esperado || 0).toFixed(2)}`, 220, 198);
-  doc.text(
-    `Expected Transfer: $${Number(resumen.transferencia_esperado || 0).toFixed(2)}`,
-    370, 198
-  );
-  doc.text(`A/R in Period: $${Number(resumen.cxc_periodo || 0).toFixed(2)}`, 44, 216);
-  doc.text(`Total Sales: $${totalVentas.toFixed(2)}`, 220, 216);
-  doc.text(`Total Paid: $${totalPagos.toFixed(2)}`, 370, 216);
-  doc.text(`Total Balance Due: $${totalAR.toFixed(2)}`, 44, 234);
-
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(azul);
-  doc.setFontSize(13);
-  doc.text("Pending Sales Included in This Report", 36, 260);
-
-  autoTable(doc, {
-    startY: 270,
-    head: [["Date", "Client", "Total", "Cash", "Card", "Transfer", "Paid", "Balance Due"]],
-    body:
-      ventas.length === 0
-        ? [["-", "-", "-", "-", "-", "-", "-", "-"]]
-        : ventas.map((v) => [
-            toUSFormat(v.fecha?.slice(0, 10)) || "-",
-            v.cliente_nombre ||
-              (v.cliente_id ? v.cliente_id.slice(0, 8) : "No client"),
-            "$" + Number(v.total_venta || 0).toFixed(2),
-            "$" + Number(v._bk?.cash || 0).toFixed(2),
-            "$" + Number(v._bk?.card || 0).toFixed(2),
-            "$" + Number(v._bk?.transfer || 0).toFixed(2),
-            "$" + Number(v.total_pagado || 0).toFixed(2),
-            "$" + Math.max(0, Number(v.total_venta || 0) - Number(v.total_pagado || 0)).toFixed(2),
-          ]),
-    theme: "grid",
-    headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
-    styles: { fontSize: 9 },
-    margin: { left: 36, right: 36 },
-  });
-
-  let yAbonos = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 280) + 20;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
-  doc.setTextColor("#0B4A6F");
-  doc.text("Customer Payments Included in This Closing", 36, yAbonos);
-
-  autoTable(doc, {
-    startY: yAbonos + 10,
-    head: [["Date", "Client", "Amount", "Cash", "Card", "Transfer", "Reference", "Notes"]],
-    body:
-      pagos.length === 0
-        ? [["-", "-", "-", "-", "-", "-", "-", "-"]]
-        : pagos.map((p) => {
-            const cash = Number(p._bk?.cash || 0);
-            const card = Number(p._bk?.card || 0);
-            const transfer = Number(p._bk?.transfer || 0);
-            const amount = cash + card + transfer || Number(p.monto || 0);
-            
-            return [
-              toUSFormat((p.fecha_pago || p.fecha || p.created_at || "").toString().slice(0,10)) || "-",
-              p.cliente_nombre ||
-                (p.cliente_id ? p.cliente_id.slice(0, 8) : "No client"),
-              "$" + amount.toFixed(2),
-              "$" + cash.toFixed(2),
-              "$" + card.toFixed(2),
-              "$" + transfer.toFixed(2),
-              p.referencia || "-",
-              p.notas || "-",
-            ];
-          }),
-    theme: "grid",
-    headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
-    styles: { fontSize: 9 },
-    margin: { left: 36, right: 36 },
-  });
-
-  const totalCash = ventas.reduce((t, v) => t + Number(v._bk?.cash || 0), 0) + 
-                   pagos.reduce((t, p) => t + Number(p._bk?.cash || 0), 0);
-  const totalCard = ventas.reduce((t, v) => t + Number(v._bk?.card || 0), 0) + 
-                   pagos.reduce((t, p) => t + Number(p._bk?.card || 0), 0);
-  const totalTransfer = ventas.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0) + 
-                      pagos.reduce((t, p) => t + Number(p._bk?.transfer || 0), 0);
-
-  let yTotales = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 280) + 20;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
-  doc.setTextColor(azul);
-  doc.text("Payment Totals", 36, yTotales);
-
-  autoTable(doc, {
-    startY: yTotales + 10,
-    head: [["Payment Method", "Total"]],
-    body: [
-      ["Cash", "$" + totalCash.toFixed(2)],
-      ["Card", "$" + totalCard.toFixed(2)],
-      ["Transfer", "$" + totalTransfer.toFixed(2)],
-      ["Grand Total", "$" + (totalCash + totalCard + totalTransfer).toFixed(2)]
-    ],
-    theme: "grid",
-    headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
-    styles: { fontSize: 10 },
-    margin: { left: 36, right: 36 },
-  });
-
-  const nombreArchivo = `VanCloseout_${(vanNombre || "")
-    .toString()
-    .replace(/\s+/g, "")}_${fechaInicio}_${fechaFin}.pdf`;
-
-  if (mode === "print") {
-    doc.autoPrint();
-    const blobUrl = doc.output("bloburl");
-    const win = window.open(blobUrl, "_blank");
-    setTimeout(() => { try { win?.print?.(); } catch {} }, 400);
-    return;
-  }
-
-  doc.save(nombreArchivo);
-}
-
-/* ======================= Modales ======================= */
-function DesgloseEfectivoModal({ open, onClose, onSave }) {
+/* ======================= MODAL DESGLOSE EFECTIVO ======================= */
+function ModalDesglose({ open, initial, onClose, onSave }) {
   const [billetes, setBilletes] = useState(
-    DENOMINACIONES.map((d) => ({ ...d, cantidad: "" }))
+    (initial && initial.length ? initial : DENOMINACIONES).map((d) => ({ ...d, cantidad: d.cantidad ?? "" }))
   );
   useEffect(() => {
-    if (open)
-      setBilletes(DENOMINACIONES.map((d) => ({ ...d, cantidad: "" })));
-  }, [open]);
+    if (open) {
+      const start = (initial && initial.length ? initial : DENOMINACIONES).map((d) => ({ ...d, cantidad: d.cantidad ?? "" }));
+      setBilletes(start);
+    }
+  }, [open, initial]);
 
-  const total = billetes.reduce(
-    (t, b) => t + Number(b.cantidad || 0) * b.valor,
-    0
-  );
+  const total = billetes.reduce((t, b) => t + Number(b.cantidad || 0) * b.valor, 0);
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-30 z-50 flex items-center justify-center">
-      <div className="bg-white rounded-xl p-6 shadow-xl w-[360px] max-w-full">
-        <h2 className="text-lg font-bold mb-2">Cash Breakdown</h2>
+    <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+      <div className="bg-white rounded-xl p-6 shadow-xl w-[420px] max-w-full max-h-[80vh] overflow-y-auto">
+        <h2 className="text-lg font-bold mb-4 text-blue-800">Cash Breakdown</h2>
         <table className="w-full mb-4">
+          <thead>
+            <tr className="border-b">
+              <th className="text-left py-2">Denomination</th>
+              <th className="text-center py-2">Count</th>
+              <th className="text-right py-2">Total</th>
+            </tr>
+          </thead>
           <tbody>
             {billetes.map((b, i) => (
-              <tr key={b.nombre}>
-                <td className="py-1">{b.nombre}</td>
-                <td>
+              <tr key={b.nombre} className="border-b">
+                <td className="py-2">{b.nombre}</td>
+                <td className="py-2 text-center">
                   <input
-                    type="number"
-                    min="0"
-                    className="border p-1 w-16 rounded text-right"
+                    type="number" min="0"
+                    className="border p-1 w-20 rounded text-center"
                     value={b.cantidad}
                     onChange={(e) => {
                       const nuevo = [...billetes];
@@ -743,663 +181,725 @@ function DesgloseEfectivoModal({ open, onClose, onSave }) {
                     }}
                   />
                 </td>
-                <td className="text-xs pl-2 text-gray-400">
-                  ${(b.valor * Number(b.cantidad || 0)).toFixed(2)}
-                </td>
+                <td className="py-2 text-right text-gray-600">{fmt.format(b.valor * Number(b.cantidad || 0))}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <div className="mb-4 text-right font-bold text-blue-700">
-          Total: ${total.toFixed(2)}
+        <div className="mb-4 p-3 bg-blue-50 rounded text-right">
+          <span className="font-bold text-lg text-blue-800">Total: {fmt.format(total)}</span>
         </div>
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-1 bg-gray-200 rounded">
-            Cancel
-          </button>
-          <button
-            onClick={() => onSave(total)}
-            className="px-3 py-1 bg-blue-700 text-white rounded"
-          >
-            Use Total
-          </button>
+          <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Cancel</button>
+          <button onClick={() => onSave({ total, billetes })} className="px-4 py-2 bg-blue-700 text-white rounded hover:bg-blue-800">Use This Total</button>
         </div>
       </div>
     </div>
   );
 }
 
-function ConfirmModal({
-  open,
-  onCancel,
-  onConfirm,
-  totalesEsperados,
-  reales,
-  cuentasCobrar,
-  comentario,
-  fechaInicio,
-  fechaFin,
-}) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center">
-      <div className="bg-white rounded-xl p-6 shadow-xl w-[370px] max-w-full">
-        <h2 className="font-bold text-lg mb-3 text-blue-800">Confirm Closeout</h2>
-        <div className="mb-2 text-sm">
-          <b>From:</b> {toUSFormat(fechaInicio)} <b>To:</b> {toUSFormat(fechaFin)}
-        </div>
-        <div className="border rounded bg-gray-50 p-3 mb-3 text-xs">
-          <div>
-            <b>Cash (expected):</b> ${totalesEsperados.pago_efectivo}
-          </div>
-          <div>
-            <b>Card (expected):</b> ${totalesEsperados.pago_tarjeta}
-          </div>
-          <div>
-            <b>Transfer (expected):</b> ${totalesEsperados.pago_transferencia}
-          </div>
-          <div>
-            <b>Cash (counted):</b> ${reales.pago_efectivo || 0}
-          </div>
-          <div>
-            <b>Card (counted):</b> ${reales.pago_tarjeta || 0}
-          </div>
-          <div>
-            <b>Transfer (counted):</b> ${reales.pago_transferencia || 0}
-          </div>
-          <div>
-            <b>Accounts Receivable:</b> ${cuentasCobrar}
-          </div>
-          <div>
-            <b>Comment:</b> {comentario || "-"}
-          </div>
-        </div>
-        <div className="flex justify-end gap-2">
-          <button onClick={onCancel} className="bg-gray-200 px-3 py-1 rounded">
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="bg-blue-700 text-white px-4 py-1 rounded font-bold"
-          >
-            Confirm
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ======================= Componente principal ======================= */
+/* ======================= COMPONENTE PRINCIPAL ======================= */
 export default function CierreVan() {
   const navigate = useNavigate();
   const { usuario } = useUsuario();
   const { van } = useVan();
 
-  const { fechas: fechasPendientes, error: fechasError } = useFechasPendientes(van?.id);
-  const { fechasCerradas } = useFechasCerradas(van?.id);
-  const hoy = new Date().toISOString().slice(0, 10);
-  const [fechaSeleccionada, setFechaSeleccionada] = useState("");
+  if (!van || !van.id) {
+    return (
+      <div className="max-w-4xl mx-auto mt-10 p-6">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <h2 className="text-lg font-bold mb-2">No se encontró una van asignada</h2>
+        </div>
+      </div>
+    );
+  }
 
-  const { cierreInfo } = useCierreInfo(van?.id, fechaSeleccionada);
-
-  useEffect(() => {
-    if (fechasPendientes.length === 0) {
-      setFechaSeleccionada("");
-      return;
-    }
-    let pref = "";
+  /* ====== Fechas del pre-cierre (modo normal) ====== */
+  const readPreFechas = () => {
     try {
-      pref = localStorage.getItem("pre_cierre_fecha") || "";
+      const saved = JSON.parse(localStorage.getItem("pre_cierre_fechas") || "[]");
+      if (Array.isArray(saved) && saved.length > 0) return [...saved].sort();
     } catch {}
-    if (isIsoDate(pref) && fechasPendientes.includes(pref)) {
-      setFechaSeleccionada(pref);
-    } else if (fechasPendientes.includes(hoy)) {
-      setFechaSeleccionada(hoy);
-    } else {
-      setFechaSeleccionada(fechasPendientes[0]);
-    }
-  }, [fechasPendientes, hoy]);
-
-  const fechaInicio = fechaSeleccionada;
-  const fechaFin = fechaSeleccionada;
-
-  const { ventas, pagos, loading, error: movimientosError } = useMovimientosNoCerrados(
-    van?.id,
-    fechaInicio,
-    fechaFin
-  );
-
-  const clienteKeys = useMemo(
-    () =>
-      Array.from(
-        new Set([...ventas, ...pagos].map((x) => x?.cliente_id).filter(Boolean))
-      ),
-    [ventas, pagos]
-  );
-
-  const [clientesDic, setClientesDic] = useState({});
-  const [clientesError, setClientesError] = useState(null);
-  useEffect(() => {
-    if (!clienteKeys.length) {
-      setClientesDic({});
-      return;
-    }
-    (async () => {
-      try {
-        const keys = Array.from(new Set(clienteKeys));
-        const dic = {};
-        const { data: a, error: aError } = await supabase
-          .from("clientes")
-          .select("id, nombre, negocio")
-          .in("id", keys);
-        if (aError) {
-          setClientesError(aError.message);
-          return;
-        }
-        for (const c of a || []) dic[c.id] = c;
-        const missing = keys.filter((k) => !dic[k]);
-        if (missing.length) {
-          const { data: b, error: bError } = await supabase
-            .from("clientes_balance")
-            .select("id, nombre, negocio")
-            .in("id", missing);
-          if (bError) {
-            setClientesError(bError.message);
-            return;
-          }
-          for (const c of b || []) dic[c.id] = c;
-        }
-        setClientesDic(dic);
-      } catch (e) {
-        setClientesError(e.message);
-      }
-    })();
-  }, [clienteKeys.join(",")]);
-
-  const pagosDecor = useMemo(
-    () =>
-      (pagos || []).map((p) => ({
-        ...p,
-        _bk: breakdownPorMetodo(p),
-        cliente_nombre:
-          p.cliente_nombre ||
-          (clientesDic[p.cliente_id]
-            ? displayName(clientesDic[p.cliente_id])
-            : p.cliente_id
-            ? p.cliente_id.slice(0, 8)
-            : NO_CLIENTE),
-      })),
-    [pagos, clientesDic]
-  );
-
-  const bkPorVenta = useMemo(() => {
-    const map = new Map();
-    for (const p of pagosDecor) {
-      const ventaId = p.venta_id || p.sale_id || p.ventaId;
-      if (!ventaId) continue;
-      const prev = map.get(ventaId) || { cash: 0, card: 0, transfer: 0 };
-      prev.cash += Number(p._bk?.cash || 0);
-      prev.card += Number(p._bk?.card || 0);
-      prev.transfer += Number(p._bk?.transfer || 0);
-      map.set(ventaId, prev);
-    }
-    return map;
-  }, [pagosDecor]);
-
-  const ventasDecor = useMemo(
-    () =>
-      (ventas || []).map((v) => {
-        const ficha = clientesDic[v.cliente_id];
-        let propio = breakdownPorMetodo(v);
-        const fallback = bkPorVenta.get(v.id) || { cash: 0, card: 0, transfer: 0 };
-        const derivado = (propio.cash + propio.card + propio.transfer > 0) ? propio : fallback;
-
-        // CORREGIDO: Calcular total_venta de forma más robusta
-        let totalVentaCalculado = Number(v.total_venta || 0);
-        let totalPagadoCalculado = Number(v.total_pagado || 0);
-        
-        // Si total_venta es 0 o menor que total_pagado, usar el mayor
-        if (totalVentaCalculado <= 0 || totalVentaCalculado < totalPagadoCalculado) {
-          const totalPagadoBreakdown = derivado.cash + derivado.card + derivado.transfer;
-          totalVentaCalculado = Math.max(totalPagadoCalculado, totalPagadoBreakdown);
-        }
-
-        return {
-          ...v,
-          total_venta: totalVentaCalculado,
-          _bk: derivado,
-          cliente_nombre:
-            v.cliente_nombre ||
-            (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
-        };
-      }),
-    [ventas, clientesDic, bkPorVenta]
-  );
-
-  const ventasIdSet = useMemo(
-    () => new Set((ventas || []).map((v) => v.id)),
-    [ventas]
-  );
-
-  const avances = useMemo(() => {
-    return (pagosDecor || []).filter((p) => {
-      const ligadoAVentaDelRango = !!(p?.venta_id && ventasIdSet.has(p.venta_id));
-      const diaLocal = pagoYMD(p);
-      if (String(diaLocal).trim() !== String(fechaSeleccionada).trim()) return false;
-      const vanOK = !p?.van_id || !van?.id || p.van_id === van.id;
-
-      if (ligadoAVentaDelRango) return false;
-      if (!vanOK) return false;
-
-      const monto =
-        (Number(p._bk?.cash || 0) +
-          Number(p._bk?.card || 0) +
-          Number(p._bk?.transfer || 0)) || Number(p.monto || 0);
-
-      return monto > 0.0001;
-    });
-  }, [pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
-
-  const { exp: expected, error: expectedError } = useExpectedDia(van?.id, fechaSeleccionada);
-
-  const totalesEsperados = {
-    pago_efectivo: Number(expected.cash || 0),
-    pago_tarjeta: Number(expected.card || 0),
-    pago_transferencia: Number(expected.transfer || 0),
+    return [ymdFromDateLocal(new Date())];
   };
 
-  // CORREGIDO: Cálculo limpio de cuentas por cobrar
-  const cuentasCobrar = useMemo(() => {
-    const totalVentas = ventasDecor.reduce((t, v) => t + Number(v.total_venta || 0), 0);
-    const totalPagos = ventasDecor.reduce((t, v) => t + Number(v.total_pagado || 0), 0);
-    const resultado = (totalVentas - totalPagos).toFixed(2);
-    
-    // Log para depuración en desarrollo
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Cálculo de cuentas por cobrar:');
-      console.log('Total Ventas:', totalVentas);
-      console.log('Total Pagos:', totalPagos);
-      console.log('Resultado (A/R):', resultado);
-    }
-    
-    return resultado;
-  }, [ventasDecor]);
+  // inicialización sincrónica desde localStorage (evita “hoy” por defecto)
+  const [fechasSeleccionadas, setFechasSeleccionadas] = useState(() => readPreFechas());
+  const [fechaInicio, setFechaInicio] = useState(() => fechasSeleccionadas[0]);
+  const [fechaFin, setFechaFin] = useState(
+    () => fechasSeleccionadas[fechasSeleccionadas.length - 1] || fechasSeleccionadas[0]
+  );
 
-  const [openDesglose, setOpenDesglose] = useState(false);
-  const [reales, setReales] = useState({
-    pago_efectivo: "",
-    pago_tarjeta: "",
-    pago_transferencia: "",
+  // si cambian las fechas (por navegación desde Pre-cierre), re-sincroniza si NO estás viendo un cierre bloqueado
+  const [viewClose, setViewClose] = useState(null);
+  useEffect(() => {
+    if (!viewClose && fechasSeleccionadas.length > 0) {
+      setFechaInicio(fechasSeleccionadas[0]);
+      setFechaFin(fechasSeleccionadas[fechasSeleccionadas.length - 1] || fechasSeleccionadas[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fechasSeleccionadas]);
+
+  // al montar, refresca por si cambió en otra pantalla
+  useEffect(() => {
+    setFechasSeleccionadas(readPreFechas());
+  }, []);
+
+  /* ====== Buscador OPCIONAL ====== */
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchStart, setSearchStart] = useState(fechaInicio);
+  const [searchEnd, setSearchEnd] = useState(fechaFin);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+
+  const openSearch = () => setShowSearch((s) => !s);
+
+  const handleSearchCloseout = async () => {
+    if (!isYMD(searchStart) || !isYMD(searchEnd)) return;
+    setLoadingSearch(true);
+    try {
+      const { data, error } = await supabase
+        .from("cierres_van")
+        .select("*")
+        .eq("van_id", van.id)
+        .lte("fecha_inicio", searchEnd)
+        .gte("fecha_fin", searchStart)
+        .order("fecha_inicio", { ascending: true });
+      if (error) throw error;
+      setSearchResults(data || []);
+      setViewClose(null);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setLoadingSearch(false);
+    }
+  };
+
+  const handlePickCloseout = (c) => {
+    setFechaInicio(c.fecha_inicio);
+    setFechaFin(c.fecha_fin);
+    setViewClose(c);
+    setCounted({
+      cash: c.efectivo_real ?? "",
+      card: c.tarjeta_real ?? "",
+      transfer: c.transferencia_real ?? "",
+      other: "",
+    });
+    setComentario(c.comentario ?? "");
+  };
+
+  const exitViewMode = () => {
+    setViewClose(null);
+    setComentario("");
+    setCounted({ cash: "", card: "", transfer: "", other: "" });
+    // volver al rango seleccionado en Pre-cierre
+    const first = fechasSeleccionadas[0];
+    const last = fechasSeleccionadas[fechasSeleccionadas.length - 1] || first;
+    setFechaInicio(first);
+    setFechaFin(last);
+  };
+
+  /* ====== Datos del periodo actual (modo normal) ====== */
+  const { ventas, pagos, loading, error } = useDatosCierre(van.id, fechaInicio, fechaFin);
+
+  const ventasConDesglose = useMemo(
+    () =>
+      ventas.map((v) => {
+        const breakdown = breakdownPorMetodo(v);
+        const totalVenta = Number(v.total || v.total_venta || 0);
+        const totalPagado = Number(v.total_pagado || 0);
+        const balance = Math.max(0, totalVenta - totalPagado);
+        return { ...v, ...breakdown, total_venta: totalVenta, total_pagado: totalPagado, balance };
+      }),
+    [ventas]
+  );
+  const pagosConDesglose = useMemo(
+    () => pagos.map((p) => ({ ...p, ...breakdownPago(p), monto: Number(p.monto || 0) })),
+    [pagos]
+  );
+
+  const totales = useMemo(() => {
+    const totalVentas = ventasConDesglose.reduce((t, v) => t + v.total_venta, 0);
+    const totalPagado = ventasConDesglose.reduce((t, v) => t + v.total_pagado, 0);
+    const balanceDue = ventasConDesglose.reduce((t, v) => t + v.balance, 0);
+    const cashVentas = ventasConDesglose.reduce((t, v) => t + v.cash, 0);
+    const cardVentas = ventasConDesglose.reduce((t, v) => t + v.card, 0);
+    const transferVentas = ventasConDesglose.reduce((t, v) => t + v.transfer, 0);
+    const otherVentas = ventasConDesglose.reduce((t, v) => t + (v.other || 0), 0);
+    const cashPagos = pagosConDesglose.reduce((t, p) => t + p.cash, 0);
+    const cardPagos = pagosConDesglose.reduce((t, p) => t + p.card, 0);
+    const transferPagos = pagosConDesglose.reduce((t, p) => t + p.transfer, 0);
+    const otherPagos = pagosConDesglose.reduce((t, p) => t + (p.other || 0), 0);
+    return {
+      totalVentas, totalPagado, balanceDue,
+      cash: cashVentas + cashPagos,
+      card: cardVentas + cardPagos,
+      transfer: transferVentas + transferPagos,
+      other: otherVentas + otherPagos,
+      ventasEfectivo: cashVentas,
+      ventasTarjeta: cardVentas,
+      ventasTransfer: transferVentas,
+      ventasOther: otherVentas,
+      pagosEfectivo: cashPagos,
+      pagosTarjeta: cardPagos,
+      pagosTransfer: transferPagos,
+      pagosOther: otherPagos,
+    };
+  }, [ventasConDesglose, pagosConDesglose]);
+
+  /* ====== Contado / desglose ====== */
+  const [cashBreakdown, setCashBreakdown] = useState(() => {
+    try {
+      const s = localStorage.getItem("cierre_cash_breakdown");
+      if (!s) return DENOMINACIONES.map((d) => ({ ...d, cantidad: "" }));
+      const arr = JSON.parse(s);
+      return DENOMINACIONES.map((d) => {
+        const found = arr.find((x) => x.nombre === d.nombre);
+        return { ...d, cantidad: found?.cantidad ?? "" };
+      });
+    } catch { return DENOMINACIONES.map((d) => ({ ...d, cantidad: "" })); }
   });
+  const totalCashBreakdown = useMemo(
+    () => cashBreakdown.reduce((t, b) => t + Number(b.cantidad || 0) * b.valor, 0),
+    [cashBreakdown]
+  );
+
+  const [counted, setCounted] = useState({ cash: "", card: "", transfer: "", other: "" });
   const [comentario, setComentario] = useState("");
+  const [openDesglose, setOpenDesglose] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [generandoPDF, setGenerandoPDF] = useState(false);
-  const [pdfMode, setPdfMode] = useState("download");
 
-  async function guardarCierre(e) {
-    if (e && e.preventDefault) e.preventDefault();
-    if (!van?.id || ventasDecor.length + pagosDecor.length === 0) {
-      setMensaje("No transactions to close.");
-      return;
-    }
+  /* ====== Validación: bloquear guardar hasta llenar datos ====== */
+  const requireOther = totales.other > 0;
+  const isNumberLike = (v) => v !== "" && !isNaN(Number(v)) && Number(v) >= 0;
+  const isFormReady =
+    !viewClose &&
+    isNumberLike(counted.cash) &&
+    isNumberLike(counted.card) &&
+    isNumberLike(counted.transfer) &&
+    (!requireOther || isNumberLike(counted.other));
+
+  /* ======================= GUARDAR CIERRE ======================= */
+  const guardarCierre = async (e) => {
+    e.preventDefault();
+    if (!van?.id || viewClose || !isFormReady) return;
     setGuardando(true);
-
-    const ventas_ids = ventasDecor.map((v) => v.id);
-    const pagos_ids = pagosDecor.map((p) => p.id);
-
     const payload = {
       van_id: van.id,
       usuario_id: usuario?.id,
       fecha_inicio: fechaInicio,
       fecha_fin: fechaFin,
       comentario,
-      cuentas_por_cobrar: cuentasCobrar,
-      efectivo_esperado: totalesEsperados.pago_efectivo,
-      efectivo_real: Number(reales.pago_efectivo || 0),
-      tarjeta_esperado: totalesEsperados.pago_tarjeta,
-      tarjeta_real: Number(reales.pago_tarjeta || 0),
-      transferencia_esperado: totalesEsperados.pago_transferencia,
-      transferencia_real: Number(reales.pago_transferencia || 0),
-      ventas_ids,
-      pagos_ids,
+      efectivo_esperado: totales.cash,
+      tarjeta_esperado: totales.card,
+      transferencia_esperado: totales.transfer,
+      efectivo_real: Number(counted.cash || 0),
+      tarjeta_real: Number(counted.card || 0),
+      transferencia_real: Number(counted.transfer || 0),
+      cuentas_por_cobrar: totales.balanceDue,
+      ventas_ids: ventasConDesglose.map((v) => v.id),
+      pagos_ids: pagosConDesglose.map((p) => p.id),
     };
+    const { data, error } = await supabase.from("cierres_van").insert([payload]).select().maybeSingle();
+    if (error) { setMensaje("Error: " + error.message); setGuardando(false); return; }
 
-    const { data, error } = await supabase
-      .from("cierres_van")
-      .insert([payload])
-      .select()
-      .maybeSingle();
-
-    if (error) {
-      setGuardando(false);
-      setMensaje("Error saving closeout: " + error.message);
-      setTimeout(() => setMensaje(""), 3500);
-      return;
+    if (data?.id) {
+      if (ventasConDesglose.length > 0)
+        await supabase.from("ventas").update({ cierre_id: data.id }).in("id", ventasConDesglose.map((v) => v.id));
+      if (pagosConDesglose.length > 0)
+        await supabase.from("pagos").update({ cierre_id: data.id }).in("id", pagosConDesglose.map((p) => p.id));
     }
 
-    const cierre_id = data?.id;
-    if (cierre_id) {
-      await supabase.rpc("cerrar_ventas_por_van", {
-        cierre_id_param: cierre_id,
-        van_id_param: van.id,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-      });
-      await supabase.rpc("cerrar_pagos_por_van", {
-        cierre_id_param: cierre_id,
-        van_id_param: van.id,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-      });
-      try {
-        localStorage.removeItem("pre_cierre_fecha");
-        localStorage.setItem("pre_cierre_last_closed", fechaInicio);
-        localStorage.setItem("pre_cierre_refresh", String(Date.now()));
-      } catch {}
-    }
-
+    setMensaje("✅ Closeout saved successfully!");
     setGuardando(false);
-    setShowConfirmModal(false);
-    setMensaje("Closeout registered successfully!");
-    setReales({ pago_efectivo: "", pago_tarjeta: "", pago_transferencia: "" });
-    setComentario("");
-    navigate("/cierres");
-  }
-
-  const generarPDF = async () => {
-    setGenerandoPDF(true);
-    
     try {
-      const resumen = {
-        efectivo_esperado: totalesEsperados.pago_efectivo,
-        tarjeta_esperado: totalesEsperados.pago_tarjeta,
-        transferencia_esperado: totalesEsperados.pago_transferencia,
-        cxc_periodo: cuentasCobrar,
-      };
-
-      const fechaCierre = cierreInfo?.created_at ? toLocalYMD(cierreInfo.created_at) : null;
-
-      generarPDFCierreVan({
-        empresa: {
-          nombre: "TOOLS4CARE",
-          direccion: "108 Lafayette St, Salem, MA 01970",
-          telefono: "(978) 594-1624",
-          email: "tools4care@gmail.com",
-        },
-        usuario,
-        vanNombre: van?.nombre || van?.van_nombre || "",
-        ventas: ventasDecor,
-        pagos: avances,
-        resumen,
-        fechaInicio,
-        fechaFin,
-        fechaCierre,
-        mode: pdfMode,
-      });
-      
-      setMensaje(pdfMode === "print" ? "PDF generated for printing..." : "PDF generated successfully!");
-    } catch (error) {
-      setMensaje("Error generating PDF: " + error.message);
-    } finally {
-      setGenerandoPDF(false);
-      setTimeout(() => setMensaje(""), 3500);
-    }
+      localStorage.removeItem("pre_cierre_fechas");
+      localStorage.removeItem("pre_cierre_fecha");
+      localStorage.setItem("cierre_cash_breakdown", JSON.stringify(cashBreakdown));
+    } catch {}
+    setTimeout(() => navigate("/cierres/historial"), 1200);
   };
 
-  // Mostrar errores si los hay
-  if (fechasError || movimientosError || clientesError || expectedError) {
-    return (
-      <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
-        <h2 className="font-bold text-xl mb-4 text-red-600">Error</h2>
-        <div className="text-red-600">
-          {fechasError && <p>Fechas pendientes: {fechasError}</p>}
-          {movimientosError && <p>Movimientos: {movimientosError}</p>}
-          {clientesError && <p>Clientes: {clientesError}</p>}
-          {expectedError && <p>Expected: {expectedError}</p>}
-        </div>
-      </div>
-    );
-  }
+  /* ======================= PDF ======================= */
+  const imprimirPDF = () => {
+    const doc = new jsPDF({ unit: "pt", format: "letter" });
+    const title = `End of Day Register Closeout`;
+    const subtitle = `${van?.nombre || "Van"} — ${toUSFromYMD(fechaInicio)} to ${toUSFromYMD(fechaFin)}`;
+    doc.setFontSize(16); doc.text(title, 40, 40);
+    doc.setFontSize(11); doc.text(subtitle, 40, 60);
+    const totalDiferencia =
+      (Number(counted.cash || 0) - totales.cash) +
+      (Number(counted.card || 0) - totales.card) +
+      (Number(counted.transfer || 0) - totales.transfer) +
+      (Number(counted.other || 0) - totales.other);
+
+    autoTable(doc, {
+      startY: 80,
+      head: [["Metric", "Amount"]],
+      body: [
+        ["Total Sales", fmt.format(totales.totalVentas)],
+        ["Total Paid on Sales", fmt.format(totales.totalPagado)],
+        ["A/R Generated", fmt.format(totales.balanceDue)],
+        ["Cash Expected", fmt.format(totales.cash)],
+        ["Card Expected", fmt.format(totales.card)],
+        ["Transfer Expected", fmt.format(totales.transfer)],
+        ...(totales.other > 0 ? [["Other Expected", fmt.format(totales.other)]] : []),
+        ["Cash Counted", fmt.format(Number(counted.cash || 0))],
+        ["Card Counted", fmt.format(Number(counted.card || 0))],
+        ["Transfer Counted", fmt.format(Number(counted.transfer || 0))],
+        ...(counted.other ? [["Other Counted", fmt.format(Number(counted.other || 0))]] : []),
+        [totalDiferencia >= 0 ? "OVERAGE" : "SHORTAGE", fmt.format(Math.abs(totalDiferencia))],
+      ],
+      theme: "striped", styles: { fontSize: 10 }, headStyles: { fillColor: [30, 64, 175] },
+    });
+    autoTable(doc, {
+      head: [["Denomination", "Count", "Total"]],
+      body: cashBreakdown.map((b) => [b.nombre, String(b.cantidad || 0), fmt.format((Number(b.cantidad || 0) || 0) * b.valor)]),
+      theme: "grid", styles: { fontSize: 10 }, headStyles: { fillColor: [21, 128, 61] }, startY: doc.lastAutoTable.finalY + 15,
+    });
+    if (ventasConDesglose.length > 0) {
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 20,
+        head: [["Date", "Client", "Total", "Paid", "Balance", "Cash", "Card", "Transfer"]],
+        body: ventasConDesglose.map((v) => [
+          toUSFromYMD((v.fecha || "").slice(0, 10)), v.cliente_nombre || "-", fmt.format(v.total_venta),
+          fmt.format(v.total_pagado), fmt.format(v.balance), fmt.format(v.cash), fmt.format(v.card), fmt.format(v.transfer),
+        ]),
+        theme: "striped", styles: { fontSize: 9 }, headStyles: { fillColor: [59, 130, 246] },
+      });
+    }
+    if (pagosConDesglose.length > 0) {
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 20,
+        head: [["Date", "Client", "Amount", "Cash", "Card", "Transfer", "Reference"]],
+        body: pagosConDesglose.map((p) => [
+          toUSFromYMD((p.fecha_pago || "").slice(0, 10)), p.cliente_nombre || "-", fmt.format(p.monto),
+          fmt.format(p.cash), fmt.format(p.card), fmt.format(p.transfer), p.referencia || "-",
+        ]),
+        theme: "striped", styles: { fontSize: 9 }, headStyles: { fillColor: [16, 185, 129] },
+      });
+    }
+    doc.save(`closeout_${van?.nombre || "van"}_${fechaInicio}_to_${fechaFin}.pdf`);
+  };
+
+  /* ======================= UI ======================= */
+  if (loading) return <div className="max-w-4xl mx-auto mt-10 p-6 text-center text-blue-600">Loading...</div>;
+  if (error) return <div className="max-w-4xl mx-auto mt-10 p-6 bg-red-100 text-red-700 rounded">{error}</div>;
 
   return (
-    <div className="max-w-2xl mx-auto mt-10 bg-white rounded shadow p-6">
-      <h2 className="font-bold text-xl mb-6 text-blue-900">Van Closeout</h2>
-
-      <div className="mb-4">
-        <label className="font-bold text-sm mb-1 block">
-          Select date to close or view:
-        </label>
-        <select
-          className="border p-2 rounded w-full max-w-xs"
-          value={fechaSeleccionada}
-          onChange={(e) => {
-            const v = e.target.value;
-            setFechaSeleccionada(v);
-            try {
-              localStorage.setItem("pre_cierre_fecha", v);
-            } catch {}
-          }}
-        >
-          {fechasPendientes.length === 0 ? (
-            <option value="">No available days</option>
-          ) : (
-            fechasPendientes.map((f) => {
-              const isClosed = fechasCerradas.includes(f);
-              return (
-                <option 
-                  value={f} 
-                  key={f}
-                >
-                  {toUSFormat(f)} {isClosed ? "✓ Closed" : "• Pending"}
-                </option>
-              );
-            })
-          )}
-        </select>
-        {cierreInfo && (
-          <div className="mt-2 p-2 rounded bg-blue-50 border border-blue-200">
-            <div className="text-sm font-semibold text-blue-800 mb-1">
-              📋 This date was closed on {toUSFormat(toLocalYMD(cierreInfo.created_at))}
-            </div>
-            <div className="text-xs text-gray-600">
-              You can view and reprint the report, but cannot modify the closeout.
-            </div>
+    <div className="max-w-4xl mx-auto mt-10 bg-white rounded-lg shadow-lg p-6">
+      {/* Header */}
+      <div className="mb-4 flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-blue-900 mb-1">End of Day Register Closeout</h1>
+          <div className="text-sm text-gray-600">
+            <span className="font-semibold">Period:</span> {toUSFromYMD(fechaInicio)} to {toUSFromYMD(fechaFin)}
+            <span className="ml-4 font-semibold">Van:</span> {van?.nombre || "—"}
+            {viewClose
+              ? <span className="ml-2 text-indigo-700 font-semibold">(VIEW MODE • locked)</span>
+              : <span className="ml-2 text-emerald-700 font-semibold">(NORMAL MODE)</span>}
           </div>
-        )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={openSearch} className="px-4 py-2 bg-gray-100 border rounded hover:bg-gray-200">
+            {showSearch ? "Hide Search" : "🔎 Search Closeout"}
+          </button>
+          {viewClose && (
+            <button type="button" onClick={exitViewMode} className="px-4 py-2 bg-white border rounded hover:bg-gray-100">
+              Exit view
+            </button>
+          )}
+          <button type="button" onClick={imprimirPDF} className="px-4 py-2 bg-indigo-700 text-white rounded hover:bg-indigo-800">
+            🖨️ Print PDF
+          </button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="text-blue-600">Loading transactions...</div>
-      ) : (
-        <>
-          <TablaMovimientosPendientes ventas={ventasDecor} />
+      {/* Buscador OPCIONAL */}
+      {showSearch && (
+        <div className="mb-6 rounded-xl border bg-neutral-50 p-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Start (YYYY-MM-DD)</label>
+              <input type="date" value={searchStart} onChange={(e) => setSearchStart(e.target.value)} className="border p-2 rounded w-full" />
+              <div className="text-[11px] text-gray-500 mt-1">Shown as {toUSFromYMD(searchStart)}</div>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">End (YYYY-MM-DD)</label>
+              <input type="date" value={searchEnd} onChange={(e) => setSearchEnd(e.target.value)} className="border p-2 rounded w-full" />
+              <div className="text-[11px] text-gray-500 mt-1">Shown as {toUSFromYMD(searchEnd)}</div>
+            </div>
+            <div className="flex sm:block">
+              <button
+                onClick={handleSearchCloseout}
+                type="button"
+                disabled={loadingSearch}
+                className="w-full sm:w-auto px-4 py-2 bg-blue-700 text-white rounded hover:bg-blue-800 disabled:opacity-50"
+              >
+                {loadingSearch ? "Loading..." : "Load"}
+              </button>
+            </div>
+          </div>
 
-          {avances.length > 0 && (
-            <>
-              <p className="text-xs text-gray-500 mb-1">
-                Only customer advances not tied to a sale are listed below.
-                Payments captured inside a sale are summarized in that sale's row.
-              </p>
-              <TablaAbonosPendientes pagos={avances} />
-            </>
+          {searchResults.length > 0 && (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm border rounded">
+                <thead>
+                  <tr className="bg-white">
+                    <th className="p-2 text-left">Closeout</th>
+                    <th className="p-2 text-left">User</th>
+                    <th className="p-2 text-right">Cash</th>
+                    <th className="p-2 text-right">Card</th>
+                    <th className="p-2 text-right">Transfer</th>
+                    <th className="p-2 text-right">A/R</th>
+                    <th className="p-2 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {searchResults.map((c) => (
+                    <tr key={c.id} className="border-t hover:bg-gray-50">
+                      <td className="p-2">
+                        {toUSFromYMD(c.fecha_inicio)} — {toUSFromYMD(c.fecha_fin)} <span className="text-xs text-gray-500">(locked)</span>
+                      </td>
+                      <td className="p-2">{c.usuario_id || "—"}</td>
+                      <td className="p-2 text-right">{fmt.format(c.efectivo_real ?? 0)}</td>
+                      <td className="p-2 text-right">{fmt.format(c.tarjeta_real ?? 0)}</td>
+                      <td className="p-2 text-right">{fmt.format(c.transferencia_real ?? 0)}</td>
+                      <td className="p-2 text-right">{fmt.format(c.cuentas_por_cobrar ?? 0)}</td>
+                      <td className="p-2 text-center">
+                        <button type="button" onClick={() => handlePickCloseout(c)} className="px-3 py-1 bg-white border rounded hover:bg-gray-100">
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="text-xs text-gray-600 mt-1">
+                Showing {searchResults.length} results inside {toUSFromYMD(searchStart)} to {toUSFromYMD(searchEnd)}. Select one to view it.
+              </div>
+            </div>
           )}
-        </>
+        </div>
       )}
 
-      {/* Sección de resumen de cuentas por cobrar */}
-      <div className="mb-4 p-4 bg-red-50 rounded-lg border border-red-200">
-        <h3 className="font-bold text-lg text-red-800 mb-2">Accounts Receivable Summary</h3>
-        {ventasDecor.length === 0 ? (
-          <div className="text-center py-4 text-gray-600">
-            No sales found for this date
+      {/* RESUMEN */}
+      <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200">
+        <h2 className="text-lg font-bold text-blue-800 mb-3">📊 Summary</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white rounded-lg p-3 border shadow-sm">
+            <div className="text-[11px] text-gray-600 uppercase font-semibold">Total Sales</div>
+            <div className="text-xl font-extrabold">{fmt.format(totales.totalVentas)}</div>
+            <div className="text-[11px] text-gray-500">{ventasConDesglose.length} transactions</div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <p className="text-sm text-gray-600">Total Sales Amount:</p>
-              <p className="font-bold text-lg">
-                ${ventasDecor.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2)}
-              </p>
+          <div className="bg-white rounded-lg p-3 border shadow-sm">
+            <div className="text-[11px] text-gray-600 uppercase font-semibold">Total Paid</div>
+            <div className="text-xl font-extrabold text-green-700">{fmt.format(totales.totalPagado)}</div>
+            <div className="text-[11px] text-gray-500">On sales</div>
+          </div>
+          <div className="bg-white rounded-lg p-3 border shadow-sm">
+            <div className="text-[11px] text-gray-600 uppercase font-semibold">Customer Payments</div>
+            <div className="text-xl font-extrabold text-emerald-700">
+              {fmt.format(pagosConDesglose.reduce((t, p) => t + p.monto, 0))}
             </div>
-            <div>
-              <p className="text-sm text-gray-600">Total Amount Paid:</p>
-              <p className="font-bold text-lg text-green-700">
-                ${ventasDecor.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Total Balance Due (A/R):</p>
-              <p className="font-bold text-xl text-red-700">
-                ${cuentasCobrar}
-              </p>
+            <div className="text-[11px] text-gray-500">{pagosConDesglose.length} payments</div>
+          </div>
+          <div className="bg-white rounded-lg p-3 border shadow-sm">
+            <div className="text-[11px] text-orange-700 uppercase font-semibold">A/R Generated</div>
+            <div className="text-xl font-extrabold text-orange-700">{fmt.format(totales.balanceDue)}</div>
+            <div className="text-[11px] text-gray-500">Accounts Receivable</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+          <div className="bg-green-50 border border-green-200 rounded p-2 text-center">
+            <div className="text-[11px] text-green-700 font-semibold">Cash Expected</div>
+            <div className="text-lg font-bold text-green-800">{fmt.format(totales.cash)}</div>
+            <div className="text-[11px] text-green-700 mt-1">
+              Sales: {fmt.format(totales.ventasEfectivo)}<br />Payments: {fmt.format(totales.pagosEfectivo)}
             </div>
           </div>
-        )}
+          <div className="bg-blue-50 border border-blue-200 rounded p-2 text-center">
+            <div className="text-[11px] text-blue-700 font-semibold">Card Expected</div>
+            <div className="text-lg font-bold text-blue-800">{fmt.format(totales.card)}</div>
+            <div className="text-[11px] text-blue-700 mt-1">
+              Sales: {fmt.format(totales.ventasTarjeta)}<br />Payments: {fmt.format(totales.pagosTarjeta)}
+            </div>
+          </div>
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 text-center">
+            <div className="text-[11px] text-purple-700 font-semibold">Transfer Expected</div>
+            <div className="text-lg font-bold text-purple-800">{fmt.format(totales.transfer)}</div>
+            <div className="text-[11px] text-purple-700 mt-1">
+              Sales: {fmt.format(totales.ventasTransfer)}<br />Payments: {fmt.format(totales.pagosTransfer)}
+            </div>
+          </div>
+          {totales.other > 0 && (
+            <div className="bg-gray-50 border border-gray-200 rounded p-2 text-center">
+              <div className="text-[11px] text-gray-700 font-semibold">Other Expected</div>
+              <div className="text-lg font-bold text-gray-800">{fmt.format(totales.other)}</div>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="mb-2 p-3 rounded bg-blue-50 text-sm">
-        <div className="font-bold text-blue-900 mb-1">Expected (from totals)</div>
-        <div>Cash expected: ${Number(expected.cash || 0).toFixed(2)}</div>
-        <div>Card expected: ${Number(expected.card || 0).toFixed(2)}</div>
-        <div>Transfer expected: ${Number(expected.transfer || 0).toFixed(2)}</div>
-        {Number(expected.mix || 0) > 0 && (
-          <div className="text-xs text-amber-700">
-            Mix (unallocated): ${Number(expected.mix).toFixed(2)}
+      {/* TABLAS */}
+      {ventasConDesglose.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-lg font-bold text-blue-800 mb-3">🛒 Sales Detail</h2>
+          <div className="overflow-x-auto border rounded-lg">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-blue-100">
+                  <th className="p-2 text-left">Date</th>
+                  <th className="p-2 text-left">Client</th>
+                  <th className="p-2 text-right">Total</th>
+                  <th className="p-2 text-right">Paid</th>
+                  <th className="p-2 text-right text-red-600">Balance</th>
+                  <th className="p-2 text-right">Cash</th>
+                  <th className="p-2 text-right">Card</th>
+                  <th className="p-2 text-right">Transfer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ventasConDesglose.map((v) => (
+                  <tr key={v.id} className="border-b hover:bg-gray-50">
+                    <td className="p-2">{toUSFromYMD((v.fecha || "").slice(0, 10))}</td>
+                    <td className="p-2">{v.cliente_nombre || "-"}</td>
+                    <td className="p-2 text-right">{fmt.format(v.total_venta)}</td>
+                    <td className="p-2 text-right text-green-600">{fmt.format(v.total_pagado)}</td>
+                    <td className="p-2 text-right text-red-600 font-bold">{fmt.format(v.balance)}</td>
+                    <td className="p-2 text-right">{fmt.format(v.cash)}</td>
+                    <td className="p-2 text-right">{fmt.format(v.card)}</td>
+                    <td className="p-2 text-right">{fmt.format(v.transfer)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-blue-50 font-bold">
+                <tr>
+                  <td colSpan={2} className="p-2">TOTALS</td>
+                  <td className="p-2 text-right">{fmt.format(totales.totalVentas)}</td>
+                  <td className="p-2 text-right text-green-600">{fmt.format(totales.totalPagado)}</td>
+                  <td className="p-2 text-right text-red-600">{fmt.format(totales.balanceDue)}</td>
+                  <td className="p-2 text-right">{fmt.format(totales.ventasEfectivo)}</td>
+                  <td className="p-2 text-right">{fmt.format(totales.ventasTarjeta)}</td>
+                  <td className="p-2 text-right">{fmt.format(totales.ventasTransfer)}</td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          setShowConfirmModal(true);
-        }}
-      >
-        {METODOS_PAGO.map(({ campo, label }) => (
-          <div key={campo} className="mb-2">
-            <label className="block font-bold">{label} expected:</label>
-            <input
-              className="border bg-gray-100 p-2 w-full mb-1"
-              value={totalesEsperados[campo] || 0}
-              disabled
-            />
-            <label className="block">Counted:</label>
-            <div className="flex gap-2">
-              <input
-                className="border p-2 w-full"
-                type="number"
-                value={reales[campo] || ""}
-                onChange={(e) =>
-                  setReales((r) => ({ ...r, [campo]: e.target.value }))
-                }
-                required
-                disabled={cierreInfo !== null}
-              />
-              {campo === "pago_efectivo" && (
-                <button
-                  type="button"
-                  className="bg-blue-100 px-3 py-2 rounded text-xs font-bold text-blue-900 border border-blue-200"
-                  onClick={() => setOpenDesglose(true)}
-                  tabIndex={-1}
-                  disabled={cierreInfo !== null}
-                >
-                  Breakdown
-                </button>
+      {pagosConDesglose.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-lg font-bold text-emerald-800 mb-3">💰 Customer Payments (A/R)</h2>
+          <div className="overflow-x-auto border rounded-lg">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-emerald-100">
+                  <th className="p-2 text-left">Date</th>
+                  <th className="p-2 text-left">Client</th>
+                  <th className="p-2 text-right">Amount</th>
+                  <th className="p-2 text-right">Cash</th>
+                  <th className="p-2 text-right">Card</th>
+                  <th className="p-2 text-right">Transfer</th>
+                  <th className="p-2 text-left">Reference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagosConDesglose.map((p) => (
+                  <tr key={p.id} className="border-b hover:bg-gray-50">
+                    <td className="p-2">{toUSFromYMD((p.fecha_pago || "").slice(0, 10))}</td>
+                    <td className="p-2">{p.cliente_nombre || "-"}</td>
+                    <td className="p-2 text-right">{fmt.format(p.monto)}</td>
+                    <td className="p-2 text-right">{fmt.format(p.cash)}</td>
+                    <td className="p-2 text-right">{fmt.format(p.card)}</td>
+                    <td className="p-2 text-right">{fmt.format(p.transfer)}</td>
+                    <td className="p-2">{p.referencia || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-emerald-50 font-bold">
+                <tr>
+                  <td colSpan={2} className="p-2">TOTALS</td>
+                  <td className="p-2 text-right">{fmt.format(pagosConDesglose.reduce((t, p) => t + p.monto, 0))}</td>
+                  <td className="p-2 text-right">{fmt.format(totales.pagosEfectivo)}</td>
+                  <td className="p-2 text-right">{fmt.format(totales.pagosTarjeta)}</td>
+                  <td className="p-2 text-right">{fmt.format(totales.pagosTransfer)}</td>
+                  <td className="p-2"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* FORMULARIO DE CIERRE */}
+      <form onSubmit={guardarCierre} className="space-y-4">
+        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
+          <h2 className="text-lg font-bold text-yellow-900 mb-3">💵 Count Your Cash & Payments</h2>
+
+          {/* Resumen desglose + botón junto a Cash */}
+          <div className="mb-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold">Cash breakdown:</span>
+              <button
+                type="button"
+                className="px-2 py-1 text-sm bg-blue-100 border border-blue-300 rounded"
+                onClick={() => setOpenDesglose(true)}
+                title="Edit breakdown"
+                disabled={!!viewClose}
+              >
+                Edit
+              </button>
+              <span className="text-sm text-gray-600">Total by breakdown: <b>{fmt.format(totalCashBreakdown)}</b></span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {cashBreakdown.filter((b) => Number(b.cantidad || 0) > 0).map((b) => (
+                <span key={b.nombre} className="px-2 py-1 rounded-full text-xs bg-white border shadow-sm">
+                  {b.nombre}: {b.cantidad} → {fmt.format(b.valor * Number(b.cantidad))}
+                </span>
+              ))}
+              {cashBreakdown.every((b) => !Number(b.cantidad || 0)) && (
+                <span className="text-xs text-gray-500">No breakdown entered yet</span>
               )}
             </div>
           </div>
-        ))}
-        <div className="mb-2">
-          <label className="block font-bold">Accounts Receivable (Credit Only) for the Period:</label>
-          <div className="text-xs text-gray-600 mb-1">
-            This shows only the unpaid balance from sales in this period
+
+          {/* === Inputs con Expected y Δ diff === */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* CASH */}
+            <div>
+              <label className="block text-sm font-bold mb-1">
+                Cash Counted:
+                <span className="ml-2">
+                  <Pill className="bg-green-50 text-green-700 border-green-200">Expected {format(totales.cash)}</Pill>
+                </span>
+              </label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="number" step="0.01" className="border p-2 rounded flex-1"
+                  value={counted.cash} onChange={(e) => setCounted({ ...counted, cash: e.target.value })} required disabled={!!viewClose}
+                />
+                <button
+                  type="button" className="px-3 bg-blue-100 border border-blue-300 rounded text-sm"
+                  onClick={() => setOpenDesglose(true)} title="Count by denominations" disabled={!!viewClose}
+                >
+                  💵
+                </button>
+              </div>
+              <div className="mt-1">
+                {(() => {
+                  const { label, cls } = deltaInfo(counted.cash, totales.cash);
+                  return label ? <Pill className={cls}>{label}</Pill> : null;
+                })()}
+              </div>
+            </div>
+
+            {/* CARD */}
+            <div>
+              <label className="block text-sm font-bold mb-1">
+                Card Counted:
+                <span className="ml-2">
+                  <Pill className="bg-blue-50 text-blue-700 border-blue-200">Expected {format(totales.card)}</Pill>
+                </span>
+              </label>
+              <input
+                type="number" step="0.01" className="border p-2 rounded w-full"
+                value={counted.card} onChange={(e) => setCounted({ ...counted, card: e.target.value })} required disabled={!!viewClose}
+              />
+              <div className="mt-1">
+                {(() => {
+                  const { label, cls } = deltaInfo(counted.card, totales.card);
+                  return label ? <Pill className={cls}>{label}</Pill> : null;
+                })()}
+              </div>
+            </div>
+
+            {/* TRANSFER */}
+            <div>
+              <label className="block text-sm font-bold mb-1">
+                Transfer Counted:
+                <span className="ml-2">
+                  <Pill className="bg-purple-50 text-purple-700 border-purple-200">Expected {format(totales.transfer)}</Pill>
+                </span>
+              </label>
+              <input
+                type="number" step="0.01" className="border p-2 rounded w-full"
+                value={counted.transfer} onChange={(e) => setCounted({ ...counted, transfer: e.target.value })} required disabled={!!viewClose}
+              />
+              <div className="mt-1">
+                {(() => {
+                  const { label, cls } = deltaInfo(counted.transfer, totales.transfer);
+                  return label ? <Pill className={cls}>{label}</Pill> : null;
+                })()}
+              </div>
+            </div>
+
+            {/* OTHER (si aplica) */}
+            {totales.other > 0 && (
+              <div>
+                <label className="block text-sm font-bold mb-1">
+                  Other Counted:
+                  <span className="ml-2">
+                    <Pill className="bg-gray-50 text-gray-700 border-gray-200">Expected {format(totales.other)}</Pill>
+                  </span>
+                </label>
+                <input
+                  type="number" step="0.01" className="border p-2 rounded w-full"
+                  value={counted.other} onChange={(e) => setCounted({ ...counted, other: e.target.value })} disabled={!!viewClose} required
+                />
+                <div className="mt-1">
+                  {(() => {
+                    const { label, cls } = deltaInfo(counted.other, totales.other);
+                    return label ? <Pill className={cls}>{label}</Pill> : null;
+                  })()}
+                </div>
+              </div>
+            )}
           </div>
-          <input
-            className="border p-2 w-full mb-1 bg-gray-100 font-semibold text-red-700"
-            value={`$${cuentasCobrar}`}
-            disabled
-          />
         </div>
-        <div className="mb-3">
-          <label className="block font-bold">Comment:</label>
+
+        {/* Comentarios */}
+        <div>
+          <label className="block text-sm font-bold mb-1">Comments:</label>
           <textarea
-            className="border p-2 w-full"
-            value={comentario}
-            onChange={(e) => setComentario(e.target.value)}
-            disabled={cierreInfo !== null}
+            className="border p-2 rounded w-full" rows={3}
+            value={comentario} onChange={(e) => setComentario(e.target.value)} placeholder="Optional notes..." disabled={!!viewClose}
           />
         </div>
-        
-        <div className="mb-4 p-3 bg-gray-50 rounded">
-          <h3 className="font-bold text-blue-800 mb-2">PDF Report Options</h3>
-          <div className="flex items-center mb-2">
-            <input
-              type="radio"
-              id="pdf-download"
-              name="pdf-mode"
-              value="download"
-              checked={pdfMode === "download"}
-              onChange={() => setPdfMode("download")}
-              className="mr-2"
-            />
-            <label htmlFor="pdf-download" className="mr-4">Download PDF</label>
-            <input
-              type="radio"
-              id="pdf-print"
-              name="pdf-mode"
-              value="print"
-              checked={pdfMode === "print"}
-              onChange={() => setPdfMode("print")}
-              className="mr-2"
-            />
-            <label htmlFor="pdf-print">Print PDF</label>
-          </div>
+
+        {/* Botones */}
+        <div className="flex gap-3">
+          <button type="button" onClick={() => navigate("/cierres/pre")} className="px-6 py-2 bg-gray-200 rounded hover:bg-gray-300">
+            ← Back
+          </button>
           <button
-            type="button"
-            className="bg-green-700 text-white px-4 py-2 rounded font-bold w-full"
-            onClick={generarPDF}
-            disabled={generandoPDF}
+            type="submit"
+            disabled={guardando || !!viewClose || !isFormReady}
+            className="px-6 py-2 bg-blue-700 text-white rounded hover:bg-blue-800 disabled:opacity-50 flex-1"
+            title={!isFormReady ? "Complete all required amounts to enable save" : ""}
           >
-            {generandoPDF ? "Generating PDF..." : "Generate PDF Report"}
+            {guardando ? "Saving..." : "💾 Save Closeout"}
           </button>
         </div>
-        
-        <button
-          type="submit"
-          className="bg-blue-700 text-white px-4 py-2 rounded font-bold w-full"
-          disabled={guardando || ventasDecor.length + pagosDecor.length === 0 || cierreInfo !== null}
-        >
-          {guardando ? "Saving..." : "Register Closeout"}
-        </button>
+
         {mensaje && (
-          <div className="mt-2 p-2 rounded text-center text-sm bg-blue-100 text-blue-700">
+          <div className={`p-3 rounded text-center ${mensaje.includes("Error") ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
             {mensaje}
           </div>
         )}
       </form>
 
-      <ConfirmModal
-        open={showConfirmModal}
-        onCancel={() => setShowConfirmModal(false)}
-        onConfirm={async () => {
-          await guardarCierre({ preventDefault: () => {} });
-        }}
-        totalesEsperados={totalesEsperados}
-        reales={reales}
-        cuentasCobrar={cuentasCobrar}
-        comentario={comentario}
-        fechaInicio={fechaInicio}
-        fechaFin={fechaFin}
-      />
-
-      <DesgloseEfectivoModal
+      <ModalDesglose
         open={openDesglose}
+        initial={cashBreakdown}
         onClose={() => setOpenDesglose(false)}
-        onSave={(total) => {
-          setReales((r) => ({ ...r, pago_efectivo: total }));
+        onSave={({ total, billetes }) => {
+          setCashBreakdown(billetes);
+          setCounted((prev) => ({ ...prev, cash: total.toFixed(2) }));
+          try { localStorage.setItem("cierre_cash_breakdown", JSON.stringify(billetes)); } catch {}
           setOpenDesglose(false);
         }}
       />

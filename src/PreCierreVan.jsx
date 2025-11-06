@@ -4,184 +4,201 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 
-/* ==================== Helpers de fecha / formato ==================== */
+/* ==================== Helpers de fecha seguros (local) ==================== */
+const pad2 = (n) => String(n).padStart(2, "0");
 
-// Formato US MM/DD/YYYY a partir de 'YYYY-MM-DD'
-function formatUS(isoDay) {
-  if (!isoDay) return "—";
-  const [y, m, d] = String(isoDay).slice(0, 10).split("-").map(Number);
-  if (!y || !m || !d) return isoDay;
-  const dt = new Date(y, m - 1, d); // local
-  return dt.toLocaleDateString("en-US", {
-    month: "2-digit",
-    day: "2-digit",
-    year: "numeric",
-  });
+// Devuelve 'YYYY-MM-DD' del día local de un Date
+function ymdFromDateLocal(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
-// 'YYYY-MM-DD' del día local actual
-function localTodayISO() {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+// Valida cadena 'YYYY-MM-DD'
+function isYMD(str) {
+  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 }
 
-// Límites locales [start, end) como 'YYYY-MM-DD HH:MM:SS' para un ISO day
-function localDayBounds(isoDay) {
-  const [y, m, d] = String(isoDay).slice(0, 10).split("-").map(Number);
-  const start = new Date(y, m - 1, d, 0, 0, 0);
-  const end = new Date(y, m - 1, d + 1, 0, 0, 0);
-  const pad = (n) => String(n).padStart(2, "0");
-  const S = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(
-    start.getDate()
-  )} ${pad(start.getHours())}:${pad(start.getMinutes())}:${pad(
-    start.getSeconds()
-  )}`;
-  const E = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(
-    end.getDate()
-  )} ${pad(end.getHours())}:${pad(end.getMinutes())}:${pad(end.getSeconds())}`;
-  return { start: S, end: E };
+// Hoy local en 'YYYY-MM-DD'
+function todayYMD() {
+  return ymdFromDateLocal(new Date());
 }
 
-// Reemplaza tu countVentasDia por esta versión robusta
-async function countVentasDia(van_id, diaISO /* 'YYYY-MM-DD' */) {
-  if (!van_id || !diaISO) return 0;
+// Convierte 'YYYY-MM-DD' -> 'MM/DD/YYYY' (solo formateo de texto)
+function toUSFromYMD(ymd) {
+  if (!isYMD(ymd)) return "—";
+  const [y, m, d] = ymd.split("-");
+  return `${m}/${d}/${y}`;
+}
 
-  // Rango local del día (evita "T" para que PostgREST no lo pase a UTC)
-  const start = `${diaISO} 00:00:00`;
-  const end   = `${diaISO} 23:59:59`;
-
-  // Probamos varias columnas de fecha, según tu esquema real
-  const dateCols = ["fecha", "fecha_venta", "created_at"];
-
-  for (const col of dateCols) {
-    // Si la columna no existe, PostgREST devuelve 400; ignoramos y seguimos.
-    const { count, error, status } = await supabase
-      .from("ventas")
-      .select("id", { count: "exact", head: true })
-      .eq("van_id", van_id)
-      .gte(col, start)
-      .lte(col, end)
-      .is("cierre_id", null);
-
-    // status 200 y count numérico ⇒ lo tomamos como bueno
-    if (!error && typeof count === "number") return count;
-
-    // Si es 400 por columna inválida, intenta la siguiente sin loguear ruido
-    if (status !== 400 && error) {
-      console.warn(`countVentasDia(${col}) error:`, error.message || error);
-    }
+// Itera días (local) entre dos YMD (inclusive) y devuelve array de YMD
+function daysBetweenYMD(startYMD, endYMD) {
+  const out = [];
+  const a = new Date(startYMD);
+  const b = new Date(endYMD);
+  a.setHours(0, 0, 0, 0);
+  b.setHours(0, 0, 0, 0);
+  for (let cur = new Date(a); cur <= b; cur.setDate(cur.getDate() + 1)) {
+    out.push(ymdFromDateLocal(cur));
   }
-
-  // Si todas fallan, devolvemos 0 para no romper UI
-  return 0;
+  return out;
 }
-
 
 /* ==================== Hook: días pendientes por van ==================== */
-/**
- * Devuelve filas del tipo:
- *  { dia: 'YYYY-MM-DD', cash_expected, card_expected, transfer_expected, mix_unallocated }
- * El RPC debe regresar solo días con actividad (sin días cerrados ni montos 0; hoy aparece si hay pendientes).
- */
-function usePrecloseRows(vanId, diasAtras = 21) {
+function usePrecloseRows(vanId, diasAtras = 21, refreshKey = 0) {
   const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!vanId) {
       setRows([]);
+      setLoading(false);
       return;
     }
 
     let alive = true;
+    setLoading(true);
+    setError(null);
+
     (async () => {
-      const hoy = new Date();
-      const desde = new Date(hoy);
-      desde.setDate(hoy.getDate() - (diasAtras - 1));
+      try {
+        // Rango visible: últimos N días (local)
+        const hoy = new Date();
+        const desde = new Date(hoy);
+        desde.setDate(hoy.getDate() - (diasAtras - 1));
 
-      const p_from = desde.toISOString().slice(0, 10);
-      const p_to = hoy.toISOString().slice(0, 10);
+        const p_from = ymdFromDateLocal(desde);
+        const p_to = ymdFromDateLocal(hoy);
 
-      const { data, error } = await supabase.rpc(
-        "closeout_pre_resumen_filtrado",
-        {
-          p_van_id: vanId,
-          p_from,
-          p_to,
-        }
-      );
+        // 1) Resumen por día (RPC existente)
+        const { data, error: rpcError } = await supabase.rpc(
+          "closeout_resumen_completo",
+          { p_van_id: vanId, p_from, p_to }
+        );
+        if (rpcError) throw rpcError;
 
-      if (!alive) return;
+        const normalized = (data ?? [])
+          .map((r) => ({
+            dia: typeof r.dia === "string" ? r.dia.slice(0, 10) : null,
+            ventas_count: Number(r.ventas_count ?? 0),
+            pagos_count: Number(r.pagos_count ?? 0),
+            cash_expected: Number(r.cash_expected ?? 0),
+            card_expected: Number(r.card_expected ?? 0),
+            transfer_expected: Number(r.transfer_expected ?? 0),
+            other_expected: Number(r.other_expected ?? 0),
+            total_expected: Number(r.total_expected ?? 0),
+            cxc_generadas: Number(r.cxc_generadas ?? 0),
+          }))
+          .filter((r) => r.dia && isYMD(r.dia));
 
-      if (error) {
-        console.error("preclose rpc error", error);
+        // 2) Traer cierres guardados (sin asumir nombres). Filtramos por van_id y
+// 2) Traer cierres ya guardados (solo por van) y filtrar en JS
+const { data: cierres, error: cierresError } = await supabase
+  .from("cierres_van")
+  .select("*")                 // Traemos todo para adaptarnos a cualquier esquema
+  .eq("van_id", vanId);        // Solo por van; el rango lo haremos en JS
+if (cierresError) throw cierresError;
+
+// Helpers para detectar los nombres reales de columnas:
+const getStart = (c) =>
+  c.fecha_inicio ?? c.start_date ?? c.fecha_desde ?? c.fecha ?? c.dia ?? c.date ?? null;
+const getEnd = (c) =>
+  c.fecha_fin ?? c.end_date ?? c.fecha_hasta ?? c.fecha ?? c.dia ?? c.date ?? null;
+
+// Nuestro rango visible en YMD
+const rangeStart = p_from; // 'YYYY-MM-DD'
+const rangeEnd   = p_to;   // 'YYYY-MM-DD'
+
+// Logs de diagnóstico
+console.debug("[PreCierre] cierres_van crudos:", cierres);
+
+// 2.1) Solo cierres que solapan el rango visible
+const cierresSolapados = (cierres || []).filter((c) => {
+  const sRaw = getStart(c);
+  const eRaw = getEnd(c);
+  if (!sRaw || !eRaw) return false;
+  const sY = typeof sRaw === "string" ? sRaw.slice(0, 10) : ymdFromDateLocal(sRaw);
+  const eY = typeof eRaw === "string" ? eRaw.slice(0, 10) : ymdFromDateLocal(eRaw);
+  // Solapa si [sY,eY] intersecta [rangeStart,rangeEnd]
+  return !(eY < rangeStart || sY > rangeEnd);
+});
+
+// 3) Construir set de días cerrados
+const closedDays = new Set();
+for (const c of cierresSolapados) {
+  const sRaw = getStart(c);
+  const eRaw = getEnd(c);
+  const sY = typeof sRaw === "string" ? sRaw.slice(0, 10) : ymdFromDateLocal(sRaw);
+  const eY = typeof eRaw === "string" ? eRaw.slice(0, 10) : ymdFromDateLocal(eRaw);
+  for (const ymd of daysBetweenYMD(sY, eY)) closedDays.add(ymd);
+}
+
+console.debug("[PreCierre] closedDays calculados:", Array.from(closedDays));
+
+// 4) Excluir los días ya cerrados
+const abiertos = normalized.filter((r) => !closedDays.has(r.dia.slice(0,10).trim()));
+
+// 5) Orden desc
+abiertos.sort((a, b) => (a.dia < b.dia ? 1 : -1));
+
+if (!alive) return;
+setRows(abiertos);
+
+
+
+        if (!alive) return;
+        setRows(abiertos);
+      } catch (err) {
+        console.error("Error en usePrecloseRows:", err);
+        if (!alive) return;
+        setError(err.message || "Error al cargar los datos");
         setRows([]);
-        return;
+      } finally {
+        if (alive) setLoading(false);
       }
-
-      const normalized = (data ?? [])
-        .map((r) => {
-          const iso =
-            r.dia ?? r.fecha ?? r.day ?? r.f ?? null;
-          return {
-            dia: typeof iso === "string" ? iso.slice(0, 10) : null,
-            cash_expected: Number(r.cash_expected ?? r.cash ?? 0),
-            card_expected: Number(r.card_expected ?? r.card ?? 0),
-            transfer_expected: Number(r.transfer_expected ?? r.transfer ?? 0),
-            mix_unallocated: Number(r.mix_unallocated ?? r.mix ?? 0),
-          };
-        })
-        .filter((r) => r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia));
-
-      // Orden desc por fecha
-      normalized.sort((a, b) => (a.dia < b.dia ? 1 : -1));
-      setRows(normalized);
     })();
 
     return () => {
       alive = false;
     };
-  }, [vanId, diasAtras]);
+  }, [vanId, diasAtras, refreshKey]);
 
-  return rows;
+  return { rows, loading, error };
 }
 
 /* ============================== Componente ============================== */
-
 export default function PreCierreVan() {
   const { van } = useVan();
   const navigate = useNavigate();
 
-  // Días pendientes (ya filtrados por el RPC)
-  const rows = usePrecloseRows(van?.id, 21);
-
-  // Conteo de facturas por día (para la columna "Invoices")
-  const [invoices, setInvoices] = useState({}); // { 'YYYY-MM-DD': number }
+  // Bandera de invalidación para refrescar tras guardar un cierre
+  const [refreshKey, setRefreshKey] = useState(0);
   useEffect(() => {
-    if (!van?.id || rows.length === 0) return;
-    let alive = true;
+    if (localStorage.getItem("pre_cierre_invalidate") === "1") {
+      localStorage.removeItem("pre_cierre_invalidate");
+      setRefreshKey((k) => k + 1);
+    }
+  }, []);
 
-    (async () => {
-      const faltan = rows.filter((r) => invoices[r.dia] == null);
-      if (faltan.length === 0) return;
+  if (!van || !van.id) {
+    return (
+      <div className="max-w-3xl mx-auto mt-10 p-6">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <h2 className="text-lg font-bold mb-2">No se encontró una van asignada</h2>
+          <p>Por favor, seleccione una van antes de continuar con el pre-cierre.</p>
+          <button
+            onClick={() => navigate("/")}
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Volver al inicio
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-      const out = {};
-      await Promise.all(
-        faltan.map(async (r) => {
-          const c = await countVentasDia(van.id, r.dia);
-          out[r.dia] = c;
-        })
-      );
+  const { rows, loading, error } = usePrecloseRows(van.id, 21, refreshKey);
 
-      if (alive) setInvoices((prev) => ({ ...prev, ...out }));
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [van?.id, rows, invoices]);
-
-  // Selección múltiple (checkboxes)
   const allDates = useMemo(() => rows.map((r) => r.dia), [rows]);
   const [selected, setSelected] = useState(() => {
     try {
@@ -192,13 +209,20 @@ export default function PreCierreVan() {
     }
   });
 
-  // Asegura que si cambian las filas, limpiamos fechas no visibles
+  // Limpia selección contra fechas visibles
   useEffect(() => {
     if (selected.length === 0) return;
     const visible = new Set(allDates);
     const cleaned = selected.filter((d) => visible.has(d));
-    if (cleaned.length !== selected.length) setSelected(cleaned);
-  }, [allDates]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (cleaned.length !== selected.length) {
+      setSelected(cleaned);
+      try {
+        localStorage.setItem("pre_cierre_fechas", JSON.stringify(cleaned));
+        if (cleaned.length > 0) localStorage.setItem("pre_cierre_fecha", cleaned[0]);
+      } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDates]);
 
   const toggleOne = (day) => {
     setSelected((prev) => {
@@ -206,8 +230,10 @@ export default function PreCierreVan() {
       const next = has ? prev.filter((d) => d !== day) : [day, ...prev];
       try {
         localStorage.setItem("pre_cierre_fechas", JSON.stringify(next));
-        if (next.length > 0) localStorage.setItem("pre_cierre_fecha", next[0]); // compat
-      } catch {}
+        if (next.length > 0) localStorage.setItem("pre_cierre_fecha", next[0]);
+      } catch (err) {
+        console.error("Error guardando en localStorage:", err);
+      }
       return next;
     });
   };
@@ -219,10 +245,11 @@ export default function PreCierreVan() {
     try {
       localStorage.setItem("pre_cierre_fechas", JSON.stringify(next));
       if (next.length > 0) localStorage.setItem("pre_cierre_fecha", next[0]);
-    } catch {}
+    } catch (err) {
+      console.error("Error guardando en localStorage:", err);
+    }
   };
 
-  // Sumas del panel (sobre fechas seleccionadas)
   const sum = selected.reduce(
     (acc, d) => {
       const r = rows.find((x) => x.dia === d);
@@ -230,16 +257,18 @@ export default function PreCierreVan() {
       acc.cash += Number(r.cash_expected || 0);
       acc.card += Number(r.card_expected || 0);
       acc.transfer += Number(r.transfer_expected || 0);
-      acc.mix += Number(r.mix_unallocated || 0);
-      acc.invoices += Number(invoices[d] || 0);
+      acc.other += Number(r.other_expected || 0);
+      acc.total += Number(r.total_expected || 0);
+      acc.cxc += Number(r.cxc_generadas || 0);
+      acc.ventas += Number(r.ventas_count || 0);
+      acc.pagos += Number(r.pagos_count || 0);
       return acc;
     },
-    { cash: 0, card: 0, transfer: 0, mix: 0, invoices: 0 }
+    { cash: 0, card: 0, transfer: 0, other: 0, total: 0, cxc: 0, ventas: 0, pagos: 0 }
   );
-  const totalExpected = sum.cash + sum.card + sum.transfer + sum.mix;
 
-  const todayISO = useMemo(localTodayISO, []);
-  const canProcess = selected.length > 0 && totalExpected > 0;
+  const todayIso = useMemo(todayYMD, []);
+  const canProcess = selected.length > 0 && sum.total > 0;
 
   const onProcess = () => {
     if (!canProcess) return;
@@ -247,12 +276,39 @@ export default function PreCierreVan() {
       localStorage.setItem("pre_cierre_fechas", JSON.stringify(selected));
       localStorage.setItem("pre_cierre_fecha", selected[0] || "");
       localStorage.setItem("pre_cierre_refresh", String(Date.now()));
-    } catch {}
-    navigate("/cierres/van");
+      navigate("/cierres/van");
+    } catch (err) {
+      console.error("Error guardando datos para cierre:", err);
+    }
   };
 
+  if (loading) {
+    return (
+      <div className="max-w-3xl mx-auto mt-10 p-6">
+        <div className="text-center text-blue-600">Loading pending days...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-3xl mx-auto mt-10 p-6">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <h2 className="text-lg font-bold mb-2">Error</h2>
+          <p>{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-3xl mx-auto mt-10 bg-white rounded shadow p-6">
+    <div className="max-w-4xl mx-auto mt-10 bg-white rounded shadow p-6">
       <h2 className="font-bold text-xl mb-4 text-blue-900">
         End of Day Register Closeout – Pre
       </h2>
@@ -260,13 +316,11 @@ export default function PreCierreVan() {
       <div className="bg-gray-50 rounded-xl shadow p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="font-semibold text-blue-800">By Date</div>
-          <div className="text-xs text-gray-500">
-            Start &amp; End Times Must be Between 0:00 &amp; 23:59:59
-          </div>
+          <div className="text-xs text-gray-500">Includes Sales + Customer Payments</div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Tabla de días */}
+          {/* Tabla fechas */}
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -280,44 +334,47 @@ export default function PreCierreVan() {
                     />
                   </th>
                   <th className="p-2">Date</th>
-                  <th className="p-2 text-right">Invoices</th>
+                  <th className="p-2 text-right">Transactions</th>
+                  <th className="p-2 text-right">Total</th>
                 </tr>
               </thead>
               <tbody>
-                {allDates.length === 0 ? (
+                {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="p-3 text-center text-gray-400">
+                    <td colSpan={4} className="p-3 text-center text-gray-400">
                       ✅ No pending days
                     </td>
                   </tr>
                 ) : (
-                  allDates.map((f) => {
+                  rows.map((row) => {
+                    const f = row.dia;
                     const checked = selected.includes(f);
+                    const disabled = (row.total_expected || 0) <= 0; // opcional
                     return (
-                      <tr
-                        key={f}
-                        className={`hover:bg-blue-50 ${
-                          checked ? "bg-blue-50" : ""
-                        }`}
-                      >
+                      <tr key={f} className={`hover:bg-blue-50 ${checked ? "bg-blue-50" : ""}`}>
                         <td className="p-2">
                           <input
                             type="checkbox"
+                            disabled={disabled}
                             checked={checked}
                             onChange={() => toggleOne(f)}
                             aria-label={`Select ${f}`}
                           />
                         </td>
                         <td
-                          className="p-2 cursor-pointer"
-                          onClick={() => toggleOne(f)}
-                          title="Toggle select"
+                          className={`p-2 ${disabled ? "text-gray-400" : "cursor-pointer"}`}
+                          onClick={() => !disabled && toggleOne(f)}
+                          title={disabled ? "No amounts expected this day" : "Toggle select"}
                         >
-                          {formatUS(f)}
-                          {f === todayISO ? " (Today)" : ""}
+                          {toUSFromYMD(f)}
+                          {f === todayIso ? " (Today)" : ""}
                         </td>
-                        <td className="p-2 text-right">
-                          {invoices[f] ?? 0}
+                        <td className="p-2 text-right text-xs">
+                          <div>{row.ventas_count || 0} sales</div>
+                          <div className="text-green-600">{row.pagos_count || 0} payments</div>
+                        </td>
+                        <td className="p-2 text-right font-semibold">
+                          ${(row.total_expected || 0).toFixed(2)}
                         </td>
                       </tr>
                     );
@@ -327,7 +384,7 @@ export default function PreCierreVan() {
             </table>
           </div>
 
-          {/* Panel lateral de totales */}
+          {/* Panel resumen selección */}
           <div className="border rounded-lg p-3 bg-white">
             <div className="text-sm mb-2">
               <b>Selected:</b>{" "}
@@ -336,30 +393,44 @@ export default function PreCierreVan() {
                 : selected
                     .slice()
                     .sort((a, b) => (a < b ? 1 : -1))
-                    .map((d) => formatUS(d))
+                    .map((d) => toUSFromYMD(d))
                     .join(", ")}
             </div>
 
             <div className="text-sm space-y-1 mb-3">
-              <div>
-                <b>Cash expected:</b> ${sum.cash.toFixed(2)}
+              <div className="bg-green-50 border border-green-200 rounded p-2">
+                <b>💰 Cash expected:</b> ${sum.cash.toFixed(2)}
               </div>
-              <div>
-                <b>Card expected:</b> ${sum.card.toFixed(2)}
+              <div className="bg-blue-50 border border-blue-200 rounded p-2">
+                <b>💳 Card expected:</b> ${sum.card.toFixed(2)}
               </div>
-              <div>
-                <b>Transfer expected:</b> ${sum.transfer.toFixed(2)}
+              <div className="bg-purple-50 border border-purple-200 rounded p-2">
+                <b>🏦 Transfer expected:</b> ${sum.transfer.toFixed(2)}
               </div>
-              {sum.mix > 0 && (
-                <div className="text-xs text-amber-700">
-                  <b>Mix (unallocated):</b> ${sum.mix.toFixed(2)}
+              {sum.other > 0 && (
+                <div className="bg-gray-50 border border-gray-200 rounded p-2">
+                  <b>💵 Other:</b> ${sum.other.toFixed(2)}
                 </div>
               )}
-              <div className="pt-2 border-t">
-                <b>Total expected:</b> ${totalExpected.toFixed(2)}
+
+              {sum.cxc > 0 && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded p-2">
+                  <b>📋 A/R Generated:</b> ${sum.cxc.toFixed(2)}
+                  <div className="text-xs text-amber-700 mt-1">(Sales not paid in full)</div>
+                </div>
+              )}
+
+              <div className="pt-2 border-t-2 border-blue-300">
+                <b>Total expected:</b> ${sum.total.toFixed(2)}
               </div>
-              <div className="text-xs text-gray-600">
-                <b>Invoices total:</b> {sum.invoices}
+
+              <div className="text-xs text-gray-600 pt-2 border-t">
+                <div>
+                  <b>{sum.ventas}</b> sales
+                </div>
+                <div className="text-green-600">
+                  <b>{sum.pagos}</b> customer payments
+                </div>
               </div>
             </div>
 
