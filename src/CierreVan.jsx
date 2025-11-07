@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
-import jsPDF from "jsPDF";
+import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
 /* ======================= CONSTANTES ======================= */
