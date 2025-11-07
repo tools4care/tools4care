@@ -93,10 +93,10 @@ function usePrecloseRows(vanId, diasAtras = 21, refreshKey = 0) {
 
         // 2) Traer cierres guardados (sin asumir nombres). Filtramos por van_id y
 // 2) Traer cierres ya guardados (solo por van) y filtrar en JS
-const { data: cierres, error: cierresError } = await supabase
-  .from("cierres_van")
-  .select("*")                 // Traemos todo para adaptarnos a cualquier esquema
-  .eq("van_id", vanId);        // Solo por van; el rango lo haremos en JS
+ const { data: cierres, error: cierresError } = await supabase
+   .from("cierres_van")
+   .select("van_id, fecha_inicio, fecha_fin")
+  .eq("van_id", vanId);      // Solo por van; el rango lo haremos en JS
 if (cierresError) throw cierresError;
 
 // Helpers para detectar los nombres reales de columnas:
@@ -142,7 +142,7 @@ const abiertos = normalized.filter((r) => !closedDays.has(r.dia.slice(0,10).trim
 abiertos.sort((a, b) => (a.dia < b.dia ? 1 : -1));
 
 if (!alive) return;
-setRows(abiertos);
+ setRows(abiertos);
 
 
 
@@ -173,6 +173,29 @@ export default function PreCierreVan() {
 
   // Bandera de invalidación para refrescar tras guardar un cierre
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // 🔁 Refresca al volver de guardar (bandera) y al recuperar foco
+ useEffect(() => {
+   const onFocus = () => setRefreshKey(k => k + 1);
+   const onStorage = (e) => {
+     if (e.key === "pre_cierre_invalidate" && e.newValue === "1") {
+       // limpiamos bandera y forzamos refresh
+       try { localStorage.removeItem("pre_cierre_invalidate"); } catch {}
+       setRefreshKey(k => k + 1);
+      // y, ya que estamos, limpiamos selección “pegada”
+       try {
+         localStorage.removeItem("pre_cierre_fechas");
+         localStorage.removeItem("pre_cierre_fecha");
+       } catch {}
+     }
+   };
+   window.addEventListener("focus", onFocus);
+   window.addEventListener("storage", onStorage);
+   return () => {
+     window.removeEventListener("focus", onFocus);
+     window.removeEventListener("storage", onStorage);
+   };
+ }, []);
   useEffect(() => {
     if (localStorage.getItem("pre_cierre_invalidate") === "1") {
       localStorage.removeItem("pre_cierre_invalidate");

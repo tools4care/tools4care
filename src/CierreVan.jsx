@@ -404,21 +404,26 @@ export default function CierreVan() {
     const { data, error } = await supabase.from("cierres_van").insert([payload]).select().maybeSingle();
     if (error) { setMensaje("Error: " + error.message); setGuardando(false); return; }
 
-    if (data?.id) {
-      if (ventasConDesglose.length > 0)
-        await supabase.from("ventas").update({ cierre_id: data.id }).in("id", ventasConDesglose.map((v) => v.id));
-      if (pagosConDesglose.length > 0)
-        await supabase.from("pagos").update({ cierre_id: data.id }).in("id", pagosConDesglose.map((p) => p.id));
-    }
+    // CierreVan_UPDATED.jsx
+if (data?.id) {
+  if (ventasConDesglose.length > 0)
+    await supabase.from("ventas").update({ cierre_id: data.id }).in("id", ventasConDesglose.map((v) => v.id));
+  if (pagosConDesglose.length > 0)
+    await supabase.from("pagos").update({ cierre_id: data.id }).in("id", pagosConDesglose.map((p) => p.id));
+}
 
-    setMensaje("✅ Closeout saved successfully!");
-    setGuardando(false);
-    try {
-      localStorage.removeItem("pre_cierre_fechas");
-      localStorage.removeItem("pre_cierre_fecha");
-      localStorage.setItem("cierre_cash_breakdown", JSON.stringify(cashBreakdown));
-    } catch {}
-    setTimeout(() => navigate("/cierres/historial"), 1200);
+setMensaje("✅ Closeout saved successfully!");
+setGuardando(false);
+try {
+  localStorage.removeItem("pre_cierre_fechas");
+  localStorage.removeItem("pre_cierre_fecha");
+  localStorage.setItem("cierre_cash_breakdown", JSON.stringify(cashBreakdown));
+  // 🔴 fuerza refresco del listado de Pre-cierre
+  localStorage.setItem("pre_cierre_invalidate", "1");
+} catch {}
+
+setTimeout(() => navigate("/cierres"), 800); // ⬅️ vuelve al Pre-cierre, no a historial
+ // opcional: vuelve directo al pre-cierre
   };
 
   /* ======================= PDF ======================= */
