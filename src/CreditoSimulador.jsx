@@ -80,6 +80,25 @@ const getScoreLabel = (score) => {
   return "Sin Crédito";
 };
 
+/* ==================== Altura responsiva para Charts ==================== */
+function useChartHeight() {
+  const [h, setH] = useState(260);
+  useEffect(() => {
+    const compute = () => {
+      const w = window.innerWidth;
+      if (w < 380) setH(170);
+      else if (w < 480) setH(190);
+      else if (w < 640) setH(220);
+      else if (w < 1024) setH(240);
+      else setH(260);
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, []);
+  return h;
+}
+
 /* ==================== LÓGICA DE SCORE ==================== */
 function calculateScoreImpact(currentSaldo, currentScore, scenario) {
   const SCORE_MIN = 300;
@@ -159,6 +178,8 @@ export default function SimuladorCredito({ onClose }) {
     { id: 4, type: "SIN_PAGAR", label: "⚠️ Sin Actividad", periods: 2, unit: "weeks", active: false },
     { id: 5, type: "HISTORIAL_PERFECTO", label: "⭐ Pagos Puntuales", periods: 4, unit: "weeks", active: false }
   ]);
+
+  const chartHeight = useChartHeight();
 
   // Buscar clientes
   useEffect(() => {
@@ -461,12 +482,12 @@ export default function SimuladorCredito({ onClose }) {
 
   return (
     <div className="max-h-[80vh] overflow-y-auto">
-      <div className="p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6">
         {/* Header con info del cliente */}
         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-4">
           <div className="flex items-start justify-between mb-3">
             <div className="flex-1">
-              <div className="font-bold text-lg text-gray-900 flex items-center gap-2">
+              <div className="font-bold text-lg sm:text-xl text-gray-900 flex items-center gap-2 min-w-0">
                 {selectedClient.cliente_nombre}
                 {hasManualLimit && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300 text-xs font-semibold">
@@ -476,7 +497,7 @@ export default function SimuladorCredito({ onClose }) {
                 )}
               </div>
               {selectedClient.nombre_negocio && (
-                <div className="text-sm text-gray-600">🏪 {selectedClient.nombre_negocio}</div>
+                <div className="text-sm text-gray-600 truncate">🏪 {selectedClient.nombre_negocio}</div>
               )}
             </div>
             <button
@@ -570,7 +591,7 @@ export default function SimuladorCredito({ onClose }) {
                               step="10"
                               value={scenario.amount || 0}
                               onChange={(e) => updateScenarioValue(scenario.id, "amount", e.target.value)}
-                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none w-full"
                             />
                           </div>
                         )}
@@ -584,7 +605,7 @@ export default function SimuladorCredito({ onClose }) {
                                 max="12"
                                 value={scenario.periods || 1}
                                 onChange={(e) => updateScenarioValue(scenario.id, "periods", e.target.value)}
-                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none w-full"
                               />
                             </div>
                             <div className="flex items-center gap-2">
@@ -592,7 +613,7 @@ export default function SimuladorCredito({ onClose }) {
                               <select
                                 value={scenario.unit || "weeks"}
                                 onChange={(e) => updateScenarioValue(scenario.id, "unit", e.target.value)}
-                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none bg-white"
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none bg-white w-full"
                               >
                                 <option value="weeks">Semanas</option>
                                 <option value="months">Meses</option>
@@ -668,10 +689,10 @@ export default function SimuladorCredito({ onClose }) {
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-300 rounded-xl p-6">
               <h4 className="font-bold text-gray-900 mb-4 text-center text-xl">📊 Resultado Proyectado</h4>
               
-              <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                 <div className="text-center">
                   <div className="text-sm text-gray-600 mb-2">Score Actual</div>
-                  <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold border-2 ${currentScoreClasses}`}>
+                  <div className={`inline-flex px-6 py-3 rounded-full text-2xl sm:text-3xl font-bold border-2 ${currentScoreClasses}`}>
                     {selectedClient.score_base || 0}
                   </div>
                   <div className="text-xs text-gray-600 mt-1">{getScoreLabel(selectedClient.score_base || 0)}</div>
@@ -683,7 +704,7 @@ export default function SimuladorCredito({ onClose }) {
 
                 <div className="text-center">
                   <div className="text-sm text-gray-600 mb-2">Score Proyectado</div>
-                  <div className={`inline-flex px-6 py-3 rounded-full text-3xl font-bold border-2 ${finalScoreClasses}`}>
+                  <div className={`inline-flex px-6 py-3 rounded-full text-2xl sm:text-3xl font-bold border-2 ${finalScoreClasses}`}>
                     {finalScore}
                   </div>
                   <div className="text-xs text-gray-600 mt-1">{getScoreLabel(finalScore)}</div>
@@ -695,7 +716,7 @@ export default function SimuladorCredito({ onClose }) {
               </div>
 
               <div className="text-center mb-4">
-                <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg ${
+                <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full font-bold text-base sm:text-lg ${
                   finalScore > (selectedClient.score_base || 0)
                     ? "bg-green-100 text-green-700 border-2 border-green-300"
                     : finalScore < (selectedClient.score_base || 0)
@@ -728,10 +749,10 @@ export default function SimuladorCredito({ onClose }) {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="bg-white rounded-lg p-3 border-2 border-purple-200">
                   <div className="text-xs text-gray-500 uppercase">Saldo Final</div>
-                  <div className="text-xl font-bold text-red-600">{fmt(finalSaldo)}</div>
+                  <div className="text-lg sm:text-xl font-bold text-red-600">{fmt(finalSaldo)}</div>
                   <div className={`text-xs ${finalSaldo < Number(selectedClient.saldo || 0) ? "text-green-600" : "text-red-600"}`}>
                     {finalSaldo < Number(selectedClient.saldo || 0) ? "↓" : "↑"} 
                     {fmt(Math.abs(finalSaldo - Number(selectedClient.saldo || 0)))}
@@ -740,7 +761,7 @@ export default function SimuladorCredito({ onClose }) {
 
                 <div className="bg-white rounded-lg p-3 border-2 border-purple-200">
                   <div className="text-xs text-gray-500 uppercase">Crédito Disponible</div>
-                  <div className="text-xl font-bold text-green-600">
+                  <div className="text-lg sm:text-xl font-bold text-green-600">
                     {fmt(projectedAvailable)}
                   </div>
                   <div className={`text-xs ${
@@ -761,7 +782,7 @@ export default function SimuladorCredito({ onClose }) {
                   📈 Evolución del Score y Límite
                   {hasManualLimit && <Shield className="text-amber-500" size={14} />}
                 </h5>
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={chartHeight}>
                   <LineChart data={scoreProgression}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="name" fontSize={12} stroke="#6b7280" />
@@ -801,7 +822,7 @@ export default function SimuladorCredito({ onClose }) {
               {/* Progresión del Saldo y Disponible */}
               <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
                 <h5 className="font-bold text-gray-900 mb-3 text-center">💰 Saldo vs Disponible</h5>
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={chartHeight}>
                   <BarChart data={saldoProgression}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="name" fontSize={12} stroke="#6b7280" />
@@ -845,7 +866,7 @@ export default function SimuladorCredito({ onClose }) {
                     <div className="text-center">
                       <div className="text-xs text-gray-500 mb-2">Actual</div>
                       <div className={`px-4 py-3 rounded-lg border-2 ${currentScoreClasses}`}>
-                        <div className="text-3xl font-bold">{selectedClient.score_base || 0}</div>
+                        <div className="text-2xl sm:text-3xl font-bold">{selectedClient.score_base || 0}</div>
                         <div className="text-xs mt-1">{getScoreLabel(selectedClient.score_base || 0)}</div>
                       </div>
                     </div>
@@ -853,7 +874,7 @@ export default function SimuladorCredito({ onClose }) {
                     <div className="text-center">
                       <div className="text-xs text-gray-500 mb-2">Proyectado</div>
                       <div className={`px-4 py-3 rounded-lg border-2 ${finalScoreClasses}`}>
-                        <div className="text-3xl font-bold">{finalScore}</div>
+                        <div className="text-2xl sm:text-3xl font-bold">{finalScore}</div>
                         <div className="text-xs mt-1">{getScoreLabel(finalScore)}</div>
                       </div>
                     </div>
@@ -892,7 +913,7 @@ export default function SimuladorCredito({ onClose }) {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg p-3">
                       <div className="text-xs text-indigo-600 uppercase font-semibold mb-1">Actual</div>
                       <div className="text-2xl font-bold text-indigo-700">{fmt(currentLimit)}</div>
@@ -939,7 +960,7 @@ export default function SimuladorCredito({ onClose }) {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="bg-green-50 border-2 border-green-200 rounded-lg p-3">
                       <div className="text-xs text-green-600 uppercase font-semibold mb-1">Actual</div>
                       <div className="text-2xl font-bold text-green-700">
