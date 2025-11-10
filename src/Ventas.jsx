@@ -1541,50 +1541,43 @@ useEffect(() => {
     }
   }, [selectedClient, cartSafe, payments, notes, step]);
 
-  /* ---------- 🔧 AUTO-FILL del monto de pago (CORREGIDO) ---------- */
-  useEffect(() => {
-    // ✅ FIX: Resetear auto-fill cuando cambia el total de la venta
-    if (step === 3 && totalAPagar > 0 && payments.length === 1) {
-      const currentPayment = Number(payments[0].monto);
-      
-      // Si el pago actual es diferente al total a pagar, resetear auto-fill
-      if (paymentAutoFilled && Math.abs(currentPayment - saleTotal) > 0.01) {
-        setPaymentAutoFilled(false);
-      }
-    }
-
-    // Auto-fill cuando entramos al paso 3 y el monto está en 0
-    if (
-      step === 3 && 
-      totalAPagar > 0 && 
-      !paymentAutoFilled && 
-      payments.length === 1 && 
-      Number(payments[0].monto) === 0
-    ) {
-      // ✅ FIX: Redondear a 2 decimales
-      const roundedTotal = Number(saleTotal.toFixed(2));
-      setPayments([{ ...payments[0], monto: roundedTotal }]);
-      setPaymentAutoFilled(true);
-    }
-
-    if (step !== 3 && paymentAutoFilled) {
+  /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
+useEffect(() => {
+  // Resetear auto-fill cuando cambia el total de la venta
+  if (step === 3 && totalAPagar > 0 && payments.length === 1) {
+    const currentPayment = Number(payments[0].monto);
+    
+    // Si el pago actual es diferente al total a pagar, resetear auto-fill
+    if (paymentAutoFilled && Math.abs(currentPayment - saleTotal) > 0.01) {
       setPaymentAutoFilled(false);
     }
+  }
 
-    if (step === 3 && paymentAutoFilled && payments.length > 1) {
-      setPaymentAutoFilled(false);
-    }
-  }, [step, totalAPagar, payments, paymentAutoFilled, saleTotal]); // ✅ FIX: Agregado saleTotal a dependencias
+  // 🆕 MEJORADO: Auto-fill solo si NO se ha tocado el campo manualmente
+  if (
+    step === 3 && 
+    totalAPagar > 0 && 
+    !paymentAutoFilled && 
+    payments.length === 1 && 
+    Number(payments[0].monto) === 0
+  ) {
+    // ⚠️ VERIFICAR: Solo auto-fill si acabamos de entrar al paso 3
+    // y el campo nunca ha sido tocado manualmente
+    const roundedTotal = Number(saleTotal.toFixed(2));
+    setPayments([{ ...payments[0], monto: roundedTotal }]);
+    setPaymentAutoFilled(true);
+  }
 
-  /* ========== LIMPIAR POLLING AL DESMONTAR ========== */
-  useEffect(() => {
-    return () => {
-      if (qrPollingIntervalRef.current) {
-        clearInterval(qrPollingIntervalRef.current);
-      }
-    };
-  }, []);// src/Ventas.jsx - PARTE 3 DE 3 (Handlers, Funciones y Renderizado de UI)
+  // Resetear auto-fill al salir del paso 3
+  if (step !== 3 && paymentAutoFilled) {
+    setPaymentAutoFilled(false);
+  }
 
+  // Resetear auto-fill cuando se agrega un segundo método de pago
+  if (step === 3 && paymentAutoFilled && payments.length > 1) {
+    setPaymentAutoFilled(false);
+  }
+}, [step, totalAPagar, payments.length, paymentAutoFilled, saleTotal]);
   /* ========== STRIPE QR FUNCTIONS (🆕 CON FEE) ========== */
 
   // 📱 Genera QR para pago con Stripe
@@ -1872,20 +1865,34 @@ useEffect(() => {
   }
 
   // ✅ FIX: handleChangePayment con redondeo a 2 decimales
-  function handleChangePayment(index, field, value) {
-    setPayments((arr) => arr.map((p, i) => {
-      if (i !== index) return p;
-      
-      // Si es el campo monto, redondear a 2 decimales
-      if (field === "monto") {
-        const numValue = Number(value);
-        const rounded = Number.isFinite(numValue) ? Number(numValue.toFixed(2)) : 0;
-        return { ...p, [field]: rounded };
+// ✅ NUEVA VERSIÓN - Reemplazar la función completa
+function handleChangePayment(index, field, value) {
+  setPayments((arr) => arr.map((p, i) => {
+    if (i !== index) return p;
+    
+    // Si es el campo monto
+    if (field === "monto") {
+      // Permitir valores vacíos, puntos, o "0"
+      if (value === '' || value === '.' || value === '0' || value === 0) {
+        return { ...p, [field]: 0 };
       }
       
-      return { ...p, [field]: value };
-    }));
-  }
+      // Convertir a número
+      const numValue = Number(value);
+      
+      // Si es un número válido y positivo
+      if (Number.isFinite(numValue) && numValue >= 0) {
+        return { ...p, [field]: numValue };
+      }
+      
+      // Si no es válido, mantener el valor actual
+      return p;
+    }
+    
+    // Para otros campos (forma de pago)
+    return { ...p, [field]: value };
+  }));
+}
 
   // ✅ FIX: handleAddPayment con redondeo a 2 decimales
   function handleAddPayment() {
@@ -3099,99 +3106,180 @@ function renderStepProducts() {
     </div>
   );
 }
-  /* ======================== Paso 3: Pago (🆕 CON FEE) ======================== */
-  function renderStepPayment() {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
+/* ======================== Paso 3: Pago (🆕 CON BOTÓN A/R Y CAMPO BORRABLE) ======================== */
+function renderStepPayment() {
+// Render label del método de pago, reemplazando por "Monto a A/R" si está bloqueado
+const getPaymentLabel = (p) => {
+  if (p?.toAR) return "Monto a A/R";
+  const found = PAYMENT_METHODS.find(fp => fp.key === p.forma);
+  return found?.label ?? p.forma ?? "Método";
+};
 
-        <div className="grid grid-cols-3 gap-3">
-          <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-center">
-            <div className="text-[10px] uppercase text-blue-700 font-semibold tracking-wide">Total</div>
-            <div className="text-2xl font-extrabold text-blue-800">{fmt(saleTotal)}</div>
-          </div>
-          <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 text-center">
-            <div className="text-[10px] uppercase text-amber-700 font-semibold tracking-wide">To Credit (A/R)</div>
-            <div className="text-2xl font-extrabold text-amber-700">{fmt(amountToCredit)}</div>
-          </div>
-          <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-3 text-center">
-            <div className="text-[10px] uppercase text-emerald-700 font-semibold tracking-wide">Change</div>
-            <div className="text-2xl font-extrabold text-emerald-700">{fmt(change)}</div>
+  return (
+    <div className="space-y-6">
+      <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-center">
+          <div className="text-[10px] uppercase text-blue-700 font-semibold tracking-wide">Total</div>
+          <div className="text-2xl font-extrabold text-blue-800">{fmt(saleTotal)}</div>
+        </div>
+        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 text-center">
+          <div className="text-[10px] uppercase text-amber-700 font-semibold tracking-wide">To Credit (A/R)</div>
+          <div className="text-2xl font-extrabold text-amber-700">{fmt(amountToCredit)}</div>
+        </div>
+        <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-3 text-center">
+          <div className="text-[10px] uppercase text-emerald-700 font-semibold tracking-wide">Change</div>
+          <div className="text-2xl font-extrabold text-emerald-700">{fmt(change)}</div>
+        </div>
+      </div>
+
+      {excesoCredito > 0 && (
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-lg p-3 text-center">
+          <div className="text-rose-700 font-semibold">❌ Credit Limit Exceeded</div>
+          <div className="text-rose-600 text-sm">
+            Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
           </div>
         </div>
+      )}
 
-        {excesoCredito > 0 && (
-          <div className="bg-rose-50 border-2 border-rose-300 rounded-lg p-3 text-center">
-            <div className="text-rose-700 font-semibold">❌ Credit Limit Exceeded</div>
-            <div className="text-rose-600 text-sm">
-              Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
-            </div>
-          </div>
-        )}
+      <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-bold text-gray-900">Payment Methods</div>
+          <button
+            className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+            onClick={handleAddPayment}
+          >
+            ➕ Add
+          </button>
+        </div>
 
-        <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-bold text-gray-900">Payment Methods</div>
-            <button
-              className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-              onClick={handleAddPayment}
-            >
-              ➕ Add
-            </button>
-          </div>
+        <div className="space-y-3">
+          {payments.map((p, i) => (
+            <div className="bg-gray-50 rounded-lg p-3 border" key={i}>
+              <div className="flex flex-col gap-3">
+{/* 🔹 PRIMERA FILA: Select/Label y monto */}
+<div className="flex items-center gap-2">
+  {/* Si está en A/R, mostramos un label fijo; si no, el select normal */}
+  {p?.toAR ? (
+    <div className="flex-1 border-2 border-amber-300 bg-amber-50 rounded-lg px-3 py-2 font-semibold text-amber-800">
+      {getPaymentLabel(p)}
+    </div>
+  ) : (
+    <select
+      value={p.forma}
+      onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
+      className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
+    >
+      {PAYMENT_METHODS.map((fp) => (
+        <option key={fp.key} value={fp.key}>
+          {fp.label}
+        </option>
+      ))}
+    </select>
+  )}
 
-          <div className="space-y-3">
-            {payments.map((p, i) => (
-              <div className="bg-gray-50 rounded-lg p-3 border" key={i}>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={p.forma}
-                    onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
-                    className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
-                  >
-                    {PAYMENT_METHODS.map((fp) => (
-                      <option key={fp.key} value={fp.key}>
-                        {fp.label}
-                      </option>
-                    ))}
-                  </select>
+  <div className="flex items-center gap-2">
+    <span className="text-lg font-bold">$</span>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold">$</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={p.monto}
-                      onChange={(e) => handleChangePayment(i, "monto", e.target.value)}
-                      className="w-28 border-2 border-gray-300 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none"
-                      placeholder="0.00"
-                    />
-                  </div>
+    {/* Input de monto: si está en A/R, se bloquea y muestra amountToCredit */}
+    <input
+      type="text"
+      value={p?.toAR ? String(Number(amountToCredit).toFixed(2)) : (p.monto === 0 ? '' : p.monto)}
+      onChange={(e) => {
+        if (p?.toAR) return; // bloqueado si está en A/R
+        const val = e.target.value.trim();
+        handleChangePayment(i, "monto", val || 0);
+      }}
+      onFocus={(e) => {
+        if (p?.toAR) return; // bloqueado si está en A/R
+        if (p.monto === 0) e.target.value = '';
+      }}
+      onBlur={(e) => {
+        if (p?.toAR) return; // bloqueado si está en A/R
+        const val = e.target.value.trim();
+        if (val === '' || val === '.' || val === '0') {
+          handleChangePayment(i, "monto", 0);
+        } else {
+          const num = parseFloat(val);
+          if (!isNaN(num) && num > 0) {
+            handleChangePayment(i, "monto", Number(num.toFixed(2)));
+          } else {
+            handleChangePayment(i, "monto", 0);
+          }
+        }
+      }}
+      readOnly={!!p?.toAR}
+      disabled={!!p?.toAR}
+      className={`w-28 border-2 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none
+                  ${p?.toAR ? "bg-amber-50 border-amber-300 text-amber-800 cursor-not-allowed" : "border-gray-300"}`}
+      placeholder="0.00"
+      title={p?.toAR ? "Bloqueado: enviado a CxC (A/R)" : ""}
+    />
+  </div>
 
-                  {p.forma === "tarjeta" && (
-                    <button
-                      onClick={() => handleGenerateQR(i)}
-                      className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-md transition-colors flex items-center gap-1"
-                      title="Generar QR para pago con Stripe"
-                    >
-                      📱 QR
-                    </button>
-                  )}
+  {payments.length > 1 && !p?.toAR && (
+    <button
+      className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
+      onClick={() => handleRemovePayment(i)}
+      title="Eliminar este método de pago"
+    >
+      ✖️
+    </button>
+  )}
+</div>
 
-                  {payments.length > 1 && (
-                    <button
-                      className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
-                      onClick={() => handleRemovePayment(i)}
-                    >
-                      ✖️
-                    </button>
-                  )}
-                </div>
+{/* Si está en A/R, muestra el balance seleccionado */}
+{p?.toAR && (
+  <div className="text-sm text-amber-700 mt-1">
+    Balance seleccionado → <b>{fmt(amountToCredit)}</b>
+  </div>
+)}
+
+{/* 🔹 SEGUNDA FILA: Botones de acción */}
+<div className="flex items-center gap-2">
+  {/* Toggle A/R */}
+  {!p?.toAR ? (
+    <button
+      onClick={() => {
+        // Bloquear: marcar como A/R y poner monto 0 (como antes)
+        handleChangePayment(i, "monto", 0);
+        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: true } : x));
+      }}
+      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
+      title="Enviar este saldo a Cuentas por Cobrar (A/R)"
+    >
+      📋 To A/R
+    </button>
+  ) : (
+    <button
+      onClick={() => {
+        // Desbloquear: quitar modo A/R
+        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x));
+      }}
+      className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
+      title="Deshacer: volver a editar el monto"
+    >
+      ↩️ Undo A/R
+    </button>
+  )}
+
+  {/* Botón QR para tarjeta (solo cuando NO está en A/R y la forma es tarjeta) */}
+  {!p?.toAR && p.forma === "tarjeta" && (
+    <button
+      onClick={() => handleGenerateQR(i)}
+      className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-md transition-colors flex items-center justify-center gap-1"
+      title="Generar QR para pago con Stripe"
+    >
+      📱 QR Pay
+    </button>
+  )}
+</div>
+
                 
                 {/* 🆕 CHECKBOX PARA FEE DE TARJETA */}
                 {p.forma === "tarjeta" && (
-                  <div className="mt-3 pt-3 border-t border-gray-200">
+                  <div className="pt-2 border-t border-gray-200">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
@@ -3234,108 +3322,109 @@ function renderStepProducts() {
                   </div>
                 )}
               </div>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            className="mt-3 text-sm text-blue-700 underline"
-            onClick={() => setShowPaymentDetails((v) => !v)}
-          >
-            {showPaymentDetails ? "Hide details" : "Show details"}
-          </button>
-
-          {showPaymentDetails && (
-            <div className="mt-3 grid grid-cols-2 lg:grid-cols-5 gap-3">
-              <div className="bg-gray-50 rounded-lg p-3 border">
-                <div className="text-[10px] uppercase text-gray-500 font-semibold">Client</div>
-                <div className="font-semibold text-gray-900 text-sm mt-1">{selectedClient?.nombre || "Quick sale"}</div>
-                <div className="text-xs text-gray-500 mt-1 font-mono">#{getCreditNumber(selectedClient)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3 border">
-                <div className="text-[10px] uppercase text-gray-500 font-semibold">Sale Total</div>
-                <div className="text-lg font-bold">{fmt(saleTotal)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3 border">
-                <div className="text-[10px] uppercase text-gray-500 font-semibold">Paid</div>
-                <div className="text-lg font-bold">{fmt(paid)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3 border">
-                <div className="text-[10px] uppercase text-gray-500 font-semibold">Applied to Old Debt</div>
-                <div className="text-lg font-bold">{fmt(paidToOldDebt)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3 border">
-                <div className="text-[10px] uppercase text-gray-500 font-semibold">New Balance</div>
-                <div className={`text-lg font-bold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                  {fmt(Math.abs(balanceAfter))}
-                </div>
-              </div>
             </div>
-          )}
+          ))}
         </div>
 
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-4">
-          <div className="grid grid-cols-2 gap-4 text-center">
-            <div>
-              <div className="text-xs text-blue-600 uppercase font-semibold">Total to Pay</div>
-              <div className="text-2xl font-bold text-blue-800">{fmt(totalAPagar)}</div>
-            </div>
-            <div>
-              <div className="text-xs text-green-600 uppercase font-semibold">Total Paid</div>
-              <div className="text-2xl font-bold text-green-700">{fmt(paid)}</div>
-            </div>
-          </div>
+        <button
+          type="button"
+          className="mt-3 text-sm text-blue-700 underline"
+          onClick={() => setShowPaymentDetails((v) => !v)}
+        >
+          {showPaymentDetails ? "Hide details" : "Show details"}
+        </button>
 
-          {change > 0 && (
-            <div className="mt-4 bg-green-100 border border-green-300 rounded-lg p-3 text-center">
-              <div className="text-sm text-green-700 font-semibold">💰 Change to Give</div>
-              <div className="text-xl font-bold text-green-800">{fmt(change)}</div>
+        {showPaymentDetails && (
+          <div className="mt-3 grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="bg-gray-50 rounded-lg p-3 border">
+              <div className="text-[10px] uppercase text-gray-500 font-semibold">Client</div>
+              <div className="font-semibold text-gray-900 text-sm mt-1">{selectedClient?.nombre || "Quick sale"}</div>
+              <div className="text-xs text-gray-500 mt-1 font-mono">#{getCreditNumber(selectedClient)}</div>
             </div>
-          )}
-
-          {mostrarAdvertencia && (
-            <div className="mt-4 bg-orange-100 border border-orange-300 rounded-lg p-3 text-center">
-              <div className="text-orange-700 font-semibold">
-                ⚠️ Paid amount exceeds total debt. Please check payments.
+            <div className="bg-gray-50 rounded-lg p-3 border">
+              <div className="text-[10px] uppercase text-gray-500 font-semibold">Sale Total</div>
+              <div className="text-lg font-bold">{fmt(saleTotal)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 border">
+              <div className="text-[10px] uppercase text-gray-500 font-semibold">Paid</div>
+              <div className="text-lg font-bold">{fmt(paid)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 border">
+              <div className="text-[10px] uppercase text-gray-500 font-semibold">Applied to Old Debt</div>
+              <div className="text-lg font-bold">{fmt(paidToOldDebt)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 border">
+              <div className="text-[10px] uppercase text-gray-500 font-semibold">New Balance</div>
+              <div className={`text-lg font-bold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                {fmt(Math.abs(balanceAfter))}
               </div>
             </div>
-          )}
-        </div>
-
-        {showCreditPanel && amountToCredit > creditAvailable && (
-          <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300 rounded-lg p-4">
-            <div className="text-red-700 font-semibold text-center">❌ Credit Limit Exceeded</div>
-            <div className="text-red-600 text-sm mt-2 text-center">
-              Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b>
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-col sm:flex-row gap-3 pt-2">
-          <button
-            className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
-            onClick={() => setStep(2)}
-            disabled={saving}
-          >
-            ← Back
-          </button>
-          <button
-            className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
-            disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
-            onClick={saveSale}
-          >
-            {saving ? "💾 Saving..." : "💾 Save Sale"}
-          </button>
-        </div>
-
-        {paymentError && (
-          <div className="bg-red-100 border border-red-300 rounded-lg p-4 text-red-700 font-semibold text-center">
-            {paymentError}
           </div>
         )}
       </div>
-    );
-  }
+
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-4">
+        <div className="grid grid-cols-2 gap-4 text-center">
+          <div>
+            <div className="text-xs text-blue-600 uppercase font-semibold">Total to Pay</div>
+            <div className="text-2xl font-bold text-blue-800">{fmt(totalAPagar)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-green-600 uppercase font-semibold">Total Paid</div>
+            <div className="text-2xl font-bold text-green-700">{fmt(paid)}</div>
+          </div>
+        </div>
+
+        {change > 0 && (
+          <div className="mt-4 bg-green-100 border border-green-300 rounded-lg p-3 text-center">
+            <div className="text-sm text-green-700 font-semibold">💰 Change to Give</div>
+            <div className="text-xl font-bold text-green-800">{fmt(change)}</div>
+          </div>
+        )}
+
+        {mostrarAdvertencia && (
+          <div className="mt-4 bg-orange-100 border border-orange-300 rounded-lg p-3 text-center">
+            <div className="text-orange-700 font-semibold">
+              ⚠️ Paid amount exceeds total debt. Please check payments.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {showCreditPanel && amountToCredit > creditAvailable && (
+        <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300 rounded-lg p-4">
+          <div className="text-red-700 font-semibold text-center">❌ Credit Limit Exceeded</div>
+          <div className="text-red-600 text-sm mt-2 text-center">
+            Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row gap-3 pt-2">
+        <button
+          className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
+          onClick={() => setStep(2)}
+          disabled={saving}
+        >
+          ← Back
+        </button>
+        <button
+          className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
+          disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
+          onClick={saveSale}
+        >
+          {saving ? "💾 Saving..." : "💾 Save Sale"}
+        </button>
+      </div>
+
+      {paymentError && (
+        <div className="bg-red-100 border border-red-300 rounded-lg p-4 text-red-700 font-semibold text-center">
+          {paymentError}
+        </div>
+      )}
+    </div>
+  );
+}
 
   /* ======================== Render raíz ======================== */
   return (
@@ -3468,7 +3557,3 @@ function renderStepProducts() {
     </div>
   );
 }
-
-// ⚠️ NOTA: Falta agregar renderStepClient() y renderStepProducts()
-// Estos métodos son idénticos a la versión anterior, así que cópialos
-// directamente del documento original (Parte 3 del documento 2)
