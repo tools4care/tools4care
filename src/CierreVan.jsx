@@ -745,7 +745,8 @@ export default function CierreVan() {
   const arPeriodo = useMemo(() => {
     if (isClosedDay) return Number(cierreInfo?.cuentas_por_cobrar || 0);
     return (ventasDecor || []).reduce((t, v) => {
-      const venta = Number(v.total_venta) || 0;
+      const totalDesdeBreakdown = sumBk(v._bk);
+      const venta = Number(v.total_venta) || totalDesdeBreakdown;
       const pagado = Number(v.total_pagado) || 0;
       const credito = venta - pagado;
       return t + (credito > 0 ? credito : 0);
@@ -753,7 +754,7 @@ export default function CierreVan() {
   }, [isClosedDay, cierreInfo, ventasDecor]);
 
   const pagosCxC = useMemo(() => {
-    if (isClosedDay) return Number(cierreInfo?.pagos_cxc || 0);
+    if (isClosedDay) return Number(cierreInfo?.pagos_cuentas_por_cobrar || 0);
     return (avances || []).reduce((t, p) => t + sumBk(p._bk), 0);
   }, [isClosedDay, cierreInfo, avances]);
 
@@ -835,7 +836,7 @@ export default function CierreVan() {
       tarjeta_real: Number(counted.card || 0),
       transferencia_esperado: Number(systemGrid.transfer.toFixed(2)),
       transferencia_real: Number(counted.transfer || 0),
-      pagos_cxc: Number(pagosCxC.toFixed(2)),
+      pagos_cuentas_por_cobrar: Number(pagosCxC.toFixed(2)),
       ventas_ids,
       pagos_ids,
     };
@@ -1076,7 +1077,9 @@ export default function CierreVan() {
                 <tr><td colSpan={8} className="text-center text-gray-400 p-4">No sales</td></tr>
               ) : (
                 ventasDecor.map((v) => {
-                  const totalVenta = Number(v.total_venta || 0);
+                  // Si total_venta es 0, calcularlo desde el breakdown
+                  const totalDesdeBreakdown = sumBk(v._bk);
+                  const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
                   const totalPagado = Number(v.total_pagado || 0);
                   const credito = Math.max(0, totalVenta - totalPagado);
                   return (
@@ -1099,7 +1102,11 @@ export default function CierreVan() {
                 <tr>
                   <td className="p-2" colSpan={2}>Totals</td>
                   <td className="p-2 text-right">
-                    ${ventasDecor.reduce((t, v) => t + Number(v.total_venta || 0), 0).toFixed(2)}
+                    ${ventasDecor.reduce((t, v) => {
+                      const totalDesdeBreakdown = sumBk(v._bk);
+                      const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
+                      return t + totalVenta;
+                    }, 0).toFixed(2)}
                   </td>
                   <td className="p-2 text-green-700 text-right">
                     ${ventasDecor.reduce((t, v) => t + Number(v._bk?.cash || 0), 0).toFixed(2)}
@@ -1115,8 +1122,11 @@ export default function CierreVan() {
                   </td>
                   <td className="p-2 text-red-700 text-right">
                     ${ventasDecor.reduce((t, v) => {
-                      const venta = Number(v.total_venta||0), pagado = Number(v.total_pagado||0);
-                      const ar = venta - pagado; return t + (ar>0?ar:0);
+                      const totalDesdeBreakdown = sumBk(v._bk);
+                      const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
+                      const pagado = Number(v.total_pagado||0);
+                      const ar = totalVenta - pagado; 
+                      return t + (ar>0?ar:0);
                     }, 0).toFixed(2)}
                   </td>
                 </tr>
