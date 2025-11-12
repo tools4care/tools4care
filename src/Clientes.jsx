@@ -10,7 +10,7 @@ import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
   MapPin, Building2, Calendar, TrendingUp, X, Check, ChevronsLeft,
   ChevronLeft, ChevronRight, ChevronsRight, BarChart3, RefreshCcw,
-  ChevronDown, ChevronUp  // 🆕 Agregar estos dos
+  ChevronDown, ChevronUp
 } from "lucide-react";
 
 /* === CxC centralizado === */
@@ -324,7 +324,7 @@ const makeUUID = () =>
     return v.toString(16);
   });
 
-// Wrapper para obtener CxC
+// ⚡ Wrapper OPTIMIZADO para obtener CxC (solo cuando se necesita)
 async function safeGetCxc(clienteId) {
   try {
     const info = await getCxcCliente(clienteId);
@@ -621,8 +621,7 @@ export default function Clientes() {
   const [mesSeleccionado, setMesSeleccionado] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Mapa con CxC por cliente en página actual
-  const [cxcByClient, setCxcByClient] = useState({});
+  // ⚡ ELIMINADO: const [cxcByClient, setCxcByClient] = useState({});
 
   // Auto-refresh crédito refs
   const focusHandlerRef = useRef(null);
@@ -675,7 +674,7 @@ export default function Clientes() {
     });
   }
 
-  /* -------------------- Cargar página -------------------- */
+  /* ⚡ OPTIMIZADO: Cargar página SIN queries adicionales de CxC */
   const fetchPage = async (opts = {}) => {
     const { p = page, ps = pageSize, q = debounced } = opts;
     setIsLoading(true);
@@ -691,29 +690,12 @@ export default function Clientes() {
 
     if (q) {
       const like = `%${q}%`;
-      const qDigits = (q || "").replace(/\D/g, "");
-
-      const filtros = [
-        `nombre.ilike.${like}`,
-        `email.ilike.${like}`,
-        `negocio.ilike.${like}`,
-        `telefono.ilike.${like}`,
-        `direccion.ilike.${like}`,
-        `dir_calle.ilike.${like}`,
-        `dir_ciudad.ilike.${like}`,
-        `dir_estado.ilike.${like}`,
-        `dir_zip.ilike.${like}`,
-      ];
-
-      if (qDigits.length >= 3) {
-        const likeDigits = `%${qDigits}%`;
-        filtros.push(
-          `tel_norm.ilike.${likeDigits}`,
-          `tel_norm.ilike.%1${qDigits}%`
-        );
-      }
-
-      query = query.or(filtros.join(","));
+      query = query.or(
+        `nombre.ilike.${like},` +
+        `email.ilike.${like},` +
+        `negocio.ilike.${like},` +
+        `telefono.ilike.${like}`
+      );
     }
 
     const { data, error, count } = await query;
@@ -722,24 +704,13 @@ export default function Clientes() {
       setIsLoading(false);
       return;
     }
+    
     setClientes(data || []);
     setTotalRows(count || 0);
-
-    const entries = await Promise.allSettled(
-      (data || []).map(async (c) => {
-        const info = await safeGetCxc(c.id);
-        return [c.id, info];
-      })
-    );
-
-    const map = {};
-    for (const r of entries) {
-      if (r.status === "fulfilled") {
-        const [id, info] = r.value;
-        if (info) map[id] = info;
-      }
-    }
-    setCxcByClient(map);
+    
+    // ⚡ NO cargamos CxC aquí - el balance viene de la vista
+    // ⚡ ELIMINADO: Todo el bloque Promise.allSettled con safeGetCxc
+    
     setIsLoading(false);
   };
 
@@ -800,13 +771,6 @@ export default function Clientes() {
   function handleEditCliente(cArg) {
     const c = cArg || clienteSeleccionado;
     if (!c) return;
-
-    console.log("Editando cliente:", {
-      id: c?.id,
-      telefono_original: c?.telefono ?? c?.phone,
-      email: c?.email,
-      direccion_original: c?.direccion
-    });
 
     let direccion = { calle: "", ciudad: "", estado: "", zip: "" };
     const raw = c?.direccion;
@@ -1003,7 +967,6 @@ export default function Clientes() {
       const info = await safeGetCxc(clienteSeleccionado.id);
       if (info) {
         setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
-        setCxcByClient((prev) => ({ ...prev, [clienteSeleccionado.id]: info }));
       }
     };
   }, [clienteSeleccionado?.id]);
@@ -1188,7 +1151,6 @@ export default function Clientes() {
                   onClick={() => safeGetCxc(clienteSeleccionado.id).then(info => {
                     if (info) {
                       setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
-                      setCxcByClient(prev => ({ ...prev, [clienteSeleccionado.id]: info }));
                       setMensaje("Credit refreshed");
                       setTimeout(() => setMensaje(""), 1200);
                     }
@@ -1287,8 +1249,8 @@ export default function Clientes() {
 
                 <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
                   {clientes.slice(0, 10).map((c) => {
-                    const cxc = cxcByClient[c.id];
-                    const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
+                    // ⚡ Usar balance directo de la vista
+                    const saldo = Number(c.balance || 0);
 
                     return (
                       <div
@@ -1296,63 +1258,63 @@ export default function Clientes() {
                         className={`shrink-0 min-w-[240px] max-w-[280px] p-3 rounded-xl border
                 ${saldo > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}
                       >
-  {/* Header: Nombre + botón Payment */}
-<div className="flex items-start justify-between gap-2">
-  <div className="min-w-0">
-    <div className="text-[11px] font-semibold text-gray-800 truncate">
-      {c.nombre || "—"}
-    </div>
-    {c.negocio && (
-      <div className="text-[10px] text-gray-600 truncate">
-        {c.negocio}
-      </div>
-    )}
-    {c.telefono && (
-      <div className="text-[10px] text-gray-500 truncate">
-        {formatPhoneForInput(c.telefono)}
-      </div>
-    )}
-  </div>
+                        {/* Header: Nombre + botón Payment */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold text-gray-800 truncate">
+                              {c.nombre || "—"}
+                            </div>
+                            {c.negocio && (
+                              <div className="text-[10px] text-gray-600 truncate">
+                                {c.negocio}
+                              </div>
+                            )}
+                            {c.telefono && (
+                              <div className="text-[10px] text-gray-500 truncate">
+                                {formatPhoneForInput(c.telefono)}
+                              </div>
+                            )}
+                          </div>
 
-  {/* Botón directo a Abono */}
-  <button
-    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
-               bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
-    onClick={async (e) => {
-      e.stopPropagation();
-      const info = await safeGetCxc(c.id);
-      setClienteSeleccionado(c);
-      setResumen((r) => ({
-        ...r,
-        balance: info ? info.saldo : (c?.balance ?? 0),
-        cxc: info ?? null,
-      }));
-      setMostrarAbono(true);
-    }}
-    title="Registrar pago"
-  >
-    <DollarSign size={14} />
-    <span className="hidden sm:inline">Payment</span>
-  </button>
-</div>  {/* ← CERRAR DIV AQUÍ */}
+                          {/* Botón directo a Abono */}
+                          <button
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
+                               bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const info = await safeGetCxc(c.id);
+                              setClienteSeleccionado(c);
+                              setResumen((r) => ({
+                                ...r,
+                                balance: info ? info.saldo : saldo,
+                                cxc: info ?? null,
+                              }));
+                              setMostrarAbono(true);
+                            }}
+                            title="Registrar pago"
+                          >
+                            <DollarSign size={14} />
+                            <span className="hidden sm:inline">Payment</span>
+                          </button>
+                        </div>
 
-{/* Balance y abrir Stats tocando el cuerpo */}
-<button
-  className="mt-2 w-full text-left"
-  onClick={() => {
-    setClienteSeleccionado(c);
-    setMostrarStats(true);
-  }}
->
-  <div
-    className={`text-sm font-bold ${
-      saldo > 0 ? "text-rose-600" : "text-emerald-600"
-    }`}
-  >
-    {fmtSafe(saldo)}
-  </div>
-  <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
-</button>
+                        {/* Balance y abrir Stats tocando el cuerpo */}
+                        <button
+                          className="mt-2 w-full text-left"
+                          onClick={() => {
+                            setClienteSeleccionado(c);
+                            setMostrarStats(true);
+                          }}
+                        >
+                          <div
+                            className={`text-sm font-bold ${
+                              saldo > 0 ? "text-rose-600" : "text-emerald-600"
+                            }`}
+                          >
+                            {fmtSafe(saldo)}
+                          </div>
+                          <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
+                        </button>
                       </div>
                     );
                   })}
@@ -1377,9 +1339,8 @@ export default function Clientes() {
                   }
                   const d = dObj || { calle: "", ciudad: "", estado: "", zip: "" };
 
-                  const cxc = cxcByClient[c.id];
-                  const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
-                  const disp = typeof cxc?.disponible === "number" ? cxc.disponible : null;
+                  // ⚡ Balance directo de la vista
+                  const saldo = Number(c.balance || 0);
 
                   return (
                     <div
@@ -1405,22 +1366,22 @@ export default function Clientes() {
                             )}
                           </div>
                         </div>
-<button
-  onClick={async (e) => {
-    e.stopPropagation();
-    const info = await safeGetCxc(c.id);
-    setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
-    setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info || null }));
-    setMostrarAbono(true);
-  }}
-  className="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
->
-  <DollarSign size={14} />
-  Payment
-</button>
-</div>  {/* ✅ AGREGAR ESTE CIERRE AQUÍ */}
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const info = await safeGetCxc(c.id);
+                            setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
+                            setResumen((r) => ({ ...r, balance: info ? info.saldo : saldo, cxc: info || null }));
+                            setMostrarAbono(true);
+                          }}
+                          className="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
+                        >
+                          <DollarSign size={14} />
+                          Payment
+                        </button>
+                      </div>
 
-<div className="grid grid-cols-2 gap-3 mb-3">
+                      <div className="grid grid-cols-2 gap-3 mb-3">
                         <div>
                           <p className="text-xs text-gray-500">Phone</p>
                           <p className="text-sm font-medium">{formatPhoneForInput(c.telefono)}</p>
@@ -1447,27 +1408,7 @@ export default function Clientes() {
                             {fmtSafe(saldo)}
                           </span>
                         </div>
-                        {disp !== null && (
-                          <div>
-                            <p className="text-xs text-gray-500">Available</p>
-                            <span
-                              className={`text-sm font-semibold ${
-                                Number(disp) >= 0 ? "text-emerald-600" : "text-red-600"
-                              }`}
-                            >
-                              {fmtSafe(disp)}
-                            </span>
-                          </div>
-                        )}
                       </div>
-
-                      {cxc?.limite_manual_aplicado && (
-                        <div className="mt-2">
-                          <span className="text-[10px] uppercase tracking-wide text-blue-500">
-                            Manual limit active
-                          </span>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -1491,7 +1432,6 @@ export default function Clientes() {
                       <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Contact</th>
                       <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider hidden md:table-cell">Address</th>
                       <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Balance</th>
-                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider hidden lg:table-cell">Credit</th>
                       <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
@@ -1507,9 +1447,8 @@ export default function Clientes() {
                       }
                       const d = dObj || { calle: "", ciudad: "", estado: "", zip: "" };
 
-                      const cxc = cxcByClient[c.id];
-                      const saldo = typeof cxc?.saldo === "number" ? cxc.saldo : (c.balance || 0);
-                      const disp = typeof cxc?.disponible === "number" ? cxc.disponible : null;
+                      // ⚡ Balance directo de la vista
+                      const saldo = Number(c.balance || 0);
 
                       return (
                         <tr
@@ -1567,43 +1506,27 @@ export default function Clientes() {
                               {fmtSafe(saldo)}
                             </span>
                           </td>
-                          <td className="px-4 sm:px-6 py-3 sm:py-4 hidden lg:table-cell">
-                            {disp === null ? (
-                              <span className="text-[11px] text-gray-400">—</span>
-                            ) : (
-                              <div className="flex flex-col">
-                                <span className={`text-sm font-semibold ${Number(disp) >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                                  Avail: {fmtSafe(disp)}
-                                </span>
-                                {cxc?.limite_manual_aplicado && (
-                                  <span className="text-[10px] uppercase tracking-wide text-blue-500 mt-0.5">
-                                    Manual limit active
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </td>
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
-   <button
-  className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duration-200"
-  onClick={async (e) => {  // ✅ Agregar async
-    e.stopPropagation();
-    const info = await safeGetCxc(c.id);
-    setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
-    setResumen((r) => ({ ...r, balance: info ? info.saldo : (c.balance || 0), cxc: info || null }));
-    setMostrarAbono(true);
-  }}
->
-  <DollarSign size={14} />
-  <span className="hidden sm:inline">Payment</span>
-</button>
+                            <button
+                              className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duration-200"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const info = await safeGetCxc(c.id);
+                                setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
+                                setResumen((r) => ({ ...r, balance: info ? info.saldo : saldo, cxc: info || null }));
+                                setMostrarAbono(true);
+                              }}
+                            >
+                              <DollarSign size={14} />
+                              <span className="hidden sm:inline">Payment</span>
+                            </button>
                           </td>
                         </tr>
                       );
                     })}
                     {clientes.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center">
+                        <td colSpan={5} className="px-6 py-12 text-center">
                           <div className="flex flex-col items-center gap-3">
                             <div className="bg-gray-100 rounded-full p-3">
                               <Search className="text-gray-400" size={24} />
