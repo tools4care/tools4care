@@ -674,45 +674,64 @@ export default function Clientes() {
     });
   }
 
-  /* ⚡ OPTIMIZADO: Cargar página SIN queries adicionales de CxC */
-  const fetchPage = async (opts = {}) => {
-    const { p = page, ps = pageSize, q = debounced } = opts;
-    setIsLoading(true);
-    setMensaje("");
-    const from = (p - 1) * ps;
-    const to = from + ps - 1;
+/* ⚡ OPTIMIZADO: Cargar página CON búsqueda completa de dirección */
+const fetchPage = async (opts = {}) => {
+  const { p = page, ps = pageSize, q = debounced } = opts;
+  setIsLoading(true);
+  setMensaje("");
+  const from = (p - 1) * ps;
+  const to = from + ps - 1;
 
-    let query = supabase
-      .from(CLIENTS_VIEW)
-      .select("*", { count: "exact" })
-      .order("nombre", { ascending: true })
-      .range(from, to);
+  let query = supabase
+    .from(CLIENTS_VIEW)
+    .select("*", { count: "exact" })
+    .order("nombre", { ascending: true })
+    .range(from, to);
 
-    if (q) {
-      const like = `%${q}%`;
-      query = query.or(
-        `nombre.ilike.${like},` +
-        `email.ilike.${like},` +
-        `negocio.ilike.${like},` +
-        `telefono.ilike.${like}`
+  if (q) {
+    const like = `%${q}%`;
+    const qDigits = (q || "").replace(/\D/g, "");
+
+    // 🔍 BÚSQUEDA COMPLETA: Nombre, Email, Negocio, Teléfono, Dirección
+    const filtros = [
+      `nombre.ilike.${like}`,
+      `email.ilike.${like}`,
+      `negocio.ilike.${like}`,
+      `telefono.ilike.${like}`,
+      `direccion.ilike.${like}`,     // ✅ Dirección completa
+      `dir_calle.ilike.${like}`,     // ✅ Calle
+      `dir_ciudad.ilike.${like}`,    // ✅ Ciudad
+      `dir_estado.ilike.${like}`,    // ✅ Estado
+      `dir_zip.ilike.${like}`,       // ✅ ZIP
+    ];
+
+    // 🔍 Búsqueda por dígitos de teléfono (si hay al menos 3 dígitos)
+    if (qDigits.length >= 3) {
+      const likeDigits = `%${qDigits}%`;
+      filtros.push(
+        `tel_norm.ilike.${likeDigits}`,
+        `tel_norm.ilike.%1${qDigits}%`
       );
     }
 
-    const { data, error, count } = await query;
-    if (error) {
-      setMensaje("Error loading clients");
-      setIsLoading(false);
-      return;
-    }
-    
-    setClientes(data || []);
-    setTotalRows(count || 0);
-    
-    // ⚡ NO cargamos CxC aquí - el balance viene de la vista
-    // ⚡ ELIMINADO: Todo el bloque Promise.allSettled con safeGetCxc
-    
+    query = query.or(filtros.join(","));
+  }
+
+  const { data, error, count } = await query;
+  if (error) {
+    setMensaje("Error loading clients");
     setIsLoading(false);
-  };
+    return;
+  }
+  
+  setClientes(data || []);
+  setTotalRows(count || 0);
+  
+  // ⚡ NO cargamos CxC aquí - el balance viene de la vista
+  // ⚡ OPTIMIZACIÓN: Sin Promise.allSettled con safeGetCxc
+  
+  setIsLoading(false);
+};
 
   useEffect(() => {
     fetchPage({ p: 1, ps: pageSize, q: debounced });
