@@ -263,7 +263,24 @@ function BuscadorSuplidor({ value, name, onChange, disabled }) {
    ===================  PESTAÑA DE VENTAS  ====================
    ============================================================ */
 
-const SIZES_COMUNES = [".05L", ".100ML", "5.25 OZ", "PACK", "TUB", "UNIT", "500ML", "1L", "BOX", "SACK", "BAG"];
+const SIZES_COMUNES = [
+  // Volúmenes pequeños
+  "15ML", "30ML", "50ML", "60ML", "75ML", "100ML", "125ML", "150ML", "200ML", "250ML",
+  // Volúmenes medianos
+  "300ML", "350ML", "400ML", "500ML", "600ML", "750ML", "800ML", "1L", "1.5L", "2L",
+  // Onzas
+  "1 OZ", "2 OZ", "3 OZ", "4 OZ", "5 OZ", "5.25 OZ", "6 OZ", "8 OZ", "10 OZ", "12 OZ", "16 OZ", "32 OZ",
+  // Gramos
+  "50G", "100G", "150G", "200G", "250G", "300G", "500G", "1KG",
+  // Libras
+  "1 LB", "2 LB", "5 LB", "10 LB",
+  // Unidades y empaques
+  "UNIT", "PACK", "PAIR", "SET", "KIT", "BOX", "CASE", "DOZEN",
+  // Contenedores
+  "TUB", "JAR", "BOTTLE", "CAN", "BAG", "SACK", "POUCH", "TUBE",
+  // Otros
+  "SAMPLE", "TRAVEL SIZE", "PROFESSIONAL SIZE", "GALLON", "QUART", "PINT"
+];
 
 function PestañaVentas({ productoId, nombre }) {
   const [ventasMes, setVentasMes] = useState([]);
