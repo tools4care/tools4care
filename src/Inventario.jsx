@@ -1,5 +1,5 @@
-// src/Inventario.jsx
-import { useEffect, useMemo, useState } from "react";
+// src/Inventario.jsx - VERSIÓN ÓPTIMA (HÍBRIDA)
+import { useEffect, useMemo, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import AgregarStockModal from "./AgregarStockModal";
@@ -21,20 +21,23 @@ export default function Inventory() {
     tipo: "warehouse",
   });
 
-  const [inventory, setInventory] = useState([]);
+  const [inventory, setInventory] = useState([]); // Productos cargados (top 100 o búsqueda en DB)
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTransferOpen, setModalTransferOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
-  // 🆕 Escáner móvil
   const [showScanner, setShowScanner] = useState(false);
 
-  // paginación
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const offset = page * PAGE_SIZE;
+
+  // 🔥 NUEVO: Estados para búsqueda híbrida
+  const [isSearchingDB, setIsSearchingDB] = useState(false);
+  const [dbSearchResults, setDbSearchResults] = useState(null);
+  const searchTimerRef = useRef(null);
 
   // ======================== Cargar ubicaciones ========================
   useEffect(() => {
@@ -80,10 +83,14 @@ export default function Inventory() {
     setHasMore(true);
     setInventory([]);
     setError("");
+    setDbSearchResults(null); // 🔥 Resetear resultados de búsqueda en DB
   }, [selected.key, selected.id, selected.tipo, refresh]);
 
-  // ======================== Cargar inventario (paginado) ========================
+  // ======================== Cargar inventario (paginado, SIN búsqueda) ========================
   useEffect(() => {
+    // 🔥 Si hay búsqueda activa, no cargar el inventario normal
+    if (search.trim()) return;
+
     (async () => {
       if (!selected) return;
 
@@ -161,7 +168,7 @@ export default function Inventory() {
         setHasMore(false);
       }
     })();
-  }, [selected.id, selected.tipo, offset, refresh]);
+  }, [selected.id, selected.tipo, offset, refresh, search]);
 
   // ======================== Realtime ========================
   useEffect(() => {
@@ -202,31 +209,137 @@ export default function Inventory() {
     setShowScanner(false);
   };
 
-  // ======================== Filtro de búsqueda OPTIMIZADO ========================
-  const filteredInventory = useMemo(() => {
-    const f = (search || "").toLowerCase().trim();
-    if (!f) return inventory;
-    
-    // 🚀 OPTIMIZACIÓN: Búsqueda exacta primero (más rápida)
-    const exactMatch = inventory.find((it) => {
-      const p = it.productos || {};
-      return (p.codigo || "").toLowerCase() === f;
-    });
-
-    if (exactMatch) {
-      return [exactMatch];
+  // 🔥 BÚSQUEDA EN BASE DE DATOS (solo cuando no encuentra en memoria)
+  const searchInDatabase = async (searchTerm) => {
+    if (!searchTerm.trim()) {
+      setDbSearchResults(null);
+      return;
     }
 
-    // Búsqueda parcial
-    return inventory.filter((it) => {
+    setIsSearchingDB(true);
+    setError("");
+
+    try {
+      const tabla = selected.tipo === "warehouse" ? "stock_almacen" : "stock_van";
+      
+      let query = supabase
+        .from(tabla)
+        .select(
+          `
+          id,
+          producto_id,
+          cantidad,
+          productos:producto_id (
+            id, codigo, nombre, marca, size
+          )
+        `,
+          { count: "exact", head: false }
+        );
+
+      if (selected.tipo === "van") {
+        query = query.eq("van_id", selected.id);
+      }
+
+      // Filtros de búsqueda
+      query = query.or(
+        `productos.codigo.ilike.%${searchTerm}%,productos.nombre.ilike.%${searchTerm}%,productos.marca.ilike.%${searchTerm}%`,
+        { referencedTable: 'productos' }
+      );
+
+      query = query.order("cantidad", { ascending: false }).limit(100);
+
+      const { data, error: sErr } = await query;
+
+      if (sErr) throw sErr;
+
+      const rows =
+        (data || []).map((s) => ({
+          id: s.id,
+          producto_id: s.producto_id,
+          cantidad: Number(s.cantidad || 0),
+          productos: s.productos || null,
+        })) ?? [];
+
+      setDbSearchResults(rows);
+    } catch (e) {
+      setError(e?.message || String(e));
+      setDbSearchResults([]);
+    } finally {
+      setIsSearchingDB(false);
+    }
+  };
+
+  // 🔥 BÚSQUEDA HÍBRIDA: Primero en memoria, luego en DB con debounce
+  useEffect(() => {
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+
+    const searchTerm = search.trim();
+
+    // Si no hay búsqueda, limpiar resultados de DB
+    if (!searchTerm) {
+      setDbSearchResults(null);
+      setIsSearchingDB(false);
+      return;
+    }
+
+    // 1️⃣ PASO 1: Buscar en memoria (instantáneo)
+    const memoryResults = inventory.filter((it) => {
       const p = it.productos || {};
+      const term = searchTerm.toLowerCase();
       return (
-        (p.codigo || "").toLowerCase().includes(f) ||
-        (p.nombre || "").toLowerCase().includes(f) ||
-        (p.marca || "").toLowerCase().includes(f)
+        (p.codigo || "").toLowerCase().includes(term) ||
+        (p.nombre || "").toLowerCase().includes(term) ||
+        (p.marca || "").toLowerCase().includes(term)
       );
     });
-  }, [inventory, search]);
+
+    // 2️⃣ PASO 2: Si encuentra resultados en memoria, NO buscar en DB
+    if (memoryResults.length > 0) {
+      setDbSearchResults(null); // Limpiar búsqueda anterior en DB
+      return;
+    }
+
+    // 3️⃣ PASO 3: Si NO encuentra en memoria, buscar en DB con debounce
+    searchTimerRef.current = setTimeout(() => {
+      searchInDatabase(searchTerm);
+    }, 400); // Debounce de 400ms
+
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, [search, inventory, selected.tipo, selected.id]);
+
+  // 🔥 FILTRADO FINAL: Memoria o DB según corresponda
+  const filteredInventory = useMemo(() => {
+    const searchTerm = search.trim().toLowerCase();
+
+    // Sin búsqueda: mostrar inventario completo
+    if (!searchTerm) {
+      return inventory;
+    }
+
+    // Buscar en memoria primero
+    const memoryResults = inventory.filter((it) => {
+      const p = it.productos || {};
+      return (
+        (p.codigo || "").toLowerCase().includes(searchTerm) ||
+        (p.nombre || "").toLowerCase().includes(searchTerm) ||
+        (p.marca || "").toLowerCase().includes(searchTerm)
+      );
+    });
+
+    // Si encontró en memoria, usar esos resultados
+    if (memoryResults.length > 0) {
+      return memoryResults;
+    }
+
+    // Si no encontró en memoria, usar resultados de DB
+    return dbSearchResults || [];
+  }, [inventory, search, dbSearchResults]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
@@ -237,7 +350,10 @@ export default function Inventory() {
             <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
               📦 VAN Inventory
             </h1>
-            <div className="text-sm text-gray-500">{filteredInventory.length} items</div>
+            <div className="text-sm text-gray-500">
+              {filteredInventory.length} items
+              {isSearchingDB && <span className="ml-2 text-blue-600">🔍 Searching...</span>}
+            </div>
           </div>
           <div className="mt-3 text-xs text-gray-600">
             Manage inventory by location with a clear and consistent interface.
@@ -275,7 +391,6 @@ export default function Inventory() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
-                  {/* 🆕 BOTÓN ESCÁNER - SOLO MÓVIL */}
                   <button
                     onClick={() => setShowScanner(true)}
                     className="lg:hidden bg-purple-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
@@ -304,10 +419,15 @@ export default function Inventory() {
           </div>
 
           {/* Current location pill */}
-          <div className="mt-3">
+          <div className="mt-3 flex items-center justify-between">
             <span className="inline-flex items-center gap-2 text-xs bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1 rounded-full">
               📍 {selected?.nombre} · <b className="font-mono">{selected?.tipo}</b>
             </span>
+            {dbSearchResults !== null && (
+              <span className="text-xs text-green-600 font-semibold">
+                🔍 Extended search active (all products)
+              </span>
+            )}
           </div>
         </div>
 
@@ -322,7 +442,16 @@ export default function Inventory() {
         <div className="bg-white rounded-xl shadow-lg p-0 overflow-hidden">
           {filteredInventory.length === 0 ? (
             <div className="p-8 text-gray-400 text-center">
-              {search ? "🔍 No products match your search." : "🗃️ No products in inventory."}
+              {isSearchingDB ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  <span>Searching in database...</span>
+                </div>
+              ) : search ? (
+                "🔍 No products match your search."
+              ) : (
+                "🗃️ No products in inventory."
+              )}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -372,7 +501,12 @@ export default function Inventory() {
         {/* Footer */}
         <div className="mt-4 flex justify-end gap-2">
           <span className="text-xs text-gray-500">
-            Showing <b>{filteredInventory.length}</b> of <b>{inventory.length}</b>
+            Showing <b>{filteredInventory.length}</b>
+            {dbSearchResults !== null ? (
+              <> of <b>all products</b> (extended search)</>
+            ) : (
+              <> of <b>{inventory.length}</b> loaded</>
+            )}
           </span>
         </div>
 
@@ -398,7 +532,7 @@ export default function Inventory() {
           }}
         />
 
-        {/* 🆕 Escáner de códigos de barras */}
+        {/* Escáner de códigos de barras */}
         {showScanner && (
           <BarcodeScanner
             onScan={handleBarcodeScanned}
