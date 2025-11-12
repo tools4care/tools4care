@@ -1,4 +1,4 @@
-// src/Inventario.jsx - VERSIÓN ÓPTIMA (HÍBRIDA)
+// src/Inventario.jsx - VERSIÓN ÓPTIMA CORREGIDA (sin error de búsqueda)
 import { useEffect, useMemo, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
@@ -21,7 +21,7 @@ export default function Inventory() {
     tipo: "warehouse",
   });
 
-  const [inventory, setInventory] = useState([]); // Productos cargados (top 100 o búsqueda en DB)
+  const [inventory, setInventory] = useState([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -34,7 +34,7 @@ export default function Inventory() {
   const [hasMore, setHasMore] = useState(true);
   const offset = page * PAGE_SIZE;
 
-  // 🔥 NUEVO: Estados para búsqueda híbrida
+  // Estados para búsqueda híbrida
   const [isSearchingDB, setIsSearchingDB] = useState(false);
   const [dbSearchResults, setDbSearchResults] = useState(null);
   const searchTimerRef = useRef(null);
@@ -83,12 +83,11 @@ export default function Inventory() {
     setHasMore(true);
     setInventory([]);
     setError("");
-    setDbSearchResults(null); // 🔥 Resetear resultados de búsqueda en DB
+    setDbSearchResults(null);
   }, [selected.key, selected.id, selected.tipo, refresh]);
 
   // ======================== Cargar inventario (paginado, SIN búsqueda) ========================
   useEffect(() => {
-    // 🔥 Si hay búsqueda activa, no cargar el inventario normal
     if (search.trim()) return;
 
     (async () => {
@@ -201,7 +200,6 @@ export default function Inventory() {
     }
   }, [selected.tipo, selected.id]);
 
-  // 🆕 Handler de escáner
   const handleBarcodeScanned = (code) => {
     let cleanedCode = code.replace(/^0+/, '');
     if (cleanedCode === '') cleanedCode = '0';
@@ -209,7 +207,7 @@ export default function Inventory() {
     setShowScanner(false);
   };
 
-  // 🔥 BÚSQUEDA EN BASE DE DATOS (solo cuando no encuentra en memoria)
+  // 🔥 BÚSQUEDA EN BASE DE DATOS CORREGIDA (busca productos primero, luego inventario)
   const searchInDatabase = async (searchTerm) => {
     if (!searchTerm.trim()) {
       setDbSearchResults(null);
@@ -220,48 +218,54 @@ export default function Inventory() {
     setError("");
 
     try {
+      // 1️⃣ Buscar productos que coincidan
+      const { data: productos, error: prodErr } = await supabase
+        .from("productos")
+        .select("id, codigo, nombre, marca, size")
+        .or(`codigo.ilike.%${searchTerm}%,nombre.ilike.%${searchTerm}%,marca.ilike.%${searchTerm}%`)
+        .limit(100);
+
+      if (prodErr) throw prodErr;
+
+      if (!productos || productos.length === 0) {
+        setDbSearchResults([]);
+        setIsSearchingDB(false);
+        return;
+      }
+
+      const productoIds = productos.map(p => p.id);
+
+      // 2️⃣ Buscar en inventario solo esos productos
       const tabla = selected.tipo === "warehouse" ? "stock_almacen" : "stock_van";
       
       let query = supabase
         .from(tabla)
-        .select(
-          `
-          id,
-          producto_id,
-          cantidad,
-          productos:producto_id (
-            id, codigo, nombre, marca, size
-          )
-        `,
-          { count: "exact", head: false }
-        );
+        .select("id, producto_id, cantidad")
+        .in("producto_id", productoIds);
 
       if (selected.tipo === "van") {
         query = query.eq("van_id", selected.id);
       }
 
-      // Filtros de búsqueda
-      query = query.or(
-        `productos.codigo.ilike.%${searchTerm}%,productos.nombre.ilike.%${searchTerm}%,productos.marca.ilike.%${searchTerm}%`,
-        { referencedTable: 'productos' }
-      );
+      query = query.order("cantidad", { ascending: false });
 
-      query = query.order("cantidad", { ascending: false }).limit(100);
+      const { data: inventario, error: invErr } = await query;
 
-      const { data, error: sErr } = await query;
+      if (invErr) throw invErr;
 
-      if (sErr) throw sErr;
-
-      const rows =
-        (data || []).map((s) => ({
-          id: s.id,
-          producto_id: s.producto_id,
-          cantidad: Number(s.cantidad || 0),
-          productos: s.productos || null,
-        })) ?? [];
+      // 3️⃣ Unir productos con inventario
+      const productosMap = new Map(productos.map(p => [p.id, p]));
+      
+      const rows = (inventario || []).map((inv) => ({
+        id: inv.id,
+        producto_id: inv.producto_id,
+        cantidad: Number(inv.cantidad || 0),
+        productos: productosMap.get(inv.producto_id) || null,
+      }));
 
       setDbSearchResults(rows);
     } catch (e) {
+      console.error("[searchInDatabase]", e);
       setError(e?.message || String(e));
       setDbSearchResults([]);
     } finally {
@@ -277,14 +281,13 @@ export default function Inventory() {
 
     const searchTerm = search.trim();
 
-    // Si no hay búsqueda, limpiar resultados de DB
     if (!searchTerm) {
       setDbSearchResults(null);
       setIsSearchingDB(false);
       return;
     }
 
-    // 1️⃣ PASO 1: Buscar en memoria (instantáneo)
+    // 1️⃣ Buscar en memoria (instantáneo)
     const memoryResults = inventory.filter((it) => {
       const p = it.productos || {};
       const term = searchTerm.toLowerCase();
@@ -295,16 +298,16 @@ export default function Inventory() {
       );
     });
 
-    // 2️⃣ PASO 2: Si encuentra resultados en memoria, NO buscar en DB
+    // 2️⃣ Si encuentra resultados en memoria, NO buscar en DB
     if (memoryResults.length > 0) {
-      setDbSearchResults(null); // Limpiar búsqueda anterior en DB
+      setDbSearchResults(null);
       return;
     }
 
-    // 3️⃣ PASO 3: Si NO encuentra en memoria, buscar en DB con debounce
+    // 3️⃣ Si NO encuentra en memoria, buscar en DB con debounce
     searchTimerRef.current = setTimeout(() => {
       searchInDatabase(searchTerm);
-    }, 400); // Debounce de 400ms
+    }, 400);
 
     return () => {
       if (searchTimerRef.current) {
@@ -313,16 +316,14 @@ export default function Inventory() {
     };
   }, [search, inventory, selected.tipo, selected.id]);
 
-  // 🔥 FILTRADO FINAL: Memoria o DB según corresponda
+  // 🔥 FILTRADO FINAL
   const filteredInventory = useMemo(() => {
     const searchTerm = search.trim().toLowerCase();
 
-    // Sin búsqueda: mostrar inventario completo
     if (!searchTerm) {
       return inventory;
     }
 
-    // Buscar en memoria primero
     const memoryResults = inventory.filter((it) => {
       const p = it.productos || {};
       return (
@@ -332,12 +333,10 @@ export default function Inventory() {
       );
     });
 
-    // Si encontró en memoria, usar esos resultados
     if (memoryResults.length > 0) {
       return memoryResults;
     }
 
-    // Si no encontró en memoria, usar resultados de DB
     return dbSearchResults || [];
   }, [inventory, search, dbSearchResults]);
 
@@ -532,7 +531,6 @@ export default function Inventory() {
           }}
         />
 
-        {/* Escáner de códigos de barras */}
         {showScanner && (
           <BarcodeScanner
             onScan={handleBarcodeScanned}
