@@ -581,12 +581,13 @@ export default function Sales() {
 
   const [step, setStep] = useState(1);
 
-  const [clientHistory, setClientHistory] = useState({
-    has: false,
-    ventas: 0,
-    pagos: 0,
-    loading: false,
-  });
+ const [clientHistory, setClientHistory] = useState({
+  has: false,
+  ventas: 0,
+  pagos: 0,
+  loading: false,
+  lastSaleDate: null, // 🆕 NUEVO
+});
 
   const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
 
@@ -956,23 +957,29 @@ export default function Sales() {
   }, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length]);
 
   /* ---------- Historial al seleccionar cliente ---------- */
-  useEffect(() => {
-    async function fetchHistory() {
-      const id = selectedClient?.id;
-      if (!id) {
-        setClientHistory({ has: false, ventas: 0, pagos: 0, loading: false });
-        return;
-      }
-      setClientHistory((h) => ({ ...h, loading: true }));
-      const [{ count: vCount }, { count: pCount }] = await Promise.all([
-        supabase.from("ventas").select("id", { count: "exact", head: true }).eq("cliente_id", id),
-        supabase.from("pagos").select("id", { count: "exact", head: true }).eq("cliente_id", id),
-      ]);
-      const has = (vCount || 0) > 0 || (pCount || 0) > 0;
-      setClientHistory({ has, ventas: vCount || 0, pagos: pCount || 0, loading: false });
+useEffect(() => {
+  async function fetchHistory() {
+    const id = selectedClient?.id;
+    if (!id) {
+      setClientHistory({ has: false, ventas: 0, pagos: 0, loading: false, lastSaleDate: null });
+      return;
     }
-    fetchHistory();
-  }, [selectedClient?.id]);
+    setClientHistory((h) => ({ ...h, loading: true }));
+    
+    // 🆕 Incluir última venta
+    const [{ count: vCount }, { count: pCount }, { data: lastSale }] = await Promise.all([
+      supabase.from("ventas").select("id", { count: "exact", head: true }).eq("cliente_id", id),
+      supabase.from("pagos").select("id", { count: "exact", head: true }).eq("cliente_id", id),
+      supabase.from("ventas").select("created_at").eq("cliente_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle()
+    ]);
+    
+    const has = (vCount || 0) > 0 || (pCount || 0) > 0;
+    const lastSaleDate = lastSale?.created_at || null;
+    
+    setClientHistory({ has, ventas: vCount || 0, pagos: pCount || 0, loading: false, lastSaleDate });
+  }
+  fetchHistory();
+}, [selectedClient?.id]);
 
   /* ---------- Traer límite/disponible/saldo ---------- */
   useEffect(() => {
@@ -1464,9 +1471,9 @@ useEffect(() => {
     }
   }
 
-  const timer = setTimeout(() => {
-    searchInDatabase();
-  }, 500);
+ const timer = setTimeout(() => {
+  searchInDatabase();
+}, 200);
 
   return () => clearTimeout(timer);
 }, [productSearch, van?.id, topProducts]);
@@ -1498,7 +1505,7 @@ useEffect(() => {
   const amountToCredit = Math.max(0, balanceAfter - balanceBefore);
 
   const clientScore = Number(selectedClient?.score_credito ?? 600);
-  const showCreditPanel = !!selectedClient && (clientHistory.has || balanceBefore !== 0);
+  const showCreditPanel = !!selectedClient && !!selectedClient.id && (clientHistory.has || balanceBefore !== 0);
 
   const computedLimit = policyLimit(clientScore);
   const creditLimit = showCreditPanel ? Number(cxcLimit ?? computedLimit) : 0;
@@ -2480,6 +2487,14 @@ function renderStepClient() {
                     Credit #: <span className="font-mono font-semibold">{creditNum}</span>
                   </span>
                 </div>
+                {clientHistory.lastSaleDate && (
+  <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+    <span>🕒</span>
+    <span className="text-xs font-semibold">
+      Last sale: {new Date(clientHistory.lastSaleDate).toLocaleDateString('en-US')}
+    </span>
+  </div>
+)}
               </div>
 
               {migrationMode && selectedClient?.id && (
@@ -2512,52 +2527,54 @@ function renderStepClient() {
                 </div>
               )}
             </div>
-
-            <div className="bg-white rounded-lg border shadow-sm p-4 min-w-0 lg:min-w-[280px]">
-              <div className="grid grid-cols-1 gap-3">
-                <div>
-                  <div className="text-xs text-gray-500 uppercase font-semibold">
-                    Credit Limit
-                  </div>
-                  <div className="text-xl font-bold text-gray-900">
-                    {fmt(Number(cxcLimit ?? policyLimit(clientScore)))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-gray-500 uppercase font-semibold">
-                    Available
-                  </div>
-                  <div className="text-xl font-bold text-emerald-600">
-                    {fmt(creditAvailable)}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-gray-500 uppercase font-semibold">
-                    After Sale
-                  </div>
-                  <div
-                    className={`text-xl font-bold ${
-                      creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"
-                    }`}
-                  >
-                    {fmt(creditAvailableAfter)}
-                  </div>
-                </div>
-
-                {balanceBefore > 0 && (
-                  <div className="rounded-lg p-2 border bg-red-50 border-red-200">
-                    <div className="text-xs font-semibold text-red-700">
-                      Outstanding Balance
+{/* 🆕 Solo mostrar si NO es Quick Sale */}
+            {selectedClient.id && (
+              <div className="bg-white rounded-lg border shadow-sm p-4 min-w-0 lg:min-w-[280px]">
+                <div className="grid grid-cols-1 gap-3">
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">
+                      Credit Limit
                     </div>
-                    <div className="text-lg font-bold text-red-700">
-                      {fmt(balanceBefore)}
+                    <div className="text-xl font-bold text-gray-900">
+                      {fmt(Number(cxcLimit ?? policyLimit(clientScore)))}
                     </div>
                   </div>
-                )}
+
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">
+                      Available
+                    </div>
+                    <div className="text-xl font-bold text-emerald-600">
+                      {fmt(creditAvailable)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">
+                      After Sale
+                    </div>
+                    <div
+                      className={`text-xl font-bold ${
+                        creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"
+                      }`}
+                    >
+                      {fmt(creditAvailableAfter)}
+                    </div>
+                  </div>
+
+                  {balanceBefore > 0 && (
+                    <div className="rounded-lg p-2 border bg-red-50 border-red-200">
+                      <div className="text-xs font-semibold text-red-700">
+                        Outstanding Balance
+                      </div>
+                      <div className="text-lg font-bold text-red-700">
+                        {fmt(balanceBefore)}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           <div className="mt-4 flex justify-between">
@@ -3059,8 +3076,8 @@ function renderStepProducts() {
         />
       </div>
 
-      {selectedClient && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      javascript{selectedClient && selectedClient.id && ( /* 🆕 Solo mostrar si NO es Quick Sale */
+  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {balanceBefore > 0 && (
             <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
               <div className="text-xs text-red-600 uppercase font-semibold">Outstanding Balance</div>
@@ -3409,11 +3426,10 @@ const getPaymentLabel = (p) => {
         >
           ← Back
         </button>
-        <button
-          className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
-          disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
-          onClick={saveSale}
-        >
+  <button
+  className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
+disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}  onClick={saveSale}
+>
           {saving ? "💾 Saving..." : "💾 Save Sale"}
         </button>
       </div>
