@@ -209,77 +209,107 @@ function useCierreInfo(van_id, fecha) {
   return cierreInfo;
 }
 
-// 4) Movimientos PENDIENTES
+// 4) Movimientos PENDIENTES - ✅ CORREGIDO
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
   const [loading, setLoading] = useState(false);
+  
   useEffect(() => {
-    if (!van_id || !isIsoDate(fechaInicio) || !isIsoDate(fechaFin)) { setVentas([]); setPagos([]); return; }
+    if (!van_id || !isIsoDate(fechaInicio) || !isIsoDate(fechaFin)) { 
+      setVentas([]); 
+      setPagos([]); 
+      return; 
+    }
+    
     setLoading(true);
+    
     (async () => {
       try {
-        // Intentar con RPC primero
-        const { data: ventasPend = [], error: errorVentas } = await supabase.rpc("ventas_no_cerradas_por_van_by_id", {
-          van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin,
+        // ✅ Usar timestamps explícitos para capturar el día completo
+        const fechaInicioStr = `${fechaInicio}T00:00:00`;
+        const fechaFinStr = `${fechaFin}T23:59:59.999`;
+        
+        console.log("🔍 Buscando ventas para:", { 
+          van_id, 
+          desde: fechaInicioStr, 
+          hasta: fechaFinStr 
         });
         
-        console.log("🔍 RPC ventas_no_cerradas_por_van_by_id resultado:", ventasPend.length, ventasPend);
-        console.log("Error del RPC:", errorVentas);
-        console.log("Parámetros enviados:", { van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin });
+        // Consulta DIRECTA de ventas (sin RPC)
+        const { data: ventasData = [], error: errorVentas } = await supabase
+          .from("ventas")
+          .select("*")
+          .eq("van_id", van_id)
+          .gte("fecha", fechaInicioStr)
+          .lte("fecha", fechaFinStr)
+          .is("cierre_id", null)
+          .order("fecha", { ascending: true });
         
-        // Si el RPC no retorna nada, intentar consulta directa como fallback
-        if (ventasPend.length === 0) {
-          console.log("⚠️ RPC retornó 0 ventas, intentando consulta directa...");
-          
-          // Probar con fecha como string
-          const { data: ventasDirectas = [], error: errorDirecto } = await supabase
-            .from("ventas")
-            .select("*")
-            .eq("van_id", van_id)
-            .gte("fecha", fechaInicio)
-            .lte("fecha", fechaFin + "T23:59:59")
-            .is("cierre_id", null);
-          
-          console.log("🔍 Consulta directa a tabla ventas:", ventasDirectas.length, ventasDirectas);
-          console.log("Error consulta directa:", errorDirecto);
-          
-          if (ventasDirectas.length === 0) {
-            // Intentar sin filtro de fecha para ver qué hay
-            console.log("⚠️ Intentando SIN filtro de fecha para diagnóstico...");
-            const { data: todasVentas = [] } = await supabase
-              .from("ventas")
-              .select("id, fecha, van_id, cierre_id, total_venta")
-              .eq("van_id", van_id)
-              .is("cierre_id", null)
-              .order("created_at", { ascending: false })
-              .limit(10);
-            
-            console.log("🔍 Últimas 10 ventas sin cierre para este van:", todasVentas);
-            if (todasVentas.length > 0) {
-              console.log("Ejemplo de fecha en DB:", todasVentas[0].fecha);
-              console.log("Fecha que buscamos:", fechaInicio);
-            }
-          }
-          
-          if (ventasDirectas.length > 0) {
-            console.log("✅ Encontradas ventas con consulta directa, usando esas");
-            setVentas(ventasDirectas);
-          } else {
-            setVentas(ventasPend);
-          }
-        } else {
-          setVentas(ventasPend);
+        if (errorVentas) {
+          console.error("❌ Error cargando ventas:", errorVentas);
         }
         
-        const { data: pagosPend = [] } = await supabase.rpc("pagos_no_cerrados_por_van_by_id", {
-          van_id_param: van_id, fecha_inicio: fechaInicio, fecha_fin: fechaFin,
-        });
-        console.log("🔍 RPC pagos_no_cerrados_por_van_by_id resultado:", pagosPend.length);
-        setPagos(pagosPend);
-      } finally { setLoading(false); }
+        console.log("✅ Ventas encontradas:", ventasData.length);
+        
+        if (ventasData.length === 0) {
+          // Diagnóstico: mostrar últimas ventas sin cierre
+          console.log("⚠️ No se encontraron ventas en el rango especificado");
+          
+          const { data: ultimas = [] } = await supabase
+            .from("ventas")
+            .select("id, fecha, van_id, cierre_id, total_venta, created_at")
+            .eq("van_id", van_id)
+            .is("cierre_id", null)
+            .order("created_at", { ascending: false })
+            .limit(5);
+          
+          console.log("📊 Últimas 5 ventas sin cierre de este van:", ultimas);
+          
+          if (ultimas.length > 0) {
+            console.log("📅 Ejemplo de formato de fecha en DB:", {
+              fecha: ultimas[0].fecha,
+              created_at: ultimas[0].created_at,
+              buscabas: fechaInicioStr
+            });
+          }
+        } else {
+          console.log("📊 Primera venta encontrada:", {
+            id: ventasData[0].id,
+            fecha: ventasData[0].fecha,
+            total: ventasData[0].total_venta
+          });
+        }
+        
+        setVentas(ventasData);
+        
+        // Consulta DIRECTA de pagos (sin RPC)
+        const { data: pagosData = [], error: errorPagos } = await supabase
+          .from("pagos")
+          .select("*")
+          .eq("van_id", van_id)
+          .gte("fecha_pago", fechaInicioStr)
+          .lte("fecha_pago", fechaFinStr)
+          .is("cierre_id", null)
+          .order("fecha_pago", { ascending: true });
+        
+        if (errorPagos) {
+          console.error("❌ Error cargando pagos:", errorPagos);
+        }
+        
+        console.log("✅ Pagos encontrados:", pagosData.length);
+        setPagos(pagosData);
+        
+      } catch (error) {
+        console.error("❌ Error general en useMovimientosNoCerrados:", error);
+        setVentas([]);
+        setPagos([]);
+      } finally { 
+        setLoading(false); 
+      }
     })();
   }, [van_id, fechaInicio, fechaFin]);
+  
   return { ventas, pagos, loading };
 }
 
@@ -606,12 +636,27 @@ export default function CierreVan() {
     })();
   }, [clienteKeys.join(",")]);
 
-  /* =========== Decorar pagos y agrupar por venta =========== */
-  const pagosDecor = useMemo(
-    () =>
-      (pagosRaw || []).map((p) => ({
+const pagosDecor = useMemo(
+  () =>
+    (pagosRaw || []).map((p) => {
+      // 🆕 FIX: Para pagos, intentar leer del breakdown, pero si no hay, usar el monto y metodo_pago
+      let breakdown = breakdownPorMetodo(p);
+      
+      // Si el breakdown está vacío, usar el monto total según el método
+      const totalBk = breakdown.cash + breakdown.card + breakdown.transfer;
+      if (totalBk === 0 && p.monto && p.metodo_pago) {
+        const monto = Number(p.monto || 0);
+        const metodo = normMetodo(p.metodo_pago);
+        
+        breakdown = { cash: 0, card: 0, transfer: 0 };
+        if (metodo === 'cash') breakdown.cash = monto;
+        else if (metodo === 'card') breakdown.card = monto;
+        else if (metodo === 'transfer') breakdown.transfer = monto;
+      }
+      
+      return {
         ...p,
-        _bk: breakdownPorMetodo(p),
+        _bk: breakdown,
         cliente_nombre:
           p.cliente_nombre ||
           (clientesDic[p.cliente_id]
@@ -619,9 +664,10 @@ export default function CierreVan() {
             : p.cliente_id
             ? p.cliente_id.slice(0, 8)
             : NO_CLIENTE),
-      })),
-    [pagosRaw, clientesDic]
-  );
+      };
+    }),
+  [pagosRaw, clientesDic]
+);
 
   const pagosPorVenta = useMemo(() => {
     const map = new Map();
@@ -637,89 +683,47 @@ export default function CierreVan() {
     }
     return map;
   }, [pagosDecor]);
+// 1️⃣ PRIMERO: Crear el Set de IDs de ventas
+const ventasIdSet = useMemo(() => new Set((ventasRaw || []).map((v) => v.id)), [ventasRaw]);
 
-  // Ventas con tope + excedentes a CxC
-  const { ventasDecor, excedentesCxC } = useMemo(() => {
-    const extrasAcumulados = [];
-    const decor = (ventasRaw || []).map((v) => {
-      const ficha = clientesDic[v.cliente_id];
-      const propio = breakdownPorMetodo(v);
-      
-      const totalVenta = Number(v.total_venta || 0);
-      const totalPagadoTabla = Number(v.total_pagado || 0);
-      const saldoVenta = Math.max(0, totalVenta - totalPagadoTabla);
-      const pack = pagosPorVenta.get(v.id) || { cash: 0, card: 0, transfer: 0, rows: [] };
+const { ventasDecor, excedentesCxC } = useMemo(() => {
+  const extrasAcumulados = [];
+  const decor = (ventasRaw || []).map((v) => {
+    const ficha = clientesDic[v.cliente_id];
+    
+    // 🆕 FIX SIMPLE: Usar SOLO las columnas individuales, NO el JSON
+    const breakdownVenta = {
+      cash: Number(v.pago_efectivo || 0),
+      card: Number(v.pago_tarjeta || 0),
+      transfer: Number(v.pago_transferencia || 0),
+    };
+    
+    return {
+      ...v,
+      _bk: breakdownVenta,
+      cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : "No client"),
+    };
+  });
 
-      if (isClosedDay) {
-        return {
-          ...v,
-          _bk: { cash: Number(propio.cash||0), card: Number(propio.card||0), transfer: Number(propio.transfer||0) },
-          cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
-        };
-      }
-
-      if (saldoVenta <= 0 || sumBk(pack) <= 0) {
-        return {
-          ...v,
-          _bk: { cash: Number(propio.cash||0), card: Number(propio.card||0), transfer: Number(propio.transfer||0) },
-          cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
-        };
-      }
-
-      const { assigned, extra } = capBreakdownTo(
-        { cash: Number(pack.cash||0), card: Number(pack.card||0), transfer: Number(pack.transfer||0) },
-        Number(saldoVenta)
-      );
-
-      const extraTotal = sumBk(extra);
-      if (extraTotal > 0.0001) {
-        extrasAcumulados.push({
-          id: `extra-${v.id}`,
-          cliente_id: v.cliente_id,
-          cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id?.slice(0,8) || NO_CLIENTE),
-          _bk: extra,
-          referencia: "Overpayment applied to A/R",
-          notas: "",
-          fecha_pago: v.fecha,
-          van_id: v.van_id,
-        });
-      }
-
-      const aplicado = addBk(propio, assigned);
-      return {
-        ...v,
-        _bk: aplicado,
-        cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : NO_CLIENTE),
-      };
-    });
-
-    return { ventasDecor: decor, excedentesCxC: extrasAcumulados };
-  }, [ventasRaw, clientesDic, pagosPorVenta, isClosedDay]);
+  return { ventasDecor: decor, excedentesCxC: [] };
+}, [ventasRaw, clientesDic]);
 
   // Avances del día
-  const ventasIdSet = useMemo(() => new Set((ventasRaw || []).map((v) => v.id)), [ventasRaw]);
-
-  const avances = useMemo(() => {
-    if (isClosedDay) {
-      return (pagosDecor || []).filter(p => !(p?.venta_id && ventasIdSet.has(p.venta_id)));
-    }
-    const lista = [];
-    for (const p of pagosDecor) {
-      const ligadoAVentaDelRango = !!(p?.venta_id && ventasIdSet.has(p.venta_id));
-      const diaLocal = pagoYMD(p);
-      const vanOK = !p?.van_id || !van?.id || p.van_id === van.id;
-      const monto = sumBk(p._bk) || Number(p.monto || 0);
-      if (!ligadoAVentaDelRango && diaLocal === String(fechaSeleccionada).trim() && vanOK && monto > 0.0001) {
-        lista.push(p);
-      }
-    }
-    for (const ex of excedentesCxC) {
-      const diaLocal = pagoYMD(ex);
-      if (diaLocal === String(fechaSeleccionada).trim()) lista.push(ex);
-    }
-    return lista;
-  }, [isClosedDay, pagosDecor, ventasIdSet, excedentesCxC, fechaSeleccionada, van?.id]);
-
+ const avances = useMemo(() => {
+  if (isClosedDay) {
+    return (pagosDecor || []).filter(p => !(p?.venta_id && ventasIdSet.has(p.venta_id)));
+  }
+  
+  // Para días abiertos: TODOS los pagos sin venta_id del día
+  return (pagosDecor || []).filter(p => {
+    const diaLocal = pagoYMD(p);
+    const vanOK = !p?.van_id || !van?.id || p.van_id === van.id;
+    const sinVenta = !p.venta_id; // ← IMPORTANTE: sin venta asociada
+    const monto = sumBk(p._bk) || Number(p.monto || 0);
+    
+    return sinVenta && diaLocal === String(fechaSeleccionada).trim() && vanOK && monto > 0.0001;
+  });
+}, [isClosedDay, pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
   // Expected
   const expectedOpen = useExpectedDia(van?.id, fechaSeleccionada);
   const systemGrid = useMemo(() => {

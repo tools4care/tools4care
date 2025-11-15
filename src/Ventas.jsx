@@ -2107,13 +2107,14 @@ function handleChangePayment(index, field, value) {
       };
 
       const { data: ventaRow, error: insErr } = await supabase
-        .from('ventas')
-        .insert([{
-          cliente_id: selectedClient?.id ?? null,
-          van_id: van.id ?? null,
-          usuario_id: usuario.id,
-          total: Number(saleTotal.toFixed(2)),
-          total_pagado: Number(paidForSaleNow.toFixed(2)),
+  .from('ventas')
+  .insert([{
+    cliente_id: selectedClient?.id ?? null,
+    van_id: van.id ?? null,
+    usuario_id: usuario.id,
+    total_venta: Number(saleTotal.toFixed(2)),      // ✅ COLUMNA CORRECTA
+    total: Number(saleTotal.toFixed(2)),            // ✅ MANTENER POR COMPATIBILIDAD
+    total_pagado: Number(paidForSaleNow.toFixed(2)),
           estado_pago: estadoPago,
           pago: pagoJson,
           pago_efectivo: pagoEfectivo,
