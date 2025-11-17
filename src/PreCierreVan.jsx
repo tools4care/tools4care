@@ -3,7 +3,42 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
+/* ==================== Helpers de fecha / formato (Eastern Time) ==================== */
 
+// Función para obtener fecha actual en Eastern Time
+function getEasternDate(date = new Date()) {
+  return new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+}
+
+// Función para formatear fecha como YYYY-MM-DD en Eastern Time
+function easternToYMD(date) {
+  const eastern = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const y = eastern.getFullYear();
+  const m = String(eastern.getMonth() + 1).padStart(2, "0");
+  const d = String(eastern.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+// Función para obtener inicio y fin del día en Eastern Time
+function easternDayBounds(isoDay) {
+  if (!isoDay) return { start: "", end: "" };
+  
+  // Crear un objeto Date para la fecha en Eastern Time
+  const date = new Date(isoDay + "T00:00:00");
+  
+  // Obtener el inicio del día en Eastern Time (00:00:00)
+  const easternStart = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  easternStart.setHours(0, 0, 0, 0);
+  
+  // Obtener el fin del día en Eastern Time (23:59:59.999)
+  const easternEnd = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  easternEnd.setHours(23, 59, 59, 999);
+  
+  // Convertir a UTC para la consulta
+  const start = easternStart.toISOString();
+  const end = easternEnd.toISOString();
+  
+  return { start, end };
+}
 /* ==================== Helpers de fecha / formato ==================== */
 
 // Formato US MM/DD/YYYY a partir de 'YYYY-MM-DD'
@@ -19,37 +54,21 @@ function formatUS(isoDay) {
   });
 }
 
-// 'YYYY-MM-DD' del día local actual
+// 'YYYY-MM-DD' del día local actual (Eastern Time)
 function localTodayISO() {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  return easternToYMD(new Date());
 }
 
-// Límites locales [start, end) como 'YYYY-MM-DD HH:MM:SS' para un ISO day
+// Límites locales [start, end) como 'YYYY-MM-DD HH:MM:SS' para un ISO day (Eastern Time)
 function localDayBounds(isoDay) {
-  const [y, m, d] = String(isoDay).slice(0, 10).split("-").map(Number);
-  const start = new Date(y, m - 1, d, 0, 0, 0);
-  const end = new Date(y, m - 1, d + 1, 0, 0, 0);
-  const pad = (n) => String(n).padStart(2, "0");
-  const S = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(
-    start.getDate()
-  )} ${pad(start.getHours())}:${pad(start.getMinutes())}:${pad(
-    start.getSeconds()
-  )}`;
-  const E = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(
-    end.getDate()
-  )} ${pad(end.getHours())}:${pad(end.getMinutes())}:${pad(end.getSeconds())}`;
-  return { start: S, end: E };
+  return easternDayBounds(isoDay);
 }
-
-// Reemplaza tu countVentasDia por esta versión robusta
-async function countVentasDia(van_id, diaISO /* 'YYYY-MM-DD' */) {
+// Reemplaza tu countVentasDia por esta versión robusta usando Eastern Time
+async function countVentasDia(van_id, diaISO) {
   if (!van_id || !diaISO) return 0;
 
-  // Rango local del día (evita "T" para que PostgREST no lo pase a UTC)
-  const start = `${diaISO} 00:00:00`;
-  const end   = `${diaISO} 23:59:59`;
+  // Usar Eastern Time para el rango del día
+  const { start, end } = easternDayBounds(diaISO);
 
   // Probamos varias columnas de fecha, según tu esquema real
   const dateCols = ["fecha", "fecha_venta", "created_at"];
@@ -76,7 +95,6 @@ async function countVentasDia(van_id, diaISO /* 'YYYY-MM-DD' */) {
   // Si todas fallan, devolvemos 0 para no romper UI
   return 0;
 }
-
 
 /* ==================== Hook: días pendientes por van ==================== */
 /**
