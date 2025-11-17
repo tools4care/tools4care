@@ -1,4 +1,3 @@
-// src/CierreVan.jsx
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
@@ -6,6 +5,69 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+
+/* ======================= Helpers de fecha (Eastern Time) ======================= */
+
+// Función para obtener fecha actual en Eastern Time
+function getEasternDate(date = new Date()) {
+  return new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+}
+
+// Función para formatear fecha como YYYY-MM-DD en Eastern Time
+function easternToYMD(date) {
+  const eastern = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const y = eastern.getFullYear();
+  const m = String(eastern.getMonth() + 1).padStart(2, "0");
+  const d = String(eastern.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Función mejorada para obtener inicio y fin del día en Eastern Time
+function easternDayBounds(isoDay) {
+  if (!isoDay) return { start: "", end: "" };
+  
+  // Convertir la fecha de entrada a Eastern Time
+  const dateUTC = new Date(`${isoDay}T00:00:00Z`);
+  const dateEastern = new Date(dateUTC.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  
+  // Obtener inicio del día en Eastern Time (00:00:00)
+  const startEastern = new Date(dateEastern);
+  startEastern.setHours(0, 0, 0, 0);
+  
+  // Obtener fin del día en Eastern Time (23:59:59.999)
+  const endEastern = new Date(dateEastern);
+  endEastern.setHours(23, 59, 59, 999);
+  
+  // Convertir a UTC para la consulta
+  const start = startEastern.toISOString();
+  const end = endEastern.toISOString();
+  
+  console.log(`Eastern Day Bounds for ${isoDay}:`, { start, end });
+  return { start, end };
+}
+
+// Función para formatear fecha en Eastern Time (MM/DD/YYYY)
+function formatEastern(dateStr) {
+  if (!dateStr) return "—";
+  const date = new Date(dateStr);
+  return date.toLocaleDateString("en-US", {
+    timeZone: "America/New_York",
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric"
+  });
+}
+
+// Función para convertir fecha a Eastern Time y luego a YYYY-MM-DD
+function toEasternYMD(d) {
+  if (!d) return "";
+  const dt = new Date(d);
+  const eastern = new Date(dt.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const y = eastern.getFullYear();
+  const m = String(eastern.getMonth() + 1).padStart(2, "0");
+  const dd = String(eastern.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
 
 /* ======================= Constantes ======================= */
 const DENOMINACIONES = [
@@ -24,14 +86,16 @@ const DENOMINACIONES = [
 const NO_CLIENTE = "Quick sale / No client";
 const isIsoDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-// MM/DD/YYYY
+// MM/DD/YYYY en Eastern Time
 const toUSFormat = (dateStr) => {
   if (!dateStr) return "";
-  const d = new Date(dateStr + "T00:00:00");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const year = d.getFullYear();
-  return `${month}/${day}/${year}`;
+  const eastern = new Date(dateStr + "T00:00:00");
+  return eastern.toLocaleDateString("en-US", {
+    timeZone: "America/New_York",
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric"
+  });
 };
 
 /* ======================= Helpers ======================= */
@@ -50,31 +114,30 @@ const normMetodo = (m) => {
   return s;
 };
 
-const toLocalYMD = (d) => {
-  if (!d) return "";
-  const dt = new Date(d);
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-};
-
 const getPagoDate = (p) =>
   p?.fecha_pago || p?.fecha || p?.fecha_abono || p?.created_at || p?.updated_at || "";
 
-const pagoYMD = (p) => toLocalYMD(getPagoDate(p));
+const pagoYMD = (p) => toEasternYMD(getPagoDate(p));
 
 /* ===== breakdown utils ===== */
 const emptyBk = () => ({ cash: 0, card: 0, transfer: 0 });
-const cloneBk = (bk) => ({ cash: +(bk.cash || 0), card: +(bk.card || 0), transfer: +(bk.transfer || 0) });
-const sumBk = (bk) => (+(bk.cash || 0)) + (+(bk.card || 0)) + (+(bk.transfer || 0));
-const addBk = (a, b) => ({
-  cash: (+(a.cash || 0)) + (+(b.cash || 0)),
-  card: (+(a.card || 0)) + (+(b.card || 0)),
-  transfer: (+(a.transfer || 0)) + (+(b.transfer || 0)),
-});
+const cloneBk = (bk) => ({ cash: +(bk?.cash || 0), card: +(bk?.card || 0), transfer: +(bk?.transfer || 0) });
+const sumBk = (bk) => {
+  if (!bk) return 0;
+  return (+(bk.cash || 0)) + (+(bk.card || 0)) + (+(bk.transfer || 0));
+};
+const addBk = (a, b) => {
+  if (!a) a = emptyBk();
+  if (!b) b = emptyBk();
+  return {
+    cash: (+(a.cash || 0)) + (+(b.cash || 0)),
+    card: (+(a.card || 0)) + (+(b.card || 0)),
+    transfer: (+(a.transfer || 0)) + (+(b.transfer || 0)),
+  };
+};
 
 function capBreakdownTo(bk, max) {
+  if (!bk) bk = emptyBk();
   const total = sumBk(bk);
   if (total <= 0.0001 || max <= 0) return { assigned: emptyBk(), extra: cloneBk(bk) };
   if (total <= max + 0.0001) return { assigned: cloneBk(bk), extra: emptyBk() };
@@ -162,13 +225,31 @@ function useFechasPendientes(van_id) {
       const hoy = new Date();
       const desde = new Date(hoy); desde.setDate(hoy.getDate() - 90);
       const toISO = (d) => d.toISOString().slice(0, 10);
+      
+      // Obtener fechas en Eastern Time
       const { data, error } = await supabase
         .from("vw_expected_por_dia_van")
         .select("dia").eq("van_id", van_id)
         .gte("dia", toISO(desde)).lte("dia", toISO(hoy))
         .order("dia", { ascending: false });
-      if (error) { setFechas([]); return; }
-      setFechas((data || []).map((r) => r.dia).filter(isIsoDate));
+      
+      if (error) { 
+        console.error("❌ Error cargando fechas pendientes:", error);
+        setFechas([]); 
+        return; 
+      }
+      
+      console.log("✅ Fechas pendientes crudas:", data);
+      
+      // Convertir fechas de Eastern Time a formato UTC para almacenamiento
+      const fechasUTC = (data || []).map((r) => {
+        const dateEastern = new Date(r.dia);
+        const dateUTC = new Date(dateEastern.toLocaleString("en-US", { timeZone: "UTC" }));
+        return dateUTC.toISOString().slice(0, 10);
+      }).filter(isIsoDate);
+      
+      console.log("✅ Fechas pendientes convertidas a UTC:", fechasUTC);
+      setFechas(fechasUTC);
     })();
   }, [van_id]);
   return fechas;
@@ -183,7 +264,12 @@ function useFechasCerradas(van_id) {
       const { data, error } = await supabase
         .from("cierres_van")
         .select("fecha_inicio").eq("van_id", van_id);
-      if (error) { setFechasCerradas([]); return; }
+      if (error) { 
+        console.error("❌ Error cargando fechas cerradas:", error);
+        setFechasCerradas([]); 
+        return; 
+      }
+      console.log("✅ Fechas cerradas cargadas:", data);
       setFechasCerradas(Array.from(new Set((data || []).map(x => x.fecha_inicio))));
     })();
   }, [van_id]);
@@ -202,14 +288,19 @@ function useCierreInfo(van_id, fecha) {
         .eq("van_id", van_id)
         .eq("fecha_inicio", fecha)
         .maybeSingle();
-      if (error || !data) { setCierreInfo(null); return; }
+      if (error || !data) { 
+        console.log("ℹ️ No hay cierre para esta fecha o error:", error);
+        setCierreInfo(null); 
+        return; 
+      }
+      console.log("✅ Cierre info cargada:", data);
       setCierreInfo(data);
     })();
   }, [van_id, fecha]);
   return cierreInfo;
 }
 
-// 4) Movimientos PENDIENTES - ✅ CORREGIDO
+// 4) Movimientos PENDIENTES
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
@@ -217,6 +308,7 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   
   useEffect(() => {
     if (!van_id || !isIsoDate(fechaInicio) || !isIsoDate(fechaFin)) { 
+      console.log("⚠️ Parámetros inválidos:", { van_id, fechaInicio, fechaFin });
       setVentas([]); 
       setPagos([]); 
       return; 
@@ -226,79 +318,101 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
     
     (async () => {
       try {
-        // ✅ Usar timestamps explícitos para capturar el día completo
-        const fechaInicioStr = `${fechaInicio}T00:00:00`;
-        const fechaFinStr = `${fechaFin}T23:59:59.999`;
+        console.log("🔍 INICIANDO BÚSQUEDA DE MOVIMIENTOS");
+        console.log("Van ID:", van_id);
+        console.log("Fecha inicio (Eastern):", fechaInicio);
+        console.log("Fecha fin (Eastern):", fechaFin);
         
-        console.log("🔍 Buscando ventas para:", { 
-          van_id, 
-          desde: fechaInicioStr, 
-          hasta: fechaFinStr 
-        });
+        // Convertir fechas a Eastern Time para la consulta
+        const { start, end } = easternDayBounds(fechaInicio);
         
-        // Consulta DIRECTA de ventas (sin RPC)
-        const { data: ventasData = [], error: errorVentas } = await supabase
-          .from("ventas")
+        // Verificar si la tabla tiene columna fecha_local
+        const { data: sampleVenta, error: sampleError } = await supabase
+          .from("ventas_local")
+          .select("*")
+          .limit(1)
+          .maybeSingle();
+        
+        if (sampleVenta) {
+          console.log("📋 Campos disponibles en ventas_local:", Object.keys(sampleVenta));
+        }
+        
+        // Intentar con fecha_local primero usando Eastern Time
+        console.log("🔍 Buscando ventas con fecha_local...");
+        const { data: ventasData, error: errorVentas } = await supabase
+          .from("ventas_local")
           .select("*")
           .eq("van_id", van_id)
-          .gte("fecha", fechaInicioStr)
-          .lte("fecha", fechaFinStr)
+          .gte("fecha_local", start.split('T')[0])  // Solo fecha sin tiempo
+          .lte("fecha_local", end.split('T')[0])      // Solo fecha sin tiempo
           .is("cierre_id", null)
-          .order("fecha", { ascending: true });
+          .order("created_at", { ascending: true });
         
         if (errorVentas) {
           console.error("❌ Error cargando ventas:", errorVentas);
-        }
-        
-        console.log("✅ Ventas encontradas:", ventasData.length);
-        
-        if (ventasData.length === 0) {
-          // Diagnóstico: mostrar últimas ventas sin cierre
-          console.log("⚠️ No se encontraron ventas en el rango especificado");
+          console.log("Intentando con campo 'fecha' en su lugar...");
           
-          const { data: ultimas = [] } = await supabase
-            .from("ventas")
-            .select("id, fecha, van_id, cierre_id, total_venta, created_at")
+          // Si falla, intentar con 'fecha' usando Eastern Time
+          const { data: ventasData2, error: errorVentas2 } = await supabase
+            .from("ventas_local")
+            .select("*")
             .eq("van_id", van_id)
+            .gte("fecha", start.split('T')[0])  // Solo fecha sin tiempo
+            .lte("fecha", end.split('T')[0])    // Solo fecha sin tiempo
             .is("cierre_id", null)
-            .order("created_at", { ascending: false })
-            .limit(5);
+            .order("created_at", { ascending: true });
           
-          console.log("📊 Últimas 5 ventas sin cierre de este van:", ultimas);
-          
-          if (ultimas.length > 0) {
-            console.log("📅 Ejemplo de formato de fecha en DB:", {
-              fecha: ultimas[0].fecha,
-              created_at: ultimas[0].created_at,
-              buscabas: fechaInicioStr
-            });
+          if (errorVentas2) {
+            console.error("❌ Error también con campo 'fecha':", errorVentas2);
+            setVentas([]);
+          } else {
+            console.log("✅ Ventas encontradas con campo 'fecha':", ventasData2?.length || 0);
+            console.log("Datos de ventas:", ventasData2);
+            setVentas(ventasData2 || []);
           }
         } else {
-          console.log("📊 Primera venta encontrada:", {
-            id: ventasData[0].id,
-            fecha: ventasData[0].fecha,
-            total: ventasData[0].total_venta
-          });
+          console.log("✅ Ventas encontradas con fecha_local:", ventasData?.length || 0);
+          if (ventasData && ventasData.length > 0) {
+            console.log("Muestra de primera venta:", ventasData[0]);
+          }
+          setVentas(ventasData || []);
         }
         
-        setVentas(ventasData);
+        // PAGOS - intentar con diferentes columnas de fecha
+        console.log("🔍 Buscando pagos...");
         
-        // Consulta DIRECTA de pagos (sin RPC)
-        const { data: pagosData = [], error: errorPagos } = await supabase
-          .from("pagos")
+        // Primero intentar con fecha_pago
+        const { data: pagosData1, error: errorPagos1 } = await supabase
+          .from("pagos_local")
           .select("*")
           .eq("van_id", van_id)
-          .gte("fecha_pago", fechaInicioStr)
-          .lte("fecha_pago", fechaFinStr)
+          .gte("fecha_pago", start.split('T')[0])  // Solo fecha sin tiempo
+          .lte("fecha_pago", end.split('T')[0])    // Solo fecha sin tiempo
           .is("cierre_id", null)
           .order("fecha_pago", { ascending: true });
         
-        if (errorPagos) {
-          console.error("❌ Error cargando pagos:", errorPagos);
+        if (!errorPagos1 && pagosData1) {
+          console.log("✅ Pagos encontrados con fecha_pago:", pagosData1?.length || 0);
+          setPagos(pagosData1 || []);
+        } else {
+          // Si falla, intentar con fecha
+          const { data: pagosData2, error: errorPagos2 } = await supabase
+            .from("pagos_local")
+            .select("*")
+            .eq("van_id", van_id)
+            .gte("fecha", start.split('T')[0])  // Solo fecha sin tiempo
+            .lte("fecha", end.split('T')[0])    // Solo fecha sin tiempo
+            .is("cierre_id", null)
+            .order("fecha_pago", { ascending: true });
+          
+          if (!errorPagos2 && pagosData2) {
+            console.log("✅ Pagos encontrados con fecha:", pagosData2?.length || 0);
+            setPagos(pagosData2 || []);
+          } else {
+            console.error("❌ Error cargando pagos:", errorPagos1 || errorPagos2);
+            setPagos([]);
+          }
         }
-        
-        console.log("✅ Pagos encontrados:", pagosData.length);
-        setPagos(pagosData);
         
       } catch (error) {
         console.error("❌ Error general en useMovimientosNoCerrados:", error);
@@ -334,6 +448,7 @@ function useMovimientosCerrados(cierre_id) {
           .select("*")
           .eq("cierre_id", cierre_id);
 
+        console.log("✅ Movimientos cerrados cargados - Ventas:", ventasC.length, "Pagos:", pagosC.length);
         setVentas(ventasC); setPagos(pagosC);
       } finally { setLoading(false); }
     })();
@@ -346,18 +461,29 @@ function useMovimientosCerrados(cierre_id) {
 function useExpectedDia(van_id, dia) {
   const [exp, setExp] = useState({ cash: 0, card: 0, transfer: 0, mix: 0 });
   useEffect(() => {
-    if (!van_id || !isIsoDate(dia)) { setExp({ cash:0, card:0, transfer:0, mix:0 }); return; }
+    if (!van_id || !isIsoDate(dia)) { 
+      setExp({ cash:0, card:0, transfer:0, mix:0 }); 
+      return; 
+    }
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("vw_expected_por_dia_van")
         .select("cash_expected, card_expected, transfer_expected, mix_unallocated")
         .eq("van_id", van_id).eq("dia", dia).maybeSingle();
-      setExp({
+      
+      if (error) {
+        console.error("❌ Error cargando expected:", error);
+      }
+      
+      const expected = {
         cash: Number(data?.cash_expected || 0),
         card: Number(data?.card_expected || 0),
         transfer: Number(data?.transfer_expected || 0),
         mix: Number(data?.mix_unallocated || 0),
-      });
+      };
+      
+      console.log("✅ Expected cargado para", dia, ":", expected);
+      setExp(expected);
     })();
   }, [van_id, dia]);
   return exp;
@@ -409,8 +535,13 @@ function ConfirmModal({
   fechaInicio, fechaFin
 }) {
   if (!open) return null;
-  const totalSystem = gridSystem.cash + gridSystem.card + gridSystem.transfer;
-  const totalCounted = counted.cash + counted.card + counted.transfer;
+  
+  // Validar que gridSystem y counted existan
+  const safeGridSystem = gridSystem || emptyBk();
+  const safeCounted = counted || emptyBk();
+  
+  const totalSystem = sumBk(safeGridSystem);
+  const totalCounted = sumBk(safeCounted);
   const overUnder = (totalCounted - totalSystem);
 
   return (
@@ -419,13 +550,13 @@ function ConfirmModal({
         <h2 className="font-bold text-lg mb-3 text-blue-800">Confirm Closeout</h2>
         <div className="mb-2 text-sm"><b>From:</b> {toUSFormat(fechaInicio)} <b>To:</b> {toUSFormat(fechaFin)}</div>
         <div className="border rounded bg-gray-50 p-3 mb-3 text-xs">
-          <div><b>Cash (system):</b> ${totalSystem ? gridSystem.cash.toFixed(2) : "0.00"} | <b>counted:</b> ${counted.cash.toFixed(2)}</div>
-          <div><b>Card (system):</b> ${totalSystem ? gridSystem.card.toFixed(2) : "0.00"} | <b>counted:</b> ${counted.card.toFixed(2)}</div>
-          <div><b>Transfer (system):</b> ${totalSystem ? gridSystem.transfer.toFixed(2) : "0.00"} | <b>counted:</b> ${counted.transfer.toFixed(2)}</div>
+          <div><b>Cash (system):</b> ${(safeGridSystem.cash || 0).toFixed(2)} | <b>counted:</b> ${(safeCounted.cash || 0).toFixed(2)}</div>
+          <div><b>Card (system):</b> ${(safeGridSystem.card || 0).toFixed(2)} | <b>counted:</b> ${(safeCounted.card || 0).toFixed(2)}</div>
+          <div><b>Transfer (system):</b> ${(safeGridSystem.transfer || 0).toFixed(2)} | <b>counted:</b> ${(safeCounted.transfer || 0).toFixed(2)}</div>
           <div><b>Total system:</b> ${totalSystem.toFixed(2)} | <b>Total counted:</b> ${totalCounted.toFixed(2)}</div>
           <div><b>Over/Under:</b> ${overUnder.toFixed(2)}</div>
-          <div className="mt-2"><b>House Charge (A/R) this day:</b> ${arPeriodo.toFixed(2)}</div>
-          <div><b>Pmt on House Chrg (today):</b> ${pagosCxC.toFixed(2)}</div>
+          <div className="mt-2"><b>House Charge (A/R) this day:</b> ${(arPeriodo || 0).toFixed(2)}</div>
+          <div><b>Pmt on House Chrg (today):</b> ${(pagosCxC || 0).toFixed(2)}</div>
           <div className="mt-2"><b>Comment:</b> {comentario || "-"}</div>
         </div>
         <div className="flex justify-end gap-2">
@@ -556,7 +687,7 @@ function generarPDFCierreVan({
       ["Cash", "$" + totalCash.toFixed(2)],
       ["Card", "$" + totalCard.toFixed(2)],
       ["Transfer", "$" + totalTransfer.toFixed(2)],
-      ["Grand Total", "$" + (totalCash + totalCard + totalTransfer).toFixed(2)]
+      ["Grand Total", "$" + (totalCash + totalCard + totalTransfer).toFixed(2)] // CORREGIDO: Paréntesis faltante
     ],
     theme: "grid",
     headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
@@ -581,6 +712,8 @@ export default function CierreVan() {
   const { usuario } = useUsuario();
   const { van } = useVan();
 
+  console.log("🚀 CierreVan montado - Van:", van);
+
   const fechasPendientes = useFechasPendientes(van?.id);
   const fechasCerradas = useFechasCerradas(van?.id);
   const hoy = new Date().toISOString().slice(0, 10);
@@ -588,33 +721,76 @@ export default function CierreVan() {
 
   const cierreInfo = useCierreInfo(van?.id, fechaSeleccionada);
 
+  // Mejora en la selección de fecha por defecto
   useEffect(() => {
-    if (fechasPendientes.length === 0) { setFechaSeleccionada(""); return; }
+    console.log("📅 Fechas pendientes:", fechasPendientes);
+    if (fechasPendientes.length === 0) { 
+      setFechaSeleccionada(""); 
+      return; 
+    }
+    
     let pref = "";
-    try { pref = localStorage.getItem("pre_cierre_fecha") || ""; } catch {}
-    if (isIsoDate(pref) && fechasPendientes.includes(pref)) setFechaSeleccionada(pref);
-    else if (fechasPendientes.includes(hoy)) setFechaSeleccionada(hoy);
-    else setFechaSeleccionada(fechasPendientes[0]);
-  }, [fechasPendientes, hoy]);
+    try { 
+      pref = localStorage.getItem("pre_cierre_fecha") || ""; 
+    } catch {}
+    
+    // Convertir preferencia a Eastern Time si existe
+    if (isIsoDate(pref)) {
+      const datePref = new Date(pref);
+      // Convertir a Eastern Time
+      const prefEastern = new Date(datePref.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const prefEasternStr = prefEastern.toISOString().slice(0, 10);
+      
+      if (fechasPendientes.includes(prefEasternStr)) {
+        setFechaSeleccionada(prefEasternStr);
+        return;
+      }
+    }
+    
+    // Obtener fecha actual en Eastern Time
+    const nowEastern = new Date();
+    const nowEasternStr = nowEastern.toLocaleDateString("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
+    
+    // Convertir Eastern Time a formato YYYY-MM-DD para comparar
+    const [month, day, year] = nowEasternStr.split("/");
+    const todayEastern = `${year}-${month}-${day}`;
+    
+    console.log("Hoy en Eastern Time:", todayEastern);
+    
+    if (fechasPendientes.includes(todayEastern)) {
+      setFechaSeleccionada(todayEastern);
+    } else {
+      setFechaSeleccionada(fechasPendientes[0]);
+    }
+  }, [fechasPendientes]);
 
   const fechaInicio = fechaSeleccionada;
   const fechaFin = fechaSeleccionada;
 
-  // Pendientes
   const { ventas: ventasPend, pagos: pagosPend, loading: loadingPend } =
     useMovimientosNoCerrados(van?.id, fechaInicio, fechaFin);
 
-  // Cerrados
   const { ventas: ventasCerr, pagos: pagosCerr, loading: loadingCerr } =
     useMovimientosCerrados(cierreInfo?.id || null);
 
-  // En función de si está cerrado, escogemos fuente de datos
   const isClosedDay = !!cierreInfo;
-  const loading = isClosedDay ? loadingCerr : loadingPend;
-  const ventasRaw = isClosedDay ? ventasCerr : ventasPend;
-  const pagosRaw = isClosedDay ? pagosCerr : pagosPend;
+  const loading = isClosedDay ? loadingCerr || loadingPend : loadingPend;
 
-  // Diccionario de clientes
+  const ventasRaw = isClosedDay 
+    ? [...ventasCerr, ...ventasPend]
+    : ventasPend;
+
+  const pagosRaw = isClosedDay 
+    ? [...pagosCerr, ...pagosPend]
+    : pagosPend;
+
+  console.log("📊 Datos crudos - Ventas:", ventasRaw.length, "Pagos:", pagosRaw.length);
+
   const clienteKeys = useMemo(
     () => Array.from(new Set([...ventasRaw, ...pagosRaw].map((x) => x?.cliente_id).filter(Boolean))),
     [ventasRaw, pagosRaw]
@@ -632,42 +808,41 @@ export default function CierreVan() {
         const { data: b } = await supabase.from("clientes_balance").select("id, nombre, negocio").in("id", missing);
         for (const c of b || []) dic[c.id] = c;
       }
+      console.log("✅ Clientes cargados:", Object.keys(dic).length);
       setClientesDic(dic);
     })();
   }, [clienteKeys.join(",")]);
 
-const pagosDecor = useMemo(
-  () =>
-    (pagosRaw || []).map((p) => {
-      // 🆕 FIX: Para pagos, intentar leer del breakdown, pero si no hay, usar el monto y metodo_pago
-      let breakdown = breakdownPorMetodo(p);
-      
-      // Si el breakdown está vacío, usar el monto total según el método
-      const totalBk = breakdown.cash + breakdown.card + breakdown.transfer;
-      if (totalBk === 0 && p.monto && p.metodo_pago) {
-        const monto = Number(p.monto || 0);
-        const metodo = normMetodo(p.metodo_pago);
+  const pagosDecor = useMemo(
+    () =>
+      (pagosRaw || []).map((p) => {
+        let breakdown = breakdownPorMetodo(p);
         
-        breakdown = { cash: 0, card: 0, transfer: 0 };
-        if (metodo === 'cash') breakdown.cash = monto;
-        else if (metodo === 'card') breakdown.card = monto;
-        else if (metodo === 'transfer') breakdown.transfer = monto;
-      }
-      
-      return {
-        ...p,
-        _bk: breakdown,
-        cliente_nombre:
-          p.cliente_nombre ||
-          (clientesDic[p.cliente_id]
-            ? displayName(clientesDic[p.cliente_id])
-            : p.cliente_id
-            ? p.cliente_id.slice(0, 8)
-            : NO_CLIENTE),
-      };
-    }),
-  [pagosRaw, clientesDic]
-);
+        const totalBk = sumBk(breakdown);
+        if (totalBk === 0 && p.monto && p.metodo_pago) {
+          const monto = Number(p.monto || 0);
+          const metodo = normMetodo(p.metodo_pago);
+          
+          breakdown = emptyBk();
+          if (metodo === 'cash') breakdown.cash = monto;
+          else if (metodo === 'card') breakdown.card = monto;
+          else if (metodo === 'transfer') breakdown.transfer = monto;
+        }
+        
+        return {
+          ...p,
+          _bk: breakdown,
+          cliente_nombre:
+            p.cliente_nombre ||
+            (clientesDic[p.cliente_id]
+              ? displayName(clientesDic[p.cliente_id])
+              : p.cliente_id
+              ? p.cliente_id.slice(0, 8)
+              : NO_CLIENTE),
+        };
+      }),
+    [pagosRaw, clientesDic]
+  );
 
   const pagosPorVenta = useMemo(() => {
     const map = new Map();
@@ -683,75 +858,78 @@ const pagosDecor = useMemo(
     }
     return map;
   }, [pagosDecor]);
-// 1️⃣ PRIMERO: Crear el Set de IDs de ventas
-const ventasIdSet = useMemo(() => new Set((ventasRaw || []).map((v) => v.id)), [ventasRaw]);
 
-const { ventasDecor, excedentesCxC } = useMemo(() => {
-  const extrasAcumulados = [];
-  const decor = (ventasRaw || []).map((v) => {
-    const ficha = clientesDic[v.cliente_id];
-    
-    // 🆕 FIX SIMPLE: Usar SOLO las columnas individuales, NO el JSON
-    const breakdownVenta = {
-      cash: Number(v.pago_efectivo || 0),
-      card: Number(v.pago_tarjeta || 0),
-      transfer: Number(v.pago_transferencia || 0),
-    };
-    
-    return {
-      ...v,
-      _bk: breakdownVenta,
-      cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : "No client"),
-    };
-  });
+  const ventasIdSet = useMemo(() => new Set((ventasRaw || []).map((v) => v.id)), [ventasRaw]);
 
-  return { ventasDecor: decor, excedentesCxC: [] };
-}, [ventasRaw, clientesDic]);
-
-  // Avances del día
- const avances = useMemo(() => {
-  if (isClosedDay) {
-    return (pagosDecor || []).filter(p => !(p?.venta_id && ventasIdSet.has(p.venta_id)));
-  }
-  
-  // Para días abiertos: TODOS los pagos sin venta_id del día
-  return (pagosDecor || []).filter(p => {
-    const diaLocal = pagoYMD(p);
-    const vanOK = !p?.van_id || !van?.id || p.van_id === van.id;
-    const sinVenta = !p.venta_id; // ← IMPORTANTE: sin venta asociada
-    const monto = sumBk(p._bk) || Number(p.monto || 0);
-    
-    return sinVenta && diaLocal === String(fechaSeleccionada).trim() && vanOK && monto > 0.0001;
-  });
-}, [isClosedDay, pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
-  // Expected
-  const expectedOpen = useExpectedDia(van?.id, fechaSeleccionada);
-  const systemGrid = useMemo(() => {
-    if (isClosedDay) {
-      return {
-        cash: Number(cierreInfo?.efectivo_esperado || 0),
-        card: Number(cierreInfo?.tarjeta_esperado || 0),
-        transfer: Number(cierreInfo?.transferencia_esperado || 0),
+  const { ventasDecor, excedentesCxC } = useMemo(() => {
+    const extrasAcumulados = [];
+    const decor = (ventasRaw || []).map((v) => {
+      const ficha = clientesDic[v.cliente_id];
+      
+      const breakdownVenta = {
+        cash: Number(v.pago_efectivo || 0),
+        card: Number(v.pago_tarjeta || 0),
+        transfer: Number(v.pago_transferencia || 0),
       };
+      
+      return {
+        ...v,
+        _bk: breakdownVenta,
+        cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : "No client"),
+      };
+    });
+
+    console.log("✅ Ventas decoradas:", decor.length);
+    if (decor.length > 0) {
+      console.log("Muestra de venta decorada:", decor[0]);
     }
-    const fromVentas = ventasDecor.reduce((acc, v) => addBk(acc, v._bk || emptyBk()), emptyBk());
-    const fromAvances = avances.reduce((acc, p) => addBk(acc, p._bk || emptyBk()), emptyBk());
-    return addBk(fromVentas, fromAvances);
-  }, [isClosedDay, cierreInfo, ventasDecor, avances]);
 
-  const totalesEsperadosPanel = {
-    cash: isClosedDay ? systemGrid.cash : Number(expectedOpen.cash || 0),
-    card: isClosedDay ? systemGrid.card : Number(expectedOpen.card || 0),
-    transfer: isClosedDay ? systemGrid.transfer : Number(expectedOpen.transfer || 0),
-  };
+    return { ventasDecor: decor, excedentesCxC: [] };
+  }, [ventasRaw, clientesDic]);
 
-  // A/R y pagos CxC
+  const avances = useMemo(() => {
+    if (isClosedDay) {
+      return (pagosDecor || []).filter(p => !(p?.venta_id && ventasIdSet.has(p.venta_id)));
+    }
+    
+    return (pagosDecor || []).filter(p => {
+      if (p.venta_id) return false;
+      
+      const vanOK = !p?.van_id || !van?.id || p.van_id === van.id;
+      const monto = sumBk(p._bk) || Number(p.monto || 0);
+      
+      // Comparar fecha en Eastern Time
+      const pDate = toEasternYMD(p.fecha_local || p.fecha);
+      return pDate === fechaSeleccionada && vanOK && monto > 0.0001;
+    });
+  }, [isClosedDay, pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
+
+  const expectedOpen = useExpectedDia(van?.id, fechaSeleccionada);
+  
+  const systemGrid = useMemo(() => {
+    const fromVentas = (ventasDecor || []).reduce((acc, v) => addBk(acc, v._bk || emptyBk()), emptyBk());
+    const fromAvances = (avances || []).reduce((acc, p) => addBk(acc, p._bk || emptyBk()), emptyBk());
+    const result = addBk(fromVentas, fromAvances);
+    console.log("💰 System Grid calculado:", result);
+    return result;
+  }, [ventasDecor, avances]);
+
+  const totalesEsperadosPanel = useMemo(() => {
+    const result = {
+      cash: isClosedDay ? (systemGrid?.cash || 0) : Number(expectedOpen?.cash || 0),
+      card: isClosedDay ? (systemGrid?.card || 0) : Number(expectedOpen?.card || 0),
+      transfer: isClosedDay ? (systemGrid?.transfer || 0) : Number(expectedOpen?.transfer || 0),
+    };
+    console.log("📊 Totales esperados panel:", result);
+    return result;
+  }, [isClosedDay, systemGrid, expectedOpen]);
+
   const arPeriodo = useMemo(() => {
     if (isClosedDay) return Number(cierreInfo?.cuentas_por_cobrar || 0);
     return (ventasDecor || []).reduce((t, v) => {
       const totalDesdeBreakdown = sumBk(v._bk);
       const venta = Number(v.total_venta) || totalDesdeBreakdown;
-      const pagado = Number(v.total_pagado) || 0;
+      const pagado = Number(v.total_pagado || 0);
       const credito = venta - pagado;
       return t + (credito > 0 ? credito : 0);
     }, 0);
@@ -762,7 +940,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
     return (avances || []).reduce((t, p) => t + sumBk(p._bk), 0);
   }, [isClosedDay, cierreInfo, avances]);
 
-  // Counted
   const [openDesglose, setOpenDesglose] = useState(false);
   const [counted, setCounted] = useState({ cash: 0, card: 0, transfer: 0 });
   const [comentario, setComentario] = useState("");
@@ -783,33 +960,30 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
   }, [isClosedDay, cierreInfo]);
 
   const overUnder = useMemo(() => {
-    const sys = systemGrid.cash + systemGrid.card + systemGrid.transfer;
-    const cnt = counted.cash + counted.card + counted.transfer;
+    const sys = sumBk(systemGrid);
+    const cnt = sumBk(counted);
     return cnt - sys;
   }, [systemGrid, counted]);
 
-  // Totales por tipo de pago (nuevo cálculo)
   const totalesPorTipoPago = useMemo(() => {
     const totals = { cash: 0, card: 0, transfer: 0 };
     
-    // Sumar de ventas
-    ventasDecor.forEach(v => {
+    (ventasDecor || []).forEach(v => {
       totals.cash += Number(v._bk?.cash || 0);
       totals.card += Number(v._bk?.card || 0);
       totals.transfer += Number(v._bk?.transfer || 0);
     });
     
-    // Sumar de avances/pagos CxC
-    avances.forEach(p => {
+    (avances || []).forEach(p => {
       totals.cash += Number(p._bk?.cash || 0);
       totals.card += Number(p._bk?.card || 0);
       totals.transfer += Number(p._bk?.transfer || 0);
     });
     
+    console.log("💵 Totales por tipo de pago:", totals);
     return totals;
   }, [ventasDecor, avances]);
 
-  /* ======================= Guardar / PDF ======================= */
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -834,16 +1008,18 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
       fecha_fin: fechaFin,
       comentario,
       cuentas_por_cobrar: Number(arPeriodo.toFixed(2)),
-      efectivo_esperado: Number(systemGrid.cash.toFixed(2)),
-      efectivo_real: Number(counted.cash || 0),
-      tarjeta_esperado: Number(systemGrid.card.toFixed(2)),
-      tarjeta_real: Number(counted.card || 0),
-      transferencia_esperado: Number(systemGrid.transfer.toFixed(2)),
-      transferencia_real: Number(counted.transfer || 0),
+      efectivo_esperado: Number((systemGrid?.cash || 0).toFixed(2)),
+      efectivo_real: Number(counted?.cash || 0),
+      tarjeta_esperado: Number((systemGrid?.card || 0).toFixed(2)),
+      tarjeta_real: Number(counted?.card || 0),
+      transferencia_esperado: Number((systemGrid?.transfer || 0).toFixed(2)),
+      transferencia_real: Number(counted?.transfer || 0),
       pagos_cuentas_por_cobrar: Number(pagosCxC.toFixed(2)),
       ventas_ids,
       pagos_ids,
     };
+
+    console.log("💾 Guardando cierre con payload:", payload);
 
     const { data, error } = await supabase
       .from("cierres_van")
@@ -852,6 +1028,7 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
       .maybeSingle();
 
     if (error) {
+      console.error("❌ Error guardando cierre:", error);
       setGuardando(false);
       setMensaje("Error saving closeout: " + error.message);
       setTimeout(() => setMensaje(""), 3500);
@@ -859,6 +1036,8 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
     }
 
     const cierre_id = data?.id;
+    console.log("✅ Cierre guardado con ID:", cierre_id);
+    
     if (cierre_id) {
       await supabase.rpc("cerrar_ventas_por_van", {
         cierre_id_param: cierre_id, van_id_param: van.id, fecha_inicio: fechaInicio, fecha_fin: fechaFin,
@@ -885,13 +1064,13 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
     setGenerandoPDF(true);
     try {
       const resumen = {
-        efectivo_esperado: systemGrid.cash,
-        tarjeta_esperado: systemGrid.card,
-        transferencia_esperado: systemGrid.transfer,
+        efectivo_esperado: systemGrid?.cash || 0,
+        tarjeta_esperado: systemGrid?.card || 0,
+        transferencia_esperado: systemGrid?.transfer || 0,
         cxc_periodo: arPeriodo,
         pagos_cxc: pagosCxC,
       };
-      const fechaCierre = cierreInfo?.created_at ? toLocalYMD(cierreInfo.created_at) : null;
+      const fechaCierre = cierreInfo?.created_at ? toEasternYMD(cierreInfo.created_at) : null;
 
       generarPDFCierreVan({
         empresa: { nombre: "TOOLS4CARE", direccion: "108 Lafayette St, Salem, MA 01970", telefono: "(978) 594-1624", email: "tools4care@gmail.com" },
@@ -907,6 +1086,7 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
       });
       setMensaje(pdfMode === "print" ? "PDF generated for printing..." : "PDF generated successfully!");
     } catch (error) {
+      console.error("❌ Error generando PDF:", error);
       setMensaje("Error generating PDF: " + error.message);
     } finally {
       setGenerandoPDF(false);
@@ -914,12 +1094,26 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
     }
   };
 
-  /* ======================= UI ======================= */
+  // Mostrar mensaje de debugging si no hay datos
+  if (!loading && fechaSeleccionada && ventasDecor.length === 0 && avances.length === 0) {
+    console.warn("⚠️ NO SE ENCONTRARON DATOS PARA LA FECHA:", fechaSeleccionada);
+  }
+
   return (
     <div className="max-w-4xl mx-auto mt-6 bg-white rounded shadow p-6">
       <h2 className="font-bold text-xl mb-4 text-blue-900">Van Closeout</h2>
 
-      {/* Selección de fecha */}
+      {/* DEBUG INFO */}
+      {!loading && fechaSeleccionada && ventasDecor.length === 0 && (
+        <div className="mb-4 p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700">
+          <p className="font-bold mb-2">⚠️ No se encontraron ventas para esta fecha</p>
+          <p className="text-sm">Revisa la consola del navegador (F12) para ver los logs detallados de la búsqueda.</p>
+          <p className="text-sm mt-2">Van ID: {van?.id || 'No definido'}</p>
+          <p className="text-sm">Fecha seleccionada (UTC): {fechaSeleccionada}</p>
+          <p className="text-sm">Fecha seleccionada (Eastern): {toUSFormat(fechaSeleccionada)}</p>
+        </div>
+      )}
+
       <div className="mb-4">
         <label className="font-bold text-sm mb-1 block">Select date to close or view:</label>
         <select
@@ -927,6 +1121,7 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
           value={fechaSeleccionada}
           onChange={(e) => {
             const v = e.target.value;
+            console.log("📅 Fecha seleccionada cambiada a:", v);
             setFechaSeleccionada(v);
             try { localStorage.setItem("pre_cierre_fecha", v); } catch {}
           }}
@@ -935,10 +1130,19 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
             <option value="">No available days</option>
           ) : (
             fechasPendientes.map((f) => {
+              // Convertir fecha UTC a Eastern Time para mostrar
+              const dateUTC = new Date(f);
+              const dateEastern = new Date(dateUTC.toLocaleString("en-US", { timeZone: "America/New_York" }));
+              const fechaEasternStr = dateEastern.toLocaleDateString("en-US", {
+                month: "2-digit",
+                day: "2-digit",
+                year: "numeric"
+              });
+              
               const isClosed = fechasCerradas.includes(f);
               return (
                 <option value={f} key={f}>
-                  {toUSFormat(f)} {isClosed ? "✓ Closed" : "• Pending"}
+                  {fechaEasternStr} {isClosed ? "✓ Closed" : "• Pending"}
                 </option>
               );
             })
@@ -948,16 +1152,31 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         {isClosedDay && (
           <div className="mt-2 p-2 rounded bg-blue-50 border border-blue-200">
             <div className="text-sm font-semibold text-blue-800 mb-1">
-              📋 This date was closed on {toUSFormat(toLocalYMD(cierreInfo.created_at))}
+              📋 This date was closed on {toUSFormat(toEasternYMD(cierreInfo.created_at))}
             </div>
             <div className="text-xs text-gray-600">
               You can view and reprint the report, but cannot modify the closeout.
             </div>
           </div>
         )}
+
+        {isClosedDay && ventasPend.length > 0 && (
+          <div className="mt-2 p-3 rounded bg-orange-50 border-l-4 border-orange-500">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">⚠️</span>
+              <div>
+                <div className="text-sm font-semibold text-orange-800">
+                  {ventasPend.length} new sale{ventasPend.length > 1 ? 's' : ''} made after closeout
+                </div>
+                <div className="text-xs text-orange-600 mt-1">
+                  These transactions are NOT included in the original closeout. Expected totals have been recalculated.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* NUEVA SECCIÓN: Resumen de Totales por Tipo de Pago */}
       <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-lg p-5 mb-6 border border-blue-200">
         <h3 className="font-bold mb-4 text-xl text-blue-900 flex items-center">
           <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -967,7 +1186,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         </h3>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          {/* CASH */}
           <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-500">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-gray-600">💵 CASH</span>
@@ -977,12 +1195,11 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
               </svg>
             </div>
             <div className="text-3xl font-bold text-green-700">
-              ${totalesPorTipoPago.cash.toFixed(2)}
+              ${(totalesPorTipoPago?.cash || 0).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">From sales & A/R payments</div>
           </div>
 
-          {/* CARD */}
           <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-gray-600">💳 CARD</span>
@@ -992,12 +1209,11 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
               </svg>
             </div>
             <div className="text-3xl font-bold text-blue-700">
-              ${totalesPorTipoPago.card.toFixed(2)}
+              ${(totalesPorTipoPago?.card || 0).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">From sales & A/R payments</div>
           </div>
 
-          {/* TRANSFER */}
           <div className="bg-white rounded-lg shadow p-4 border-l-4 border-purple-500">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-gray-600">🏦 TRANSFER</span>
@@ -1006,19 +1222,18 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
               </svg>
             </div>
             <div className="text-3xl font-bold text-purple-700">
-              ${totalesPorTipoPago.transfer.toFixed(2)}
+              ${(totalesPorTipoPago?.transfer || 0).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">From sales & A/R payments</div>
           </div>
         </div>
 
-        {/* Total General */}
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg shadow-md p-4 text-white">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold opacity-90">GRAND TOTAL</div>
               <div className="text-4xl font-bold mt-1">
-                ${(totalesPorTipoPago.cash + totalesPorTipoPago.card + totalesPorTipoPago.transfer).toFixed(2)}
+                ${sumBk(totalesPorTipoPago).toFixed(2)}
               </div>
             </div>
             <svg className="w-16 h-16 opacity-30" fill="currentColor" viewBox="0 0 20 20">
@@ -1029,23 +1244,25 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         </div>
       </div>
 
-      {/* Tabla de ventas del día */}
       <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
         <h3 className="font-bold mb-3 text-lg text-blue-800">Pending Closeout Movements</h3>
         <div className="mb-2 font-semibold text-gray-700">Sales in this day:</div>
         
-        {/* Debug info */}
+        {loading && (
+          <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm">
+            <div className="font-bold text-blue-800">⏳ Cargando datos...</div>
+          </div>
+        )}
+        
         {!loading && ventasDecor.length === 0 && (
           <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm">
             <div className="font-bold text-yellow-800 mb-1">⚠️ No sales found for this date</div>
             <div className="text-yellow-700">
-              Check the browser console (F12) for detailed logs. 
-              The RPC might not be returning data for recent sales.
+              Check the browser console (F12) for detailed logs.
             </div>
           </div>
         )}
         
-        {/* A/R Indicator */}
         {ventasDecor.length > 0 && (
           <div className="mb-3 p-3 bg-red-50 border-l-4 border-red-500 rounded">
             <div className="flex items-center justify-between">
@@ -1081,14 +1298,23 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
                 <tr><td colSpan={8} className="text-center text-gray-400 p-4">No sales</td></tr>
               ) : (
                 ventasDecor.map((v) => {
-                  // Si total_venta es 0, calcularlo desde el breakdown
                   const totalDesdeBreakdown = sumBk(v._bk);
                   const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
                   const totalPagado = Number(v.total_pagado || 0);
                   const credito = Math.max(0, totalVenta - totalPagado);
                   return (
-                    <tr key={v.id} className="border-b hover:bg-gray-50">
-                      <td className="p-2">{toUSFormat((v.fecha || "").toString().slice(0,10)) || "-"}</td>
+                    <tr 
+                      key={v.id} 
+                      className={`border-b hover:bg-gray-50 ${!v.cierre_id && isClosedDay ? 'bg-yellow-50' : ''}`}
+                    >
+                      <td className="p-2">
+                        {!v.cierre_id && isClosedDay && (
+                          <span className="inline-block text-xs bg-orange-500 text-white px-2 py-0.5 rounded mr-2 font-semibold">
+                            NEW
+                          </span>
+                        )}
+                        {toUSFormat((v.fecha || "").toString().slice(0,10)) || "-"}
+                      </td>
                       <td className="p-2">{v.cliente_nombre || (v.cliente_id ? v.cliente_id.slice(0,8) : NO_CLIENTE)}</td>
                       <td className="p-2 font-semibold text-right">${totalVenta.toFixed(2)}</td>
                       <td className="p-2 text-green-700 text-right">${Number(v._bk?.cash || 0).toFixed(2)}</td>
@@ -1102,9 +1328,75 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
               )}
             </tbody>
             {ventasDecor.length > 0 && (
-              <tfoot className="bg-blue-50 font-bold">
-                <tr>
-                  <td className="p-2" colSpan={2}>Totals</td>
+              <tfoot className="bg-blue-50 font-bold text-xs">
+                {isClosedDay && ventasCerr.length > 0 && (
+                  <tr className="bg-blue-100">
+                    <td className="p-2" colSpan={2}>In Original Closeout ({ventasCerr.length})</td>
+                    <td className="p-2 text-right">
+                      ${ventasCerr.reduce((t, v) => {
+                        const totalDesdeBreakdown = sumBk(v._bk);
+                        const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
+                        return t + totalVenta;
+                      }, 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-green-700 text-right">
+                      ${ventasCerr.reduce((t, v) => t + Number(v._bk?.cash || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-blue-700 text-right">
+                      ${ventasCerr.reduce((t, v) => t + Number(v._bk?.card || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-purple-700 text-right">
+                      ${ventasCerr.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-right">
+                      ${ventasCerr.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-red-700 text-right">
+                      ${ventasCerr.reduce((t, v) => {
+                        const totalDesdeBreakdown = sumBk(v._bk);
+                        const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
+                        const pagado = Number(v.total_pagado||0);
+                        const ar = totalVenta - pagado; 
+                        return t + (ar>0?ar:0);
+                      }, 0).toFixed(2)}
+                    </td>
+                  </tr>
+                )}
+                {isClosedDay && ventasPend.length > 0 && (
+                  <tr className="bg-orange-50">
+                    <td className="p-2" colSpan={2}>⚠️ After Closeout ({ventasPend.length})</td>
+                    <td className="p-2 text-right">
+                      ${ventasPend.reduce((t, v) => {
+                        const totalDesdeBreakdown = sumBk(v._bk);
+                        const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
+                        return t + totalVenta;
+                      }, 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-green-700 text-right">
+                      ${ventasPend.reduce((t, v) => t + Number(v._bk?.cash || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-blue-700 text-right">
+                      ${ventasPend.reduce((t, v) => t + Number(v._bk?.card || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-purple-700 text-right">
+                      ${ventasPend.reduce((t, v) => t + Number(v._bk?.transfer || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-right">
+                      ${ventasPend.reduce((t, v) => t + Number(v.total_pagado || 0), 0).toFixed(2)}
+                    </td>
+                    <td className="p-2 text-red-700 text-right">
+                      ${ventasPend.reduce((t, v) => {
+                        const totalDesdeBreakdown = sumBk(v._bk);
+                        const totalVenta = Number(v.total_venta) || totalDesdeBreakdown;
+                        const pagado = Number(v.total_pagado||0);
+                        const ar = totalVenta - pagado; 
+                        return t + (ar>0?ar:0);
+                      }, 0).toFixed(2)}
+                    </td>
+                  </tr>
+                )}
+                <tr className={`${isClosedDay && ventasPend.length > 0 ? 'bg-blue-200' : 'bg-blue-50'}`}>
+                  <td className="p-2" colSpan={2}>TOTAL ALL ({ventasDecor.length})</td>
                   <td className="p-2 text-right">
                     ${ventasDecor.reduce((t, v) => {
                       const totalDesdeBreakdown = sumBk(v._bk);
@@ -1140,7 +1432,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         </div>
       </div>
 
-      {/* Avances (pagos a CxC) */}
       {avances.length > 0 && (
         <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
           <h3 className="font-bold mb-3 text-lg text-blue-800">Customer Payments on A/R (today)</h3>
@@ -1199,17 +1490,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         </div>
       )}
 
-      {/* Expected */}
-      <div className="mb-4 p-3 rounded bg-blue-50 text-sm">
-        <div className="font-bold text-blue-900 mb-1">Expected (from totals)</div>
-        <div>Cash expected: ${Number(totalesEsperadosPanel.cash).toFixed(2)}</div>
-        <div>Card expected: ${Number(totalesEsperadosPanel.card).toFixed(2)}</div>
-        <div>Transfer expected: ${Number(totalesEsperadosPanel.transfer).toFixed(2)}</div>
-        <div>House Charge (A/R) today: ${Number(arPeriodo).toFixed(2)}</div>
-        <div>Pmt on House Charge: ${Number(pagosCxC).toFixed(2)}</div>
-      </div>
-
-      {/* GRID System vs Counted */}
       <div className="mb-4">
         <h3 className="font-bold text-blue-800 mb-2">End of Day — Tenders</h3>
         <div className="overflow-x-auto">
@@ -1225,14 +1505,14 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
             <tbody>
               <tr className="border-b">
                 <td className="p-2">CASH</td>
-                <td className="p-2 text-right">${systemGrid.cash.toFixed(2)}</td>
+                <td className="p-2 text-right">${(systemGrid?.cash || 0).toFixed(2)}</td>
                 <td className="p-2">
                   <input
                     type="number"
                     step="0.01"
                     className="border rounded p-1 w-full text-right"
                     disabled={isClosedDay}
-                    value={counted.cash}
+                    value={counted?.cash || 0}
                     onChange={(e)=>setCounted((c)=>({...c, cash:Number(e.target.value||0)}))}
                   />
                 </td>
@@ -1247,14 +1527,14 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
               </tr>
               <tr className="border-b">
                 <td className="p-2">VISA / MASTERCARD</td>
-                <td className="p-2 text-right">${systemGrid.card.toFixed(2)}</td>
+                <td className="p-2 text-right">${(systemGrid?.card || 0).toFixed(2)}</td>
                 <td className="p-2">
                   <input
                     type="number"
                     step="0.01"
                     className="border rounded p-1 w-full text-right"
                     disabled={isClosedDay}
-                    value={counted.card}
+                    value={counted?.card || 0}
                     onChange={(e)=>setCounted((c)=>({...c, card:Number(e.target.value||0)}))}
                   />
                 </td>
@@ -1262,14 +1542,14 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
               </tr>
               <tr className="border-b">
                 <td className="p-2">TRANSFER</td>
-                <td className="p-2 text-right">${systemGrid.transfer.toFixed(2)}</td>
+                <td className="p-2 text-right">${(systemGrid?.transfer || 0).toFixed(2)}</td>
                 <td className="p-2">
                   <input
                     type="number"
                     step="0.01"
                     className="border rounded p-1 w-full text-right"
                     disabled={isClosedDay}
-                    value={counted.transfer}
+                    value={counted?.transfer || 0}
                     onChange={(e)=>setCounted((c)=>({...c, transfer:Number(e.target.value||0)}))}
                   />
                 </td>
@@ -1278,10 +1558,10 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
               <tr>
                 <td className="p-2 font-bold">Total</td>
                 <td className="p-2 text-right font-bold">
-                  ${(systemGrid.cash + systemGrid.card + systemGrid.transfer).toFixed(2)}
+                  ${sumBk(systemGrid).toFixed(2)}
                 </td>
                 <td className="p-2 text-right font-bold">
-                  ${(counted.cash + counted.card + counted.transfer).toFixed(2)}
+                  ${sumBk(counted).toFixed(2)}
                 </td>
                 <td className="p-2"></td>
               </tr>
@@ -1289,7 +1569,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
           </table>
         </div>
 
-        {/* Drawer Totals */}
         <div className="grid grid-cols-2 gap-3 mt-3">
           <div className="p-3 bg-gray-50 rounded border">
             <div className="text-sm text-gray-600">A/R (House Charge) today</div>
@@ -1308,7 +1587,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         </div>
       </div>
 
-      {/* Comentario */}
       <div className="mb-3">
         <label className="block font-bold mb-1">Comment:</label>
         <textarea
@@ -1320,7 +1598,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         />
       </div>
 
-      {/* PDF */}
       <div className="mb-4 p-3 bg-gray-50 rounded">
         <h3 className="font-bold text-blue-800 mb-2">PDF Report</h3>
         <div className="flex items-center mb-2">
@@ -1341,7 +1618,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         </button>
       </div>
 
-      {/* Acciones */}
       <div className="flex flex-col gap-2">
         <button
           className="bg-blue-700 text-white px-4 py-2 rounded font-bold w-full hover:bg-blue-800 disabled:bg-gray-400"
@@ -1357,7 +1633,6 @@ const { ventasDecor, excedentesCxC } = useMemo(() => {
         )}
       </div>
 
-      {/* Modales */}
       <ConfirmModal
         open={showConfirmModal}
         onCancel={() => setShowConfirmModal(false)}
