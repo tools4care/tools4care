@@ -12,6 +12,9 @@
     "dist": "electron-builder"
   },
   "dependencies": {
+    "@babel/core": "^7.28.5",
+    "@babel/preset-env": "^7.28.5",
+    "@babel/preset-react": "^7.28.5",
     "@stripe/react-stripe-js": "^3.10.0",
     "@stripe/stripe-js": "^7.9.0",
     "@supabase/supabase-js": "^2.50.2",
@@ -27,8 +30,8 @@
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
     "quagga": "^0.12.1",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "react-icons": "^5.5.0",
     "react-router-dom": "^7.6.3",
     "recharts": "^3.1.0"

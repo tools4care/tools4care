@@ -6,11 +6,72 @@ import autoTable from "jspdf-autotable";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 
+/* ===================== Iconos SVG ===================== */
+const IconInvoice = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+  </svg>
+);
+
+const IconSearch = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+  </svg>
+);
+
+const IconCalendar = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+  </svg>
+);
+
+const IconFilter = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+  </svg>
+);
+
+const IconDollar = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
+const IconDownload = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+  </svg>
+);
+
+const IconUser = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+  </svg>
+);
+
+const IconTruck = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+  </svg>
+);
+
+const IconCheck = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+  </svg>
+);
+
+const IconClock = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
 /* ===================== Utilities ===================== */
 function formatAddress(dir) {
   if (!dir) return "-";
   
-  // Si es string, intentar parsear
   if (typeof dir === "string") {
     try {
       dir = JSON.parse(dir);
@@ -19,7 +80,6 @@ function formatAddress(dir) {
     }
   }
   
-  // Si es objeto, construir dirección
   if (typeof dir === "object" && dir !== null) {
     const partes = [
       dir.calle,
@@ -216,10 +276,58 @@ export default function Facturas() {
   const [fechaFin, setFechaFin] = useState("");
   const [estadoFiltro, setEstadoFiltro] = useState("all");
 
+  // Período para estadísticas (7, 30, 90 días o "all")
+  const [periodoStats, setPeriodoStats] = useState(30);
+
+  // Estadísticas
+  const [estadisticas, setEstadisticas] = useState({
+    totalGeneral: 0,
+    totalPagado: 0,
+    totalPendiente: 0,
+    cantidadTotal: 0,
+    cantidadPagadas: 0,
+    cantidadPendientes: 0,
+  });
+
   useEffect(() => {
     cargarFacturas();
+    cargarEstadisticas();
     // eslint-disable-next-line
-  }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro]);
+  }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda, periodoStats]);
+
+  async function cargarEstadisticas() {
+    let query = supabase.from("facturas_ext").select("total, estado_pago");
+
+    if (usuario?.rol !== "admin" && van?.id) {
+      query = query.eq("van_id", van.id);
+    }
+
+    // Aplicar período para estadísticas
+    if (periodoStats !== "all") {
+      const fechaDesde = new Date();
+      fechaDesde.setDate(fechaDesde.getDate() - periodoStats);
+      query = query.gte("fecha", fechaDesde.toISOString().split("T")[0]);
+    }
+
+    const { data } = await query;
+    
+    if (data) {
+      const totalGeneral = data.reduce((sum, f) => sum + Number(f.total || 0), 0);
+      const pagadas = data.filter(f => f.estado_pago === "pagado");
+      const totalPagado = pagadas.reduce((sum, f) => sum + Number(f.total || 0), 0);
+      const pendientes = data.filter(f => f.estado_pago !== "pagado");
+      const totalPendiente = pendientes.reduce((sum, f) => sum + Number(f.total || 0), 0);
+
+      setEstadisticas({
+        totalGeneral,
+        totalPagado,
+        totalPendiente,
+        cantidadTotal: data.length,
+        cantidadPagadas: pagadas.length,
+        cantidadPendientes: pendientes.length,
+      });
+    }
+  }
 
   async function cargarFacturas() {
     setLoading(true);
@@ -244,6 +352,11 @@ export default function Facturas() {
       query = query.eq("estado_pago", estadoFiltro);
     }
 
+    // CORREGIDO: Búsqueda integrada en el query
+    if (busqueda.trim()) {
+      query = query.or(`cliente_nombre_c.ilike.%${busqueda}%,numero_factura.ilike.%${busqueda}%`);
+    }
+
     const desde = (pagina - 1) * porPagina;
     const hasta = desde + porPagina - 1;
 
@@ -254,18 +367,6 @@ export default function Facturas() {
     setTotalVentas(count || 0);
     setLoading(false);
   }
-
-  const facturasFiltradas = facturas.filter((f) => {
-    const t1 = (f.cliente_nombre_c || "").toLowerCase();
-    const t2 = (f.numero_factura || "").toLowerCase();
-    const q = busqueda.toLowerCase();
-    return t1.includes(q) || t2.includes(q);
-  });
-
-  // Calcular estadísticas
-  const totalGeneral = facturasFiltradas.reduce((sum, f) => sum + Number(f.total || 0), 0);
-  const totalPagado = facturasFiltradas.filter(f => f.estado_pago === "pagado").reduce((sum, f) => sum + Number(f.total || 0), 0);
-  const totalPendiente = facturasFiltradas.filter(f => f.estado_pago !== "pagado").reduce((sum, f) => sum + Number(f.total || 0), 0);
 
   /* === Carga perezosa del detalle === */
   useEffect(() => {
@@ -305,71 +406,162 @@ export default function Facturas() {
     setFechaFin("");
     setEstadoFiltro("all");
     setPagina(1);
+    // No reseteamos periodoStats porque es independiente de los filtros de búsqueda
+  }
+
+  function handleBusquedaChange(value) {
+    setBusqueda(value);
+    setPagina(1); // Resetear a página 1 cuando se busca
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
-      <div className="w-full max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-              Invoices
-            </h2>
-            <span className="text-sm text-gray-500">
-              Page {pagina} / {totalPaginas}
-            </span>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6">
+      <div className="w-full max-w-[1600px] mx-auto space-y-6">
+        
+        {/* Header Mejorado */}
+        <div className="bg-white rounded-3xl shadow-xl p-6">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6">
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2 flex items-center gap-3">
+                <IconInvoice />
+                Invoices
+              </h1>
+              <p className="text-gray-600 text-sm">
+                Manage and download your invoices
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-sm text-gray-600 bg-blue-100 px-4 py-2 rounded-full font-semibold">
+                Page {pagina} / {totalPaginas}
+              </div>
+              <button
+                onClick={limpiarFiltros}
+                className="flex items-center gap-2 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white px-5 py-2.5 rounded-xl font-semibold shadow-lg transition-all"
+              >
+                <IconFilter />
+                Clear Filters
+              </button>
+            </div>
           </div>
 
-          {/* Estadísticas */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-            <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200">
-              <div className="text-xs text-blue-600 font-semibold uppercase">Total</div>
-              <div className="text-2xl font-bold text-blue-800">${totalGeneral.toFixed(2)}</div>
-            </div>
-            <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3 border border-green-200">
-              <div className="text-xs text-green-600 font-semibold uppercase">Paid</div>
-              <div className="text-2xl font-bold text-green-800">${totalPagado.toFixed(2)}</div>
-            </div>
-            <div className="bg-gradient-to-r from-amber-50 to-amber-100 rounded-lg p-3 border border-amber-200">
-              <div className="text-xs text-amber-600 font-semibold uppercase">Pending</div>
-              <div className="text-2xl font-bold text-amber-800">${totalPendiente.toFixed(2)}</div>
+          {/* Selector de Período para Estadísticas */}
+          <div className="mb-4">
+            <div className="text-sm font-semibold text-gray-700 mb-2">Statistics Period:</div>
+            <div className="flex flex-wrap items-center gap-2">
+              {[
+                { value: 7, label: "Last 7 days" },
+                { value: 30, label: "Last 30 days" },
+                { value: 90, label: "Last 90 days" },
+                { value: "all", label: "All time" },
+              ].map((periodo) => (
+                <button
+                  key={periodo.value}
+                  onClick={() => setPeriodoStats(periodo.value)}
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    periodoStats === periodo.value
+                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg scale-105"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  {periodo.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Filtros */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <input
-              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-              placeholder="Search client or invoice..."
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-            />
+          {/* Estadísticas Visuales */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-5 text-white shadow-lg hover:shadow-xl transition-shadow relative overflow-hidden">
+              <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4 scale-[2]">
+                <IconDollar />
+              </div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-semibold opacity-90">Total Revenue</div>
+                  <IconDollar />
+                </div>
+                <div className="text-4xl font-bold mb-1">${estadisticas.totalGeneral.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-sm opacity-80">{estadisticas.cantidadTotal} invoices</div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-5 text-white shadow-lg hover:shadow-xl transition-shadow relative overflow-hidden">
+              <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4 scale-[2]">
+                <IconCheck />
+              </div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-semibold opacity-90">Total Paid</div>
+                  <IconCheck />
+                </div>
+                <div className="text-4xl font-bold mb-1">${estadisticas.totalPagado.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-sm opacity-80">{estadisticas.cantidadPagadas} paid</div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl p-5 text-white shadow-lg hover:shadow-xl transition-shadow relative overflow-hidden">
+              <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4 scale-[2]">
+                <IconClock />
+              </div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-semibold opacity-90">Pending</div>
+                  <IconClock />
+                </div>
+                <div className="text-4xl font-bold mb-1">${estadisticas.totalPendiente.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-sm opacity-80">{estadisticas.cantidadPendientes} pending</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Filtros Mejorados */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                <IconSearch />
+              </div>
+              <input
+                className="w-full border-2 border-gray-300 rounded-xl pl-10 pr-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+                placeholder="Search client or invoice..."
+                value={busqueda}
+                onChange={(e) => handleBusquedaChange(e.target.value)}
+              />
+            </div>
             
-            <input
-              type="date"
-              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-              value={fechaInicio}
-              onChange={(e) => {
-                setFechaInicio(e.target.value);
-                setPagina(1);
-              }}
-              placeholder="Start date"
-            />
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                <IconCalendar />
+              </div>
+              <input
+                type="date"
+                className="w-full border-2 border-gray-300 rounded-xl pl-10 pr-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+                value={fechaInicio}
+                onChange={(e) => {
+                  setFechaInicio(e.target.value);
+                  setPagina(1);
+                }}
+                placeholder="Start date"
+              />
+            </div>
             
-            <input
-              type="date"
-              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-              value={fechaFin}
-              onChange={(e) => {
-                setFechaFin(e.target.value);
-                setPagina(1);
-              }}
-              placeholder="End date"
-            />
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                <IconCalendar />
+              </div>
+              <input
+                type="date"
+                className="w-full border-2 border-gray-300 rounded-xl pl-10 pr-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+                value={fechaFin}
+                onChange={(e) => {
+                  setFechaFin(e.target.value);
+                  setPagina(1);
+                }}
+                placeholder="End date"
+              />
+            </div>
             
             <select
-              className="border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+              className="border-2 border-gray-300 rounded-xl px-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
               value={estadoFiltro}
               onChange={(e) => {
                 setEstadoFiltro(e.target.value);
@@ -381,170 +573,363 @@ export default function Facturas() {
               <option value="parcial">Partial</option>
               <option value="pendiente">Pending</option>
             </select>
-
-            <button
-              onClick={limpiarFiltros}
-              className="bg-gray-500 hover:bg-gray-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md transition-all"
-            >
-              Clear Filters
-            </button>
           </div>
         </div>
 
-        {/* Tabla */}
-        <div className="bg-white rounded-xl shadow-lg p-0 overflow-hidden">
-          {loading ? (
-            <div className="p-8 text-blue-700 font-semibold">Loading invoices...</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-100/80 text-gray-700">
-                    <th className="p-3 text-left">Number</th>
-                    <th className="p-3 text-left">Date</th>
-                    <th className="p-3 text-left">Client</th>
-                    <th className="p-3 text-right">Total</th>
-                    <th className="p-3 text-left">VAN</th>
-                    <th className="p-3 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {facturasFiltradas.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="text-center text-gray-400 py-8">
-                        No results found
-                      </td>
-                    </tr>
-                  )}
-                  {facturasFiltradas.map((f) => (
-                    <tr
-                      key={f.id}
-                      className="hover:bg-blue-50 cursor-pointer transition-colors"
-                      onClick={() => setFacturaSeleccionada(f)}
-                    >
-                      <td className="p-3 font-mono text-gray-800">
-                        {f.numero_factura || f.id?.slice(0, 8)}
-                      </td>
-                      <td className="p-3 text-gray-800">
-                        {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : "-"}
-                      </td>
-                      <td className="p-3 text-gray-800">{f.cliente_nombre_c || "-"}</td>
-                      <td className="p-3 text-right text-gray-900 font-semibold">
-                        ${Number(f.total || 0).toFixed(2)}
-                      </td>
-                      <td className="p-3 text-gray-800">{f.nombre_van || "-"}</td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={
-                            f.estado_pago === "pagado"
-                              ? "inline-block px-2 py-1 rounded-full bg-green-100 text-green-700 font-semibold text-xs"
-                              : f.estado_pago === "parcial"
-                              ? "inline-block px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-semibold text-xs"
-                              : "inline-block px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-semibold text-xs"
-                          }
-                        >
-                          {f.estado_pago === "pagado" ? "Paid" : f.estado_pago === "parcial" ? "Partial" : "Pending"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* Tabla / Cards */}
+        <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
+          <div className="p-6 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-800">Invoice List</h2>
+              <div className="text-sm text-gray-500">
+                Showing <span className="font-semibold text-gray-800">{facturas.length}</span> of <span className="font-semibold text-gray-800">{totalVentas}</span>
+              </div>
             </div>
+          </div>
+
+          {loading ? (
+            <div className="p-12 text-center">
+              <div className="inline-block w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+              <div className="text-blue-700 font-semibold">Loading invoices...</div>
+            </div>
+          ) : facturas.length === 0 ? (
+            <div className="p-12 text-center">
+              <div className="text-6xl mb-4">📄</div>
+              <div className="text-gray-400 font-semibold mb-2">No invoices found</div>
+              <div className="text-sm text-gray-500">Try adjusting your search filters</div>
+            </div>
+          ) : (
+            <>
+              {/* Vista Desktop - Tabla */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="p-4 text-left">
+                        <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
+                          <IconInvoice />
+                          Number
+                        </div>
+                      </th>
+                      <th className="p-4 text-left text-sm font-bold text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <IconCalendar />
+                          Date
+                        </div>
+                      </th>
+                      <th className="p-4 text-left text-sm font-bold text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <IconUser />
+                          Client
+                        </div>
+                      </th>
+                      <th className="p-4 text-right text-sm font-bold text-gray-700">
+                        <div className="flex items-center justify-end gap-2">
+                          <IconDollar />
+                          Total
+                        </div>
+                      </th>
+                      <th className="p-4 text-left text-sm font-bold text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <IconTruck />
+                          VAN
+                        </div>
+                      </th>
+                      <th className="p-4 text-center text-sm font-bold text-gray-700">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {facturas.map((f) => (
+                      <tr
+                        key={f.id}
+                        className="hover:bg-blue-50 cursor-pointer transition-all group"
+                        onClick={() => setFacturaSeleccionada(f)}
+                      >
+                        <td className="p-4">
+                          <div className="font-mono text-sm font-semibold text-blue-600 group-hover:text-blue-700">
+                            {f.numero_factura || f.id?.slice(0, 8)}
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <div className="font-medium text-gray-800">
+                            {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US", {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric'
+                            }) : "-"}
+                          </div>
+                        </td>
+                        <td className="p-4 font-medium text-gray-800">{f.cliente_nombre_c || "-"}</td>
+                        <td className="p-4 text-right">
+                          <div className="font-bold text-xl text-gray-900 group-hover:text-blue-600 transition-colors">
+                            ${Number(f.total || 0).toFixed(2)}
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <div className="text-sm text-gray-600">{f.nombre_van || "-"}</div>
+                        </td>
+                        <td className="p-4 text-center">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${
+                              f.estado_pago === "pagado"
+                                ? "bg-green-500 text-white"
+                                : f.estado_pago === "parcial"
+                                ? "bg-blue-500 text-white"
+                                : "bg-amber-500 text-white"
+                            }`}
+                          >
+                            {f.estado_pago === "pagado" ? (
+                              <>
+                                <IconCheck />
+                                Paid
+                              </>
+                            ) : f.estado_pago === "parcial" ? (
+                              "◐ Partial"
+                            ) : (
+                              <>
+                                <IconClock />
+                                Pending
+                              </>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Vista Mobile - Cards */}
+              <div className="md:hidden p-4 space-y-3">
+                {facturas.map((f) => (
+                  <div
+                    key={f.id}
+                    className="bg-gradient-to-br from-white to-blue-50 rounded-2xl p-4 border-2 border-blue-100 hover:border-blue-300 hover:shadow-lg cursor-pointer transition-all"
+                    onClick={() => setFacturaSeleccionada(f)}
+                  >
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex-1">
+                        <div className="font-mono text-sm font-bold text-blue-600 mb-1">
+                          #{f.numero_factura || f.id?.slice(0, 8)}
+                        </div>
+                        <div className="font-semibold text-gray-900 mb-1">{f.cliente_nombre_c || "-"}</div>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <IconCalendar />
+                          {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : "-"}
+                        </div>
+                      </div>
+                      <span
+                        className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold ${
+                          f.estado_pago === "pagado"
+                            ? "bg-green-500 text-white"
+                            : f.estado_pago === "parcial"
+                            ? "bg-blue-500 text-white"
+                            : "bg-amber-500 text-white"
+                        }`}
+                      >
+                        {f.estado_pago === "pagado" ? <IconCheck /> : <IconClock />}
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl p-3">
+                      <div className="flex items-center gap-2">
+                        <IconDollar />
+                        <span className="font-semibold">Total</span>
+                      </div>
+                      <span className="text-2xl font-bold">${Number(f.total || 0).toFixed(2)}</span>
+                    </div>
+
+                    {f.nombre_van && (
+                      <div className="mt-2 flex items-center gap-2 text-xs text-gray-600">
+                        <IconTruck />
+                        {f.nombre_van}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
 
-        {/* Paginación */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4">
-          <div className="text-xs text-gray-500">
-            Showing <b>{facturasFiltradas.length}</b> of <b>{totalVentas}</b> records
+        {/* Paginación Mejorada */}
+        {!loading && totalVentas > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white rounded-2xl shadow-lg p-4">
+            <div className="text-sm text-gray-600">
+              Showing <span className="font-bold text-gray-800">{(pagina - 1) * porPagina + 1}</span> - <span className="font-bold text-gray-800">{Math.min(pagina * porPagina, totalVentas)}</span> of <span className="font-bold text-gray-800">{totalVentas}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-gray-200 to-gray-300 hover:from-gray-300 hover:to-gray-400 text-gray-800 font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                disabled={pagina === 1}
+              >
+                ← Previous
+              </button>
+              <div className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold shadow-md">
+                {pagina} / {totalPaginas}
+              </div>
+              <button
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                onClick={() => setPagina((p) => p + 1)}
+                disabled={pagina >= totalPaginas}
+              >
+                Next →
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              className="px-4 py-2 rounded-lg bg-gradient-to-r from-gray-200 to-gray-300 text-gray-800 font-medium shadow hover:shadow-md disabled:opacity-50"
-              onClick={() => setPagina((p) => Math.max(1, p - 1))}
-              disabled={pagina === 1}
-            >
-              Previous
-            </button>
-            <span className="px-3 py-1 rounded-full border text-xs text-gray-600 bg-white">
-              {pagina} / {totalPaginas}
-            </span>
-            <button
-              className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold shadow hover:shadow-md disabled:opacity-50"
-              onClick={() => setPagina((p) => p + 1)}
-              disabled={pagina >= totalPaginas}
-            >
-              Next
-            </button>
-          </div>
-        </div>
+        )}
 
-        {/* Modal Detalle */}
+        {/* Modal Detalle Mejorado */}
         {facturaSeleccionada && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-              <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-3 flex items-center justify-between">
-                <h3 className="font-bold text-lg">Invoice Details</h3>
+            <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <IconInvoice />
+                  <h3 className="font-bold text-xl">Invoice Details</h3>
+                </div>
                 <button
-                  className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center"
+                  className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
                   onClick={() => setFacturaSeleccionada(null)}
                 >
                   ✖
                 </button>
               </div>
 
-              <div className="p-5 text-sm text-gray-700 space-y-2 overflow-y-auto">
-                <div><b>Invoice #:</b> {facturaSeleccionada.numero_factura || facturaSeleccionada.id}</div>
-                <div><b>Date:</b> {facturaSeleccionada.fecha ? new Date(facturaSeleccionada.fecha).toLocaleDateString("en-US") : "-"}</div>
-                <div><b>Client:</b> {facturaSeleccionada.cliente_nombre_c || "-"}</div>
-                <div><b>Address:</b> {formatAddress(facturaSeleccionada.cliente_direccion)}</div>
-                <div><b>Phone:</b> {formatPhone(facturaSeleccionada.cliente_telefono)}</div>
-                <div><b>Email:</b> {facturaSeleccionada.cliente_email || "-"}</div>
-                <div><b>Total:</b> ${Number(facturaSeleccionada.total || 0).toFixed(2)}</div>
-                <div><b>VAN:</b> {facturaSeleccionada.nombre_van || "-"}</div>
-                <div>
-                  <b>Status:</b>{" "}
-                  <span
-                    className={
-                      facturaSeleccionada.estado_pago === "pagado"
-                        ? "inline-block px-2 py-1 rounded-full bg-green-100 text-green-700 font-semibold text-xs ml-2"
-                        : "inline-block px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-semibold text-xs ml-2"
-                    }
-                  >
-                    {facturaSeleccionada.estado_pago === "pagado" ? "Paid" : "Pending"}
-                  </span>
+              <div className="p-6 space-y-4 overflow-y-auto flex-1">
+                {/* Info Principal en Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
+                    <div className="text-xs text-blue-600 font-semibold uppercase mb-1">Invoice Number</div>
+                    <div className="font-mono text-lg font-bold text-gray-800">{facturaSeleccionada.numero_factura || facturaSeleccionada.id?.slice(0, 12)}</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-200">
+                    <div className="text-xs text-purple-600 font-semibold uppercase mb-1">Date</div>
+                    <div className="font-semibold text-gray-800">
+                      {facturaSeleccionada.fecha ? new Date(facturaSeleccionada.fecha).toLocaleDateString("en-US", {
+                        day: '2-digit',
+                        month: 'long',
+                        year: 'numeric'
+                      }) : "-"}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="mt-3">
-                  <b>Products:</b>
-                  <ul className="list-disc ml-6 space-y-1 mt-1">
-                    {(facturaSeleccionada.detalle_ventas || []).map((item, idx) => (
-                      <li key={idx}>
-                        {(item.productos?.nombre || item.producto_nombre || item.producto_id || "-")}
-                        {" x "}
-                        {item.cantidad || 1}
-                        {" @ $"}
-                        {Number(item.precio_unitario != null ? item.precio_unitario : item.precio_unit || 0).toFixed(2)}
-                      </li>
-                    ))}
-                    {(facturaSeleccionada.detalle_ventas || []).length === 0 && (
-                      <li className="text-gray-400">No products</li>
-                    )}
-                  </ul>
+                {/* Cliente */}
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5 border border-green-200">
+                  <div className="flex items-center gap-2 mb-3">
+                    <IconUser />
+                    <h4 className="font-bold text-gray-800">Client Information</h4>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div><span className="font-semibold">Name:</span> {facturaSeleccionada.cliente_nombre_c || "-"}</div>
+                    <div><span className="font-semibold">Address:</span> {formatAddress(facturaSeleccionada.cliente_direccion)}</div>
+                    <div><span className="font-semibold">Phone:</span> {formatPhone(facturaSeleccionada.cliente_telefono)}</div>
+                    <div><span className="font-semibold">Email:</span> {facturaSeleccionada.cliente_email || "-"}</div>
+                  </div>
+                </div>
+
+                {/* Total y Estado */}
+                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <IconDollar />
+                        <div className="text-sm font-semibold opacity-90">Invoice Total</div>
+                      </div>
+                      <div className="text-5xl font-bold">
+                        ${Number(facturaSeleccionada.total || 0).toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold opacity-90 mb-2">Payment Status</div>
+                      <span
+                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-base font-bold ${
+                          facturaSeleccionada.estado_pago === "pagado"
+                            ? "bg-green-500"
+                            : facturaSeleccionada.estado_pago === "parcial"
+                            ? "bg-blue-400"
+                            : "bg-amber-500"
+                        }`}
+                      >
+                        {facturaSeleccionada.estado_pago === "pagado" ? (
+                          <>
+                            <IconCheck />
+                            Paid
+                          </>
+                        ) : facturaSeleccionada.estado_pago === "parcial" ? (
+                          "◐ Partial"
+                        ) : (
+                          <>
+                            <IconClock />
+                            Pending
+                          </>
+                        )}
+                      </span>
+                      {facturaSeleccionada.nombre_van && (
+                        <div className="mt-3 flex items-center gap-2 opacity-90">
+                          <IconTruck />
+                          <span className="text-sm">{facturaSeleccionada.nombre_van}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Productos */}
+                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+                  <div className="flex items-center gap-2 mb-4">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                    <h4 className="font-bold text-gray-800">Products</h4>
+                  </div>
+                  {!facturaSeleccionada.detalle_ventas ? (
+                    <div className="text-blue-600 text-sm py-4">Loading products...</div>
+                  ) : (facturaSeleccionada.detalle_ventas || []).length === 0 ? (
+                    <div className="text-gray-400 text-sm py-4">No products</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(facturaSeleccionada.detalle_ventas || []).map((item, idx) => {
+                        const unit = Number(item.precio_unitario != null ? item.precio_unitario : item.precio_unit || 0);
+                        const subtotal = unit * Number(item.cantidad || 1);
+                        return (
+                          <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                            <div className="flex justify-between items-start">
+                              <div className="flex-1">
+                                <div className="font-semibold text-gray-900">
+                                  {item.productos?.nombre || item.producto_nombre || item.producto_id || "-"}
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  Quantity: <span className="font-semibold">{item.cantidad || 1}</span> × ${unit.toFixed(2)}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-xs text-gray-500">Subtotal</div>
+                                <div className="font-bold text-lg text-gray-900">${subtotal.toFixed(2)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="p-5 pt-0 flex flex-col gap-2">
+              {/* Footer con botones */}
+              <div className="p-6 pt-0 space-y-3 border-t">
                 <button
-                  className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold py-2.5 px-4 rounded-lg shadow-md disabled:opacity-50"
+                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={() => descargarPDFFactura(facturaSeleccionada)}
                   disabled={!facturaSeleccionada.detalle_ventas}
                 >
+                  <IconDownload />
                   Download PDF
                 </button>
                 <button
-                  className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2.5 px-4 rounded-lg"
+                  className="w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-semibold py-3 px-4 rounded-xl transition-all"
                   onClick={() => setFacturaSeleccionada(null)}
                 >
                   Close
