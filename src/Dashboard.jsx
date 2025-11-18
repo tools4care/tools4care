@@ -15,6 +15,7 @@ import {
   Legend,
   ComposedChart,
   Cell,
+  LineChart,
 } from "recharts";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -52,6 +53,53 @@ function withMA(data, key = "total", windowSize = 7) {
   return out;
 }
 
+/* ---------- Iconos SVG ---------- */
+const IconDollar = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
+const IconTrending = ({ up }) => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    {up ? (
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+    ) : (
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+    )}
+  </svg>
+);
+
+const IconShoppingCart = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+  </svg>
+);
+
+const IconUsers = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+  </svg>
+);
+
+const IconAlert = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+  </svg>
+);
+
+const IconPackage = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+  </svg>
+);
+
+const IconClock = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
 /* ---------- Modal Low Stock ---------- */
 function LowStockModal({ open, items, onClose }) {
   const [q, setQ] = useState("");
@@ -69,10 +117,13 @@ function LowStockModal({ open, items, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-        <div className="px-5 py-3 bg-gradient-to-r from-red-600 to-orange-600 text-white flex items-center justify-between">
-          <h3 className="font-bold text-lg">Low Stock Alert</h3>
+        <div className="px-5 py-4 bg-gradient-to-r from-red-600 to-orange-600 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <IconAlert />
+            <h3 className="font-bold text-lg">Alerta de Stock Bajo</h3>
+          </div>
           <button
-            className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center"
+            className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
             onClick={onClose}
           >
             ✖
@@ -80,33 +131,43 @@ function LowStockModal({ open, items, onClose }) {
         </div>
         <div className="p-4 flex-1 overflow-hidden flex flex-col">
           <input
-            className="w-full border rounded-lg px-3 py-2 mb-3"
-            placeholder="Search by code or name…"
+            className="w-full border-2 border-gray-200 focus:border-red-500 rounded-lg px-4 py-2.5 mb-3 transition-colors"
+            placeholder="Buscar por código o nombre…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <div className="flex-1 overflow-y-auto">
             {filtered.length === 0 ? (
-              <div className="text-gray-500 text-sm">No results.</div>
+              <div className="text-gray-500 text-sm text-center py-8">No hay resultados.</div>
             ) : (
-              <ul className="divide-y">
+              <ul className="space-y-2">
                 {filtered.map((p, idx) => (
-                  <li key={`${p.codigo}-${idx}`} className="py-2 flex items-baseline gap-3">
-                    <span className="font-mono text-gray-500 text-sm">{p.codigo}</span>
-                    <span className="flex-1 text-sm">{p.nombre}</span>
-                    <span className="text-red-600 font-semibold">{p.cantidad}</span>
+                  <li key={`${p.codigo}-${idx}`} className="bg-gradient-to-r from-red-50 to-orange-50 rounded-lg p-4 border-l-4 border-red-500 hover:shadow-md transition-shadow">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-900">{p.nombre}</div>
+                        <div className="text-xs text-gray-500 font-mono mt-1">{p.codigo}</div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className="text-xs text-gray-500">Stock</div>
+                          <div className="text-2xl font-bold text-red-600">{p.cantidad}</div>
+                        </div>
+                        <IconAlert className="text-red-600" />
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>
             )}
           </div>
         </div>
-        <div className="p-4">
+        <div className="p-4 border-t">
           <button
-            className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2.5 px-4 rounded-lg"
+            className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white font-semibold py-3 px-4 rounded-lg transition-all"
             onClick={onClose}
           >
-            Close
+            Cerrar
           </button>
         </div>
       </div>
@@ -114,7 +175,7 @@ function LowStockModal({ open, items, onClose }) {
   );
 }
 
-/* ---------- Modal Detalle Venta MEJORADO ---------- */
+/* ---------- Modal Detalle Venta ---------- */
 function DetalleVentaModal({ venta, loading, productos, onClose, getNombreCliente }) {
   if (!venta) return null;
 
@@ -124,68 +185,74 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
     return sum + sub;
   }, 0);
 
-  // Desglose de pagos desde venta.pago JSON
   const pagoInfo = venta.pago || {};
   const metodosAplicados = pagoInfo.metodos || [];
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-3 flex items-center justify-between">
-          <h3 className="font-bold text-lg">Sale Details</h3>
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <IconShoppingCart />
+            <h3 className="font-bold text-xl">Detalle de Venta</h3>
+          </div>
           <button
-            className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center"
+            className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
             onClick={onClose}
           >
             ✖
           </button>
         </div>
 
-        {/* Body */}
-        <div className="p-5 text-sm text-gray-700 space-y-3 overflow-y-auto flex-1">
-          {/* Info general */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <div className="text-xs text-gray-500 uppercase font-semibold">Sale ID</div>
-              <div className="font-mono text-sm">{venta.id?.slice(0, 8)}...</div>
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+          {/* Info general en cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
+              <div className="text-xs text-blue-600 font-semibold uppercase mb-1">ID de Venta</div>
+              <div className="font-mono text-sm font-semibold text-gray-800">{venta.id?.slice(0, 12)}...</div>
             </div>
-            <div>
-              <div className="text-xs text-gray-500 uppercase font-semibold">Date</div>
-              <div>{dayjs(venta.fecha).format("YYYY-MM-DD HH:mm")}</div>
+            <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-200">
+              <div className="text-xs text-purple-600 font-semibold uppercase mb-1">Fecha</div>
+              <div className="font-semibold text-gray-800">{dayjs(venta.fecha).format("DD/MM/YYYY HH:mm")}</div>
             </div>
-            <div>
-              <div className="text-xs text-gray-500 uppercase font-semibold">Client</div>
-              <div>{getNombreCliente(venta.cliente_id) || "—"}</div>
+            <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
+              <div className="text-xs text-green-600 font-semibold uppercase mb-1">Cliente</div>
+              <div className="font-semibold text-gray-800">{getNombreCliente(venta.cliente_id) || "—"}</div>
             </div>
-            <div>
-              <div className="text-xs text-gray-500 uppercase font-semibold">Payment Status</div>
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
+              <div className="text-xs text-amber-600 font-semibold uppercase mb-1">Estado de Pago</div>
               <span
-                className={`inline-block px-2 py-1 rounded-full text-xs font-semibold ${
+                className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold ${
                   venta.estado_pago === "pagado"
-                    ? "bg-green-100 text-green-700"
+                    ? "bg-green-500 text-white"
                     : venta.estado_pago === "parcial"
-                    ? "bg-blue-100 text-blue-700"
-                    : "bg-amber-100 text-amber-700"
+                    ? "bg-blue-500 text-white"
+                    : "bg-amber-500 text-white"
                 }`}
               >
-                {venta.estado_pago === "pagado" ? "Paid" : venta.estado_pago === "parcial" ? "Partial" : "Pending"}
+                {venta.estado_pago === "pagado" ? "✓ Pagado" : venta.estado_pago === "parcial" ? "◐ Parcial" : "○ Pendiente"}
               </span>
             </div>
           </div>
 
-          {/* Totales */}
-          <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-            <div className="grid grid-cols-2 gap-2 text-sm">
+          {/* Totales destacados */}
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div>
-                <div className="text-xs text-blue-600 font-semibold">Total Sale</div>
-                <div className="text-lg font-bold text-blue-800">
+                <div className="flex items-center gap-2 mb-2">
+                  <IconShoppingCart />
+                  <div className="text-sm font-semibold opacity-90">Total de la Venta</div>
+                </div>
+                <div className="text-4xl font-bold">
                   {fmtMoney(venta.total || 0)}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-blue-600 font-semibold">Total Paid</div>
-                <div className="text-lg font-bold text-green-700">
+                <div className="flex items-center gap-2 mb-2">
+                  <IconDollar />
+                  <div className="text-sm font-semibold opacity-90">Total Pagado</div>
+                </div>
+                <div className="text-4xl font-bold text-green-300">
                   {fmtMoney(venta.total_pagado || 0)}
                 </div>
               </div>
@@ -194,13 +261,16 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
 
           {/* Métodos de pago */}
           {metodosAplicados.length > 0 && (
-            <div>
-              <div className="text-xs text-gray-500 uppercase font-semibold mb-2">Payment Methods</div>
-              <div className="space-y-1">
+            <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+              <div className="flex items-center gap-2 mb-4">
+                <IconDollar />
+                <h4 className="font-bold text-gray-800">Métodos de Pago</h4>
+              </div>
+              <div className="space-y-2">
                 {metodosAplicados.map((m, idx) => (
-                  <div key={idx} className="flex justify-between text-sm bg-gray-50 rounded px-3 py-2">
-                    <span className="capitalize">{m.forma || "—"}</span>
-                    <span className="font-semibold">{dinero(m.monto || 0)}</span>
+                  <div key={idx} className="flex justify-between items-center bg-white rounded-lg px-4 py-3 border border-gray-200">
+                    <span className="capitalize font-semibold text-gray-700">{m.forma || "—"}</span>
+                    <span className="font-bold text-lg text-blue-600">{dinero(m.monto || 0)}</span>
                   </div>
                 ))}
               </div>
@@ -208,29 +278,33 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
           )}
 
           {/* Productos */}
-          <div>
-            <div className="text-xs text-gray-500 uppercase font-semibold mb-2">Products Sold</div>
+          <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+            <div className="flex items-center gap-2 mb-4">
+              <IconPackage />
+              <h4 className="font-bold text-gray-800">Productos Vendidos</h4>
+            </div>
             {loading ? (
-              <div className="text-blue-700 text-xs">Loading products…</div>
+              <div className="text-blue-600 text-sm text-center py-4">Cargando productos…</div>
             ) : productos.length === 0 ? (
-              <div className="text-gray-400 text-sm">No products in this sale</div>
+              <div className="text-gray-400 text-sm text-center py-4">No hay productos en esta venta</div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {productos.map((p, idx) => {
                   const unit = Number(p.precio_unit ?? p.precio_unitario ?? 0);
                   const sub = p.subtotal != null ? Number(p.subtotal) : unit * Number(p.cantidad || 0);
                   return (
-                    <div key={idx} className="bg-gray-50 rounded-lg p-3 border">
+                    <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
-                          <div className="font-semibold text-gray-900">{p.nombre || p.producto_id}</div>
-                          <div className="text-xs text-gray-500 font-mono">{p.codigo || p.producto_id}</div>
+                          <div className="font-bold text-gray-900 text-lg">{p.nombre || p.producto_id}</div>
+                          <div className="text-xs text-gray-500 font-mono mt-1">{p.codigo || p.producto_id}</div>
+                          <div className="text-sm text-gray-600 mt-2">
+                            Cantidad: <span className="font-semibold">{p.cantidad}</span> × {dinero(unit)}
+                          </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-sm text-gray-600">
-                            {p.cantidad} x {dinero(unit)}
-                          </div>
-                          <div className="font-bold text-gray-900">{dinero(sub)}</div>
+                          <div className="text-xs text-gray-500 mb-1">Subtotal</div>
+                          <div className="font-bold text-xl text-gray-900">{dinero(sub)}</div>
                         </div>
                       </div>
                     </div>
@@ -238,33 +312,93 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                 })}
                 
                 {/* Total de productos */}
-                <div className="bg-blue-50 rounded-lg p-3 border border-blue-200 flex justify-between items-center">
-                  <span className="font-semibold text-blue-800">Subtotal Products:</span>
-                  <span className="font-bold text-blue-900 text-lg">{dinero(totalProductos)}</span>
+                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 flex justify-between items-center text-white shadow-lg">
+                  <span className="font-bold text-lg">Subtotal Productos:</span>
+                  <span className="font-bold text-2xl">{dinero(totalProductos)}</span>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Notas si existen */}
+          {/* Notas */}
           {venta.notas && (
-            <div>
-              <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Notes</div>
-              <div className="text-sm bg-gray-50 rounded p-3 border">{venta.notas}</div>
+            <div className="bg-amber-50 rounded-xl p-5 border border-amber-200">
+              <div className="text-sm text-amber-600 font-semibold uppercase mb-2">Notas</div>
+              <div className="text-sm text-gray-700">{venta.notas}</div>
             </div>
           )}
         </div>
 
-        {/* Footer */}
         <div className="p-4 border-t">
           <button
-            className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2.5 px-4 rounded-lg"
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg"
             onClick={onClose}
           >
-            Close
+            Cerrar
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- Tarjeta de Métrica Mejorada ---------- */
+function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo, valuePrefix = "" }) {
+  const isPositive = trend > 0;
+  const isNeutral = trend === 0;
+  
+  return (
+    <div className={`bg-gradient-to-br ${gradientFrom} ${gradientTo} rounded-2xl shadow-lg hover:shadow-xl transition-all p-5 text-white relative overflow-hidden`}>
+      <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4">
+        <div className="scale-[2]">{icon}</div>
+      </div>
+      <div className="relative z-10">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-semibold opacity-90">{title}</div>
+          {icon}
+        </div>
+        <div className="flex items-baseline gap-2">
+          <div className="text-4xl font-bold">
+            {valuePrefix}{typeof value === 'number' ? value.toFixed(value >= 100 ? 0 : 1) : value}{unit}
+          </div>
+        </div>
+        {trend !== null && trend !== undefined && (
+          <div className={`mt-3 flex items-center gap-1.5 text-sm font-semibold ${
+            isNeutral ? 'opacity-70' : ''
+          }`}>
+            <IconTrending up={isPositive} />
+            <span>
+              {isPositive ? '+' : ''}{trend.toFixed(1)}% vs anterior
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Mini Sparkline ---------- */
+function MiniSparkline({ data, color = "#3b82f6" }) {
+  const max = Math.max(...data.map(d => d.value));
+  const min = Math.min(...data.map(d => d.value));
+  const range = max - min || 1;
+  
+  return (
+    <div className="h-12 flex items-end gap-0.5">
+      {data.map((d, i) => {
+        const height = ((d.value - min) / range) * 100;
+        return (
+          <div
+            key={i}
+            className="flex-1 rounded-t transition-all"
+            style={{
+              backgroundColor: color,
+              height: `${Math.max(height, 5)}%`,
+              opacity: 0.7 + (height / 100) * 0.3,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -283,10 +417,10 @@ export default function Dashboard() {
   const [stockVan, setStockVan] = useState([]);
 
   const [showAllLow, setShowAllLow] = useState(false);
-  const LOW_STOCK_PREVIEW = 5;
+  const LOW_STOCK_PREVIEW = 3;
 
   const [mostrarTodas, setMostrarTodas] = useState(false);
-  const ventasMostrar = mostrarTodas ? ventas : ventas.slice(0, 5);
+  const ventasMostrar = mostrarTodas ? ventas : ventas.slice(0, 8);
 
   const [ventaSeleccionada, setVentaSeleccionada] = useState(null);
   const [detalleProductos, setDetalleProductos] = useState([]);
@@ -294,12 +428,13 @@ export default function Dashboard() {
 
   const [clientes, setClientes] = useState([]);
 
-  // Estados para métricas clave
   const [metricas, setMetricas] = useState({
     promedioDiario: 0,
     crecimiento: 0,
     conversion: 0,
     productosAgotados: 0,
+    totalVentas: 0,
+    totalOrdenes: 0,
   });
 
   useEffect(() => {
@@ -319,12 +454,11 @@ export default function Dashboard() {
     }
   }, [van?.id, rangeDays]);
 
-  // Cargar métricas clave
   useEffect(() => {
     if (ventas.length > 0) {
       calcularMetricas();
     }
-  }, [ventas]);
+  }, [ventas, rangeDays]);
 
   async function cargarClientes() {
     const { data } = await supabase.from("clientes").select("id, nombre");
@@ -340,7 +474,6 @@ export default function Dashboard() {
     setLoading(true);
     const desde = dayjs().subtract(days - 1, "day").startOf("day").format("YYYY-MM-DD");
 
-    // Ventas del período
     const { data: ventasData, error: errVentas } = await supabase
       .from("ventas")
       .select("*")
@@ -370,7 +503,7 @@ export default function Dashboard() {
       setVentasSerie(serie);
     }
 
-    // Top productos
+    // Top 10 productos
     const desde30 = dayjs().subtract(30, "day").startOf("day").format("YYYY-MM-DD");
     const { data: ventasIds } = await supabase
       .from("ventas")
@@ -409,7 +542,7 @@ export default function Dashboard() {
           nombre: nameMap.get(producto_id) || producto_id,
         }))
         .sort((a, b) => b.cantidad - a.cantidad)
-        .slice(0, 5);
+        .slice(0, 10); // Top 10
     }
     setProductosTop(top);
     setLoading(false);
@@ -513,27 +646,25 @@ export default function Dashboard() {
   }
 
   const lowPreview = stockVan.slice(0, LOW_STOCK_PREVIEW);
-  const remainingLow = Math.max(0, stockVan.length - LOW_STOCK_PREVIEW);
   const chartData = withMA(ventasSerie, "total", 7);
 
-  // Cálculo de métricas clave
   const calcularMetricas = () => {
-    // Ventas totales y promedio diario
     const totalVentas = ventas.reduce((sum, v) => sum + Number(v.total || 0), 0);
     const diasConVentas = new Set(ventas.map(v => dayjs(v.fecha).format("YYYY-MM-DD"))).size;
     const promedioDiario = diasConVentas > 0 ? totalVentas / diasConVentas : 0;
     
-    // Crecimiento vs período anterior
-    const periodoAnterior = dayjs().subtract(rangeDays, "day").format("YYYY-MM-DD");
-    const ventasAnteriores = ventas.filter(v => dayjs(v.fecha).isBefore(periodoAnterior));
-    const totalAnterior = ventasAnteriores.reduce((sum, v) => sum + Number(v.total || 0), 0);
-    const crecimiento = totalAnterior > 0 ? ((totalVentas - totalAnterior) / totalAnterior * 100) : 0;
+    // Crecimiento comparando primera mitad vs segunda mitad del período
+    const mitad = Math.floor(rangeDays / 2);
+    const fechaMitad = dayjs().subtract(mitad, "day");
+    const ventasPrimera = ventas.filter(v => dayjs(v.fecha).isBefore(fechaMitad));
+    const ventasSegunda = ventas.filter(v => !dayjs(v.fecha).isBefore(fechaMitad));
+    const totalPrimera = ventasPrimera.reduce((sum, v) => sum + Number(v.total || 0), 0);
+    const totalSegunda = ventasSegunda.reduce((sum, v) => sum + Number(v.total || 0), 0);
+    const crecimiento = totalPrimera > 0 ? ((totalSegunda - totalPrimera) / totalPrimera * 100) : 0;
     
-    // Tasa de conversión (ventas totales / clientes únicos)
-    const clientesUnicos = new Set(ventas.map(v => v.cliente_id)).size;
-    const conversion = clientesUnicos > 0 ? (ventas.length / clientesUnicos) * 100 : 0;
+    const clientesUnicos = new Set(ventas.map(v => v.cliente_id).filter(Boolean)).size;
+    const conversion = clientesUnicos > 0 ? (ventas.length / clientesUnicos) : 0;
     
-    // Productos agotados (stock = 0)
     const productosAgotados = stockVan.filter(p => p.cantidad === 0).length;
     
     setMetricas({
@@ -541,253 +672,469 @@ export default function Dashboard() {
       crecimiento,
       conversion,
       productosAgotados,
+      totalVentas,
+      totalOrdenes: ventas.length,
     });
   };
 
-  // Componente de métrica con indicador visual
-  const MetricaCard = ({ title, value, unit, trend, color }) => (
-    <div className="bg-white rounded-xl shadow-lg p-4 flex flex-col">
-      <div className="text-sm text-gray-500 mb-1">{title}</div>
-      <div className="flex items-baseline">
-        <div className={`text-2xl font-bold ${color}`}>{value.toFixed(1)}{unit}</div>
-        {trend !== null && (
-          <div className={`ml-2 flex items-center ${trend > 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {trend > 0 ? '↗' : '↘'} <span className="ml-1 text-sm">{Math.abs(trend).toFixed(1)}%</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  // Datos para sparklines
+  const sparklineData = ventasSerie.slice(-7).map(d => ({ value: d.total }));
+  const maxProducto = productosTop.length > 0 ? productosTop[0].cantidad : 1;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
-      <div className="w-full max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Dashboard</h1>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
-              <div className="text-sm text-gray-600">
-                {van?.nombre || van?.nombre_van ? `VAN: ${van?.nombre || van?.nombre_van}` : "Select a VAN"}
-              </div>
-              <div className="flex items-center gap-1">
-                {[7, 14, 30].map((d) => (
-                  <button
-                    key={d}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                      rangeDays === d
-                        ? "bg-blue-600 text-white shadow-md"
-                        : "bg-white text-gray-700 border border-gray-300 hover:border-blue-400"
-                    }`}
-                    onClick={() => setRangeDays(d)}
-                  >
-                    {d}d
-                  </button>
-                ))}
-              </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6">
+      <div className="w-full max-w-[1600px] mx-auto space-y-6">
+        
+        {/* Header Mejorado */}
+        <div className="bg-white rounded-3xl shadow-xl p-6">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
+                Dashboard
+              </h1>
+              <p className="text-gray-600 text-sm">
+                {van?.nombre || van?.nombre_van ? (
+                  <span className="inline-flex items-center gap-2 bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full font-semibold">
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                      <path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05A2.5 2.5 0 0115.95 16H17a1 1 0 001-1v-5a1 1 0 00-.293-.707l-2-2A1 1 0 0015 7h-1z" />
+                    </svg>
+                    {van?.nombre || van?.nombre_van}
+                  </span>
+                ) : (
+                  "Selecciona una VAN"
+                )}
+              </p>
             </div>
-          </div>
-
-          {/* Métricas clave */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-            <MetricaCard 
-              title="Daily Avg" 
-              value={metricas.promedioDiario} 
-              unit="" 
-              trend={metricas.crecimiento} 
-              color="text-blue-600" 
-            />
-            <MetricaCard 
-              title="Growth" 
-              value={metricas.crecimiento} 
-              unit="%" 
-              trend={metricas.crecimiento} 
-              color={metricas.crecimiento > 0 ? "text-green-600" : "text-red-600"} 
-            />
-            <MetricaCard 
-              title="Conversion" 
-              value={metricas.conversion} 
-              unit="%" 
-              trend={null} 
-              color="text-purple-600" 
-            />
-            <MetricaCard 
-              title="Out of Stock" 
-              value={metricas.productosAgotados} 
-              unit="" 
-              trend={null} 
-              color="text-red-600" 
-            />
+            <div className="flex items-center gap-2">
+              {[7, 14, 30].map((d) => (
+                <button
+                  key={d}
+                  className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                    rangeDays === d
+                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg scale-105"
+                      : "bg-white text-gray-700 border-2 border-gray-200 hover:border-blue-400 hover:shadow-md"
+                  }`}
+                  onClick={() => setRangeDays(d)}
+                >
+                  {d} días
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Gráfica principal */}
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3">
-            <h2 className="font-bold text-gray-800 mb-2 sm:mb-0">Sales Performance</h2>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-blue-500 rounded-full mr-1"></div>
-                <span className="text-xs">Sales</span>
+        {/* Métricas Clave - Más Visuales */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          <MetricCard
+            title="Promedio Diario"
+            value={metricas.promedioDiario}
+            unit=""
+            valuePrefix="$"
+            trend={metricas.crecimiento}
+            icon={<IconDollar />}
+            gradientFrom="from-blue-500"
+            gradientTo="to-cyan-500"
+          />
+          <MetricCard
+            title="Crecimiento"
+            value={metricas.crecimiento}
+            unit="%"
+            trend={metricas.crecimiento}
+            icon={<IconTrending up={metricas.crecimiento > 0} />}
+            gradientFrom={metricas.crecimiento >= 0 ? "from-green-500" : "from-red-500"}
+            gradientTo={metricas.crecimiento >= 0 ? "to-emerald-500" : "to-orange-500"}
+          />
+          <MetricCard
+            title="Tasa de Conversión"
+            value={metricas.conversion}
+            unit="x"
+            trend={null}
+            icon={<IconUsers />}
+            gradientFrom="from-purple-500"
+            gradientTo="to-pink-500"
+          />
+          <MetricCard
+            title="Productos Agotados"
+            value={metricas.productosAgotados}
+            unit=""
+            trend={null}
+            icon={<IconAlert />}
+            gradientFrom="from-orange-500"
+            gradientTo="to-red-500"
+          />
+        </div>
+
+        {/* Resumen Rápido con Sparklines */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="bg-white rounded-2xl shadow-lg p-5">
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <div className="text-sm text-gray-500 font-semibold">Ventas Totales</div>
+                <div className="text-3xl font-bold text-gray-900">{fmtMoney(metricas.totalVentas)}</div>
               </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-gray-800 rounded-full mr-1"></div>
-                <span className="text-xs">7-day Avg</span>
+              <div className="bg-blue-100 p-2 rounded-lg">
+                <IconDollar />
               </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-green-500 rounded-full mr-1"></div>
-                <span className="text-xs">Orders</span>
+            </div>
+            <MiniSparkline data={sparklineData} color="#3b82f6" />
+            <div className="text-xs text-gray-500 mt-2">Últimos 7 días</div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg p-5">
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <div className="text-sm text-gray-500 font-semibold">Total de Órdenes</div>
+                <div className="text-3xl font-bold text-gray-900">{metricas.totalOrdenes}</div>
+              </div>
+              <div className="bg-green-100 p-2 rounded-lg">
+                <IconShoppingCart />
+              </div>
+            </div>
+            <MiniSparkline data={ventasSerie.slice(-7).map(d => ({ value: d.orders }))} color="#10b981" />
+            <div className="text-xs text-gray-500 mt-2">Últimos 7 días</div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg p-5">
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <div className="text-sm text-gray-500 font-semibold">Ticket Promedio</div>
+                <div className="text-3xl font-bold text-gray-900">
+                  {fmtMoney(metricas.totalOrdenes > 0 ? metricas.totalVentas / metricas.totalOrdenes : 0)}
+                </div>
+              </div>
+              <div className="bg-purple-100 p-2 rounded-lg">
+                <IconUsers />
+              </div>
+            </div>
+            <div className="h-12 flex items-end">
+              <div className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 rounded-t" style={{ height: '70%' }} />
+            </div>
+            <div className="text-xs text-gray-500 mt-2">Por orden</div>
+          </div>
+        </div>
+
+        {/* Gráfica Principal Mejorada */}
+        <div className="bg-white rounded-3xl shadow-xl p-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-800 mb-1">Rendimiento de Ventas</h2>
+              <p className="text-sm text-gray-500">Análisis de tendencias y órdenes</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-blue-500 rounded"></div>
+                <span className="font-medium">Ventas</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-gray-800 rounded"></div>
+                <span className="font-medium">Promedio 7d</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-green-500 rounded"></div>
+                <span className="font-medium">Órdenes</span>
               </div>
             </div>
           </div>
-          <div className="h-64 sm:h-80">
+          <div className="h-80 sm:h-96">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="fecha" tickFormatter={shortDate} minTickGap={20} />
-                <YAxis />
+                <defs>
+                  <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis 
+                  dataKey="fecha" 
+                  tickFormatter={shortDate} 
+                  minTickGap={30}
+                  style={{ fontSize: '12px', fontWeight: '500' }}
+                />
+                <YAxis style={{ fontSize: '12px', fontWeight: '500' }} />
                 <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    border: 'none',
+                    borderRadius: '12px',
+                    boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
+                    padding: '12px',
+                  }}
                   formatter={(value, name) => {
-                    if (name === "total") return [fmtMoney(value), "Revenue"];
-                    if (name === "ma7") return [fmtMoney(value), "7-day avg"];
-                    if (name === "orders") return [value, "Orders"];
+                    if (name === "total") return [fmtMoney(value), "Ingresos"];
+                    if (name === "ma7") return [fmtMoney(value), "Promedio 7d"];
+                    if (name === "orders") return [value, "Órdenes"];
                     return value;
                   }}
-                  labelFormatter={(l) => dayjs(l).format("YYYY-MM-DD")}
+                  labelFormatter={(l) => dayjs(l).format("DD/MM/YYYY")}
                 />
-                <Bar dataKey="total" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                <Area type="monotone" dataKey="total" stroke="#3b82f6" fill="url(#colorTotal)" strokeWidth={2} />
                 <Line type="monotone" dataKey="ma7" stroke="#1f2937" strokeWidth={3} dot={false} />
-                <Line type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} dot={{ r: 4, fill: '#10b981' }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <p className="text-xs text-gray-500 mt-2">
-            Blue bars = daily sales · Dark line = 7-day moving average · Green line = # of orders
-          </p>
         </div>
 
-        {/* Sección de alertas y productos */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          {/* Low Stock */}
-          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-bold text-gray-800">Low Stock Alert</h2>
-              {stockVan.length > LOW_STOCK_PREVIEW && (
-                <button
-                  onClick={() => setShowAllLow(true)}
-                  className="text-sm px-3 py-1 rounded-lg bg-red-600 text-white hover:bg-red-700 font-semibold"
-                >
-                  View All ({stockVan.length})
-                </button>
-              )}
+        {/* Sección de Productos y Alertas */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          
+          {/* Top 10 Productos - Rediseñado */}
+          <div className="xl:col-span-2 bg-white rounded-3xl shadow-xl p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-800 mb-1">Top 10 Productos</h2>
+                <p className="text-sm text-gray-500">Últimos 30 días</p>
+              </div>
+              <div className="bg-green-100 p-3 rounded-xl">
+                <IconPackage />
+              </div>
             </div>
+            {productosTop.length === 0 ? (
+              <div className="text-gray-400 text-center py-12">No hay datos de productos</div>
+            ) : (
+              <div className="space-y-3">
+                {productosTop.map((p, idx) => {
+                  const percentage = (p.cantidad / maxProducto) * 100;
+                  const colors = [
+                    'from-yellow-400 to-orange-500',
+                    'from-gray-400 to-gray-500',
+                    'from-amber-600 to-yellow-700',
+                    'from-blue-500 to-indigo-500',
+                    'from-green-500 to-emerald-500',
+                    'from-purple-500 to-pink-500',
+                    'from-red-500 to-rose-500',
+                    'from-cyan-500 to-blue-500',
+                    'from-indigo-500 to-purple-500',
+                    'from-teal-500 to-green-500',
+                  ];
+                  return (
+                    <div key={idx} className="group hover:scale-[1.02] transition-transform">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3 flex-1">
+                          <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${colors[idx]} text-white font-bold flex items-center justify-center text-sm shadow-md`}>
+                            #{idx + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-gray-900 truncate">{p.nombre}</div>
+                            <div className="text-xs text-gray-500">Unidades vendidas</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold text-gray-900">{p.cantidad}</div>
+                        </div>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                        <div 
+                          className={`h-full bg-gradient-to-r ${colors[idx]} transition-all duration-500 rounded-full shadow-inner`}
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Alerta de Stock Bajo - Rediseñado */}
+          <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-3xl shadow-xl p-6 border-2 border-red-200">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-red-900 mb-1">Alerta de Stock</h2>
+                <p className="text-sm text-red-600">Productos con bajo inventario</p>
+              </div>
+              <div className="bg-red-500 text-white p-3 rounded-xl animate-pulse">
+                <IconAlert />
+              </div>
+            </div>
+            
             {stockVan.length === 0 ? (
-              <div className="text-gray-400">No low-stock products</div>
+              <div className="text-center py-8">
+                <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div className="font-semibold text-gray-700">¡Todo bien!</div>
+                <div className="text-sm text-gray-500">No hay productos con stock bajo</div>
+              </div>
             ) : (
               <>
-                <ul className="space-y-2">
+                <div className="space-y-3 mb-4">
                   {lowPreview.map((p, idx) => (
-                    <li key={idx} className="flex items-center justify-between bg-red-50 rounded-lg p-3 border border-red-200">
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900">{p.nombre}</div>
-                        <div className="text-xs text-gray-500 font-mono">{p.codigo}</div>
+                    <div key={idx} className="bg-white rounded-xl p-4 border-l-4 border-red-500 hover:shadow-lg transition-shadow">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0 mr-3">
+                          <div className="font-bold text-gray-900 truncate">{p.nombre}</div>
+                          <div className="text-xs text-gray-500 font-mono">{p.codigo}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-right">
+                            <div className="text-xs text-gray-500">Stock</div>
+                            <div className="text-3xl font-bold text-red-600">{p.cantidad}</div>
+                          </div>
+                          {p.cantidad === 0 && (
+                            <div className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded">
+                              AGOTADO
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-red-600 font-bold text-lg">{p.cantidad}</div>
-                    </li>
+                    </div>
                   ))}
-                </ul>
-                {remainingLow > 0 && (
-                  <div className="text-xs text-gray-500 mt-2">
-                    And <b>{remainingLow}</b> more…
-                  </div>
+                </div>
+                
+                {stockVan.length > LOW_STOCK_PREVIEW && (
+                  <button
+                    onClick={() => setShowAllLow(true)}
+                    className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg"
+                  >
+                    Ver Todos ({stockVan.length})
+                  </button>
                 )}
               </>
             )}
           </div>
-
-          {/* Top Products */}
-          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
-            <h2 className="font-bold text-gray-800 mb-3">Top Selling Products</h2>
-            <div className="h-60">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={productosTop}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="nombre" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="cantidad" fill="#22c55e" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
         </div>
 
-        {/* Recent Sales */}
-        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-          <div className="p-4 sm:p-6">
-            <h2 className="text-lg font-bold text-gray-800 mb-3">Recent Sales</h2>
+        {/* Ventas Recientes - Rediseñado para Mobile */}
+        <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
+          <div className="p-6 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-800 mb-1">Ventas Recientes</h2>
+                <p className="text-sm text-gray-500">Click para ver detalles</p>
+              </div>
+              <div className="bg-blue-100 p-3 rounded-xl">
+                <IconShoppingCart />
+              </div>
+            </div>
           </div>
+          
           {loading ? (
-            <div className="p-6 text-blue-700 font-semibold">Loading…</div>
+            <div className="p-12 text-center">
+              <div className="inline-block w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              <div className="mt-4 text-blue-700 font-semibold">Cargando ventas…</div>
+            </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-100/80 text-gray-700">
-                    <th className="p-3 text-left">Date</th>
-                    <th className="p-3 text-left">Client</th>
-                    <th className="p-3 text-right">Total</th>
-                    <th className="p-3 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {ventasMostrar.map((v) => (
-                    <tr
-                      key={v.id}
-                      className="hover:bg-blue-50 cursor-pointer transition-colors"
-                      onClick={() => abrirDetalleVenta(v)}
-                    >
-                      <td className="p-3 text-gray-800">{dayjs(v.fecha).format("MM-DD HH:mm")}</td>
-                      <td className="p-3 text-gray-800">{getNombreCliente(v.cliente_id)}</td>
-                      <td className="p-3 text-right text-gray-900 font-semibold">
-                        {fmtMoney(v.total || 0)}
-                      </td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`inline-block px-2 py-1 rounded-full text-xs font-semibold ${
-                            v.estado_pago === "pagado"
-                              ? "bg-green-100 text-green-700"
-                              : v.estado_pago === "parcial"
-                              ? "bg-blue-100 text-blue-700"
-                              : "bg-amber-100 text-amber-700"
-                          }`}
-                        >
-                          {v.estado_pago === "pagado" ? "Paid" : v.estado_pago === "parcial" ? "Partial" : "Pending"}
-                        </span>
-                      </td>
+            <>
+              {/* Vista Desktop - Tabla */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="p-4 text-left text-sm font-bold text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <IconClock />
+                          Fecha
+                        </div>
+                      </th>
+                      <th className="p-4 text-left text-sm font-bold text-gray-700">Cliente</th>
+                      <th className="p-4 text-right text-sm font-bold text-gray-700">Total</th>
+                      <th className="p-4 text-center text-sm font-bold text-gray-700">Estado</th>
                     </tr>
-                  ))}
-                  {ventas.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="text-center text-gray-400 py-8">
-                        No sales registered
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {ventasMostrar.map((v) => (
+                      <tr
+                        key={v.id}
+                        className="hover:bg-blue-50 cursor-pointer transition-all group"
+                        onClick={() => abrirDetalleVenta(v)}
+                      >
+                        <td className="p-4">
+                          <div className="font-semibold text-gray-900">{dayjs(v.fecha).format("DD/MM/YYYY")}</div>
+                          <div className="text-xs text-gray-500">{dayjs(v.fecha).format("HH:mm")}</div>
+                        </td>
+                        <td className="p-4 font-medium text-gray-800">{getNombreCliente(v.cliente_id)}</td>
+                        <td className="p-4 text-right">
+                          <div className="font-bold text-xl text-gray-900 group-hover:text-blue-600 transition-colors">
+                            {fmtMoney(v.total || 0)}
+                          </div>
+                        </td>
+                        <td className="p-4 text-center">
+                          <span
+                            className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-bold ${
+                              v.estado_pago === "pagado"
+                                ? "bg-green-500 text-white"
+                                : v.estado_pago === "parcial"
+                                ? "bg-blue-500 text-white"
+                                : "bg-amber-500 text-white"
+                            }`}
+                          >
+                            {v.estado_pago === "pagado" ? "✓ Pagado" : v.estado_pago === "parcial" ? "◐ Parcial" : "○ Pendiente"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {ventas.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="text-center text-gray-400 py-12">
+                          <div className="text-6xl mb-3">📭</div>
+                          <div className="font-semibold">No hay ventas registradas</div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-          {!loading && ventas.length > 5 && (
-            <div className="p-4 sm:p-6 pt-3 flex justify-center">
-              <button
-                className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold shadow-md hover:shadow-lg transition-all"
-                onClick={() => setMostrarTodas((m) => !m)}
-              >
-                {mostrarTodas ? "Show Less" : "Show More"}
-              </button>
-            </div>
+              {/* Vista Mobile - Cards */}
+              <div className="md:hidden p-4 space-y-3">
+                {ventasMostrar.map((v) => (
+                  <div
+                    key={v.id}
+                    className="bg-gradient-to-br from-white to-blue-50 rounded-2xl p-4 border-2 border-blue-100 hover:border-blue-300 hover:shadow-lg cursor-pointer transition-all"
+                    onClick={() => abrirDetalleVenta(v)}
+                  >
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <div className="font-bold text-gray-900 text-lg mb-1">
+                          {getNombreCliente(v.cliente_id)}
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                          <IconClock />
+                          {dayjs(v.fecha).format("DD/MM/YYYY HH:mm")}
+                        </div>
+                      </div>
+                      <span
+                        className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold ${
+                          v.estado_pago === "pagado"
+                            ? "bg-green-500 text-white"
+                            : v.estado_pago === "parcial"
+                            ? "bg-blue-500 text-white"
+                            : "bg-amber-500 text-white"
+                        }`}
+                      >
+                        {v.estado_pago === "pagado" ? "✓" : v.estado_pago === "parcial" ? "◐" : "○"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between bg-blue-600 text-white rounded-xl p-3">
+                      <span className="font-semibold">Total</span>
+                      <span className="text-2xl font-bold">{fmtMoney(v.total || 0)}</span>
+                    </div>
+                  </div>
+                ))}
+                {ventas.length === 0 && (
+                  <div className="text-center text-gray-400 py-12">
+                    <div className="text-6xl mb-3">📭</div>
+                    <div className="font-semibold">No hay ventas registradas</div>
+                  </div>
+                )}
+              </div>
+
+              {!loading && ventas.length > 8 && (
+                <div className="p-6 pt-3 flex justify-center border-t border-gray-100">
+                  <button
+                    className="px-8 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all"
+                    onClick={() => setMostrarTodas((m) => !m)}
+                  >
+                    {mostrarTodas ? "Mostrar Menos" : `Mostrar Más (${ventas.length - 8} más)`}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
