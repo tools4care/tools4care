@@ -120,7 +120,7 @@ function LowStockModal({ open, items, onClose }) {
         <div className="px-5 py-4 bg-gradient-to-r from-red-600 to-orange-600 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <IconAlert />
-            <h3 className="font-bold text-lg">Alerta de Stock Bajo</h3>
+            <h3 className="font-bold text-lg">Low Stock Alert</h3>
           </div>
           <button
             className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
@@ -132,13 +132,13 @@ function LowStockModal({ open, items, onClose }) {
         <div className="p-4 flex-1 overflow-hidden flex flex-col">
           <input
             className="w-full border-2 border-gray-200 focus:border-red-500 rounded-lg px-4 py-2.5 mb-3 transition-colors"
-            placeholder="Buscar por código o nombre…"
+            placeholder="Search by code or name..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <div className="flex-1 overflow-y-auto">
             {filtered.length === 0 ? (
-              <div className="text-gray-500 text-sm text-center py-8">No hay resultados.</div>
+              <div className="text-gray-500 text-sm text-center py-8">No results found.</div>
             ) : (
               <ul className="space-y-2">
                 {filtered.map((p, idx) => (
@@ -167,7 +167,156 @@ function LowStockModal({ open, items, onClose }) {
             className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white font-semibold py-3 px-4 rounded-lg transition-all"
             onClick={onClose}
           >
-            Cerrar
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Modal Recent Sales ---------- */
+function RecentSalesModal({ open, ventas, onClose, getNombreCliente, onSelectVenta }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  
+  const filtered = useMemo(() => {
+    const s = searchTerm.trim().toLowerCase();
+    if (!s) return ventas;
+    return ventas.filter((v) => {
+      const cliente = getNombreCliente(v.cliente_id).toLowerCase();
+      const fecha = dayjs(v.fecha).format("DD/MM/YYYY").toLowerCase();
+      return cliente.includes(s) || fecha.includes(s);
+    });
+  }, [searchTerm, ventas, getNombreCliente]);
+
+  if (!open) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="px-5 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <IconShoppingCart />
+            <h3 className="font-bold text-lg">Recent Sales</h3>
+          </div>
+          <button
+            className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
+            onClick={onClose}
+          >
+            ✖
+          </button>
+        </div>
+        
+        <div className="p-4 flex-1 overflow-hidden flex flex-col">
+          <input
+            className="w-full border-2 border-gray-200 focus:border-blue-500 rounded-lg px-4 py-2.5 mb-3 transition-colors"
+            placeholder="Search by client or date..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          
+          <div className="flex-1 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="text-gray-500 text-sm text-center py-8">No sales found.</div>
+            ) : (
+              <>
+                {/* Desktop View */}
+                <div className="hidden md:block">
+                  <table className="min-w-full">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="p-3 text-left text-xs font-bold text-gray-700">Date</th>
+                        <th className="p-3 text-left text-xs font-bold text-gray-700">Client</th>
+                        <th className="p-3 text-right text-xs font-bold text-gray-700">Total</th>
+                        <th className="p-3 text-center text-xs font-bold text-gray-700">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filtered.map((v) => (
+                        <tr
+                          key={v.id}
+                          className="hover:bg-blue-50 cursor-pointer transition-colors"
+                          onClick={() => {
+                            onSelectVenta(v);
+                            onClose();
+                          }}
+                        >
+                          <td className="p-3">
+                            <div className="font-medium text-gray-900 text-sm">{dayjs(v.fecha).format("MM/DD/YYYY")}</div>
+                            <div className="text-xs text-gray-500">{dayjs(v.fecha).format("HH:mm")}</div>
+                          </td>
+                          <td className="p-3 font-medium text-gray-800 text-sm">{getNombreCliente(v.cliente_id)}</td>
+                          <td className="p-3 text-right">
+                            <div className="font-bold text-lg text-gray-900">{fmtMoney(v.total || 0)}</div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
+                                v.estado_pago === "pagado"
+                                  ? "bg-green-500 text-white"
+                                  : v.estado_pago === "parcial"
+                                  ? "bg-blue-500 text-white"
+                                  : "bg-amber-500 text-white"
+                              }`}
+                            >
+                              {v.estado_pago === "pagado" ? "✓ Paid" : v.estado_pago === "parcial" ? "◐ Partial" : "○ Pending"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile View */}
+                <div className="md:hidden space-y-3">
+                  {filtered.map((v) => (
+                    <div
+                      key={v.id}
+                      className="bg-gradient-to-br from-white to-blue-50 rounded-xl p-4 border-2 border-blue-100 hover:border-blue-300 hover:shadow-lg cursor-pointer transition-all"
+                      onClick={() => {
+                        onSelectVenta(v);
+                        onClose();
+                      }}
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <div className="font-bold text-gray-900 mb-1">{getNombreCliente(v.cliente_id)}</div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <IconClock />
+                            {dayjs(v.fecha).format("MM/DD/YYYY HH:mm")}
+                          </div>
+                        </div>
+                        <span
+                          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-bold ${
+                            v.estado_pago === "pagado"
+                              ? "bg-green-500 text-white"
+                              : v.estado_pago === "parcial"
+                              ? "bg-blue-500 text-white"
+                              : "bg-amber-500 text-white"
+                          }`}
+                        >
+                          {v.estado_pago === "pagado" ? "✓" : v.estado_pago === "parcial" ? "◐" : "○"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between bg-blue-600 text-white rounded-lg p-3">
+                        <span className="font-semibold">Total</span>
+                        <span className="text-xl font-bold">{fmtMoney(v.total || 0)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 border-t">
+          <button
+            className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white font-semibold py-3 px-4 rounded-lg transition-all"
+            onClick={onClose}
+          >
+            Close
           </button>
         </div>
       </div>
@@ -194,7 +343,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <IconShoppingCart />
-            <h3 className="font-bold text-xl">Detalle de Venta</h3>
+            <h3 className="font-bold text-xl">Sale Details</h3>
           </div>
           <button
             className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
@@ -208,19 +357,19 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
           {/* Info general en cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
-              <div className="text-xs text-blue-600 font-semibold uppercase mb-1">ID de Venta</div>
+              <div className="text-xs text-blue-600 font-semibold uppercase mb-1">Sale ID</div>
               <div className="font-mono text-sm font-semibold text-gray-800">{venta.id?.slice(0, 12)}...</div>
             </div>
             <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-200">
-              <div className="text-xs text-purple-600 font-semibold uppercase mb-1">Fecha</div>
-              <div className="font-semibold text-gray-800">{dayjs(venta.fecha).format("DD/MM/YYYY HH:mm")}</div>
+              <div className="text-xs text-purple-600 font-semibold uppercase mb-1">Date</div>
+              <div className="font-semibold text-gray-800">{dayjs(venta.fecha).format("MM/DD/YYYY HH:mm")}</div>
             </div>
             <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
-              <div className="text-xs text-green-600 font-semibold uppercase mb-1">Cliente</div>
+              <div className="text-xs text-green-600 font-semibold uppercase mb-1">Client</div>
               <div className="font-semibold text-gray-800">{getNombreCliente(venta.cliente_id) || "—"}</div>
             </div>
             <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
-              <div className="text-xs text-amber-600 font-semibold uppercase mb-1">Estado de Pago</div>
+              <div className="text-xs text-amber-600 font-semibold uppercase mb-1">Payment Status</div>
               <span
                 className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold ${
                   venta.estado_pago === "pagado"
@@ -230,7 +379,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                     : "bg-amber-500 text-white"
                 }`}
               >
-                {venta.estado_pago === "pagado" ? "✓ Pagado" : venta.estado_pago === "parcial" ? "◐ Parcial" : "○ Pendiente"}
+                {venta.estado_pago === "pagado" ? "✓ Paid" : venta.estado_pago === "parcial" ? "◐ Partial" : "○ Pending"}
               </span>
             </div>
           </div>
@@ -241,7 +390,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <IconShoppingCart />
-                  <div className="text-sm font-semibold opacity-90">Total de la Venta</div>
+                  <div className="text-sm font-semibold opacity-90">Sale Total</div>
                 </div>
                 <div className="text-4xl font-bold">
                   {fmtMoney(venta.total || 0)}
@@ -250,7 +399,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <IconDollar />
-                  <div className="text-sm font-semibold opacity-90">Total Pagado</div>
+                  <div className="text-sm font-semibold opacity-90">Total Paid</div>
                 </div>
                 <div className="text-4xl font-bold text-green-300">
                   {fmtMoney(venta.total_pagado || 0)}
@@ -264,7 +413,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
             <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
               <div className="flex items-center gap-2 mb-4">
                 <IconDollar />
-                <h4 className="font-bold text-gray-800">Métodos de Pago</h4>
+                <h4 className="font-bold text-gray-800">Payment Methods</h4>
               </div>
               <div className="space-y-2">
                 {metodosAplicados.map((m, idx) => (
@@ -281,12 +430,12 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
           <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
             <div className="flex items-center gap-2 mb-4">
               <IconPackage />
-              <h4 className="font-bold text-gray-800">Productos Vendidos</h4>
+              <h4 className="font-bold text-gray-800">Products Sold</h4>
             </div>
             {loading ? (
-              <div className="text-blue-600 text-sm text-center py-4">Cargando productos…</div>
+              <div className="text-blue-600 text-sm text-center py-4">Loading products…</div>
             ) : productos.length === 0 ? (
-              <div className="text-gray-400 text-sm text-center py-4">No hay productos en esta venta</div>
+              <div className="text-gray-400 text-sm text-center py-4">No products in this sale</div>
             ) : (
               <div className="space-y-3">
                 {productos.map((p, idx) => {
@@ -299,7 +448,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                           <div className="font-bold text-gray-900 text-lg">{p.nombre || p.producto_id}</div>
                           <div className="text-xs text-gray-500 font-mono mt-1">{p.codigo || p.producto_id}</div>
                           <div className="text-sm text-gray-600 mt-2">
-                            Cantidad: <span className="font-semibold">{p.cantidad}</span> × {dinero(unit)}
+                            Quantity: <span className="font-semibold">{p.cantidad}</span> × {dinero(unit)}
                           </div>
                         </div>
                         <div className="text-right">
@@ -313,7 +462,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                 
                 {/* Total de productos */}
                 <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 flex justify-between items-center text-white shadow-lg">
-                  <span className="font-bold text-lg">Subtotal Productos:</span>
+                  <span className="font-bold text-lg">Products Subtotal:</span>
                   <span className="font-bold text-2xl">{dinero(totalProductos)}</span>
                 </div>
               </div>
@@ -323,7 +472,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
           {/* Notas */}
           {venta.notas && (
             <div className="bg-amber-50 rounded-xl p-5 border border-amber-200">
-              <div className="text-sm text-amber-600 font-semibold uppercase mb-2">Notas</div>
+              <div className="text-sm text-amber-600 font-semibold uppercase mb-2">Notes</div>
               <div className="text-sm text-gray-700">{venta.notas}</div>
             </div>
           )}
@@ -334,7 +483,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
             className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg"
             onClick={onClose}
           >
-            Cerrar
+            Close
           </button>
         </div>
       </div>
@@ -368,7 +517,7 @@ function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo,
           }`}>
             <IconTrending up={isPositive} />
             <span>
-              {isPositive ? '+' : ''}{trend.toFixed(1)}% vs anterior
+              {isPositive ? '+' : ''}{trend.toFixed(1)}% vs previous
             </span>
           </div>
         )}
@@ -418,6 +567,8 @@ export default function Dashboard() {
 
   const [showAllLow, setShowAllLow] = useState(false);
   const LOW_STOCK_PREVIEW = 3;
+
+  const [showRecentSales, setShowRecentSales] = useState(false);
 
   const [mostrarTodas, setMostrarTodas] = useState(false);
   const ventasMostrar = mostrarTodas ? ventas : ventas.slice(0, 8);
@@ -702,7 +853,7 @@ export default function Dashboard() {
                     {van?.nombre || van?.nombre_van}
                   </span>
                 ) : (
-                  "Selecciona una VAN"
+                  "Select a VAN"
                 )}
               </p>
             </div>
@@ -717,7 +868,7 @@ export default function Dashboard() {
                   }`}
                   onClick={() => setRangeDays(d)}
                 >
-                  {d} días
+                  {d} days
                 </button>
               ))}
             </div>
@@ -727,7 +878,7 @@ export default function Dashboard() {
         {/* Métricas Clave - Más Visuales */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <MetricCard
-            title="Promedio Diario"
+            title="Daily Average"
             value={metricas.promedioDiario}
             unit=""
             valuePrefix="$"
@@ -737,7 +888,7 @@ export default function Dashboard() {
             gradientTo="to-cyan-500"
           />
           <MetricCard
-            title="Crecimiento"
+            title="Growth"
             value={metricas.crecimiento}
             unit="%"
             trend={metricas.crecimiento}
@@ -746,7 +897,7 @@ export default function Dashboard() {
             gradientTo={metricas.crecimiento >= 0 ? "to-emerald-500" : "to-orange-500"}
           />
           <MetricCard
-            title="Tasa de Conversión"
+            title="Conversion Rate"
             value={metricas.conversion}
             unit="x"
             trend={null}
@@ -755,7 +906,7 @@ export default function Dashboard() {
             gradientTo="to-pink-500"
           />
           <MetricCard
-            title="Productos Agotados"
+            title="Out of Stock"
             value={metricas.productosAgotados}
             unit=""
             trend={null}
@@ -770,7 +921,7 @@ export default function Dashboard() {
           <div className="bg-white rounded-2xl shadow-lg p-5">
             <div className="flex justify-between items-start mb-3">
               <div>
-                <div className="text-sm text-gray-500 font-semibold">Ventas Totales</div>
+                <div className="text-sm text-gray-500 font-semibold">Total Sales</div>
                 <div className="text-3xl font-bold text-gray-900">{fmtMoney(metricas.totalVentas)}</div>
               </div>
               <div className="bg-blue-100 p-2 rounded-lg">
@@ -778,13 +929,13 @@ export default function Dashboard() {
               </div>
             </div>
             <MiniSparkline data={sparklineData} color="#3b82f6" />
-            <div className="text-xs text-gray-500 mt-2">Últimos 7 días</div>
+            <div className="text-xs text-gray-500 mt-2">Last 7 days</div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg p-5">
             <div className="flex justify-between items-start mb-3">
               <div>
-                <div className="text-sm text-gray-500 font-semibold">Total de Órdenes</div>
+                <div className="text-sm text-gray-500 font-semibold">Total Orders</div>
                 <div className="text-3xl font-bold text-gray-900">{metricas.totalOrdenes}</div>
               </div>
               <div className="bg-green-100 p-2 rounded-lg">
@@ -792,13 +943,13 @@ export default function Dashboard() {
               </div>
             </div>
             <MiniSparkline data={ventasSerie.slice(-7).map(d => ({ value: d.orders }))} color="#10b981" />
-            <div className="text-xs text-gray-500 mt-2">Últimos 7 días</div>
+            <div className="text-xs text-gray-500 mt-2">Last 7 days</div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg p-5">
             <div className="flex justify-between items-start mb-3">
               <div>
-                <div className="text-sm text-gray-500 font-semibold">Ticket Promedio</div>
+                <div className="text-sm text-gray-500 font-semibold">Average Ticket</div>
                 <div className="text-3xl font-bold text-gray-900">
                   {fmtMoney(metricas.totalOrdenes > 0 ? metricas.totalVentas / metricas.totalOrdenes : 0)}
                 </div>
@@ -810,7 +961,7 @@ export default function Dashboard() {
             <div className="h-12 flex items-end">
               <div className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 rounded-t" style={{ height: '70%' }} />
             </div>
-            <div className="text-xs text-gray-500 mt-2">Por orden</div>
+            <div className="text-xs text-gray-500 mt-2">Per order</div>
           </div>
         </div>
 
@@ -818,21 +969,21 @@ export default function Dashboard() {
         <div className="bg-white rounded-3xl shadow-xl p-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
             <div>
-              <h2 className="text-2xl font-bold text-gray-800 mb-1">Rendimiento de Ventas</h2>
-              <p className="text-sm text-gray-500">Análisis de tendencias y órdenes</p>
+              <h2 className="text-2xl font-bold text-gray-800 mb-1">Sales Performance</h2>
+              <p className="text-sm text-gray-500">Trends and orders analysis</p>
             </div>
             <div className="flex flex-wrap items-center gap-4 text-sm">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 bg-blue-500 rounded"></div>
-                <span className="font-medium">Ventas</span>
+                <span className="font-medium">Sales</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 bg-gray-800 rounded"></div>
-                <span className="font-medium">Promedio 7d</span>
+                <span className="font-medium">7-day Avg</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 bg-green-500 rounded"></div>
-                <span className="font-medium">Órdenes</span>
+                <span className="font-medium">Orders</span>
               </div>
             </div>
           </div>
@@ -862,12 +1013,12 @@ export default function Dashboard() {
                     padding: '12px',
                   }}
                   formatter={(value, name) => {
-                    if (name === "total") return [fmtMoney(value), "Ingresos"];
-                    if (name === "ma7") return [fmtMoney(value), "Promedio 7d"];
-                    if (name === "orders") return [value, "Órdenes"];
+                    if (name === "total") return [fmtMoney(value), "Revenue"];
+                    if (name === "ma7") return [fmtMoney(value), "7-day avg"];
+                    if (name === "orders") return [value, "Orders"];
                     return value;
                   }}
-                  labelFormatter={(l) => dayjs(l).format("DD/MM/YYYY")}
+                  labelFormatter={(l) => dayjs(l).format("MM/DD/YYYY")}
                 />
                 <Area type="monotone" dataKey="total" stroke="#3b82f6" fill="url(#colorTotal)" strokeWidth={2} />
                 <Line type="monotone" dataKey="ma7" stroke="#1f2937" strokeWidth={3} dot={false} />
@@ -884,15 +1035,15 @@ export default function Dashboard() {
           <div className="xl:col-span-2 bg-white rounded-3xl shadow-xl p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-1">Top 10 Productos</h2>
-                <p className="text-sm text-gray-500">Últimos 30 días</p>
+                <h2 className="text-2xl font-bold text-gray-800 mb-1">Top 10 Products</h2>
+                <p className="text-sm text-gray-500">Last 30 days</p>
               </div>
               <div className="bg-green-100 p-3 rounded-xl">
                 <IconPackage />
               </div>
             </div>
             {productosTop.length === 0 ? (
-              <div className="text-gray-400 text-center py-12">No hay datos de productos</div>
+              <div className="text-gray-400 text-center py-12">No product data available</div>
             ) : (
               <div className="space-y-3">
                 {productosTop.map((p, idx) => {
@@ -918,7 +1069,7 @@ export default function Dashboard() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="font-semibold text-gray-900 truncate">{p.nombre}</div>
-                            <div className="text-xs text-gray-500">Unidades vendidas</div>
+                            <div className="text-xs text-gray-500">Units sold</div>
                           </div>
                         </div>
                         <div className="text-right">
@@ -942,8 +1093,8 @@ export default function Dashboard() {
           <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-3xl shadow-xl p-6 border-2 border-red-200">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-bold text-red-900 mb-1">Alerta de Stock</h2>
-                <p className="text-sm text-red-600">Productos con bajo inventario</p>
+                <h2 className="text-2xl font-bold text-red-900 mb-1">Stock Alert</h2>
+                <p className="text-sm text-red-600">Low inventory items</p>
               </div>
               <div className="bg-red-500 text-white p-3 rounded-xl animate-pulse">
                 <IconAlert />
@@ -957,8 +1108,8 @@ export default function Dashboard() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <div className="font-semibold text-gray-700">¡Todo bien!</div>
-                <div className="text-sm text-gray-500">No hay productos con stock bajo</div>
+                <div className="font-semibold text-gray-700">All good!</div>
+                <div className="text-sm text-gray-500">No low stock items</div>
               </div>
             ) : (
               <>
@@ -977,7 +1128,7 @@ export default function Dashboard() {
                           </div>
                           {p.cantidad === 0 && (
                             <div className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded">
-                              AGOTADO
+                              OUT
                             </div>
                           )}
                         </div>
@@ -991,7 +1142,7 @@ export default function Dashboard() {
                     onClick={() => setShowAllLow(true)}
                     className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg"
                   >
-                    Ver Todos ({stockVan.length})
+                    View All ({stockVan.length})
                   </button>
                 )}
               </>
@@ -999,148 +1150,96 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Ventas Recientes - Rediseñado para Mobile */}
+        {/* Recent Sales Card */}
         <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
-          <div className="p-6 border-b border-gray-100">
-            <div className="flex items-center justify-between">
+          <div className="p-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
               <div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-1">Ventas Recientes</h2>
-                <p className="text-sm text-gray-500">Click para ver detalles</p>
+                <h2 className="text-2xl font-bold text-gray-800 mb-1">Recent Sales</h2>
+                <p className="text-sm text-gray-500">{ventas.length} sales in the selected period</p>
               </div>
               <div className="bg-blue-100 p-3 rounded-xl">
                 <IconShoppingCart />
               </div>
             </div>
-          </div>
-          
-          {loading ? (
-            <div className="p-12 text-center">
-              <div className="inline-block w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-              <div className="mt-4 text-blue-700 font-semibold">Cargando ventas…</div>
-            </div>
-          ) : (
-            <>
-              {/* Vista Desktop - Tabla */}
-              <div className="hidden md:block overflow-x-auto">
-                <table className="min-w-full">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="p-4 text-left text-sm font-bold text-gray-700">
-                        <div className="flex items-center gap-2">
-                          <IconClock />
-                          Fecha
-                        </div>
-                      </th>
-                      <th className="p-4 text-left text-sm font-bold text-gray-700">Cliente</th>
-                      <th className="p-4 text-right text-sm font-bold text-gray-700">Total</th>
-                      <th className="p-4 text-center text-sm font-bold text-gray-700">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {ventasMostrar.map((v) => (
-                      <tr
-                        key={v.id}
-                        className="hover:bg-blue-50 cursor-pointer transition-all group"
-                        onClick={() => abrirDetalleVenta(v)}
-                      >
-                        <td className="p-4">
-                          <div className="font-semibold text-gray-900">{dayjs(v.fecha).format("DD/MM/YYYY")}</div>
-                          <div className="text-xs text-gray-500">{dayjs(v.fecha).format("HH:mm")}</div>
-                        </td>
-                        <td className="p-4 font-medium text-gray-800">{getNombreCliente(v.cliente_id)}</td>
-                        <td className="p-4 text-right">
-                          <div className="font-bold text-xl text-gray-900 group-hover:text-blue-600 transition-colors">
-                            {fmtMoney(v.total || 0)}
+
+            {loading ? (
+              <div className="p-12 text-center">
+                <div className="inline-block w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                <div className="mt-4 text-blue-700 font-semibold">Loading sales…</div>
+              </div>
+            ) : ventas.length === 0 ? (
+              <div className="p-12 text-center">
+                <div className="text-6xl mb-3">📭</div>
+                <div className="font-semibold text-gray-700 mb-2">No sales recorded</div>
+                <div className="text-sm text-gray-500">Start making sales to see them here</div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Preview de últimas 3 ventas */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {ventas.slice(0, 3).map((v) => (
+                    <div
+                      key={v.id}
+                      className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border-2 border-blue-200 hover:border-blue-400 hover:shadow-lg cursor-pointer transition-all"
+                      onClick={() => abrirDetalleVenta(v)}
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1">
+                          <div className="font-bold text-gray-900 text-sm mb-1">
+                            {getNombreCliente(v.cliente_id)}
                           </div>
-                        </td>
-                        <td className="p-4 text-center">
-                          <span
-                            className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-bold ${
-                              v.estado_pago === "pagado"
-                                ? "bg-green-500 text-white"
-                                : v.estado_pago === "parcial"
-                                ? "bg-blue-500 text-white"
-                                : "bg-amber-500 text-white"
-                            }`}
-                          >
-                            {v.estado_pago === "pagado" ? "✓ Pagado" : v.estado_pago === "parcial" ? "◐ Parcial" : "○ Pendiente"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {ventas.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="text-center text-gray-400 py-12">
-                          <div className="text-6xl mb-3">📭</div>
-                          <div className="font-semibold">No hay ventas registradas</div>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Vista Mobile - Cards */}
-              <div className="md:hidden p-4 space-y-3">
-                {ventasMostrar.map((v) => (
-                  <div
-                    key={v.id}
-                    className="bg-gradient-to-br from-white to-blue-50 rounded-2xl p-4 border-2 border-blue-100 hover:border-blue-300 hover:shadow-lg cursor-pointer transition-all"
-                    onClick={() => abrirDetalleVenta(v)}
-                  >
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <div className="font-bold text-gray-900 text-lg mb-1">
-                          {getNombreCliente(v.cliente_id)}
+                          <div className="flex items-center gap-1 text-xs text-gray-500">
+                            <IconClock />
+                            {dayjs(v.fecha).format("MM/DD HH:mm")}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-gray-500">
-                          <IconClock />
-                          {dayjs(v.fecha).format("DD/MM/YYYY HH:mm")}
-                        </div>
+                        <span
+                          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-bold ${
+                            v.estado_pago === "pagado"
+                              ? "bg-green-500 text-white"
+                              : v.estado_pago === "parcial"
+                              ? "bg-blue-500 text-white"
+                              : "bg-amber-500 text-white"
+                          }`}
+                        >
+                          {v.estado_pago === "pagado" ? "✓" : v.estado_pago === "parcial" ? "◐" : "○"}
+                        </span>
                       </div>
-                      <span
-                        className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold ${
-                          v.estado_pago === "pagado"
-                            ? "bg-green-500 text-white"
-                            : v.estado_pago === "parcial"
-                            ? "bg-blue-500 text-white"
-                            : "bg-amber-500 text-white"
-                        }`}
-                      >
-                        {v.estado_pago === "pagado" ? "✓" : v.estado_pago === "parcial" ? "◐" : "○"}
-                      </span>
+                      <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg p-3">
+                        <span className="text-sm font-semibold">Total</span>
+                        <span className="text-xl font-bold">{fmtMoney(v.total || 0)}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between bg-blue-600 text-white rounded-xl p-3">
-                      <span className="font-semibold">Total</span>
-                      <span className="text-2xl font-bold">{fmtMoney(v.total || 0)}</span>
-                    </div>
-                  </div>
-                ))}
-                {ventas.length === 0 && (
-                  <div className="text-center text-gray-400 py-12">
-                    <div className="text-6xl mb-3">📭</div>
-                    <div className="font-semibold">No hay ventas registradas</div>
-                  </div>
-                )}
-              </div>
-
-              {!loading && ventas.length > 8 && (
-                <div className="p-6 pt-3 flex justify-center border-t border-gray-100">
-                  <button
-                    className="px-8 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all"
-                    onClick={() => setMostrarTodas((m) => !m)}
-                  >
-                    {mostrarTodas ? "Mostrar Menos" : `Mostrar Más (${ventas.length - 8} más)`}
-                  </button>
+                  ))}
                 </div>
-              )}
-            </>
-          )}
+
+                {/* Botón para ver todas */}
+                <button
+                  onClick={() => setShowRecentSales(true)}
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-3 group"
+                >
+                  <IconShoppingCart />
+                  <span>View All Sales ({ventas.length})</span>
+                  <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Modals */}
       <LowStockModal open={showAllLow} items={stockVan} onClose={() => setShowAllLow(false)} />
+      <RecentSalesModal 
+        open={showRecentSales} 
+        ventas={ventas} 
+        onClose={() => setShowRecentSales(false)}
+        getNombreCliente={getNombreCliente}
+        onSelectVenta={abrirDetalleVenta}
+      />
       <DetalleVentaModal
         venta={ventaSeleccionada}
         productos={detalleProductos}
