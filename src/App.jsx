@@ -23,7 +23,7 @@ import OnlineCatalog from "./online/OnlineCatalog";
 import Checkout from "./storefront/Checkout";
 import OnlineDiscounts from "./online/Discounts";
 
-import NetworkIndicator from "./components/NetworkIndicator";
+import { NetworkIndicator } from "./components/NetworkIndicator";
 
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
