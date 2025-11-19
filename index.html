@@ -1,22 +1,716 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tools4Care sales</title>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    
+    <!-- Primary Meta Tags -->
+    <title>Tools4Care Sales - Sistema de Ventas Móvil</title>
+    <meta name="title" content="Tools4Care Sales - Sistema de Ventas Móvil" />
+    <meta name="description" content="Sistema de ventas y punto de venta móvil para Tools4Care. Gestiona ventas, inventario y clientes offline." />
+    
     <!-- PWA - Sistema de Ventas -->
-<link rel="manifest" href="/manifest-ventas.json" />
-<meta name="theme-color" content="#2563eb" />
-
-    <!-- PWA iOS -->
+    <link rel="manifest" href="/manifest-ventas.json" />
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Tools4Care Sales" />
+    
+    <!-- Apple iOS Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="T4C Sales" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icons/icon-167.png" />
+    
+    <!-- Apple Splash Screens -->
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-2048-2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-1668-2388.png" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-1536-2048.png" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-1125-2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-1242-2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-828-1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-1242-2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-750-1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+    <link rel="apple-touch-startup-image" href="/splash/apple-splash-640-1136.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+    
+    <!-- Microsoft Windows/IE11 -->
+    <meta name="msapplication-TileColor" content="#2563eb" />
+    <meta name="msapplication-TileImage" content="/icons/icon-144.png" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
+    
+    <!-- Preconnect to important domains -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="dns-prefetch" href="https://gvloygqbavibmpakzdma.supabase.co" />
+    
+    <!-- Fonts (opcional - si usas Google Fonts) -->
+    <!-- <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" /> -->
+    
+    <style>
+      /* ========================= 🎨 RESET Y BASE ========================= */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+      }
+
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+          'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        background: linear-gradient(135deg, #f5f7fa 0%, #e3f2fd 100%);
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      code {
+        font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+          monospace;
+      }
+
+      #root {
+        min-height: 100vh;
+        width: 100%;
+      }
+
+      /* ========================= 🎭 ANIMACIONES ========================= */
+      
+      /* Fade In */
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      .animate-fadeIn {
+        animation: fadeIn 0.3s ease-out forwards;
+      }
+
+      /* Scale In */
+      @keyframes scaleIn {
+        from {
+          opacity: 0;
+          transform: scale(0.9);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      .animate-scaleIn {
+        animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      /* Slide Down */
+      @keyframes slideDown {
+        from {
+          opacity: 0;
+          transform: translateY(-20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .animate-slideDown {
+        animation: slideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      /* Slide Up */
+      @keyframes slideUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .animate-slideUp {
+        animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      /* Slide In from Right */
+      @keyframes slideInRight {
+        from {
+          opacity: 0;
+          transform: translateX(30px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      .animate-slideInRight {
+        animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      /* Slide In from Left */
+      @keyframes slideInLeft {
+        from {
+          opacity: 0;
+          transform: translateX(-30px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      .animate-slideInLeft {
+        animation: slideInLeft 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      /* Bounce */
+      @keyframes bounce {
+        0%, 100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-10px);
+        }
+      }
+
+      .animate-bounce {
+        animation: bounce 1s ease-in-out infinite;
+      }
+
+      /* Pulse */
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .animate-pulse {
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+
+      /* Spin */
+      @keyframes spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .animate-spin {
+        animation: spin 1s linear infinite;
+      }
+
+      /* Shake */
+      @keyframes shake {
+        0%, 100% {
+          transform: translateX(0);
+        }
+        10%, 30%, 50%, 70%, 90% {
+          transform: translateX(-5px);
+        }
+        20%, 40%, 60%, 80% {
+          transform: translateX(5px);
+        }
+      }
+
+      .animate-shake {
+        animation: shake 0.5s ease-in-out;
+      }
+
+      /* Fade In Up (para listas) */
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .animate-fadeInUp {
+        animation: fadeInUp 0.3s ease-out forwards;
+      }
+
+      /* Staggered animations para listas */
+      .stagger-delay-1 { animation-delay: 0.05s; }
+      .stagger-delay-2 { animation-delay: 0.1s; }
+      .stagger-delay-3 { animation-delay: 0.15s; }
+      .stagger-delay-4 { animation-delay: 0.2s; }
+      .stagger-delay-5 { animation-delay: 0.25s; }
+
+      /* ========================= 💫 EFECTOS ESPECIALES ========================= */
+      
+      /* Shimmer loading effect */
+      @keyframes shimmer {
+        0% {
+          background-position: -1000px 0;
+        }
+        100% {
+          background-position: 1000px 0;
+        }
+      }
+
+      .shimmer {
+        background: linear-gradient(
+          to right,
+          #f0f0f0 4%,
+          #e8e8e8 25%,
+          #f0f0f0 36%
+        );
+        background-size: 1000px 100%;
+        animation: shimmer 2s infinite linear;
+      }
+
+      /* Glow effect */
+      @keyframes glow {
+        0%, 100% {
+          box-shadow: 0 0 5px rgba(37, 99, 235, 0.5),
+                      0 0 10px rgba(37, 99, 235, 0.3);
+        }
+        50% {
+          box-shadow: 0 0 10px rgba(37, 99, 235, 0.8),
+                      0 0 20px rgba(37, 99, 235, 0.5),
+                      0 0 30px rgba(37, 99, 235, 0.3);
+        }
+      }
+
+      .glow-effect {
+        animation: glow 2s ease-in-out infinite;
+      }
+
+      /* ========================= 🎯 LOADING SCREEN ========================= */
+      
+      #loading-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        transition: opacity 0.5s ease-out;
+      }
+
+      #loading-screen.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .loading-logo {
+        width: 120px;
+        height: 120px;
+        margin-bottom: 30px;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      .loading-spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+
+      .loading-text {
+        color: white;
+        font-size: 18px;
+        font-weight: 600;
+        margin-top: 20px;
+        letter-spacing: 0.5px;
+      }
+
+      /* ========================= 📱 MOBILE OPTIMIZATIONS ========================= */
+      
+      /* iOS safe areas */
+      @supports (padding: max(0px)) {
+        body {
+          padding-left: max(0px, env(safe-area-inset-left));
+          padding-right: max(0px, env(safe-area-inset-right));
+        }
+      }
+
+      /* Disable pull-to-refresh */
+      body {
+        overscroll-behavior-y: contain;
+      }
+
+      /* Smooth scrolling */
+      html {
+        scroll-behavior: smooth;
+      }
+
+      /* Better touch feedback */
+      button, a, [role="button"] {
+        -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+        touch-action: manipulation;
+      }
+
+      /* Disable text selection on UI elements */
+      .no-select {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+
+      /* ========================= 🎨 SCROLLBAR STYLING ========================= */
+      
+      /* For Webkit browsers (Chrome, Safari, Edge) */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+
+      ::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 10px;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 10px;
+        transition: background 0.3s ease;
+      }
+
+      ::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(135deg, #5568d3 0%, #65408b 100%);
+      }
+
+      /* For Firefox */
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: #667eea #f1f1f1;
+      }
+
+      /* ========================= 🌐 OFFLINE INDICATOR ========================= */
+      
+      .offline-indicator {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+        padding: 12px;
+        text-align: center;
+        font-weight: 600;
+        font-size: 14px;
+        z-index: 9998;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        transform: translateY(-100%);
+        transition: transform 0.3s ease-out;
+      }
+
+      .offline-indicator.show {
+        transform: translateY(0);
+      }
+
+      /* ========================= 🎯 UTILITY CLASSES ========================= */
+      
+      /* Transitions */
+      .transition-all {
+        transition: all 0.3s ease;
+      }
+
+      .transition-colors {
+        transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+      }
+
+      .transition-transform {
+        transition: transform 0.3s ease;
+      }
+
+      /* Hover effects */
+      .hover-scale:hover {
+        transform: scale(1.05);
+      }
+
+      .hover-scale:active {
+        transform: scale(0.98);
+      }
+
+      /* Shadows */
+      .shadow-soft {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      }
+
+      .shadow-medium {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+
+      .shadow-strong {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+      }
+
+      /* Glass morphism */
+      .glass {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+
+      /* Gradients */
+      .gradient-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+
+      .gradient-success {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      }
+
+      .gradient-danger {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      }
+
+      .gradient-warning {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      }
+
+      .gradient-info {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      }
+
+      /* ========================= 📱 RESPONSIVE BREAKPOINTS ========================= */
+      
+      @media (max-width: 640px) {
+        .loading-logo {
+          width: 100px;
+          height: 100px;
+        }
+
+        .loading-text {
+          font-size: 16px;
+        }
+      }
+
+      /* ========================= 🎭 PRINT STYLES ========================= */
+      
+      @media print {
+        body {
+          background: white;
+        }
+
+        .no-print {
+          display: none !important;
+        }
+
+        .print-only {
+          display: block !important;
+        }
+      }
+
+      /* ========================= ♿ ACCESSIBILITY ========================= */
+      
+      /* Focus styles */
+      *:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+
+      /* Reduced motion for accessibility */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+
+      /* High contrast mode */
+      @media (prefers-contrast: high) {
+        button, a {
+          border: 2px solid currentColor;
+        }
+      }
+
+      /* Dark mode support (opcional) */
+      @media (prefers-color-scheme: dark) {
+        /* Puedes agregar estilos dark mode aquí si lo necesitas */
+      }
+
+      /* ========================= 🚀 PERFORMANCE HINTS ========================= */
+      
+      /* Hardware acceleration for animations */
+      .accelerated {
+        transform: translateZ(0);
+        will-change: transform;
+      }
+
+      /* Optimize repaints */
+      .gpu-accelerated {
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        perspective: 1000px;
+      }
+    </style>
   </head>
   <body>
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+      <div class="loading-logo">
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="50" cy="50" r="45" fill="none" stroke="white" stroke-width="3" opacity="0.3"/>
+          <circle cx="50" cy="50" r="35" fill="white" opacity="0.9"/>
+          <text x="50" y="60" font-size="30" font-weight="bold" fill="#667eea" text-anchor="middle">T4C</text>
+        </svg>
+      </div>
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Cargando Sistema de Ventas...</div>
+    </div>
+
+    <!-- Offline Indicator -->
+    <div id="offline-indicator" class="offline-indicator">
+      📵 Sin conexión - Trabajando en modo offline
+    </div>
+
+    <!-- Main App Container -->
     <div id="root"></div>
+
+    <!-- Service Worker Registration -->
+    <script>
+      // Remove loading screen when app loads
+      window.addEventListener('load', () => {
+        const loadingScreen = document.getElementById('loading-screen');
+        setTimeout(() => {
+          loadingScreen.classList.add('fade-out');
+          setTimeout(() => {
+            loadingScreen.style.display = 'none';
+          }, 500);
+        }, 1000);
+      });
+
+      // Service Worker Registration
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('✅ Service Worker registrado:', registration);
+              
+              // Check for updates
+              registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    console.log('🔄 Nueva versión disponible');
+                    // Opcional: Mostrar notificación al usuario
+                    if (confirm('Hay una nueva versión disponible. ¿Deseas actualizar?')) {
+                      window.location.reload();
+                    }
+                  }
+                });
+              });
+            })
+            .catch(error => {
+              console.error('❌ Error registrando Service Worker:', error);
+            });
+        });
+      }
+
+      // Online/Offline Status
+      function updateOnlineStatus() {
+        const offlineIndicator = document.getElementById('offline-indicator');
+        if (!navigator.onLine) {
+          offlineIndicator.classList.add('show');
+        } else {
+          offlineIndicator.classList.remove('show');
+        }
+      }
+
+      window.addEventListener('online', () => {
+        updateOnlineStatus();
+        console.log('🌐 Conexión restaurada');
+      });
+
+      window.addEventListener('offline', () => {
+        updateOnlineStatus();
+        console.log('📵 Sin conexión - Modo offline activado');
+      });
+
+      // Check initial status
+      updateOnlineStatus();
+
+      // Prevent zoom on double tap (iOS)
+      let lastTouchEnd = 0;
+      document.addEventListener('touchend', (event) => {
+        const now = Date.now();
+        if (now - lastTouchEnd <= 300) {
+          event.preventDefault();
+        }
+        lastTouchEnd = now;
+      }, false);
+
+      // Add viewport height CSS variable for mobile browsers
+      function setViewportHeight() {
+        const vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', `${vh}px`);
+      }
+
+      setViewportHeight();
+      window.addEventListener('resize', setViewportHeight);
+
+      // Disable context menu on production (optional)
+      if (window.location.hostname !== 'localhost') {
+        document.addEventListener('contextmenu', (e) => {
+          // e.preventDefault(); // Descomenta si quieres deshabilitar menú contextual
+        });
+      }
+
+      // Performance monitoring
+      if ('performance' in window) {
+        window.addEventListener('load', () => {
+          setTimeout(() => {
+            const perfData = performance.getEntriesByType('navigation')[0];
+            console.log('⚡ Performance Metrics:');
+            console.log('- DOM Content Loaded:', perfData.domContentLoadedEventEnd - perfData.domContentLoadedEventStart, 'ms');
+            console.log('- Load Complete:', perfData.loadEventEnd - perfData.loadEventStart, 'ms');
+            console.log('- Total Load Time:', perfData.loadEventEnd - perfData.fetchStart, 'ms');
+          }, 0);
+        });
+      }
+
+      // Log app info
+      console.log('%c🚀 Tools4Care Sales System', 'color: #2563eb; font-size: 20px; font-weight: bold;');
+      console.log('%cVersion: 1.0.0', 'color: #10b981; font-size: 14px;');
+      console.log('%cMode: ' + (window.location.hostname === 'localhost' ? 'Development' : 'Production'), 'color: #f59e0b; font-size: 14px;');
+    </script>
+
+    <!-- Main App Script -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

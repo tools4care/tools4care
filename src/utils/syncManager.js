@@ -2,57 +2,121 @@
 import { supabase } from '../supabaseClient';
 import { obtenerVentasPendientes, marcarVentaSincronizada } from './offlineDB';
 
-// Sincroniza todas las ventas pendientes
+/**
+ * Sincroniza todas las ventas pendientes con Supabase
+ */
 export async function sincronizarVentasPendientes() {
+  console.log('🔄 Iniciando sincronización de ventas pendientes...');
+
   try {
+    // Obtener ventas pendientes de IndexedDB
     const ventasPendientes = await obtenerVentasPendientes();
     
     if (ventasPendientes.length === 0) {
-      return { success: true, sincronizadas: 0, errores: 0 };
+      console.log('✅ No hay ventas pendientes para sincronizar');
+      return {
+        success: true,
+        sincronizadas: 0,
+        errores: 0,
+        message: 'No hay ventas pendientes'
+      };
     }
 
-    console.log(`🔄 Sincronizando ${ventasPendientes.length} ventas pendientes...`);
+    console.log(`📦 Sincronizando ${ventasPendientes.length} venta(s)...`);
 
     let sincronizadas = 0;
     let errores = 0;
-    const erroresDetalle = [];
+    const resultados = [];
 
+    // Sincronizar cada venta
     for (const venta of ventasPendientes) {
       try {
-        // Remover campos temporales antes de subir
-        const { _offline_id, _offline_timestamp, _sincronizada, ...ventaLimpia } = venta;
-
-        // Insertar en Supabase
-        const { error } = await supabase
+        // Insertar venta en Supabase
+        const { data: ventaData, error: ventaError } = await supabase
           .from('ventas')
-          .insert(ventaLimpia);
+          .insert({
+            cliente_id: venta.cliente_id,
+            van_id: venta.van_id,
+            usuario_id: venta.usuario_id,
+            total: venta.total,
+            estado_pago: venta.estado_pago || 'pendiente',
+            notas: venta.notas,
+            fecha_venta: venta.fecha_venta || new Date().toISOString(),
+          })
+          .select()
+          .single();
 
-        if (error) throw error;
+        if (ventaError) throw ventaError;
 
-        // Marcar como sincronizada
-        await marcarVentaSincronizada(_offline_id);
+        const ventaId = ventaData.id;
+
+        // Insertar items de la venta
+        if (venta.items && venta.items.length > 0) {
+          const { error: itemsError } = await supabase
+            .from('detalle_ventas')
+            .insert(
+              venta.items.map(item => ({
+                venta_id: ventaId,
+                producto_id: item.producto_id,
+                cantidad: item.cantidad,
+                precio_unitario: item.precio_unitario || 0,
+                descuento: 0,
+              }))
+            );
+
+          if (itemsError) throw itemsError;
+        }
+
+        // Actualizar stock en Supabase
+        for (const item of venta.items || []) {
+          const { data: stockData } = await supabase
+            .from('stock_van')
+            .select('cantidad')
+            .eq('van_id', venta.van_id)
+            .eq('producto_id', item.producto_id)
+            .single();
+
+          if (stockData) {
+            await supabase
+              .from('stock_van')
+              .update({ cantidad: stockData.cantidad - item.cantidad })
+              .eq('van_id', venta.van_id)
+              .eq('producto_id', item.producto_id);
+          }
+        }
+
+        // Eliminar de IndexedDB después de sincronizar exitosamente
+        await marcarVentaSincronizada(venta._offline_id);
+
         sincronizadas++;
-        console.log(`✅ Venta ${_offline_id} sincronizada`);
+        resultados.push({
+          id: venta._offline_id,
+          success: true,
+          ventaId
+        });
+
+        console.log(`✅ Venta ${venta._offline_id} sincronizada exitosamente`);
 
       } catch (error) {
         errores++;
-        erroresDetalle.push({
-          venta: venta._offline_id,
+        resultados.push({
+          id: venta._offline_id,
+          success: false,
           error: error.message
         });
         console.error(`❌ Error sincronizando venta ${venta._offline_id}:`, error);
       }
     }
 
-    const resultado = {
+    console.log(`✅ Sincronización completada: ${sincronizadas} exitosas, ${errores} errores`);
+
+    return {
       success: errores === 0,
       sincronizadas,
       errores,
-      erroresDetalle
+      resultados,
+      message: `${sincronizadas} venta(s) sincronizada(s)${errores > 0 ? `, ${errores} error(es)` : ''}`
     };
-
-    console.log(`🎉 Sincronización completa: ${sincronizadas} OK, ${errores} errores`);
-    return resultado;
 
   } catch (error) {
     console.error('❌ Error en sincronización:', error);
@@ -60,27 +124,8 @@ export async function sincronizarVentasPendientes() {
       success: false,
       sincronizadas: 0,
       errores: 1,
-      erroresDetalle: [{ error: error.message }]
+      error: error.message,
+      message: 'Error al sincronizar ventas'
     };
-  }
-}
-
-// Sincroniza una sola venta (para uso manual)
-export async function sincronizarVenta(venta) {
-  try {
-    const { _offline_id, _offline_timestamp, _sincronizada, ...ventaLimpia } = venta;
-
-    const { error } = await supabase
-      .from('ventas')
-      .insert(ventaLimpia);
-
-    if (error) throw error;
-
-    await marcarVentaSincronizada(_offline_id);
-    return { success: true };
-
-  } catch (error) {
-    console.error('Error sincronizando venta:', error);
-    return { success: false, error: error.message };
   }
 }
