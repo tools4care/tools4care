@@ -568,6 +568,63 @@ function ConfirmModal({
   );
 }
 
+/* ======================= 🆕 NUEVO MODAL: PDF ANTES DE CERRAR SESIÓN ======================= */
+function PDFBeforeLogoutModal({ open, onDownload, onPrint, onSkip, generating }) {
+  if (!open) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+      <div className="bg-white rounded-xl p-6 shadow-2xl w-[450px] max-w-full">
+        <div className="text-center mb-4">
+          <div className="text-5xl mb-3">✅</div>
+          <h2 className="font-bold text-xl text-green-700 mb-2">Closeout Successful!</h2>
+          <p className="text-gray-600 text-sm">
+            Would you like to generate a PDF report before logging out?
+          </p>
+        </div>
+        
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+          <p className="text-xs text-blue-800">
+            ⚠️ <b>Important:</b> After this action, you will be automatically logged out of the system.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={onDownload}
+            disabled={generating}
+            className="w-full px-4 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            {generating === 'download' ? 'Generating...' : 'Download PDF & Logout'}
+          </button>
+
+          <button
+            onClick={onPrint}
+            disabled={generating}
+            className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+            </svg>
+            {generating === 'print' ? 'Preparing...' : 'Print PDF & Logout'}
+          </button>
+
+          <button
+            onClick={onSkip}
+            disabled={generating}
+            className="w-full px-4 py-3 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400 disabled:opacity-50"
+          >
+            Skip & Logout Now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ======================= PDF ======================= */
 function generarPDFCierreVan({
   empresa, usuario, vanNombre,
@@ -687,7 +744,7 @@ function generarPDFCierreVan({
       ["Cash", "$" + totalCash.toFixed(2)],
       ["Card", "$" + totalCard.toFixed(2)],
       ["Transfer", "$" + totalTransfer.toFixed(2)],
-      ["Grand Total", "$" + (totalCash + totalCard + totalTransfer).toFixed(2)] // CORREGIDO: Paréntesis faltante
+      ["Grand Total", "$" + (totalCash + totalCard + totalTransfer).toFixed(2)]
     ],
     theme: "grid",
     headStyles: { fillColor: "#0B4A6F", textColor: "#fff", fontStyle: "bold" },
@@ -990,6 +1047,13 @@ export default function CierreVan() {
   const [generandoPDF, setGenerandoPDF] = useState(false);
   const [pdfMode, setPdfMode] = useState("download");
 
+  // 🆕 ESTADOS PARA EL NUEVO MODAL
+  const [showPDFBeforeLogout, setShowPDFBeforeLogout] = useState(false);
+  const [pdfGenerating, setPdfGenerating] = useState(null); // null | 'download' | 'print'
+
+  // ============================================================================
+  // 🚪 FUNCIÓN MODIFICADA: guardarCierre CON MODAL DE PDF ANTES DE LOGOUT
+  // ============================================================================
   async function guardarCierre(e) {
     if (e && e.preventDefault) e.preventDefault();
     if (isClosedDay) return;
@@ -1054,12 +1118,129 @@ export default function CierreVan() {
 
     setGuardando(false);
     setShowConfirmModal(false);
-    setMensaje("Closeout registered successfully!");
-    setCounted({ cash: 0, card: 0, transfer: 0 });
-    setComentario("");
-    navigate("/cierres");
+    
+    // 🆕 MOSTRAR MODAL DE PDF ANTES DE CERRAR SESIÓN
+    setShowPDFBeforeLogout(true);
   }
 
+  // 🆕 FUNCIÓN PARA CERRAR SESIÓN
+  async function cerrarSesion() {
+    try {
+      console.log("🔐 Cerrando sesión después del cierre del día...");
+      
+      // Limpiar datos locales
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+      } catch (e) {
+        console.warn("Error limpiando storage:", e);
+      }
+      
+      // Cerrar sesión en Supabase
+      await supabase.auth.signOut();
+      console.log("✅ Sesión cerrada exitosamente");
+      
+      // Redirigir al login
+      window.location.href = "/login";
+      
+    } catch (logoutError) {
+      console.error("❌ Error cerrando sesión:", logoutError);
+      window.location.href = "/login";
+    }
+  }
+
+  // 🆕 HANDLER PARA DOWNLOAD PDF Y LOGOUT
+  async function handleDownloadAndLogout() {
+    setPdfGenerating('download');
+    try {
+      const resumen = {
+        efectivo_esperado: systemGrid?.cash || 0,
+        tarjeta_esperado: systemGrid?.card || 0,
+        transferencia_esperado: systemGrid?.transfer || 0,
+        cxc_periodo: arPeriodo,
+        pagos_cxc: pagosCxC,
+      };
+      const fechaCierre = cierreInfo?.created_at ? toEasternYMD(cierreInfo.created_at) : null;
+
+      generarPDFCierreVan({
+        empresa: { 
+          nombre: "TOOLS4CARE", 
+          direccion: "108 Lafayette St, Salem, MA 01970", 
+          telefono: "(978) 594-1624", 
+          email: "tools4care@gmail.com" 
+        },
+        usuario,
+        vanNombre: van?.nombre || van?.van_nombre || "",
+        ventas: ventasDecor,
+        avances,
+        resumen,
+        fechaInicio,
+        fechaFin,
+        fechaCierre,
+        mode: "download",
+      });
+      
+      // Esperar 1 segundo para que el PDF se descargue
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+    } catch (error) {
+      console.error("❌ Error generando PDF:", error);
+    } finally {
+      setPdfGenerating(null);
+      // Cerrar sesión
+      await cerrarSesion();
+    }
+  }
+
+  // 🆕 HANDLER PARA PRINT PDF Y LOGOUT
+  async function handlePrintAndLogout() {
+    setPdfGenerating('print');
+    try {
+      const resumen = {
+        efectivo_esperado: systemGrid?.cash || 0,
+        tarjeta_esperado: systemGrid?.card || 0,
+        transferencia_esperado: systemGrid?.transfer || 0,
+        cxc_periodo: arPeriodo,
+        pagos_cxc: pagosCxC,
+      };
+      const fechaCierre = cierreInfo?.created_at ? toEasternYMD(cierreInfo.created_at) : null;
+
+      generarPDFCierreVan({
+        empresa: { 
+          nombre: "TOOLS4CARE", 
+          direccion: "108 Lafayette St, Salem, MA 01970", 
+          telefono: "(978) 594-1624", 
+          email: "tools4care@gmail.com" 
+        },
+        usuario,
+        vanNombre: van?.nombre || van?.van_nombre || "",
+        ventas: ventasDecor,
+        avances,
+        resumen,
+        fechaInicio,
+        fechaFin,
+        fechaCierre,
+        mode: "print",
+      });
+      
+      // Esperar 2 segundos para que se abra la ventana de impresión
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+    } catch (error) {
+      console.error("❌ Error generando PDF:", error);
+    } finally {
+      setPdfGenerating(null);
+      // Cerrar sesión
+      await cerrarSesion();
+    }
+  }
+
+  // 🆕 HANDLER PARA SKIP Y LOGOUT DIRECTO
+  async function handleSkipAndLogout() {
+    await cerrarSesion();
+  }
+
+  // FUNCIÓN ORIGINAL DE GENERAR PDF (para el botón "Generate PDF Report")
   const generarPDF = async () => {
     setGenerandoPDF(true);
     try {
@@ -1073,7 +1254,12 @@ export default function CierreVan() {
       const fechaCierre = cierreInfo?.created_at ? toEasternYMD(cierreInfo.created_at) : null;
 
       generarPDFCierreVan({
-        empresa: { nombre: "TOOLS4CARE", direccion: "108 Lafayette St, Salem, MA 01970", telefono: "(978) 594-1624", email: "tools4care@gmail.com" },
+        empresa: { 
+          nombre: "TOOLS4CARE", 
+          direccion: "108 Lafayette St, Salem, MA 01970", 
+          telefono: "(978) 594-1624", 
+          email: "tools4care@gmail.com" 
+        },
         usuario,
         vanNombre: van?.nombre || van?.van_nombre || "",
         ventas: ventasDecor,
@@ -1633,6 +1819,7 @@ export default function CierreVan() {
         )}
       </div>
 
+      {/* MODALES */}
       <ConfirmModal
         open={showConfirmModal}
         onCancel={() => setShowConfirmModal(false)}
@@ -1650,6 +1837,15 @@ export default function CierreVan() {
         open={openDesglose}
         onClose={() => setOpenDesglose(false)}
         onSave={(total) => { setCounted((r)=>({ ...r, cash: Number(total||0) })); setOpenDesglose(false); }}
+      />
+
+      {/* 🆕 NUEVO MODAL: PDF ANTES DE LOGOUT */}
+      <PDFBeforeLogoutModal
+        open={showPDFBeforeLogout}
+        onDownload={handleDownloadAndLogout}
+        onPrint={handlePrintAndLogout}
+        onSkip={handleSkipAndLogout}
+        generating={pdfGenerating}
       />
     </div>
   );
