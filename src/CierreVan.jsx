@@ -22,19 +22,18 @@ function easternToYMD(date) {
   return `${y}-${m}-${d}`;
 }
 
-// Función mejorada para obtener inicio y fin del día en Eastern Time
+// Función para obtener inicio y fin del día en Eastern Time
 function easternDayBounds(isoDay) {
   if (!isoDay) return { start: "", end: "" };
   
-  // Convertir la fecha de entrada a Eastern Time
-  const dateUTC = new Date(`${isoDay}T00:00:00Z`);
-  const dateEastern = new Date(dateUTC.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  // Crear un objeto Date para la fecha en Eastern Time
+  const dateEastern = new Date(`${isoDay}T00:00:00`);
   
-  // Obtener inicio del día en Eastern Time (00:00:00)
+  // Obtener el inicio del día en Eastern Time (00:00:00)
   const startEastern = new Date(dateEastern);
   startEastern.setHours(0, 0, 0, 0);
   
-  // Obtener fin del día en Eastern Time (23:59:59.999)
+  // Obtener el fin del día en Eastern Time (23:59:59.999)
   const endEastern = new Date(dateEastern);
   endEastern.setHours(23, 59, 59, 999);
   
@@ -57,6 +56,8 @@ function formatEastern(dateStr) {
     year: "numeric"
   });
 }
+
+
 
 // Función para convertir fecha a Eastern Time y luego a YYYY-MM-DD
 function toEasternYMD(d) {
@@ -568,63 +569,6 @@ function ConfirmModal({
   );
 }
 
-/* ======================= 🆕 NUEVO MODAL: PDF ANTES DE CERRAR SESIÓN ======================= */
-function PDFBeforeLogoutModal({ open, onDownload, onPrint, onSkip, generating }) {
-  if (!open) return null;
-  
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
-      <div className="bg-white rounded-xl p-6 shadow-2xl w-[450px] max-w-full">
-        <div className="text-center mb-4">
-          <div className="text-5xl mb-3">✅</div>
-          <h2 className="font-bold text-xl text-green-700 mb-2">Closeout Successful!</h2>
-          <p className="text-gray-600 text-sm">
-            Would you like to generate a PDF report before logging out?
-          </p>
-        </div>
-        
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-          <p className="text-xs text-blue-800">
-            ⚠️ <b>Important:</b> After this action, you will be automatically logged out of the system.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={onDownload}
-            disabled={generating}
-            className="w-full px-4 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            {generating === 'download' ? 'Generating...' : 'Download PDF & Logout'}
-          </button>
-
-          <button
-            onClick={onPrint}
-            disabled={generating}
-            className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-            </svg>
-            {generating === 'print' ? 'Preparing...' : 'Print PDF & Logout'}
-          </button>
-
-          <button
-            onClick={onSkip}
-            disabled={generating}
-            className="w-full px-4 py-3 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400 disabled:opacity-50"
-          >
-            Skip & Logout Now
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ======================= PDF ======================= */
 function generarPDFCierreVan({
   empresa, usuario, vanNombre,
@@ -778,53 +722,53 @@ export default function CierreVan() {
 
   const cierreInfo = useCierreInfo(van?.id, fechaSeleccionada);
 
-  // Mejora en la selección de fecha por defecto
-  useEffect(() => {
-    console.log("📅 Fechas pendientes:", fechasPendientes);
-    if (fechasPendientes.length === 0) { 
-      setFechaSeleccionada(""); 
-      return; 
+// Modificar la función de selección de fecha en el componente principal
+useEffect(() => {
+  console.log("📅 Fechas pendientes:", fechasPendientes);
+  if (fechasPendientes.length === 0) { 
+    setFechaSeleccionada(""); 
+    return; 
+  }
+  
+  let pref = "";
+  try { 
+    pref = localStorage.getItem("pre_cierre_fecha") || ""; 
+  } catch {}
+  
+  // Convertir preferencia a Eastern Time si existe
+  if (isIsoDate(pref)) {
+    const datePref = new Date(pref);
+    // Convertir a Eastern Time
+    const prefEastern = new Date(datePref.toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const prefEasternStr = prefEastern.toISOString().slice(0, 10);
+    
+    if (fechasPendientes.includes(prefEasternStr)) {
+      setFechaSeleccionada(prefEasternStr);
+      return;
     }
-    
-    let pref = "";
-    try { 
-      pref = localStorage.getItem("pre_cierre_fecha") || ""; 
-    } catch {}
-    
-    // Convertir preferencia a Eastern Time si existe
-    if (isIsoDate(pref)) {
-      const datePref = new Date(pref);
-      // Convertir a Eastern Time
-      const prefEastern = new Date(datePref.toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const prefEasternStr = prefEastern.toISOString().slice(0, 10);
-      
-      if (fechasPendientes.includes(prefEasternStr)) {
-        setFechaSeleccionada(prefEasternStr);
-        return;
-      }
-    }
-    
-    // Obtener fecha actual en Eastern Time
-    const nowEastern = new Date();
-    const nowEasternStr = nowEastern.toLocaleDateString("en-US", {
-      timeZone: "America/New_York",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    });
-    
-    // Convertir Eastern Time a formato YYYY-MM-DD para comparar
-    const [month, day, year] = nowEasternStr.split("/");
-    const todayEastern = `${year}-${month}-${day}`;
-    
-    console.log("Hoy en Eastern Time:", todayEastern);
-    
-    if (fechasPendientes.includes(todayEastern)) {
-      setFechaSeleccionada(todayEastern);
-    } else {
-      setFechaSeleccionada(fechasPendientes[0]);
-    }
-  }, [fechasPendientes]);
+  }
+  
+  // Obtener fecha actual en Eastern Time
+  const nowEastern = new Date();
+  const nowEasternStr = nowEastern.toLocaleDateString("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  
+  // Convertir Eastern Time a formato YYYY-MM-DD para comparar
+  const [month, day, year] = nowEasternStr.split("/");
+  const todayEastern = `${year}-${month}-${day}`;
+  
+  console.log("Hoy en Eastern Time:", todayEastern);
+  
+  if (fechasPendientes.includes(todayEastern)) {
+    setFechaSeleccionada(todayEastern);
+  } else {
+    setFechaSeleccionada(fechasPendientes[0]);
+  }
+}, [fechasPendientes]);
 
   const fechaInicio = fechaSeleccionada;
   const fechaFin = fechaSeleccionada;
@@ -870,37 +814,71 @@ export default function CierreVan() {
     })();
   }, [clienteKeys.join(",")]);
 
-  const pagosDecor = useMemo(
-    () =>
-      (pagosRaw || []).map((p) => {
-        let breakdown = breakdownPorMetodo(p);
-        
-        const totalBk = sumBk(breakdown);
-        if (totalBk === 0 && p.monto && p.metodo_pago) {
-          const monto = Number(p.monto || 0);
-          const metodo = normMetodo(p.metodo_pago);
-          
-          breakdown = emptyBk();
-          if (metodo === 'cash') breakdown.cash = monto;
-          else if (metodo === 'card') breakdown.card = monto;
-          else if (metodo === 'transfer') breakdown.transfer = monto;
-        }
-        
-        return {
-          ...p,
-          _bk: breakdown,
-          cliente_nombre:
-            p.cliente_nombre ||
-            (clientesDic[p.cliente_id]
-              ? displayName(clientesDic[p.cliente_id])
-              : p.cliente_id
-              ? p.cliente_id.slice(0, 8)
-              : NO_CLIENTE),
-        };
-      }),
-    [pagosRaw, clientesDic]
-  );
+// 🔵 PAGOS DECORADOS: ventas + CxC + cualquier pago suelto
+const pagosDecor = useMemo(() => {
+  const arr = [];
 
+  // 1) Pagos que vienen desde ventas
+  for (const v of ventasRaw || []) {
+    for (const p of v.pagos || []) {
+      arr.push({
+        ...p,
+        venta_id: v.id,
+        cliente_id: v.cliente_id,
+        fecha_local: v.fecha_local || v.fecha || v.created_at,
+        cliente_nombre:
+          v.cliente_nombre ||
+          (clientesDic[v.cliente_id]
+            ? displayName(clientesDic[v.cliente_id])
+            : "No client"),
+      });
+    }
+  }
+
+  // 2) Pagos sueltos tipo CxC (NO dentro de ventas)
+  for (const c of pagosRaw || []) {
+    // si ya vino por ventas, no lo dupliques
+    if (c.venta_id) continue;
+
+    arr.push({
+      ...c,
+      fecha_local:
+        c.fecha_local ||
+        c.fecha_pago ||
+        c.fecha ||
+        c.created_at ||
+        c.updated_at,
+      cliente_nombre:
+        c.cliente_nombre ||
+        (clientesDic[c.cliente_id]
+          ? displayName(clientesDic[c.cliente_id])
+          : "No client"),
+    });
+  }
+
+  // 3) Decoración final con breakdown
+  return arr.map((p) => {
+    let breakdown = breakdownPorMetodo(p);
+
+    const totalBk = sumBk(breakdown);
+    if (totalBk === 0 && p.monto && p.metodo_pago) {
+      const monto = Number(p.monto || 0);
+      const metodo = normMetodo(p.metodo_pago);
+
+      breakdown = emptyBk();
+      if (metodo === "cash") breakdown.cash = monto;
+      else if (metodo === "card") breakdown.card = monto;
+      else if (metodo === "transfer") breakdown.transfer = monto;
+    }
+
+    return {
+      ...p,
+      _bk: breakdown,
+    };
+  });
+}, [ventasRaw, pagosRaw, clientesDic]);
+
+console.log("🔵 DEBUG pagosDecor:", pagosDecor);
   const pagosPorVenta = useMemo(() => {
     const map = new Map();
     for (const p of pagosDecor) {
@@ -944,32 +922,74 @@ export default function CierreVan() {
     return { ventasDecor: decor, excedentesCxC: [] };
   }, [ventasRaw, clientesDic]);
 
-  const avances = useMemo(() => {
-    if (isClosedDay) {
-      return (pagosDecor || []).filter(p => !(p?.venta_id && ventasIdSet.has(p.venta_id)));
-    }
-    
-    return (pagosDecor || []).filter(p => {
-      if (p.venta_id) return false;
-      
-      const vanOK = !p?.van_id || !van?.id || p.van_id === van.id;
-      const monto = sumBk(p._bk) || Number(p.monto || 0);
-      
-      // Comparar fecha en Eastern Time
-      const pDate = toEasternYMD(p.fecha_local || p.fecha);
-      return pDate === fechaSeleccionada && vanOK && monto > 0.0001;
-    });
-  }, [isClosedDay, pagosDecor, ventasIdSet, fechaSeleccionada, van?.id]);
+const avances = useMemo(() => {
+  // Si el día está cerrado, simplemente usa todo lo que no tiene venta_id
+  if (isClosedDay) {
+    return (pagosDecor || []).filter(p => !p.venta_id);
+  }
+
+  // Función para comparar fecha del pago con la fecha seleccionada (en Eastern Time)
+  const isSameEasternDay = (p) => {
+    const ymd = pagoYMD(p);  // ← convierte cualquier fecha del pago a YYYY-MM-DD en Eastern
+    return ymd === fechaSeleccionada;
+  };
+
+  return (pagosDecor || []).filter(p => {
+    // Tiene que ser un pago sin venta
+    if (p.venta_id) return false;
+
+    // Tiene que ser de la misma van
+    if (p.van_id && p.van_id !== van?.id) return false;
+
+    // Validar que cae en el día seleccionado usando Eastern Time
+    return isSameEasternDay(p);
+  });
+}, [isClosedDay, pagosDecor, fechaSeleccionada, van?.id]);
+
+
 
   const expectedOpen = useExpectedDia(van?.id, fechaSeleccionada);
   
-  const systemGrid = useMemo(() => {
-    const fromVentas = (ventasDecor || []).reduce((acc, v) => addBk(acc, v._bk || emptyBk()), emptyBk());
-    const fromAvances = (avances || []).reduce((acc, p) => addBk(acc, p._bk || emptyBk()), emptyBk());
-    const result = addBk(fromVentas, fromAvances);
-    console.log("💰 System Grid calculado:", result);
-    return result;
-  }, [ventasDecor, avances]);
+ // 🔵 GRID DEL SISTEMA - AGRUPANDO PAGOS REALES POR idempotency_key
+// 🔵 GRID DEL SISTEMA — SUMA PAGOS REALES SIN DUPLICARLOS
+const systemGrid = useMemo(() => {
+  const grupos = new Map();
+
+  for (const p of pagosDecor || []) {
+    // Agrupamos por idempotency_key (ideal)
+    // Si falta, usamos referencia
+    // Si falta, generamos clave estable usando método + fecha + cliente
+    const key =
+      p.idempotency_key ||
+      p.referencia ||
+      `${p.metodo_pago}-${pagoYMD(p)}-${p.cliente_id || "nc"}`;
+
+    if (!grupos.has(key)) {
+      grupos.set(key, { cash: 0, card: 0, transfer: 0 });
+    }
+
+    const g = grupos.get(key);
+
+    // Sumamos por método según la vista _bk que ya está estandarizada
+    g.cash += Number(p._bk?.cash || 0);
+    g.card += Number(p._bk?.card || 0);
+    g.transfer += Number(p._bk?.transfer || 0);
+
+    grupos.set(key, g);
+  }
+
+  // Sumamos totales REALES (sin duplicados)
+  const totals = { cash: 0, card: 0, transfer: 0 };
+
+  for (const g of grupos.values()) {
+    totals.cash += g.cash;
+    totals.card += g.card;
+    totals.transfer += g.transfer;
+  }
+
+  return totals;
+}, [pagosDecor]);
+
 
   const totalesEsperadosPanel = useMemo(() => {
     const result = {
@@ -986,7 +1006,7 @@ export default function CierreVan() {
     return (ventasDecor || []).reduce((t, v) => {
       const totalDesdeBreakdown = sumBk(v._bk);
       const venta = Number(v.total_venta) || totalDesdeBreakdown;
-      const pagado = Number(v.total_pagado || 0);
+      const pagado = Number(v.total_pagado) || 0;
       const credito = venta - pagado;
       return t + (credito > 0 ? credito : 0);
     }, 0);
@@ -1022,38 +1042,12 @@ export default function CierreVan() {
     return cnt - sys;
   }, [systemGrid, counted]);
 
-  const totalesPorTipoPago = useMemo(() => {
-    const totals = { cash: 0, card: 0, transfer: 0 };
-    
-    (ventasDecor || []).forEach(v => {
-      totals.cash += Number(v._bk?.cash || 0);
-      totals.card += Number(v._bk?.card || 0);
-      totals.transfer += Number(v._bk?.transfer || 0);
-    });
-    
-    (avances || []).forEach(p => {
-      totals.cash += Number(p._bk?.cash || 0);
-      totals.card += Number(p._bk?.card || 0);
-      totals.transfer += Number(p._bk?.transfer || 0);
-    });
-    
-    console.log("💵 Totales por tipo de pago:", totals);
-    return totals;
-  }, [ventasDecor, avances]);
-
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [generandoPDF, setGenerandoPDF] = useState(false);
   const [pdfMode, setPdfMode] = useState("download");
 
-  // 🆕 ESTADOS PARA EL NUEVO MODAL
-  const [showPDFBeforeLogout, setShowPDFBeforeLogout] = useState(false);
-  const [pdfGenerating, setPdfGenerating] = useState(null); // null | 'download' | 'print'
-
-  // ============================================================================
-  // 🚪 FUNCIÓN MODIFICADA: guardarCierre CON MODAL DE PDF ANTES DE LOGOUT
-  // ============================================================================
   async function guardarCierre(e) {
     if (e && e.preventDefault) e.preventDefault();
     if (isClosedDay) return;
@@ -1118,129 +1112,12 @@ export default function CierreVan() {
 
     setGuardando(false);
     setShowConfirmModal(false);
-    
-    // 🆕 MOSTRAR MODAL DE PDF ANTES DE CERRAR SESIÓN
-    setShowPDFBeforeLogout(true);
+    setMensaje("Closeout registered successfully!");
+    setCounted({ cash: 0, card: 0, transfer: 0 });
+    setComentario("");
+    navigate("/cierres");
   }
 
-  // 🆕 FUNCIÓN PARA CERRAR SESIÓN
-  async function cerrarSesion() {
-    try {
-      console.log("🔐 Cerrando sesión después del cierre del día...");
-      
-      // Limpiar datos locales
-      try {
-        localStorage.clear();
-        sessionStorage.clear();
-      } catch (e) {
-        console.warn("Error limpiando storage:", e);
-      }
-      
-      // Cerrar sesión en Supabase
-      await supabase.auth.signOut();
-      console.log("✅ Sesión cerrada exitosamente");
-      
-      // Redirigir al login
-      window.location.href = "/login";
-      
-    } catch (logoutError) {
-      console.error("❌ Error cerrando sesión:", logoutError);
-      window.location.href = "/login";
-    }
-  }
-
-  // 🆕 HANDLER PARA DOWNLOAD PDF Y LOGOUT
-  async function handleDownloadAndLogout() {
-    setPdfGenerating('download');
-    try {
-      const resumen = {
-        efectivo_esperado: systemGrid?.cash || 0,
-        tarjeta_esperado: systemGrid?.card || 0,
-        transferencia_esperado: systemGrid?.transfer || 0,
-        cxc_periodo: arPeriodo,
-        pagos_cxc: pagosCxC,
-      };
-      const fechaCierre = cierreInfo?.created_at ? toEasternYMD(cierreInfo.created_at) : null;
-
-      generarPDFCierreVan({
-        empresa: { 
-          nombre: "TOOLS4CARE", 
-          direccion: "108 Lafayette St, Salem, MA 01970", 
-          telefono: "(978) 594-1624", 
-          email: "tools4care@gmail.com" 
-        },
-        usuario,
-        vanNombre: van?.nombre || van?.van_nombre || "",
-        ventas: ventasDecor,
-        avances,
-        resumen,
-        fechaInicio,
-        fechaFin,
-        fechaCierre,
-        mode: "download",
-      });
-      
-      // Esperar 1 segundo para que el PDF se descargue
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-    } catch (error) {
-      console.error("❌ Error generando PDF:", error);
-    } finally {
-      setPdfGenerating(null);
-      // Cerrar sesión
-      await cerrarSesion();
-    }
-  }
-
-  // 🆕 HANDLER PARA PRINT PDF Y LOGOUT
-  async function handlePrintAndLogout() {
-    setPdfGenerating('print');
-    try {
-      const resumen = {
-        efectivo_esperado: systemGrid?.cash || 0,
-        tarjeta_esperado: systemGrid?.card || 0,
-        transferencia_esperado: systemGrid?.transfer || 0,
-        cxc_periodo: arPeriodo,
-        pagos_cxc: pagosCxC,
-      };
-      const fechaCierre = cierreInfo?.created_at ? toEasternYMD(cierreInfo.created_at) : null;
-
-      generarPDFCierreVan({
-        empresa: { 
-          nombre: "TOOLS4CARE", 
-          direccion: "108 Lafayette St, Salem, MA 01970", 
-          telefono: "(978) 594-1624", 
-          email: "tools4care@gmail.com" 
-        },
-        usuario,
-        vanNombre: van?.nombre || van?.van_nombre || "",
-        ventas: ventasDecor,
-        avances,
-        resumen,
-        fechaInicio,
-        fechaFin,
-        fechaCierre,
-        mode: "print",
-      });
-      
-      // Esperar 2 segundos para que se abra la ventana de impresión
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-    } catch (error) {
-      console.error("❌ Error generando PDF:", error);
-    } finally {
-      setPdfGenerating(null);
-      // Cerrar sesión
-      await cerrarSesion();
-    }
-  }
-
-  // 🆕 HANDLER PARA SKIP Y LOGOUT DIRECTO
-  async function handleSkipAndLogout() {
-    await cerrarSesion();
-  }
-
-  // FUNCIÓN ORIGINAL DE GENERAR PDF (para el botón "Generate PDF Report")
   const generarPDF = async () => {
     setGenerandoPDF(true);
     try {
@@ -1254,12 +1131,7 @@ export default function CierreVan() {
       const fechaCierre = cierreInfo?.created_at ? toEasternYMD(cierreInfo.created_at) : null;
 
       generarPDFCierreVan({
-        empresa: { 
-          nombre: "TOOLS4CARE", 
-          direccion: "108 Lafayette St, Salem, MA 01970", 
-          telefono: "(978) 594-1624", 
-          email: "tools4care@gmail.com" 
-        },
+        empresa: { nombre: "TOOLS4CARE", direccion: "108 Lafayette St, Salem, MA 01970", telefono: "(978) 594-1624", email: "tools4care@gmail.com" },
         usuario,
         vanNombre: van?.nombre || van?.van_nombre || "",
         ventas: ventasDecor,
@@ -1363,6 +1235,7 @@ export default function CierreVan() {
         )}
       </div>
 
+      {/* ---------- PAYMENT TOTALS SUMMARY (usa systemGrid) ---------- */}
       <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-lg p-5 mb-6 border border-blue-200">
         <h3 className="font-bold mb-4 text-xl text-blue-900 flex items-center">
           <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1381,7 +1254,7 @@ export default function CierreVan() {
               </svg>
             </div>
             <div className="text-3xl font-bold text-green-700">
-              ${(totalesPorTipoPago?.cash || 0).toFixed(2)}
+              ${(systemGrid?.cash || 0).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">From sales & A/R payments</div>
           </div>
@@ -1395,7 +1268,7 @@ export default function CierreVan() {
               </svg>
             </div>
             <div className="text-3xl font-bold text-blue-700">
-              ${(totalesPorTipoPago?.card || 0).toFixed(2)}
+              ${(systemGrid?.card || 0).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">From sales & A/R payments</div>
           </div>
@@ -1408,7 +1281,7 @@ export default function CierreVan() {
               </svg>
             </div>
             <div className="text-3xl font-bold text-purple-700">
-              ${(totalesPorTipoPago?.transfer || 0).toFixed(2)}
+              ${(systemGrid?.transfer || 0).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">From sales & A/R payments</div>
           </div>
@@ -1419,7 +1292,7 @@ export default function CierreVan() {
             <div>
               <div className="text-sm font-semibold opacity-90">GRAND TOTAL</div>
               <div className="text-4xl font-bold mt-1">
-                ${sumBk(totalesPorTipoPago).toFixed(2)}
+                ${sumBk(systemGrid).toFixed(2)}
               </div>
             </div>
             <svg className="w-16 h-16 opacity-30" fill="currentColor" viewBox="0 0 20 20">
@@ -1430,6 +1303,7 @@ export default function CierreVan() {
         </div>
       </div>
 
+      {/* ---------- TABLA DE VENTAS ---------- */}
       <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
         <h3 className="font-bold mb-3 text-lg text-blue-800">Pending Closeout Movements</h3>
         <div className="mb-2 font-semibold text-gray-700">Sales in this day:</div>
@@ -1618,6 +1492,7 @@ export default function CierreVan() {
         </div>
       </div>
 
+      {/* ---------- PAGOS CxC ---------- */}
       {avances.length > 0 && (
         <div className="bg-gray-50 rounded-xl shadow p-4 mb-6">
           <h3 className="font-bold mb-3 text-lg text-blue-800">Customer Payments on A/R (today)</h3>
@@ -1676,6 +1551,7 @@ export default function CierreVan() {
         </div>
       )}
 
+      {/* ---------- END OF DAY — TENDERS (System ahora = systemGrid) ---------- */}
       <div className="mb-4">
         <h3 className="font-bold text-blue-800 mb-2">End of Day — Tenders</h3>
         <div className="overflow-x-auto">
@@ -1773,6 +1649,7 @@ export default function CierreVan() {
         </div>
       </div>
 
+      {/* ---------- COMENTARIO Y PDF ---------- */}
       <div className="mb-3">
         <label className="block font-bold mb-1">Comment:</label>
         <textarea
@@ -1804,6 +1681,7 @@ export default function CierreVan() {
         </button>
       </div>
 
+      {/* ---------- BOTÓN DE CIERRE ---------- */}
       <div className="flex flex-col gap-2">
         <button
           className="bg-blue-700 text-white px-4 py-2 rounded font-bold w-full hover:bg-blue-800 disabled:bg-gray-400"
@@ -1819,7 +1697,6 @@ export default function CierreVan() {
         )}
       </div>
 
-      {/* MODALES */}
       <ConfirmModal
         open={showConfirmModal}
         onCancel={() => setShowConfirmModal(false)}
@@ -1837,15 +1714,6 @@ export default function CierreVan() {
         open={openDesglose}
         onClose={() => setOpenDesglose(false)}
         onSave={(total) => { setCounted((r)=>({ ...r, cash: Number(total||0) })); setOpenDesglose(false); }}
-      />
-
-      {/* 🆕 NUEVO MODAL: PDF ANTES DE LOGOUT */}
-      <PDFBeforeLogoutModal
-        open={showPDFBeforeLogout}
-        onDownload={handleDownloadAndLogout}
-        onPrint={handlePrintAndLogout}
-        onSkip={handleSkipAndLogout}
-        generating={pdfGenerating}
       />
     </div>
   );
