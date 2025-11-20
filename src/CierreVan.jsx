@@ -302,6 +302,7 @@ function useCierreInfo(van_id, fecha) {
 }
 
 // 4) Movimientos PENDIENTES
+// 4) Movimientos PENDIENTES
 function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   const [ventas, setVentas] = useState([]);
   const [pagos, setPagos] = useState([]);
@@ -309,7 +310,7 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
   
   useEffect(() => {
     if (!van_id || !isIsoDate(fechaInicio) || !isIsoDate(fechaFin)) { 
-      console.log("⚠️ Parámetros inválidos:", { van_id, fechaInicio, fechaFin });
+      console.log("⚠️ Invalid parameters:", { van_id, fechaInicio, fechaFin });
       setVentas([]); 
       setPagos([]); 
       return; 
@@ -319,104 +320,137 @@ function useMovimientosNoCerrados(van_id, fechaInicio, fechaFin) {
     
     (async () => {
       try {
-        console.log("🔍 INICIANDO BÚSQUEDA DE MOVIMIENTOS");
+        console.log("🔍 STARTING MOVEMENT SEARCH");
         console.log("Van ID:", van_id);
-        console.log("Fecha inicio (Eastern):", fechaInicio);
-        console.log("Fecha fin (Eastern):", fechaFin);
+        console.log("Start date (Eastern):", fechaInicio);
+        console.log("End date (Eastern):", fechaFin);
         
-        // Convertir fechas a Eastern Time para la consulta
-        const { start, end } = easternDayBounds(fechaInicio);
+        // Usar las fechas directamente sin convertir a bounds de Eastern
+        // porque las fechas ya vienen en formato YYYY-MM-DD
         
-        // Verificar si la tabla tiene columna fecha_local
-        const { data: sampleVenta, error: sampleError } = await supabase
-          .from("ventas_local")
+        // BUSCAR EN LA TABLA VENTAS (no ventas_local)
+        console.log("🔍 Searching sales in 'ventas' table...");
+        
+        // Primero intentar con fecha_local
+        let ventasData = null;
+        let errorVentas = null;
+        
+        const { data: testData } = await supabase
+          .from("ventas")
           .select("*")
           .limit(1)
           .maybeSingle();
         
-        if (sampleVenta) {
-          console.log("📋 Campos disponibles en ventas_local:", Object.keys(sampleVenta));
+        if (testData) {
+          console.log("📋 Available fields in ventas:", Object.keys(testData));
         }
         
-        // Intentar con fecha_local primero usando Eastern Time
-        console.log("🔍 Buscando ventas con fecha_local...");
-        const { data: ventasData, error: errorVentas } = await supabase
-          .from("ventas_local")
-          .select("*")
-          .eq("van_id", van_id)
-          .gte("fecha_local", start.split('T')[0])  // Solo fecha sin tiempo
-          .lte("fecha_local", end.split('T')[0])      // Solo fecha sin tiempo
-          .is("cierre_id", null)
-          .order("created_at", { ascending: true });
-        
-        if (errorVentas) {
-          console.error("❌ Error cargando ventas:", errorVentas);
-          console.log("Intentando con campo 'fecha' en su lugar...");
-          
-          // Si falla, intentar con 'fecha' usando Eastern Time
-          const { data: ventasData2, error: errorVentas2 } = await supabase
-            .from("ventas_local")
+        // Intentar con fecha_local
+        if (testData && 'fecha_local' in testData) {
+          const result = await supabase
+            .from("ventas")
             .select("*")
             .eq("van_id", van_id)
-            .gte("fecha", start.split('T')[0])  // Solo fecha sin tiempo
-            .lte("fecha", end.split('T')[0])    // Solo fecha sin tiempo
+            .gte("fecha_local", fechaInicio)
+            .lte("fecha_local", fechaFin)
             .is("cierre_id", null)
             .order("created_at", { ascending: true });
           
-          if (errorVentas2) {
-            console.error("❌ Error también con campo 'fecha':", errorVentas2);
-            setVentas([]);
-          } else {
-            console.log("✅ Ventas encontradas con campo 'fecha':", ventasData2?.length || 0);
-            console.log("Datos de ventas:", ventasData2);
-            setVentas(ventasData2 || []);
+          ventasData = result.data;
+          errorVentas = result.error;
+          
+          if (!errorVentas && ventasData) {
+            console.log("✅ Sales found with fecha_local:", ventasData.length);
           }
-        } else {
-          console.log("✅ Ventas encontradas con fecha_local:", ventasData?.length || 0);
-          if (ventasData && ventasData.length > 0) {
-            console.log("Muestra de primera venta:", ventasData[0]);
-          }
-          setVentas(ventasData || []);
         }
         
-        // PAGOS - intentar con diferentes columnas de fecha
-        console.log("🔍 Buscando pagos...");
+        // Si no hay fecha_local o falló, usar 'fecha'
+        if (!ventasData || ventasData.length === 0) {
+          console.log("Trying with 'fecha' field...");
+          const result = await supabase
+            .from("ventas")
+            .select("*")
+            .eq("van_id", van_id)
+            .gte("fecha", `${fechaInicio}T00:00:00`)
+            .lte("fecha", `${fechaFin}T23:59:59`)
+            .is("cierre_id", null)
+            .order("created_at", { ascending: true });
+          
+          ventasData = result.data;
+          errorVentas = result.error;
+          
+          if (!errorVentas && ventasData) {
+            console.log("✅ Sales found with fecha:", ventasData.length);
+          }
+        }
         
-        // Primero intentar con fecha_pago
-        const { data: pagosData1, error: errorPagos1 } = await supabase
-          .from("pagos_local")
+        // Si aún no hay resultados, intentar sin filtro de fecha para debug
+        if (!ventasData || ventasData.length === 0) {
+          console.log("⚠️ No sales found, checking all sales for this van...");
+          const result = await supabase
+            .from("ventas")
+            .select("*")
+            .eq("van_id", van_id)
+            .is("cierre_id", null)
+            .order("created_at", { ascending: false })
+            .limit(10);
+          
+          console.log("Last 10 unclosed sales for this van:", result.data);
+          
+          // Revisar las fechas de estas ventas
+          if (result.data && result.data.length > 0) {
+            result.data.forEach(v => {
+              console.log("Sale:", {
+                id: v.id,
+                fecha: v.fecha,
+                fecha_local: v.fecha_local,
+                created_at: v.created_at,
+                total: v.total_venta
+              });
+            });
+          }
+        }
+        
+        setVentas(ventasData || []);
+        
+        // BUSCAR PAGOS en la tabla 'pagos' (no pagos_local)
+        console.log("🔍 Searching payments in 'pagos' table...");
+        
+        let pagosData = null;
+        
+        // Intentar con fecha_pago
+        const resultPagos = await supabase
+          .from("pagos")
           .select("*")
           .eq("van_id", van_id)
-          .gte("fecha_pago", start.split('T')[0])  // Solo fecha sin tiempo
-          .lte("fecha_pago", end.split('T')[0])    // Solo fecha sin tiempo
+          .gte("fecha_pago", `${fechaInicio}T00:00:00`)
+          .lte("fecha_pago", `${fechaFin}T23:59:59`)
           .is("cierre_id", null)
           .order("fecha_pago", { ascending: true });
         
-        if (!errorPagos1 && pagosData1) {
-          console.log("✅ Pagos encontrados con fecha_pago:", pagosData1?.length || 0);
-          setPagos(pagosData1 || []);
+        pagosData = resultPagos.data;
+        
+        if (!resultPagos.error && pagosData) {
+          console.log("✅ Payments found:", pagosData.length);
         } else {
-          // Si falla, intentar con fecha
-          const { data: pagosData2, error: errorPagos2 } = await supabase
-            .from("pagos_local")
+          // Intentar con 'fecha'
+          const resultPagos2 = await supabase
+            .from("pagos")
             .select("*")
             .eq("van_id", van_id)
-            .gte("fecha", start.split('T')[0])  // Solo fecha sin tiempo
-            .lte("fecha", end.split('T')[0])    // Solo fecha sin tiempo
+            .gte("fecha", `${fechaInicio}T00:00:00`)
+            .lte("fecha", `${fechaFin}T23:59:59`)
             .is("cierre_id", null)
-            .order("fecha_pago", { ascending: true });
+            .order("created_at", { ascending: true });
           
-          if (!errorPagos2 && pagosData2) {
-            console.log("✅ Pagos encontrados con fecha:", pagosData2?.length || 0);
-            setPagos(pagosData2 || []);
-          } else {
-            console.error("❌ Error cargando pagos:", errorPagos1 || errorPagos2);
-            setPagos([]);
-          }
+          pagosData = resultPagos2.data;
+          console.log("✅ Payments found with fecha:", pagosData?.length || 0);
         }
         
+        setPagos(pagosData || []);
+        
       } catch (error) {
-        console.error("❌ Error general en useMovimientosNoCerrados:", error);
+        console.error("❌ General error in useMovimientosNoCerrados:", error);
         setVentas([]);
         setPagos([]);
       } finally { 
@@ -815,31 +849,12 @@ useEffect(() => {
   }, [clienteKeys.join(",")]);
 
 // 🔵 PAGOS DECORADOS: ventas + CxC + cualquier pago suelto
+// 🔵 PAGOS DECORADOS: ventas + CxC + cualquier pago suelto
 const pagosDecor = useMemo(() => {
   const arr = [];
 
-  // 1) Pagos que vienen desde ventas
-  for (const v of ventasRaw || []) {
-    for (const p of v.pagos || []) {
-      arr.push({
-        ...p,
-        venta_id: v.id,
-        cliente_id: v.cliente_id,
-        fecha_local: v.fecha_local || v.fecha || v.created_at,
-        cliente_nombre:
-          v.cliente_nombre ||
-          (clientesDic[v.cliente_id]
-            ? displayName(clientesDic[v.cliente_id])
-            : "No client"),
-      });
-    }
-  }
-
-  // 2) Pagos sueltos tipo CxC (NO dentro de ventas)
+  // 1) Pagos sueltos tipo CxC de la tabla pagos
   for (const c of pagosRaw || []) {
-    // si ya vino por ventas, no lo dupliques
-    if (c.venta_id) continue;
-
     arr.push({
       ...c,
       fecha_local:
@@ -854,6 +869,39 @@ const pagosDecor = useMemo(() => {
           ? displayName(clientesDic[c.cliente_id])
           : "No client"),
     });
+  }
+
+  // 2) Pagos que vienen de las ventas (usando los campos directos de la venta)
+  for (const v of ventasRaw || []) {
+    // Verificar si la venta tiene pagos en los campos directos
+    const pagoEfectivo = Number(v.pago_efectivo || 0);
+    const pagoTarjeta = Number(v.pago_tarjeta || 0);
+    const pagoTransferencia = Number(v.pago_transferencia || 0);
+    
+    const totalPagoVenta = pagoEfectivo + pagoTarjeta + pagoTransferencia;
+    
+    // Solo agregar si hay algún pago
+    if (totalPagoVenta > 0) {
+      arr.push({
+        id: `venta-pago-${v.id}`,
+        venta_id: v.id,
+        cliente_id: v.cliente_id,
+        fecha_local: v.fecha_local || v.fecha || v.created_at,
+        fecha_pago: v.fecha_local || v.fecha || v.created_at,
+        cliente_nombre:
+          v.cliente_nombre ||
+          (clientesDic[v.cliente_id]
+            ? displayName(clientesDic[v.cliente_id])
+            : "No client"),
+        pago_efectivo: pagoEfectivo,
+        pago_tarjeta: pagoTarjeta,
+        pago_transferencia: pagoTransferencia,
+        monto: totalPagoVenta,
+        metodo_pago: pagoEfectivo > 0 ? 'cash' : (pagoTarjeta > 0 ? 'card' : 'transfer'),
+        referencia: `VENTA-${v.id?.slice(0, 8)}`,
+        idempotency_key: `venta-${v.id}`,
+      });
+    }
   }
 
   // 3) Decoración final con breakdown
@@ -896,31 +944,32 @@ console.log("🔵 DEBUG pagosDecor:", pagosDecor);
 
   const ventasIdSet = useMemo(() => new Set((ventasRaw || []).map((v) => v.id)), [ventasRaw]);
 
-  const { ventasDecor, excedentesCxC } = useMemo(() => {
-    const extrasAcumulados = [];
-    const decor = (ventasRaw || []).map((v) => {
-      const ficha = clientesDic[v.cliente_id];
-      
-      const breakdownVenta = {
-        cash: Number(v.pago_efectivo || 0),
-        card: Number(v.pago_tarjeta || 0),
-        transfer: Number(v.pago_transferencia || 0),
-      };
-      
-      return {
-        ...v,
-        _bk: breakdownVenta,
-        cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : "No client"),
-      };
-    });
+const { ventasDecor, excedentesCxC } = useMemo(() => {
+  const decor = (ventasRaw || []).map((v) => {
+    const ficha = clientesDic[v.cliente_id];
+    
+    // Usar los campos de pago directos de la venta
+    const breakdownVenta = {
+      cash: Number(v.pago_efectivo || 0),
+      card: Number(v.pago_tarjeta || 0),
+      transfer: Number(v.pago_transferencia || 0),
+    };
+    
+    return {
+      ...v,
+      _bk: breakdownVenta,
+      cliente_nombre: v.cliente_nombre || (ficha ? displayName(ficha) : v.cliente_id ? v.cliente_id.slice(0, 8) : "No client"),
+    };
+  });
 
-    console.log("✅ Ventas decoradas:", decor.length);
-    if (decor.length > 0) {
-      console.log("Muestra de venta decorada:", decor[0]);
-    }
+  console.log("✅ Ventas decoradas:", decor.length);
+  if (decor.length > 0) {
+    console.log("Muestra de venta decorada:", decor[0]);
+    console.log("Breakdown de primera venta:", decor[0]._bk);
+  }
 
-    return { ventasDecor: decor, excedentesCxC: [] };
-  }, [ventasRaw, clientesDic]);
+  return { ventasDecor: decor, excedentesCxC: [] };
+}, [ventasRaw, clientesDic]);
 
 const avances = useMemo(() => {
   // Si el día está cerrado, simplemente usa todo lo que no tiene venta_id
