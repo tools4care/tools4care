@@ -2214,15 +2214,56 @@ function handleChangePayment(index, field, value) {
         }
       }
 
-      const montoParaCxC = Number(payOldDebtNow.toFixed(2));
+         const montoParaCxC = Number(payOldDebtNow.toFixed(2));
+
       if (montoParaCxC > 0 && selectedClient?.id) {
-        await registrarPagoCxC({
-          cliente_id: selectedClient.id,
-          monto: montoParaCxC,
-          metodo: metodoPrincipal,
-          van_id: van.id,
-        });
+        // 🔐 Id de idempotencia para no duplicar pagos si algo reintenta
+        let idemKey = null;
+        try {
+          // Navegadores modernos
+          if (typeof crypto !== "undefined" && crypto.randomUUID) {
+            idemKey = crypto.randomUUID();
+          }
+        } catch (e) {
+          console.warn("No se pudo generar randomUUID, idem_key queda null:", e);
+        }
+
+        // 💰 1) Registrar el pago REAL en tabla `pagos`
+        const { error: pagoCxCErr } = await supabase
+          .from("pagos")
+          .insert([
+            {
+              venta_id: null, // 👈 MUY IMPORTANTE: este pago es para deuda vieja, no para esta venta
+              cliente_id: selectedClient.id,
+              van_id: van.id ?? null,
+              usuario_id: usuario.id ?? null,
+              fecha_pago: new Date().toISOString(),
+              monto: montoParaCxC,
+              metodo_pago: metodoPrincipal, // "Cash", "Card", "Transfer", etc.
+              referencia: `Pago CxC dentro de venta ${ventaId}`,
+              notas: "Pago a cuenta por cobrar aplicado desde pantalla de ventas",
+              idem_key: idemKey, // null si no se pudo generar; igual es opcional
+            },
+          ]);
+
+        if (pagoCxCErr) {
+          console.error("❌ Error insertando pago CxC en tabla pagos:", pagoCxCErr);
+
+          // 🔁 Fallback: si por alguna razón falla, usamos tu flujo viejo
+          // para no romper la app (pero idealmente esto no debería ejecutarse casi nunca)
+          try {
+            await registrarPagoCxC({
+              cliente_id: selectedClient.id,
+              monto: montoParaCxC,
+              metodo: metodoPrincipal,
+              van_id: van.id,
+            });
+          } catch (fallbackErr) {
+            console.error("❌ Error también en registrarPagoCxC fallback:", fallbackErr);
+          }
+        }
       }
+
 
       const prevDue = Math.max(0, balanceBefore);
       const balancePost = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
