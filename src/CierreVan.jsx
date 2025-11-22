@@ -1,4 +1,4 @@
-// src/CierreDia.jsx (English version with card option and zero display) - Report Area Improved
+// src/CierreDia.jsx - Fixed version using only existing columns
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
@@ -9,8 +9,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { format, startOfDay, endOfDay, isToday } from "date-fns";
-import { 
-  DollarSign, FileText, Download, RefreshCw, CheckCircle, AlertCircle, 
+import {
+  DollarSign, FileText, Download, RefreshCw, CheckCircle, AlertCircle,
   Calculator, Calendar, TrendingUp, AlertTriangle, X, Plus, Minus, Send, MoreHorizontal, CreditCard,
   Eye, Printer, Share2, FileBarChart, PieChart as PieChartIcon, BarChart3, TrendingUp as TrendingUpIcon
 } from "lucide-react";
@@ -32,22 +32,22 @@ const TRANSFER_TYPES = [
 ];
 
 /* ========================= Report Component ========================= */
-const ReportPreview = ({ 
-  fecha, 
-  ventasDia, 
-  pagosDirectos, 
-  totales, 
-  cashReal, 
-  cardReal, 
-  transferReal, 
-  otherReal, 
-  van, 
-  usuario, 
-  onGeneratePDF, 
-  onClose 
+const ReportPreview = ({
+  fecha,
+  ventasDia,
+  pagosDirectos,
+  totales,
+  cashReal,
+  cardReal,
+  transferReal,
+  otherReal,
+  van,
+  usuario,
+  onGeneratePDF,
+  onClose
 }) => {
   const [activeTab, setActiveTab] = useState("summary");
-  
+
   // Datos para gráficos
   const datosMetodosPago = [
     { method: "Cash", value: totales.totalEfectivo, color: PAYMENT_METHODS.efectivo.color },
@@ -91,30 +91,30 @@ const ReportPreview = ({
               </button>
             </div>
           </div>
-          
-          {/* Tabs */}
-          <div className="flex gap-4 mt-4 border-b border-blue-400">
-            <button
-              onClick={() => setActiveTab("summary")}
-              className={`pb-2 px-1 font-medium ${activeTab === "summary" ? "border-b-2 border-white text-white" : "text-blue-200 hover:text-white"}`}
-            >
-              Summary
-            </button>
-            <button
-              onClick={() => setActiveTab("details")}
-              className={`pb-2 px-1 font-medium ${activeTab === "details" ? "border-b-2 border-white text-white" : "text-blue-200 hover:text-white"}`}
-            >
-              Details
-            </button>
-            <button
-              onClick={() => setActiveTab("analysis")}
-              className={`pb-2 px-1 font-medium ${activeTab === "analysis" ? "border-b-2 border-white text-white" : "text-blue-200 hover:text-white"}`}
-            >
-              Analysis
-            </button>
-          </div>
         </div>
-        
+
+        {/* Tabs */}
+        <div className="flex gap-4 px-6 mt-4 border-b border-gray-200">
+          <button
+            onClick={() => setActiveTab("summary")}
+            className={`pb-2 px-1 font-medium ${activeTab === "summary" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
+          >
+            Summary
+          </button>
+          <button
+            onClick={() => setActiveTab("details")}
+            className={`pb-2 px-1 font-medium ${activeTab === "details" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
+          >
+            Details
+          </button>
+          <button
+            onClick={() => setActiveTab("analysis")}
+            className={`pb-2 px-1 font-medium ${activeTab === "analysis" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
+          >
+            Analysis
+          </button>
+        </div>
+
         {/* Content */}
         <div className="p-6 overflow-y-auto flex-grow">
           {/* Summary Tab */}
@@ -129,7 +129,7 @@ const ReportPreview = ({
                   </div>
                   <div>
                     <h3 className="text-sm font-medium text-gray-500">Date</h3>
-                    <p className="text-lg font-semibold">{format(fecha, 'MM/dd/yyyy')}</p>
+                    <p className="text-lg font-semibold">{format(new Date(fecha), 'MM/dd/yyyy')}</p>
                   </div>
                   <div>
                     <h3 className="text-sm font-medium text-gray-500">VAN</h3>
@@ -141,7 +141,7 @@ const ReportPreview = ({
                   </div>
                 </div>
               </div>
-              
+
               {/* Key Metrics */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
@@ -153,7 +153,7 @@ const ReportPreview = ({
                     <DollarSign className="text-green-600" size={24} />
                   </div>
                 </div>
-                
+
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
                   <div className="flex items-center justify-between mb-2">
                     <div>
@@ -163,7 +163,7 @@ const ReportPreview = ({
                     <Calculator className="text-blue-600" size={24} />
                   </div>
                 </div>
-                
+
                 <div className="bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl p-4 border border-purple-200">
                   <div className="flex items-center justify-between mb-2">
                     <div>
@@ -173,10 +173,10 @@ const ReportPreview = ({
                     <TrendingUp className="text-purple-600" size={24} />
                   </div>
                 </div>
-                
+
                 <div className={`bg-gradient-to-br rounded-xl p-4 border ${
-                  totales.diferencia === 0 
-                    ? "bg-gradient-to-br from-green-50 to-emerald-50 border-green-200" 
+                  totales.diferencia === 0
+                    ? "bg-gradient-to-br from-green-50 to-emerald-50 border-green-200"
                     : "bg-gradient-to-br from-red-50 to-rose-50 border-red-200"
                 }`}>
                   <div className="flex items-center justify-between mb-2">
@@ -200,7 +200,7 @@ const ReportPreview = ({
                   </div>
                 </div>
               </div>
-              
+
               {/* Payment Methods Chart */}
               <div className="bg-white rounded-xl shadow border border-gray-200 p-4 mb-6">
                 <h3 className="text-lg font-bold text-gray-800 mb-4">Payment Methods Distribution</h3>
@@ -226,7 +226,7 @@ const ReportPreview = ({
                   </ResponsiveContainer>
                 </div>
               </div>
-              
+
               {/* Payment Methods Table */}
               <div className="bg-white rounded-xl shadow border border-gray-200 overflow-hidden mb-6">
                 <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
@@ -248,13 +248,13 @@ const ReportPreview = ({
                                         item.method === "Card" ? cardReal :
                                         item.method === "Transfer" ? transferReal : otherReal;
                       const difference = Math.abs(item.value - realAmount);
-                      
+
                       return (
                         <tr key={item.method}>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center">
-                              <div 
-                                className="w-3 h-3 rounded-full mr-2" 
+                              <div
+                                className="w-3 h-3 rounded-full mr-2"
                                 style={{ backgroundColor: item.color }}
                               ></div>
                               <span className="font-medium text-gray-900">{item.method}</span>
@@ -266,9 +266,9 @@ const ReportPreview = ({
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center">
                               <div className="w-24 bg-gray-200 rounded-full h-2 mr-2">
-                                <div 
-                                  className="h-2 rounded-full" 
-                                  style={{ 
+                                <div
+                                  className="h-2 rounded-full"
+                                  style={{
                                     width: `${(item.value / totales.totalCaja) * 100}%`,
                                     backgroundColor: item.color
                                   }}
@@ -297,7 +297,7 @@ const ReportPreview = ({
               </div>
             </div>
           )}
-          
+
           {/* Details Tab */}
           {activeTab === "details" && (
             <div>
@@ -353,7 +353,7 @@ const ReportPreview = ({
                   </div>
                 </div>
               )}
-              
+
               {/* Direct Payments Table */}
               {pagosDirectos.length > 0 && (
                 <div className="bg-white rounded-xl shadow border border-gray-200 overflow-hidden mb-6">
@@ -403,7 +403,7 @@ const ReportPreview = ({
                   </div>
                 </div>
               )}
-              
+
               {/* Totals Summary */}
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200">
                 <h3 className="text-lg font-bold text-gray-800 mb-4">Totals Summary</h3>
@@ -432,7 +432,7 @@ const ReportPreview = ({
               </div>
             </div>
           )}
-          
+
           {/* Analysis Tab */}
           {activeTab === "analysis" && (
             <div>
@@ -457,7 +457,7 @@ const ReportPreview = ({
                   </ResponsiveContainer>
                 </div>
               </div>
-              
+
               {/* Insights */}
               <div className="bg-white rounded-xl shadow border border-gray-200 p-4 mb-6">
                 <h3 className="text-lg font-bold text-gray-800 mb-4">Financial Insights</h3>
@@ -469,14 +469,14 @@ const ReportPreview = ({
                       </div>
                       <div className="ml-3">
                         <p className="text-sm text-blue-700">
-                          <strong>Payment Method Distribution:</strong> {datosMetodosPago.length > 0 ? 
-                          `${datosMetodosPago.reduce((max, item) => max.value > item.value ? max : item).method} is the dominant payment method` : 
+                          <strong>Payment Method Distribution:</strong> {datosMetodosPago.length > 0 ?
+                          `${datosMetodosPago.reduce((max, item) => max.value > item.value ? max : item).method} is the dominant payment method` :
                           'No payment data available'}
                         </p>
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded">
                     <div className="flex">
                       <div className="flex-shrink-0">
@@ -484,14 +484,14 @@ const ReportPreview = ({
                       </div>
                       <div className="ml-3">
                         <p className="text-sm text-green-700">
-                          <strong>Financial Health:</strong> {totales.diferencia === 0 ? 
-                          `Your accounts are balanced with no discrepancies` : 
+                          <strong>Financial Health:</strong> {totales.diferencia === 0 ?
+                          `Your accounts are balanced with no discrepancies` :
                           `You have a discrepancy of ${fmtCurrency(totales.diferencia)} that needs attention`}
                         </p>
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded">
                     <div className="flex">
                       <div className="flex-shrink-0">
@@ -499,8 +499,8 @@ const ReportPreview = ({
                       </div>
                       <div className="ml-3">
                         <p className="text-sm text-amber-700">
-                          <strong>Recommendation:</strong> {totales.diferencia > 0 ? 
-                          `Review and reconcile the discrepancy of ${fmtCurrency(totales.diferencia)}` : 
+                          <strong>Recommendation:</strong> {totales.diferencia > 0 ?
+                          `Review and reconcile the discrepancy of ${fmtCurrency(totales.diferencia)}` :
                           'Proceed with the day closure as all accounts are balanced'}
                         </p>
                       </div>
@@ -508,7 +508,7 @@ const ReportPreview = ({
                   </div>
                 </div>
               </div>
-              
+
               {/* Action Items */}
               <div className="bg-gradient-to-r from-purple-50 to-violet-50 rounded-xl p-6 border border-purple-200">
                 <h3 className="text-lg font-bold text-gray-800 mb-4">Next Steps</h3>
@@ -546,9 +546,9 @@ export default function CierreDia() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
-  
-  // Main states
-  const [fecha, setFecha] = useState(new Date());
+
+  // Main states - fecha inicializada como cadena en formato yyyy-MM-dd
+  const [fecha, setFecha] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [ventasDia, setVentasDia] = useState([]);
   const [pagosDirectos, setPagosDirectos] = useState([]);
   const [ventasCargando, setVentasCargando] = useState(false);
@@ -559,33 +559,33 @@ export default function CierreDia() {
   const [diaCerrado, setDiaCerrado] = useState(false);
   const [discrepancia, setDiscrepancia] = useState(0);
   const [observaciones, setObservaciones] = useState("");
-  
+
   // Payment method input states
   const [cashInput, setCashInput] = useState("");
   const [cardInput, setCardInput] = useState("");
   const [transferInput, setTransferInput] = useState("");
   const [otherInput, setOtherInput] = useState("");
-  
+
   // Payment method real values
   const [cashReal, setCashReal] = useState(0);
   const [cardReal, setCardReal] = useState(0);
   const [transferReal, setTransferReal] = useState(0);
   const [otherReal, setOtherReal] = useState(0);
-  
+
   // States for breakdown modals
   const [showCashBreakdownModal, setShowCashBreakdownModal] = useState(false);
   const [showCardBreakdownModal, setShowCardBreakdownModal] = useState(false);
   const [showTransferBreakdownModal, setShowTransferBreakdownModal] = useState(false);
   const [showOtherBreakdownModal, setShowOtherBreakdownModal] = useState(false);
-  
+
   // State for report preview modal
   const [showReportPreview, setShowReportPreview] = useState(false);
-  
+
   const [cashCounts, setCashCounts] = useState({});
   const [cardCounts, setCardCounts] = useState({});
   const [transferCounts, setTransferCounts] = useState({});
   const [otherCounts, setOtherCounts] = useState({});
-  
+
   const [cashTotal, setCashTotal] = useState(0);
   const [cardTotal, setCardTotal] = useState(0);
   const [transferTotal, setTransferTotal] = useState(0);
@@ -635,31 +635,32 @@ export default function CierreDia() {
     cargarPagosDirectos();
     verificarDiaCerrado();
   }, [fecha, van?.id]);
-  
-  // Sync input states with real values - CORRECCIÓN: Mostrar cero cuando es cero
+
+  // Sync input states with real values
   useEffect(() => {
     setCashReal(cashInput === "" ? 0 : Number(cashInput));
   }, [cashInput]);
-  
+
   useEffect(() => {
     setCardReal(cardInput === "" ? 0 : Number(cardInput));
   }, [cardInput]);
-  
+
   useEffect(() => {
     setTransferReal(transferInput === "" ? 0 : Number(transferInput));
   }, [transferInput]);
-  
+
   useEffect(() => {
     setOtherReal(otherInput === "" ? 0 : Number(otherInput));
   }, [otherInput]);
-  
+
   const cargarVentasDia = async () => {
     if (!van?.id) return;
     setVentasCargando(true);
     try {
-      const inicioDia = startOfDay(fecha);
-      const finDia = endOfDay(fecha);
-      
+      const fechaObj = new Date(fecha);
+      const inicioDia = startOfDay(fechaObj);
+      const finDia = endOfDay(fechaObj);
+
       const { data, error } = await supabase
         .from('ventas')
         .select(`
@@ -670,7 +671,7 @@ export default function CierreDia() {
         .gte('created_at', inicioDia.toISOString())
         .lte('created_at', finDia.toISOString())
         .order('created_at', { ascending: false });
-      
+
       if (error) throw error;
       setVentasDia(data || []);
     } catch (err) {
@@ -680,14 +681,15 @@ export default function CierreDia() {
       setVentasCargando(false);
     }
   };
-  
+
   const cargarPagosDirectos = async () => {
     if (!van?.id) return;
     setPagosCargando(true);
     try {
-      const inicioDia = startOfDay(fecha);
-      const finDia = endOfDay(fecha);
-      
+      const fechaObj = new Date(fecha);
+      const inicioDia = startOfDay(fechaObj);
+      const finDia = endOfDay(fechaObj);
+
       const { data, error } = await supabase
         .from('pagos')
         .select(`
@@ -698,7 +700,7 @@ export default function CierreDia() {
         .gte('fecha_pago', inicioDia.toISOString())
         .lte('fecha_pago', finDia.toISOString())
         .order('fecha_pago', { ascending: false });
-      
+
       if (error) throw error;
       setPagosDirectos(data || []);
     } catch (err) {
@@ -708,17 +710,17 @@ export default function CierreDia() {
       setPagosCargando(false);
     }
   };
-  
+
   const verificarDiaCerrado = async () => {
-    if (!van?.id || !isToday(fecha)) return;
+    if (!van?.id) return;
     try {
       const { data, error } = await supabase
         .from('cierres_dia')
         .select('cerrado')
         .eq('van_id', van.id)
-        .eq('fecha', format(fecha, 'yyyy-MM-dd'))
+        .eq('fecha', fecha)
         .single();
-      
+
       if (error && error.code !== 'PGRST116') throw error;
       setDiaCerrado(data?.cerrado || false);
     } catch (err) {
@@ -727,50 +729,55 @@ export default function CierreDia() {
   };
 
   /* ========================= Closure Functions ========================= */
+
   const handleCierreDia = async () => {
     if (!van?.id || !usuario?.id) {
       setMensaje("You must select a VAN and be logged in");
       setTipoMensaje("error");
       return;
     }
-    
+
     if (diaCerrado) {
       setMensaje("The day is already closed");
       setTipoMensaje("warning");
       return;
     }
-    
+
     if (totales.diferencia > 0 && !observaciones.trim()) {
       setMensaje("You must provide a note for the discrepancy");
       setTipoMensaje("warning");
       return;
     }
-    
+
     setCargando(true);
     setMensaje("");
-    
+
     try {
+      // ✅ SOLUCIÓN: Incluir caja_real que es NOT NULL en la base de datos
+      const totalReal = cashReal + cardReal + transferReal + otherReal;
+      
+      const detallesReales = `\n\n--- Real Amounts ---\nCash: ${fmtCurrency(cashReal)}\nCard: ${fmtCurrency(cardReal)}\nTransfer: ${fmtCurrency(transferReal)}\nOther: ${fmtCurrency(otherReal)}\nTotal Real: ${fmtCurrency(totalReal)}`;
+      
+      const observacionesCompletas = observaciones.trim() + detallesReales;
+      
       const { error } = await supabase
         .from('cierres_dia')
         .upsert([{
           van_id: van.id,
-          fecha: format(fecha, 'yyyy-MM-dd'),
+          fecha: fecha,
           usuario_id: usuario.id,
           total_ventas: totales.totalVentas,
           total_efectivo: totales.totalEfectivo,
           total_tarjeta: totales.totalTarjeta,
           total_transferencia: totales.totalTransferencia,
           total_otros: totales.totalOtros,
-          caja_real: cashReal,
-          tarjeta_real: cardReal,
-          transferencia_real: transferReal,
-          otros_real: otherReal,
+          caja_real: totalReal, // ✅ Campo requerido (NOT NULL)
           discrepancia: totales.diferencia,
-          observaciones: observaciones,
+          observaciones: observacionesCompletas,
           cerrado: true,
           created_at: new Date().toISOString()
         }]);
-      
+
       if (error) throw error;
       setDiaCerrado(true);
       setMensaje("Day closure successfully registered");
@@ -782,25 +789,25 @@ export default function CierreDia() {
       setCargando(false);
     }
   };
-  
+
   const handleReabrirDia = async () => {
     if (!van?.id || !usuario?.id) return;
     if (!confirm("Are you sure you want to reopen this day?")) return;
-    
+
     setCargando(true);
     setMensaje("");
-    
+
     try {
       const { error } = await supabase
         .from('cierres_dia')
-        .update({ 
+        .update({
           cerrado: false,
           reabierto_por: usuario.id,
           reabierto_el: new Date().toISOString()
         })
         .eq('van_id', van.id)
-        .eq('fecha', format(fecha, 'yyyy-MM-dd'));
-      
+        .eq('fecha', fecha);
+
       if (error) throw error;
       setDiaCerrado(false);
       setMensaje("Day successfully reopened");
@@ -812,21 +819,21 @@ export default function CierreDia() {
       setCargando(false);
     }
   };
-  
-  /* ========================= Improved PDF Generation ========================= */
+
+  /* ========================= PDF Generation ========================= */
   const handleGenerarPDF = () => {
     if (!ventasDia.length && !pagosDirectos.length) {
       setMensaje("No sales or payments to generate report");
       setTipoMensaje("warning");
       return;
     }
-    
+
     try {
       const doc = new jsPDF();
       const businessName = "Tools4Care";
       const reportTitle = "Day Closure Report";
-      
-      // Header with gradient effect
+
+      // Header
       doc.setFillColor(25, 118, 210);
       doc.rect(0, 0, 210, 30, "F");
       doc.setTextColor(255, 255, 255);
@@ -834,19 +841,17 @@ export default function CierreDia() {
       doc.text(businessName, 14, 20);
       doc.setFontSize(16);
       doc.text(reportTitle, 14, 30);
-      
-      // Reset text color
       doc.setTextColor(0, 0, 0);
-      
-      // Business information box
+
+      // Business information
       doc.setFillColor(240, 240, 240);
       doc.rect(14, 35, 182, 25, "F");
       doc.setFontSize(10);
-      doc.text(`Date: ${format(fecha, 'MM/dd/yyyy')}`, 14, 45);
+      doc.text(`Date: ${format(new Date(fecha), 'MM/dd/yyyy')}`, 14, 45);
       doc.text(`VAN: ${van?.nombre || van?.alias || 'No name'}`, 14, 52);
       doc.text(`User: ${usuario?.nombre || 'No name'}`, 14, 59);
-      
-      // Executive Summary section
+
+      // Executive Summary
       doc.setFillColor(25, 118, 210);
       doc.rect(14, 65, 182, 10, "F");
       doc.setTextColor(255, 255, 255);
@@ -855,9 +860,7 @@ export default function CierreDia() {
       doc.text("Executive Summary", 14, 73);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(0, 0, 0);
-      
-      // Summary metrics
-      doc.setFontSize(10);
+
       const summaryData = [
         ["Metric", "Value"],
         ["Total Sales", totales.totalVentas > 0 ? fmtCurrency(totales.totalVentas) : "$0.00"],
@@ -865,21 +868,17 @@ export default function CierreDia() {
         ["Total Real", fmtCurrency(cashReal + cardReal + transferReal + otherReal)],
         ["Discrepancy", totales.diferencia > 0 ? fmtCurrency(totales.diferencia) : "$0.00"]
       ];
-      
+
       autoTable(doc, {
         startY: 78,
         head: [summaryData[0]],
         body: summaryData.slice(1),
         theme: "grid",
         styles: { fontSize: 8 },
-        headStyles: { 
-          fillColor: [25, 118, 210], 
-          textColor: 255,
-          fontStyle: "bold"
-        }
+        headStyles: { fillColor: [25, 118, 210], textColor: 255, fontStyle: "bold" }
       });
-      
-      // Payment Methods section
+
+      // Payment Methods
       const paymentY = doc.lastAutoTable.finalY + 10;
       doc.setFillColor(25, 118, 210);
       doc.rect(14, paymentY, 182, 10, "F");
@@ -889,118 +888,38 @@ export default function CierreDia() {
       doc.text("Payment Methods Breakdown", 14, paymentY + 8);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(0, 0, 0);
-      
-      // Payment methods data
+
       const paymentData = [
         ["Method", "System Amount", "Real Amount", "Difference", "Percentage"],
-        ["Cash", fmtCurrency(totales.totalEfectivo), fmtCurrency(cashReal), 
-         fmtCurrency(Math.abs(totales.totalEfectivo - cashReal)), 
-         `${((totales.totalEfectivo / totales.totalCaja) * 100).toFixed(1)}%`],
-        ["Card", fmtCurrency(totales.totalTarjeta), fmtCurrency(cardReal), 
-         fmtCurrency(Math.abs(totales.totalTarjeta - cardReal)), 
-         `${((totales.totalTarjeta / totales.totalCaja) * 100).toFixed(1)}%`],
-        ["Transfer", fmtCurrency(totales.totalTransferencia), fmtCurrency(transferReal), 
-         fmtCurrency(Math.abs(totales.totalTransferencia - transferReal)), 
-         `${((totales.totalTransferencia / totales.totalCaja) * 100).toFixed(1)}%`],
-        ["Other", fmtCurrency(totales.totalOtros), fmtCurrency(otherReal), 
-         fmtCurrency(Math.abs(totales.totalOtros - otherReal)), 
-         `${((totales.totalOtros / totales.totalCaja) * 100).toFixed(1)}%`],
+        ["Cash", fmtCurrency(totales.totalEfectivo), fmtCurrency(cashReal),
+          fmtCurrency(Math.abs(totales.totalEfectivo - cashReal)),
+          `${((totales.totalEfectivo / totales.totalCaja) * 100).toFixed(1)}%`],
+        ["Card", fmtCurrency(totales.totalTarjeta), fmtCurrency(cardReal),
+          fmtCurrency(Math.abs(totales.totalTarjeta - cardReal)),
+          `${((totales.totalTarjeta / totales.totalCaja) * 100).toFixed(1)}%`],
+        ["Transfer", fmtCurrency(totales.totalTransferencia), fmtCurrency(transferReal),
+          fmtCurrency(Math.abs(totales.totalTransferencia - transferReal)),
+          `${((totales.totalTransferencia / totales.totalCaja) * 100).toFixed(1)}%`],
+        ["Other", fmtCurrency(totales.totalOtros), fmtCurrency(otherReal),
+          fmtCurrency(Math.abs(totales.totalOtros - otherReal)),
+          `${((totales.totalOtros / totales.totalCaja) * 100).toFixed(1)}%`],
         ["", "", "", "", ""],
-        ["Total", fmtCurrency(totales.totalCaja), fmtCurrency(cashReal + cardReal + transferReal + otherReal), 
-         fmtCurrency(totales.diferencia), "100%"]
+        ["Total", fmtCurrency(totales.totalCaja), fmtCurrency(cashReal + cardReal + transferReal + otherReal),
+          fmtCurrency(totales.diferencia), "100%"]
       ];
-      
+
       autoTable(doc, {
         startY: paymentY + 12,
         head: [paymentData[0]],
         body: paymentData.slice(1),
         theme: "grid",
         styles: { fontSize: 8 },
-        headStyles: { 
-          fillColor: [25, 118, 210], 
-          textColor: 255,
-          fontStyle: "bold"
-        }
+        headStyles: { fillColor: [25, 118, 210], textColor: 255, fontStyle: "bold" }
       });
-      
-      // Sales section
-      const salesY = doc.lastAutoTable.finalY + 10;
-      if (ventasDia.length > 0) {
-        doc.setFillColor(25, 118, 210);
-        doc.rect(14, salesY, 182, 10, "F");
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text("Sales of the Day", 14, salesY + 8);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(0, 0, 0);
-        
-        const salesData = [
-          ["ID", "Date", "Client", "Total", "Paid", "Status"],
-          ...ventasDia.slice(0, 10).map(venta => [
-            venta.id.slice(0, 8) + "...",
-            new Date(venta.created_at).toLocaleString(),
-            venta.clientes?.nombre || "Unidentified",
-            fmtCurrency(venta.total_venta),
-            fmtCurrency(venta.total_pagado),
-            venta.estado_pago || "pending"
-          ])
-        ];
-        
-        autoTable(doc, {
-          startY: salesY + 12,
-          head: [salesData[0]],
-          body: salesData.slice(1),
-          theme: "grid",
-          styles: { fontSize: 8 },
-          headStyles: { 
-            fillColor: [25, 118, 210], 
-            textColor: 255,
-            fontStyle: "bold"
-          }
-        });
-      }
-      
-      // Direct payments section
-      const paymentsY = doc.lastAutoTable.finalY + 10;
-      if (pagosDirectos.length > 0) {
-        doc.setFillColor(25, 118, 210);
-        doc.rect(14, paymentsY, 182, 10, "F");
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text("Direct Payments of the Day", 14, paymentsY + 8);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(0, 0, 0);
-        
-        const paymentsData = [
-          ["ID", "Date", "Client", "Method", "Amount"],
-          ...pagosDirectos.slice(0, 10).map(pago => [
-            pago.id.slice(0, 8) + "...",
-            new Date(pago.fecha_pago).toLocaleString(),
-            pago.clientes?.nombre || "Unidentified",
-            getPaymentMethodLabel(pago.metodo_pago),
-            fmtCurrency(pago.monto)
-          ])
-        ];
-        
-        autoTable(doc, {
-          startY: paymentsY + 12,
-          head: [paymentsData[0]],
-          body: paymentsData.slice(1),
-          theme: "grid",
-          styles: { fontSize: 8 },
-          headStyles: { 
-            fillColor: [25, 118, 210], 
-            textColor: 255,
-            fontStyle: "bold"
-          }
-        });
-      }
-      
-      // Notes section
-      const notesY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : 180;
+
+      // Notes
       if (observaciones) {
+        const notesY = doc.lastAutoTable.finalY + 10;
         doc.setFillColor(25, 118, 210);
         doc.rect(14, notesY, 182, 10, "F");
         doc.setTextColor(255, 255, 255);
@@ -1009,19 +928,17 @@ export default function CierreDia() {
         doc.text("Notes", 14, notesY + 8);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(0, 0, 0);
-        
         doc.text(observaciones, 14, notesY + 18, { maxWidth: 180 });
       }
-      
+
       // Footer
-      const footerY = Math.max(notesY + 30, 270);
+      const footerY = 270;
       doc.setFontSize(8);
       doc.setTextColor(100, 100, 100);
       doc.text(`Generated on ${new Date().toLocaleString()}`, 14, footerY);
       doc.text(`Tools4Care Financial System`, 14, footerY + 6);
-      
-      // Save
-      doc.save(`DayClosure_${format(fecha, 'yyyy-MM-dd')}_${van?.nombre || 'VAN'}.pdf`);
+
+      doc.save(`DayClosure_${fecha}_${van?.nombre || 'VAN'}.pdf`);
       setMensaje("PDF report generated successfully");
       setTipoMensaje("success");
     } catch (error) {
@@ -1042,7 +959,8 @@ export default function CierreDia() {
   };
 
   const updateCashCount = (value, count) => {
-    const newCounts = { ...cashCounts, [value]: count };
+    const numericCount = parseInt(count) || 0;
+    const newCounts = { ...cashCounts, [value]: numericCount };
     setCashCounts(newCounts);
     calculateCashTotal(newCounts);
   };
@@ -1056,7 +974,8 @@ export default function CierreDia() {
   };
 
   const applyCashBreakdown = () => {
-    setCashInput(cashTotal.toString());
+    const formattedValue = cashTotal.toFixed(2);
+    setCashInput(formattedValue);
     setShowCashBreakdownModal(false);
     setMensaje(`Cash updated to ${fmtCurrency(cashTotal)}`);
     setTipoMensaje("success");
@@ -1089,7 +1008,8 @@ export default function CierreDia() {
   };
 
   const updateCardCount = (value, count) => {
-    const newCounts = { ...cardCounts, [value]: count };
+    const numericCount = parseInt(count) || 0;
+    const newCounts = { ...cardCounts, [value]: numericCount };
     setCardCounts(newCounts);
     calculateCardTotal(newCounts);
   };
@@ -1103,7 +1023,8 @@ export default function CierreDia() {
   };
 
   const applyCardBreakdown = () => {
-    setCardInput(cardTotal.toString());
+    const formattedValue = cardTotal.toFixed(2);
+    setCardInput(formattedValue);
     setShowCardBreakdownModal(false);
     setMensaje(`Card payments updated to ${fmtCurrency(cardTotal)}`);
     setTipoMensaje("success");
@@ -1136,7 +1057,8 @@ export default function CierreDia() {
   };
 
   const updateTransferCount = (type, count) => {
-    const newCounts = { ...transferCounts, [type]: count };
+    const numericCount = parseInt(count) || 0;
+    const newCounts = { ...transferCounts, [type]: numericCount };
     setTransferCounts(newCounts);
     calculateTransferTotal(newCounts);
   };
@@ -1150,7 +1072,8 @@ export default function CierreDia() {
   };
 
   const applyTransferBreakdown = () => {
-    setTransferInput(transferTotal.toString());
+    const formattedValue = transferTotal.toFixed(2);
+    setTransferInput(formattedValue);
     setShowTransferBreakdownModal(false);
     setMensaje(`Transfer payments updated to ${fmtCurrency(transferTotal)}`);
     setTipoMensaje("success");
@@ -1183,7 +1106,8 @@ export default function CierreDia() {
   };
 
   const updateOtherCount = (value, count) => {
-    const newCounts = { ...otherCounts, [value]: count };
+    const numericCount = parseInt(count) || 0;
+    const newCounts = { ...otherCounts, [value]: numericCount };
     setOtherCounts(newCounts);
     calculateOtherTotal(newCounts);
   };
@@ -1197,7 +1121,8 @@ export default function CierreDia() {
   };
 
   const applyOtherBreakdown = () => {
-    setOtherInput(otherTotal.toString());
+    const formattedValue = otherTotal.toFixed(2);
+    setOtherInput(formattedValue);
     setShowOtherBreakdownModal(false);
     setMensaje(`Other payments updated to ${fmtCurrency(otherTotal)}`);
     setTipoMensaje("success");
@@ -1229,13 +1154,13 @@ export default function CierreDia() {
       totalCaja: 0,
       diferencia: 0
     };
-    
+
     let totalVentas = 0;
     let totalEfectivo = 0;
     let totalTarjeta = 0;
     let totalTransferencia = 0;
     let totalOtros = 0;
-    
+
     ventasDia.forEach(venta => {
       totalVentas += Number(venta.total_venta || 0);
       if (venta.pago?.map) {
@@ -1245,7 +1170,7 @@ export default function CierreDia() {
         totalOtros += Number(venta.pago.map.otro || 0);
       }
     });
-    
+
     pagosDirectos.forEach(pago => {
       const monto = Number(pago.monto || 0);
       switch(pago.metodo_pago) {
@@ -1255,11 +1180,11 @@ export default function CierreDia() {
         default: totalOtros += monto;
       }
     });
-    
+
     const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
     const totalReal = cashReal + cardReal + transferReal + otherReal;
     const diferencia = Math.abs(totalCaja - totalReal);
-    
+
     return {
       totalVentas,
       totalEfectivo,
@@ -1301,7 +1226,7 @@ export default function CierreDia() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-6xl mx-auto">
-        
+
         {/* Header */}
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 sm:gap-4">
@@ -1361,7 +1286,7 @@ export default function CierreDia() {
         {/* Payment Methods Panel */}
         <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6 mb-6">
           <h3 className="text-lg font-bold text-gray-800 mb-4">Payment Methods Count</h3>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Cash */}
             <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
@@ -1381,12 +1306,12 @@ export default function CierreDia() {
                   <Calculator size={16} />
                 </button>
               </div>
-              
+
               <div className="mb-2">
                 <p className="text-sm text-gray-600">System Total</p>
                 <p className="text-lg font-bold text-green-800">{totales.totalEfectivo > 0 ? fmtCurrency(totales.totalEfectivo) : "$0.00"}</p>
               </div>
-              
+
               <div>
                 <p className="text-sm text-gray-600">What I Have</p>
                 <div className="relative">
@@ -1402,7 +1327,7 @@ export default function CierreDia() {
                 </div>
               </div>
             </div>
-            
+
             {/* Card */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
               <div className="flex items-center justify-between mb-2">
@@ -1421,12 +1346,12 @@ export default function CierreDia() {
                   <Calculator size={16} />
                 </button>
               </div>
-              
+
               <div className="mb-2">
                 <p className="text-sm text-gray-600">System Total</p>
                 <p className="text-lg font-bold text-blue-800">{totales.totalTarjeta > 0 ? fmtCurrency(totales.totalTarjeta) : "$0.00"}</p>
               </div>
-              
+
               <div>
                 <p className="text-sm text-gray-600">What I Have</p>
                 <div className="relative">
@@ -1442,7 +1367,7 @@ export default function CierreDia() {
                 </div>
               </div>
             </div>
-            
+
             {/* Transfer */}
             <div className="bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl p-4 border border-purple-200">
               <div className="flex items-center justify-between mb-2">
@@ -1461,12 +1386,12 @@ export default function CierreDia() {
                   <Calculator size={16} />
                 </button>
               </div>
-              
+
               <div className="mb-2">
                 <p className="text-sm text-gray-600">System Total</p>
                 <p className="text-lg font-bold text-purple-800">{totales.totalTransferencia > 0 ? fmtCurrency(totales.totalTransferencia) : "$0.00"}</p>
               </div>
-              
+
               <div>
                 <p className="text-sm text-gray-600">What I Have</p>
                 <div className="relative">
@@ -1482,7 +1407,7 @@ export default function CierreDia() {
                 </div>
               </div>
             </div>
-            
+
             {/* Other */}
             <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
               <div className="flex items-center justify-between mb-2">
@@ -1501,12 +1426,12 @@ export default function CierreDia() {
                   <Calculator size={16} />
                 </button>
               </div>
-              
+
               <div className="mb-2">
                 <p className="text-sm text-gray-600">System Total</p>
                 <p className="text-lg font-bold text-amber-800">{totales.totalOtros > 0 ? fmtCurrency(totales.totalOtros) : "$0.00"}</p>
               </div>
-              
+
               <div>
                 <p className="text-sm text-gray-600">What I Have</p>
                 <div className="relative">
@@ -1533,13 +1458,19 @@ export default function CierreDia() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
               <input
                 type="date"
-                value={format(fecha, 'yyyy-MM-dd')}
-                onChange={(e) => setFecha(new Date(e.target.value))}
+                value={fecha}
+                onChange={(e) => {
+                  const selectedDate = e.target.value;
+                  setFecha(selectedDate);
+                  cargarVentasDia();
+                  cargarPagosDirectos();
+                  verificarDiaCerrado();
+                }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 max={format(new Date(), 'yyyy-MM-dd')}
               />
             </div>
-            
+
             {/* Notes */}
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1555,7 +1486,7 @@ export default function CierreDia() {
               />
             </div>
           </div>
-          
+
           {/* Action buttons */}
           <div className="flex flex-wrap gap-3 mt-6">
             <button
@@ -1566,7 +1497,7 @@ export default function CierreDia() {
               <Download size={18} />
               <span>Generate PDF Report</span>
             </button>
-            
+
             {!diaCerrado ? (
               <button
                 onClick={handleCierreDia}
@@ -1618,7 +1549,7 @@ export default function CierreDia() {
               <DollarSign className="text-blue-600" size={24} />
             </div>
           </div>
-          
+
           <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
             <div className="flex items-center justify-between">
               <div>
@@ -1628,7 +1559,7 @@ export default function CierreDia() {
               <Calculator className="text-green-600" size={24} />
             </div>
           </div>
-          
+
           <div className="bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl p-4 border border-purple-200">
             <div className="flex items-center justify-between">
               <div>
@@ -1638,10 +1569,10 @@ export default function CierreDia() {
               <TrendingUp className="text-purple-600" size={24} />
             </div>
           </div>
-          
+
           <div className={`bg-gradient-to-br rounded-xl p-4 border ${
-            totales.diferencia === 0 
-              ? "bg-gradient-to-br from-green-50 to-emerald-50 border-green-200" 
+            totales.diferencia === 0
+              ? "bg-gradient-to-br from-green-50 to-emerald-50 border-green-200"
               : "bg-gradient-to-br from-red-50 to-rose-50 border-red-200"
           }`}>
             <div className="flex items-center justify-between">
@@ -1705,7 +1636,7 @@ export default function CierreDia() {
                 </ResponsiveContainer>
               </div>
             </div>
-            
+
             {/* Sales by hour */}
             <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6">
               <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
@@ -1735,7 +1666,7 @@ export default function CierreDia() {
               Sales of the Day ({ventasDia.length})
             </h3>
           </div>
-          
+
           {ventasCargando ? (
             <div className="flex justify-center items-center py-12">
               <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
@@ -1805,7 +1736,7 @@ export default function CierreDia() {
                 Direct Payments of the Day ({pagosDirectos.length})
               </h3>
             </div>
-            
+
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -1851,7 +1782,7 @@ export default function CierreDia() {
         )}
 
         {/* Final summary */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200">
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200 mt-6">
           <h3 className="text-lg font-bold text-gray-800 mb-4">Final Day Summary</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-white rounded-lg p-4 shadow-sm">
@@ -1875,10 +1806,10 @@ export default function CierreDia() {
           </div>
         </div>
       </div>
-      
+
       {/* Report Preview Modal */}
       {showReportPreview && (
-        <ReportPreview 
+        <ReportPreview
           fecha={fecha}
           ventasDia={ventasDia}
           pagosDirectos={pagosDirectos}
@@ -1893,7 +1824,7 @@ export default function CierreDia() {
           onClose={() => setShowReportPreview(false)}
         />
       )}
-      
+
       {/* Cash breakdown modal */}
       {showCashBreakdownModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1907,7 +1838,7 @@ export default function CierreDia() {
                 <X size={24} />
               </button>
             </div>
-            
+
             <div className="p-4 overflow-y-auto flex-grow">
               <div className="mb-4">
                 <div className="flex justify-between items-center mb-4">
@@ -1916,12 +1847,12 @@ export default function CierreDia() {
                     Total: {fmtCurrency(cashTotal)}
                   </div>
                 </div>
-                
+
                 <div className="space-y-3">
                   {DENOMINATIONS.map((denom) => (
                     <div key={denom.value} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <span className="font-medium text-gray-700">{denom.label}</span>
-                      
+
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => subtractCashCount(denom.value)}
@@ -1929,15 +1860,14 @@ export default function CierreDia() {
                         >
                           <Minus size={16} />
                         </button>
-                        
+
                         <input
-                          type="number"
-                          min="0"
-                          value={cashCounts[denom.value] || 0}
+                          type="text"
+                          value={String(cashCounts[denom.value] || 0).padStart(1, '0')}
                           onChange={(e) => updateCashCount(denom.value, e.target.value)}
                           className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
                         />
-                        
+
                         <button
                           onClick={() => addCashCount(denom.value)}
                           className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
@@ -1945,7 +1875,7 @@ export default function CierreDia() {
                           <Plus size={16} />
                         </button>
                       </div>
-                      
+
                       <div className="font-medium text-gray-900">
                         {fmtCurrency((cashCounts[denom.value] || 0) * denom.value)}
                       </div>
@@ -1954,7 +1884,7 @@ export default function CierreDia() {
                 </div>
               </div>
             </div>
-            
+
             <div className="p-4 border-t border-gray-200 flex justify-between">
               <button
                 onClick={() => setShowCashBreakdownModal(false)}
@@ -1962,7 +1892,7 @@ export default function CierreDia() {
               >
                 Cancel
               </button>
-              
+
               <button
                 onClick={applyCashBreakdown}
                 className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
@@ -1974,250 +1904,139 @@ export default function CierreDia() {
           </div>
         </div>
       )}
-      
-      {/* Card breakdown modal */}
+
+      {/* Card breakdown modal - Similar structure */}
       {showCardBreakdownModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="p-4 border-b border-gray-200 flex justify-between items-center">
               <h3 className="text-lg font-bold text-gray-800">Quick Card Count</h3>
-              <button
-                onClick={() => setShowCardBreakdownModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
+              <button onClick={() => setShowCardBreakdownModal(false)} className="text-gray-500 hover:text-gray-700">
                 <X size={24} />
               </button>
             </div>
-            
             <div className="p-4 overflow-y-auto flex-grow">
               <div className="mb-4">
                 <div className="flex justify-between items-center mb-4">
                   <p className="text-gray-700">Enter the count for each denomination:</p>
-                  <div className="text-xl font-bold text-blue-700">
-                    Total: {fmtCurrency(cardTotal)}
-                  </div>
+                  <div className="text-xl font-bold text-blue-700">Total: {fmtCurrency(cardTotal)}</div>
                 </div>
-                
                 <div className="space-y-3">
                   {DENOMINATIONS.map((denom) => (
                     <div key={denom.value} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <span className="font-medium text-gray-700">{denom.label}</span>
-                      
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => subtractCardCount(denom.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors"
-                        >
+                        <button onClick={() => subtractCardCount(denom.value)} className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors">
                           <Minus size={16} />
                         </button>
-                        
-                        <input
-                          type="number"
-                          min="0"
-                          value={cardCounts[denom.value] || 0}
-                          onChange={(e) => updateCardCount(denom.value, e.target.value)}
-                          className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
-                        />
-                        
-                        <button
-                          onClick={() => addCardCount(denom.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
-                        >
+                        <input type="text" value={String(cardCounts[denom.value] || 0).padStart(1, '0')} onChange={(e) => updateCardCount(denom.value, e.target.value)} className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2" />
+                        <button onClick={() => addCardCount(denom.value)} className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors">
                           <Plus size={16} />
                         </button>
                       </div>
-                      
-                      <div className="font-medium text-gray-900">
-                        {fmtCurrency((cardCounts[denom.value] || 0) * denom.value)}
-                      </div>
+                      <div className="font-medium text-gray-900">{fmtCurrency((cardCounts[denom.value] || 0) * denom.value)}</div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
-            
             <div className="p-4 border-t border-gray-200 flex justify-between">
-              <button
-                onClick={() => setShowCardBreakdownModal(false)}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              
-              <button
-                onClick={applyCardBreakdown}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-              >
-                <CheckCircle size={18} />
-                Apply to Card
+              <button onClick={() => setShowCardBreakdownModal(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+              <button onClick={applyCardBreakdown} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
+                <CheckCircle size={18} />Apply to Card
               </button>
             </div>
           </div>
         </div>
       )}
-      
+
       {/* Transfer breakdown modal */}
       {showTransferBreakdownModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="p-4 border-b border-gray-200 flex justify-between items-center">
               <h3 className="text-lg font-bold text-gray-800">Quick Transfer Count</h3>
-              <button
-                onClick={() => setShowTransferBreakdownModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
+              <button onClick={() => setShowTransferBreakdownModal(false)} className="text-gray-500 hover:text-gray-700">
                 <X size={24} />
               </button>
             </div>
-            
             <div className="p-4 overflow-y-auto flex-grow">
               <div className="mb-4">
                 <div className="flex justify-between items-center mb-4">
                   <p className="text-gray-700">Enter the count for each transfer type:</p>
-                  <div className="text-xl font-bold text-purple-700">
-                    Total: {fmtCurrency(transferTotal)}
-                  </div>
+                  <div className="text-xl font-bold text-purple-700">Total: {fmtCurrency(transferTotal)}</div>
                 </div>
-                
                 <div className="space-y-3">
                   {TRANSFER_TYPES.map((type) => (
                     <div key={type.value} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <div className="flex items-center gap-2">
-                        <div 
-                          className="w-4 h-4 rounded-full" 
-                          style={{ backgroundColor: type.color }}
-                        ></div>
+                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: type.color }}></div>
                         <span className="font-medium text-gray-700">{type.label}</span>
                       </div>
-                      
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => subtractTransferCount(type.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors"
-                        >
+                        <button onClick={() => subtractTransferCount(type.value)} className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors">
                           <Minus size={16} />
                         </button>
-                        
-                        <input
-                          type="number"
-                          min="0"
-                          value={transferCounts[type.value] || 0}
-                          onChange={(e) => updateTransferCount(type.value, e.target.value)}
-                          className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
-                        />
-                        
-                        <button
-                          onClick={() => addTransferCount(type.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
-                        >
+                        <input type="text" value={String(transferCounts[type.value] || 0).padStart(1, '0')} onChange={(e) => updateTransferCount(type.value, e.target.value)} className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2" />
+                        <button onClick={() => addTransferCount(type.value)} className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors">
                           <Plus size={16} />
                         </button>
                       </div>
-                      
-                      <div className="font-medium text-gray-900">
-                        {fmtCurrency((transferCounts[type.value] || 0) * 1)}
-                      </div>
+                      <div className="font-medium text-gray-900">{fmtCurrency((transferCounts[type.value] || 0) * 1)}</div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
-            
             <div className="p-4 border-t border-gray-200 flex justify-between">
-              <button
-                onClick={() => setShowTransferBreakdownModal(false)}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              
-              <button
-                onClick={applyTransferBreakdown}
-                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-              >
-                <CheckCircle size={18} />
-                Apply to Transfer
+              <button onClick={() => setShowTransferBreakdownModal(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+              <button onClick={applyTransferBreakdown} className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
+                <CheckCircle size={18} />Apply to Transfer
               </button>
             </div>
           </div>
         </div>
       )}
-      
+
       {/* Other breakdown modal */}
       {showOtherBreakdownModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="p-4 border-b border-gray-200 flex justify-between items-center">
               <h3 className="text-lg font-bold text-gray-800">Quick Other Count</h3>
-              <button
-                onClick={() => setShowOtherBreakdownModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
+              <button onClick={() => setShowOtherBreakdownModal(false)} className="text-gray-500 hover:text-gray-700">
                 <X size={24} />
               </button>
             </div>
-            
             <div className="p-4 overflow-y-auto flex-grow">
               <div className="mb-4">
                 <div className="flex justify-between items-center mb-4">
                   <p className="text-gray-700">Enter the count for each denomination:</p>
-                  <div className="text-xl font-bold text-amber-700">
-                    Total: {fmtCurrency(otherTotal)}
-                  </div>
+                  <div className="text-xl font-bold text-amber-700">Total: {fmtCurrency(otherTotal)}</div>
                 </div>
-                
                 <div className="space-y-3">
                   {DENOMINATIONS.map((denom) => (
                     <div key={denom.value} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <span className="font-medium text-gray-700">{denom.label}</span>
-                      
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => subtractOtherCount(denom.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors"
-                        >
+                        <button onClick={() => subtractOtherCount(denom.value)} className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors">
                           <Minus size={16} />
                         </button>
-                        
-                        <input
-                          type="number"
-                          min="0"
-                          value={otherCounts[denom.value] || 0}
-                          onChange={(e) => updateOtherCount(denom.value, e.target.value)}
-                          className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
-                        />
-                        
-                        <button
-                          onClick={() => addOtherCount(denom.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
-                        >
+                        <input type="text" value={String(otherCounts[denom.value] || 0).padStart(1, '0')} onChange={(e) => updateOtherCount(denom.value, e.target.value)} className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2" />
+                        <button onClick={() => addOtherCount(denom.value)} className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors">
                           <Plus size={16} />
                         </button>
                       </div>
-                      
-                      <div className="font-medium text-gray-900">
-                        {fmtCurrency((otherCounts[denom.value] || 0) * denom.value)}
-                      </div>
+                      <div className="font-medium text-gray-900">{fmtCurrency((otherCounts[denom.value] || 0) * denom.value)}</div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
-            
             <div className="p-4 border-t border-gray-200 flex justify-between">
-              <button
-                onClick={() => setShowOtherBreakdownModal(false)}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              
-              <button
-                onClick={applyOtherBreakdown}
-                className="px-6 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-              >
-                <CheckCircle size={18} />
-                Apply to Other
+              <button onClick={() => setShowOtherBreakdownModal(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+              <button onClick={applyOtherBreakdown} className="px-6 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
+                <CheckCircle size={18} />Apply to Other
               </button>
             </div>
           </div>
