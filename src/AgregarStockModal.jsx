@@ -21,6 +21,9 @@ export default function AgregarStockModal({
   const [mensaje, setMensaje] = useState("");
   const [loading, setLoading] = useState(false);
   const timerRef = useRef();
+  
+  // 🆕 Ref para el input de cantidad (para hacer focus automático)
+  const cantidadInputRef = useRef(null);
 
   // modo de búsqueda: "auto" (todos), "codigo", "nombre", "marca"
   const [modo, setModo] = useState("auto");
@@ -48,6 +51,17 @@ export default function AgregarStockModal({
       if (timerRef.current) clearTimeout(timerRef.current);
     }
   }, [abierto]);
+
+  // 🆕 Auto-focus en cantidad cuando se selecciona un producto
+  useEffect(() => {
+    if (seleccion && cantidadInputRef.current) {
+      // Pequeño delay para asegurar que el DOM esté listo
+      setTimeout(() => {
+        cantidadInputRef.current?.focus();
+        cantidadInputRef.current?.select(); // Selecciona el texto para reemplazarlo fácilmente
+      }, 100);
+    }
+  }, [seleccion]);
 
   // Debounce de búsqueda + fast-path para escáner
   useEffect(() => {
@@ -461,8 +475,12 @@ export default function AgregarStockModal({
           </div>
         )}
 
+        {/* 🆕 INPUT DE CANTIDAD CON TECLADO NUMÉRICO */}
         <input
+          ref={cantidadInputRef}
           type="number"
+          inputMode="numeric"
+          pattern="[0-9]*"
           className="border p-2 rounded w-full mb-2"
           min={1}
           value={cantidad}
