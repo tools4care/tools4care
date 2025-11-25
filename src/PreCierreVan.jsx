@@ -1,4 +1,4 @@
-// src/PreCierreVan.jsx
+// src/PreCierreVan.jsx - Corregido
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
@@ -78,8 +78,11 @@ function localTodayISO() {
 }
 
 /* ========================= Custom Hook ========================= */
+
 function usePrecloseRows(vanId, diasAtras = 21) {
   const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!vanId) {
@@ -88,55 +91,96 @@ function usePrecloseRows(vanId, diasAtras = 21) {
     }
 
     let alive = true;
-    (async () => {
-      const hoy = new Date();
-      const desde = new Date(hoy);
-      desde.setDate(hoy.getDate() - (diasAtras - 1));
+    setLoading(true);
+    setError(null);
 
-      const p_from = desde.toISOString().slice(0, 10);
-      const p_to = hoy.toISOString().slice(0, 10);
+    const fetchData = async () => {
+      try {
+        const hoy = new Date();
+        const desde = new Date(hoy);
+        desde.setDate(hoy.getDate() - (diasAtras - 1));
 
-      const { data, error } = await supabase.rpc(
-        "closeout_pre_resumen_filtrado",
-        {
-          p_van_id: vanId,
-          p_from,
-          p_to,
+        const p_from = desde.toISOString().slice(0, 10);
+        const p_to = hoy.toISOString().slice(0, 10);
+
+        console.log("Fetching pre-close rows for van:", vanId, "from:", p_from, "to:", p_to);
+
+        // Obtener las fechas que ya tienen cierres
+        const { data: cierres, error: cierresError } = await supabase
+          .from('cierres_dia')
+          .select('fecha')
+          .eq('van_id', vanId)
+          .gte('fecha', p_from)
+          .lte('fecha', p_to);
+
+        if (cierresError) {
+          console.error("Error fetching closures", cierresError);
+          throw new Error(cierresError.message);
         }
-      );
 
-      if (!alive) return;
+        const fechasConCierre = new Set(cierres?.map(c => c.fecha) || []);
+        console.log("Fechas con cierre:", fechasConCierre);
 
-      if (error) {
-        console.error("preclose rpc error", error);
+        // Llamar a la función RPC
+     const { data, error: rpcError } = await supabase.rpc(
+  "closeout_pre_resumen_filtrado",
+  {
+    p_van_id: vanId,
+    p_from,
+    p_to,
+  }
+);
+
+        if (rpcError) {
+          console.error("RPC error:", rpcError);
+          throw new Error(rpcError.message);
+        }
+
+        console.log("RPC data received:", data);
+
+        // Procesar y normalizar los datos
+        const normalized = (data ?? [])
+          .map((r) => {
+            const iso = r.dia ?? r.fecha ?? r.day ?? r.f ?? null;
+            return {
+              dia: typeof iso === "string" ? iso.slice(0, 10) : null,
+              cash_expected: Number(r.cash_expected ?? r.cash ?? 0),
+              card_expected: Number(r.card_expected ?? r.card ?? 0),
+              transfer_expected: Number(r.transfer_expected ?? r.transfer ?? 0),
+              mix_unallocated: Number(r.mix_unallocated ?? r.mix ?? 0),
+            };
+          })
+          .filter((r) => {
+            const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
+            const hasCierre = fechasConCierre.has(r.dia);
+            console.log(`Filtering date ${r.dia}: valid=${isValid}, hasCierre=${hasCierre}`);
+            return isValid && !hasCierre;
+          });
+
+        // Ordenar por fecha descendente
+        normalized.sort((a, b) => (a.dia < b.dia ? 1 : -1));
+        
+        console.log("Normalized rows:", normalized);
+        setRows(normalized);
+      } catch (err) {
+        console.error("Error in fetchData:", err);
+        setError(err.message);
         setRows([]);
-        return;
+      } finally {
+        if (alive) {
+          setLoading(false);
+        }
       }
+    };
 
-      const normalized = (data ?? [])
-        .map((r) => {
-          const iso = r.dia ?? r.fecha ?? r.day ?? r.f ?? null;
-          return {
-            dia: typeof iso === "string" ? iso.slice(0, 10) : null,
-            cash_expected: Number(r.cash_expected ?? r.cash ?? 0),
-            card_expected: Number(r.card_expected ?? r.card ?? 0),
-            transfer_expected: Number(r.transfer_expected ?? r.transfer ?? 0),
-            mix_unallocated: Number(r.mix_unallocated ?? r.mix ?? 0),
-          };
-        })
-        .filter((r) => r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia));
-
-      // Orden desc por fecha
-      normalized.sort((a, b) => (a.dia < b.dia ? 1 : -1));
-      setRows(normalized);
-    })();
+    fetchData();
 
     return () => {
       alive = false;
     };
   }, [vanId, diasAtras]);
 
-  return rows;
+  return { rows, loading, error };
 }
 
 /* ========================= Helper Functions ========================= */
@@ -162,7 +206,6 @@ export default function PreCierreVan() {
   const navigate = useNavigate();
   
   // Estados principales
-  const [rows, setRows] = useState([]);
   const [invoices, setInvoices] = useState({});
   const [selected, setSelected] = useState([]);
   const [mensaje, setMensaje] = useState("");
@@ -171,12 +214,13 @@ export default function PreCierreVan() {
   
   // Fechas
   const todayISO = useMemo(localTodayISO, []);
-  const allDates = useMemo(() => rows.map((r) => r.dia), [rows]);
 
   // Cargar filas pendientes usando el hook personalizado
-  const pendingRows = usePrecloseRows(van?.id, 21);
+  const { rows: pendingRows, loading, error } = usePrecloseRows(van?.id, 21);
   
-  // Sincronizar filas pendientes con el estado
+  // Sincronizar filas pendientes con el estado principal
+  const [rows, setRows] = useState([]);
+  
   useEffect(() => {
     if (pendingRows.length !== rows.length) {
       setRows(pendingRows);
@@ -228,10 +272,10 @@ export default function PreCierreVan() {
   // Asegurar que las fechas seleccionadas estén visibles
   useEffect(() => {
     if (selected.length === 0) return;
-    const visible = new Set(allDates);
+    const visible = new Set(rows.map(r => r.dia));
     const cleaned = selected.filter((d) => visible.has(d));
     if (cleaned.length !== selected.length) setSelected(cleaned);
-  }, [allDates, selected]);
+  }, [rows, selected]);
 
   // Actualizar localStorage cuando cambian las selecciones
   useEffect(() => {
@@ -288,28 +332,32 @@ export default function PreCierreVan() {
   }, []);
 
   // Toggle todas las fechas
-  const allSelected = selected.length > 0 && selected.length === allDates.length;
+  const allSelected = selected.length > 0 && selected.length === rows.length;
   const onToggleAll = useCallback(() => {
-    const next = allSelected ? [] : [...allDates];
+    const next = allSelected ? [] : [...rows.map(r => r.dia)];
     setSelected(next);
-  }, [allDates, allSelected]);
+  }, [rows, allSelected]);
 
   // Sumas del panel (sobre fechas seleccionadas)
-  const sum = useMemo(() => {
-    return selected.reduce(
-      (acc, d) => {
-        const r = rows.find((x) => x.dia === d);
-        if (!r) return acc;
-        acc.cash += Number(r.cash_expected || 0);
-        acc.card += Number(r.card_expected || 0);
-        acc.transfer += Number(r.transfer_expected || 0);
-        acc.mix += Number(r.mix_unallocated || 0);
-        acc.invoices += Number(invoices[d] || 0);
-        return acc;
-      },
-      { cash: 0, card: 0, transfer: 0, mix: 0, invoices: 0 }
-    );
-  }, [selected, rows, invoices]);
+// En la función sum
+const sum = useMemo(() => {
+  return selected.reduce(
+    (acc, d) => {
+      const r = rows.find((x) => x.dia === d);
+      if (!r) return acc;
+      
+      // Sumar correctamente los métodos de pago
+      acc.cash += Number(r.cash_expected || 0);
+      acc.card += Number(r.card_expected || 0);
+      acc.transfer += Number(r.transfer_expected || 0);
+      acc.mix += Number(r.mix_unallocated || 0);
+      acc.invoices += Number(invoices[d] || 0);
+      
+      return acc;
+    },
+    { cash: 0, card: 0, transfer: 0, mix: 0, invoices: 0 }
+  );
+}, [selected, rows, invoices]);
 
   const totalExpected = sum.cash + sum.card + sum.transfer + sum.mix;
   const canProcess = selected.length > 0 && totalExpected > 0;
@@ -624,7 +672,20 @@ export default function PreCierreVan() {
             </div>
           </div>
           
-          {rows.length === 0 ? (
+          {loading ? (
+            <div className="flex justify-center items-center py-12">
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+              <span className="ml-2 text-gray-600">Loading pending days...</span>
+            </div>
+          ) : error ? (
+            <div className="text-center py-12">
+              <div className="bg-red-100 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
+                <AlertCircle className="text-red-500" size={24} />
+              </div>
+              <p className="text-red-600 font-medium">Error loading data</p>
+              <p className="text-red-500 text-sm mt-1">{error}</p>
+            </div>
+          ) : rows.length === 0 ? (
             <div className="text-center py-12">
               <div className="bg-gray-100 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
                 <Calendar className="text-gray-400" size={24} />
