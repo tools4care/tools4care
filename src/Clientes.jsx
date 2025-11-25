@@ -10,7 +10,7 @@ import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
   MapPin, Building2, Calendar, TrendingUp, X, Check, ChevronsLeft,
   ChevronLeft, ChevronRight, ChevronsRight, BarChart3, RefreshCcw,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, Trash2, Download
 } from "lucide-react";
 
 /* === CxC centralizado === */
@@ -621,8 +621,6 @@ export default function Clientes() {
   const [mesSeleccionado, setMesSeleccionado] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // ⚡ ELIMINADO: const [cxcByClient, setCxcByClient] = useState({});
-
   // Auto-refresh crédito refs
   const focusHandlerRef = useRef(null);
   const intervalRef = useRef(null);
@@ -726,10 +724,6 @@ const fetchPage = async (opts = {}) => {
   
   setClientes(data || []);
   setTotalRows(count || 0);
-  
-  // ⚡ NO cargamos CxC aquí - el balance viene de la vista
-  // ⚡ OPTIMIZACIÓN: Sin Promise.allSettled con safeGetCxc
-  
   setIsLoading(false);
 };
 
@@ -1153,18 +1147,18 @@ const fetchPage = async (opts = {}) => {
 
   /* -------------------- UI -------------------- */
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-8">
-        {/* Header */}
-        <div className="mb-4 sm:mb-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 sm:gap-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
+        {/* Header Mejorado */}
+        <div className="bg-white rounded-3xl shadow-xl p-6 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h1 className="text-xl sm:text-2xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
                 Client Management
               </h1>
-              <p className="text-gray-600 mt-1 sm:mt-2 text-xs sm:text-sm md:text-base">Manage your clients and track their payments</p>
+              <p className="text-gray-600 text-sm">Manage your clients and track their payments</p>
             </div>
-            <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-3">
               {clienteSeleccionado?.id && (
                 <button
                   onClick={() => safeGetCxc(clienteSeleccionado.id).then(info => {
@@ -1174,7 +1168,7 @@ const fetchPage = async (opts = {}) => {
                       setTimeout(() => setMensaje(""), 1200);
                     }
                   })}
-                  className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm text-sm sm:text-base"
+                  className="bg-white text-blue-700 border-2 border-blue-200 hover:border-blue-400 hover:bg-blue-50 px-4 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm"
                   title="Refresh credit"
                 >
                   <RefreshCcw size={18} />
@@ -1183,51 +1177,51 @@ const fetchPage = async (opts = {}) => {
               )}
               <button
                 onClick={() => { abrirNuevoCliente(); navigate("/clientes/nuevo"); }}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-xs sm:text-base"
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 title="New Client (⌘/Ctrl+N)"
               >
                 <Plus size={20} />
-                <span className="hidden sm:inline">New Client</span>
+                <span>New Client</span>
               </button>
             </div>
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 mt-4 sm:mt-8">
-            <div className="bg-white rounded-2xl p-3 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-5 border-2 border-blue-200 hover:border-blue-300 transition-all hover:shadow-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-500 text-xs sm:text-sm font-medium">Total Clients</p>
-                  <p className="text-xl sm:text-3xl font-bold text-gray-800">{totales.totalClients}</p>
+                  <p className="text-blue-600 text-sm font-semibold uppercase tracking-wide">Total Clients</p>
+                  <p className="text-4xl font-bold text-blue-700 mt-1">{totales.totalClients}</p>
                 </div>
-                <div className="bg-blue-100 p-2 sm:p-3 rounded-full">
-                  <User className="text-blue-600" size={18} />
+                <div className="bg-blue-500 p-3 rounded-xl shadow-lg">
+                  <User className="text-white" size={24} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl p-3 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-5 border-2 border-amber-200 hover:border-amber-300 transition-all hover:shadow-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-500 text-xs sm:text-sm font-medium">Clients with Debt</p>
-                  <p className="text-xl sm:text-3xl font-bold text-orange-600">{totales.withDebt}</p>
+                  <p className="text-amber-600 text-sm font-semibold uppercase tracking-wide">Clients with Debt</p>
+                  <p className="text-4xl font-bold text-amber-700 mt-1">{totales.withDebt}</p>
                 </div>
-                <div className="bg-orange-100 p-2 sm:p-3 rounded-full">
-                  <TrendingUp className="text-orange-600" size={18} />
+                <div className="bg-amber-500 p-3 rounded-xl shadow-lg">
+                  <TrendingUp className="text-white" size={24} />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl p-3 sm:p-6 shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
+            <div className="bg-gradient-to-br from-red-50 to-rose-50 rounded-2xl p-5 border-2 border-red-200 hover:border-red-300 transition-all hover:shadow-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-500 text-xs sm:text-sm font-medium">Total Outstanding</p>
-                  <p className="text-xl sm:text-3xl font-bold text-red-600">
+                  <p className="text-red-600 text-sm font-semibold uppercase tracking-wide">Total Outstanding</p>
+                  <p className="text-4xl font-bold text-red-700 mt-1">
                     {fmtSafe(totales.totalOutstanding)}
                   </p>
                 </div>
-                <div className="bg-red-100 p-2 sm:p-3 rounded-full">
-                  <DollarSign className="text-red-600" size={18} />
+                <div className="bg-red-500 p-3 rounded-xl shadow-lg">
+                  <DollarSign className="text-white" size={24} />
                 </div>
               </div>
             </div>
@@ -1235,15 +1229,15 @@ const fetchPage = async (opts = {}) => {
         </div>
 
         {/* Main card */}
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-3xl shadow-xl border-2 border-gray-200 overflow-hidden">
           {/* Search */}
-          <div className="p-3 sm:p-6 bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">
+          <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50 border-b-2 border-gray-200">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
               <input
                 ref={searchRef}
-                className="w-full pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white shadow-sm text-xs sm:text-base"
-                placeholder="Search clients by name, phone, email or business..."
+                className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white shadow-sm text-base font-medium"
+                placeholder="Search clients by name, phone, email, business or address..."
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value ?? "")}
                 title="Focus Search (⌘/Ctrl+K)"
@@ -1253,43 +1247,45 @@ const fetchPage = async (opts = {}) => {
 
           {/* Loading */}
           {isLoading && (
-            <div className="flex justify-center items-center py-8 sm:py-12">
-              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+            <div className="flex justify-center items-center py-16">
+              <div className="relative">
+                <div className="w-16 h-16 border-8 border-blue-200 rounded-full"></div>
+                <div className="w-16 h-16 border-8 border-blue-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+              </div>
             </div>
           )}
 
           {/* --- PANEL STICKY DE BALANCES EN MÓVIL --- */}
           {busqueda.trim() !== "" && !isLoading && clientes.length > 0 && (
-            <div className="md:hidden sticky top-0 z-20 bg-white border-b border-gray-200">
-              <div className="px-3 py-2">
-                <div className="text-[10px] text-gray-500 mb-1">
-                  Resultados: {clientes.length} • Balances rápidos
+            <div className="md:hidden sticky top-0 z-20 bg-white border-b-2 border-gray-200 shadow-md">
+              <div className="px-4 py-3">
+                <div className="text-xs text-gray-500 mb-2 font-semibold">
+                  📊 Results: {clientes.length} • Quick balances
                 </div>
 
-                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
                   {clientes.slice(0, 10).map((c) => {
-                    // ⚡ Usar balance directo de la vista
                     const saldo = Number(c.balance || 0);
 
                     return (
                       <div
                         key={c.id}
-                        className={`shrink-0 min-w-[240px] max-w-[280px] p-3 rounded-xl border
-                ${saldo > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}
+                        className={`shrink-0 min-w-[260px] max-w-[300px] p-4 rounded-xl border-2 shadow-md
+                ${saldo > 0 ? "border-rose-300 bg-gradient-to-br from-rose-50 to-red-50" : "border-emerald-300 bg-gradient-to-br from-emerald-50 to-green-50"}`}
                       >
                         {/* Header: Nombre + botón Payment */}
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-semibold text-gray-800 truncate">
+                        <div className="flex items-start justify-between gap-2 mb-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-bold text-gray-900 truncate">
                               {c.nombre || "—"}
                             </div>
                             {c.negocio && (
-                              <div className="text-[10px] text-gray-600 truncate">
+                              <div className="text-xs text-gray-600 truncate mt-0.5">
                                 {c.negocio}
                               </div>
                             )}
                             {c.telefono && (
-                              <div className="text-[10px] text-gray-500 truncate">
+                              <div className="text-xs text-gray-500 truncate mt-0.5">
                                 {formatPhoneForInput(c.telefono)}
                               </div>
                             )}
@@ -1297,8 +1293,8 @@ const fetchPage = async (opts = {}) => {
 
                           {/* Botón directo a Abono */}
                           <button
-                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium
-                               bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold
+                               bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white whitespace-nowrap shadow-md"
                             onClick={async (e) => {
                               e.stopPropagation();
                               const info = await safeGetCxc(c.id);
@@ -1313,26 +1309,26 @@ const fetchPage = async (opts = {}) => {
                             title="Registrar pago"
                           >
                             <DollarSign size={14} />
-                            <span className="hidden sm:inline">Payment</span>
+                            Payment
                           </button>
                         </div>
 
                         {/* Balance y abrir Stats tocando el cuerpo */}
                         <button
-                          className="mt-2 w-full text-left"
+                          className="mt-2 w-full text-left bg-white/60 rounded-lg p-3 hover:bg-white/80 transition-all"
                           onClick={() => {
                             setClienteSeleccionado(c);
                             setMostrarStats(true);
                           }}
                         >
                           <div
-                            className={`text-sm font-bold ${
+                            className={`text-2xl font-bold ${
                               saldo > 0 ? "text-rose-600" : "text-emerald-600"
                             }`}
                           >
                             {fmtSafe(saldo)}
                           </div>
-                          <div className="text-[10px] text-gray-500">Tap para ver detalles</div>
+                          <div className="text-xs text-gray-500 mt-1">Tap for details</div>
                         </button>
                       </div>
                     );
@@ -1346,7 +1342,7 @@ const fetchPage = async (opts = {}) => {
           {!isLoading && (
             <>
               {/* Mobile View - Cards */}
-              <div className="md:hidden space-y-3 p-3 sm:p-4">
+              <div className="md:hidden space-y-4 p-4">
                 {clientes.map((c) => {
                   // Dirección: aceptar string u objeto
                   const dRaw = c.direccion;
@@ -1358,28 +1354,27 @@ const fetchPage = async (opts = {}) => {
                   }
                   const d = dObj || { calle: "", ciudad: "", estado: "", zip: "" };
 
-                  // ⚡ Balance directo de la vista
                   const saldo = Number(c.balance || 0);
 
                   return (
                     <div
                       key={c.id}
-                      className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                      className="bg-gradient-to-br from-white to-blue-50 border-2 border-blue-100 rounded-2xl p-5 shadow-lg hover:shadow-xl transition-all cursor-pointer"
                       onClick={() => {
                         setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
                         setMostrarStats(true);
                       }}
                     >
-                      <div className="flex justify-between items-start mb-3">
+                      <div className="flex justify-between items-start mb-4">
                         <div className="flex items-center gap-3">
-                          <div className="bg-blue-100 rounded-full p-2">
-                            <User className="text-blue-600" size={16} />
+                          <div className="bg-gradient-to-br from-blue-500 to-indigo-500 rounded-xl p-2.5 shadow-md">
+                            <User className="text-white" size={20} />
                           </div>
                           <div>
                             <h3 className="font-bold text-gray-900 text-lg">{c.nombre}</h3>
                             {c.negocio && (
-                              <p className="text-sm text-gray-600 flex items-center gap-1">
-                                <Building2 size={12} />
+                              <p className="text-sm text-gray-600 flex items-center gap-1 mt-0.5">
+                                <Building2 size={14} />
                                 {c.negocio}
                               </p>
                             )}
@@ -1393,35 +1388,38 @@ const fetchPage = async (opts = {}) => {
                             setResumen((r) => ({ ...r, balance: info ? info.saldo : saldo, cxc: info || null }));
                             setMostrarAbono(true);
                           }}
-                          className="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1"
+                          className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md"
                         >
-                          <DollarSign size={14} />
+                          <DollarSign size={16} />
                           Payment
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 mb-3">
-                        <div>
-                          <p className="text-xs text-gray-500">Phone</p>
-                          <p className="text-sm font-medium">{formatPhoneForInput(c.telefono)}</p>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="bg-white/70 rounded-lg p-3">
+                          <p className="text-xs text-gray-500 font-semibold uppercase">Phone</p>
+                          <p className="text-sm font-medium text-gray-900 mt-1">{formatPhoneForInput(c.telefono)}</p>
                         </div>
-                        <div>
-                          <p className="text-xs text-gray-500">Email</p>
-                          <p className="text-sm font-medium truncate">{c.email}</p>
+                        <div className="bg-white/70 rounded-lg p-3">
+                          <p className="text-xs text-gray-500 font-semibold uppercase">Email</p>
+                          <p className="text-sm font-medium text-gray-900 truncate mt-1">{c.email}</p>
                         </div>
                       </div>
 
-                      <div className="mb-3">
-                        <p className="text-xs text-gray-500 mb-1">Address</p>
-                        <p className="text-sm text-gray-800 truncate">{prettyAddress(c.direccion)}</p>
+                      <div className="mb-4 bg-white/70 rounded-lg p-3">
+                        <p className="text-xs text-gray-500 font-semibold uppercase mb-1.5">Address</p>
+                        <p className="text-sm text-gray-800 flex items-start gap-2">
+                          <MapPin size={14} className="shrink-0 mt-0.5 text-gray-400" />
+                          <span>{prettyAddress(c.direccion)}</span>
+                        </p>
                       </div>
 
                       <div className="flex justify-between items-center">
                         <div>
-                          <p className="text-xs text-gray-500">Balance</p>
+                          <p className="text-xs text-gray-500 font-semibold uppercase">Balance</p>
                           <span
-                            className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
-                              safe2(saldo) > 0 ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
+                            className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold mt-1 shadow-sm ${
+                              safe2(saldo) > 0 ? "bg-red-500 text-white" : "bg-green-500 text-white"
                             }`}
                           >
                             {fmtSafe(saldo)}
@@ -1432,29 +1430,29 @@ const fetchPage = async (opts = {}) => {
                   );
                 })}
                 {clientes.length === 0 && (
-                  <div className="text-center py-8">
-                    <div className="bg-gray-100 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
-                      <Search className="text-gray-400" size={24} />
+                  <div className="text-center py-12">
+                    <div className="bg-gradient-to-br from-gray-100 to-gray-200 rounded-full p-4 w-20 h-20 mx-auto mb-4 flex items-center justify-center shadow-inner">
+                      <Search className="text-gray-400" size={32} />
                     </div>
-                    <p className="text-gray-500 font-medium">No clients found</p>
-                    <p className="text-gray-400 text-sm">Try adjusting your search criteria</p>
+                    <p className="text-gray-700 font-bold text-lg mb-1">No clients found</p>
+                    <p className="text-gray-500 text-sm">Try adjusting your search criteria</p>
                   </div>
                 )}
               </div>
 
               {/* Desktop View - Table */}
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-xs sm:text-sm">
-                  <thead className="bg-gray-50">
+                <table className="w-full">
+                  <thead className="bg-gradient-to-r from-gray-50 to-blue-50 border-b-2 border-gray-200">
                     <tr>
-                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Client Info</th>
-                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Contact</th>
-                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider hidden md:table-cell">Address</th>
-                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Balance</th>
-                      <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Client Info</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Contact</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Address</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Balance</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200">
+                  <tbody className="divide-y divide-gray-100">
                     {clientes.map((c) => {
                       // Dirección: aceptar string u objeto
                       const dRaw = c.direccion;
@@ -1466,27 +1464,26 @@ const fetchPage = async (opts = {}) => {
                       }
                       const d = dObj || { calle: "", ciudad: "", estado: "", zip: "" };
 
-                      // ⚡ Balance directo de la vista
                       const saldo = Number(c.balance || 0);
 
                       return (
                         <tr
                           key={c.id}
-                          className="hover:bg-blue-50 cursor-pointer transition-colors duration-150"
+                          className="hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 cursor-pointer transition-all duration-200"
                           onClick={() => {
                             setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
                             setMostrarStats(true);
                           }}
                         >
-                          <td className="px-4 sm:px-6 py-3 sm:py-4">
+                          <td className="px-6 py-4">
                             <div className="flex items-center">
-                              <div className="bg-blue-100 rounded-full p-2 mr-3">
-                                <User size={16} className="text-blue-600" />
+                              <div className="bg-gradient-to-br from-blue-500 to-indigo-500 rounded-xl p-2 mr-3 shadow-md">
+                                <User size={18} className="text-white" />
                               </div>
                               <div>
-                                <div className="text-sm font-semibold text-gray-900">{c.nombre}</div>
+                                <div className="text-sm font-bold text-gray-900">{c.nombre}</div>
                                 {c.negocio && (
-                                  <div className="text-[12px] sm:text-sm text-gray-500 flex items-center gap-1">
+                                  <div className="text-sm text-gray-600 flex items-center gap-1 mt-0.5">
                                     <Building2 size={12} />
                                     {c.negocio}
                                   </div>
@@ -1494,40 +1491,40 @@ const fetchPage = async (opts = {}) => {
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 sm:px-6 py-3 sm:py-4">
+                          <td className="px-6 py-4">
                             <div className="space-y-1">
                               {c.telefono && (
                                 <div className="text-sm text-gray-900 flex items-center gap-2">
-                                  <Phone size={12} className="text-gray-400" />
+                                  <Phone size={14} className="text-gray-400" />
                                   {formatPhoneForInput(c.telefono)}
                                 </div>
                               )}
                               {c.email && (
-                                <div className="text-[12px] sm:text-sm text-gray-500 flex items-center gap-2">
-                                  <Mail size={12} className="text-gray-400" />
+                                <div className="text-sm text-gray-600 flex items-center gap-2">
+                                  <Mail size={14} className="text-gray-400" />
                                   {c.email}
                                 </div>
                               )}
                             </div>
                           </td>
-                          <td className="px-4 sm:px-6 py-3 sm:py-4 hidden md:table-cell">
+                          <td className="px-6 py-4">
                             <div className="text-sm text-gray-900 flex items-start gap-2">
-                              <MapPin size={12} className="text-gray-400 mt-0.5 flex-shrink-0" />
-                              <div>{prettyAddress(c.direccion)}</div>
+                              <MapPin size={14} className="text-gray-400 mt-0.5 shrink-0" />
+                              <div className="max-w-xs">{prettyAddress(c.direccion)}</div>
                             </div>
                           </td>
-                          <td className="px-4 sm:px-6 py-3 sm:py-4">
+                          <td className="px-6 py-4">
                             <span
-                              className={`inline-flex items-center px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold ${
-                                safe2(saldo) > 0 ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
+                              className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold shadow-sm ${
+                                safe2(saldo) > 0 ? "bg-red-500 text-white" : "bg-green-500 text-white"
                               }`}
                             >
                               {fmtSafe(saldo)}
                             </span>
                           </td>
-                          <td className="px-4 sm:px-6 py-3 sm:py-4">
+                          <td className="px-6 py-4">
                             <button
-                              className="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors duration-200"
+                              className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all duration-200 shadow-md hover:shadow-lg"
                               onClick={async (e) => {
                                 e.stopPropagation();
                                 const info = await safeGetCxc(c.id);
@@ -1536,8 +1533,8 @@ const fetchPage = async (opts = {}) => {
                                 setMostrarAbono(true);
                               }}
                             >
-                              <DollarSign size={14} />
-                              <span className="hidden sm:inline">Payment</span>
+                              <DollarSign size={16} />
+                              Payment
                             </button>
                           </td>
                         </tr>
@@ -1545,13 +1542,13 @@ const fetchPage = async (opts = {}) => {
                     })}
                     {clientes.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center">
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="bg-gray-100 rounded-full p-3">
-                              <Search className="text-gray-400" size={24} />
+                        <td colSpan={5} className="px-6 py-16 text-center">
+                          <div className="flex flex-col items-center gap-4">
+                            <div className="bg-gradient-to-br from-gray-100 to-gray-200 rounded-full p-4 shadow-inner">
+                              <Search className="text-gray-400" size={32} />
                             </div>
-                            <p className="text-gray-500 font-medium">No clients found</p>
-                            <p className="text-gray-400 text-sm">Try adjusting your search criteria</p>
+                            <p className="text-gray-700 font-bold text-lg">No clients found</p>
+                            <p className="text-gray-500">Try adjusting your search criteria</p>
                           </div>
                         </td>
                       </tr>
@@ -1561,46 +1558,46 @@ const fetchPage = async (opts = {}) => {
               </div>
 
               {/* Footer: paginación */}
-              <div className="flex flex-col md:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-200 bg-gray-50 text-sm">
-                <div className="text-gray-600">
-                  Showing <span className="font-semibold">{clientes.length}</span> of{" "}
-                  <span className="font-semibold">{totalRows}</span> • Page{" "}
-                  <span className="font-semibold">{page}</span> / {pageCount}
+              <div className="flex flex-col md:flex-row items-center justify-between gap-4 px-6 py-4 border-t-2 border-gray-200 bg-gradient-to-r from-gray-50 to-blue-50">
+                <div className="text-gray-700 font-medium">
+                  Showing <span className="font-bold text-blue-600">{clientes.length}</span> of{" "}
+                  <span className="font-bold text-blue-600">{totalRows}</span> • Page{" "}
+                  <span className="font-bold text-blue-600">{page}</span> / {pageCount}
                 </div>
-                <div className="flex items-center gap-3">
-                  <label className="text-gray-600">Page size</label>
+                <div className="flex items-center gap-4">
+                  <label className="text-gray-700 font-medium">Page size</label>
                   <select
-                    className="px-3 py-2 border rounded-lg text-sm"
+                    className="px-4 py-2 border-2 border-gray-300 rounded-xl font-medium bg-white hover:border-blue-400 focus:ring-2 focus:ring-blue-500 transition-all"
                     value={pageSize}
                     onChange={(e) => setPageSize(Number(e.target.value))}
                   >
                     {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
 
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-2">
                     <button
-                      className="p-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
+                      className="p-2 rounded-xl border-2 border-gray-300 bg-white hover:bg-blue-50 hover:border-blue-400 disabled:opacity-40 disabled:hover:bg-white disabled:hover:border-gray-300 transition-all shadow-sm"
                       disabled={page <= 1}
                       onClick={() => setPage(1)}
                     >
                       <ChevronsLeft size={18} />
                     </button>
                     <button
-                      className="p-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
+                      className="p-2 rounded-xl border-2 border-gray-300 bg-white hover:bg-blue-50 hover:border-blue-400 disabled:opacity-40 disabled:hover:bg-white disabled:hover:border-gray-300 transition-all shadow-sm"
                       disabled={page <= 1}
                       onClick={() => setPage(p => Math.max(1, p - 1))}
                     >
                       <ChevronLeft size={18} />
                     </button>
                     <button
-                      className="p-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
+                      className="p-2 rounded-xl border-2 border-gray-300 bg-white hover:bg-blue-50 hover:border-blue-400 disabled:opacity-40 disabled:hover:bg-white disabled:hover:border-gray-300 transition-all shadow-sm"
                       disabled={page >= pageCount}
                       onClick={() => setPage(p => Math.min(pageCount, p + 1))}
                     >
                       <ChevronRight size={18} />
                     </button>
                     <button
-                      className="p-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
+                      className="p-2 rounded-xl border-2 border-gray-300 bg-white hover:bg-blue-50 hover:border-blue-400 disabled:opacity-40 disabled:hover:bg-white disabled:hover:border-gray-300 transition-all shadow-sm"
                       disabled={page >= pageCount}
                       onClick={() => setPage(pageCount)}
                     >
@@ -1616,14 +1613,14 @@ const fetchPage = async (opts = {}) => {
         {/* Mensajes */}
         {mensaje && (
           <div
-            className={`fixed top-4 right-4 px-4 sm:px-6 py-3 sm:py-4 rounded-xl shadow-lg z-50 transition-all duration-300 text-xs sm:text-base ${
+            className={`fixed top-6 right-6 px-6 py-4 rounded-xl shadow-2xl z-50 transition-all duration-300 border-2 ${
               mensaje.includes("Error") || mensaje.includes("invalid")
-                ? "bg-red-500 text-white"
-                : "bg-green-500 text-white"
+                ? "bg-gradient-to-r from-red-500 to-rose-500 text-white border-red-600"
+                : "bg-gradient-to-r from-green-500 to-emerald-500 text-white border-green-600"
             }`}
           >
-            <div className="flex items-center gap-2">
-              {mensaje.includes("Error") ? <X size={16} /> : <Check size={16} />}
+            <div className="flex items-center gap-3 font-semibold">
+              {mensaje.includes("Error") ? <X size={20} /> : <Check size={20} />}
               {mensaje}
             </div>
           </div>
@@ -1651,30 +1648,31 @@ const fetchPage = async (opts = {}) => {
 
       {/* Modal edición */}
       {mostrarEdicion && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <form
             onSubmit={handleGuardar}
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[90vh] overflow-hidden"
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden"
           >
-            <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
-              <h3 className="text-xl sm:text-2xl font-bold">
+            <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+              <h3 className="text-2xl font-bold flex items-center gap-2">
+                {clienteSeleccionado ? <Edit size={24} /> : <Plus size={24} />}
                 {clienteSeleccionado ? "Edit Client" : "New Client"}
               </h3>
-              <p className="text-blue-100 mt-1 text-xs sm:text-sm">
+              <p className="text-blue-100 mt-2 text-sm">
                 {clienteSeleccionado ? "Update client information" : "Add a new client to your system"}
               </p>
             </div>
 
-            <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-240px)]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="md:col-span-2">
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <User size={16} />
+                  <label className="flex items-center gap-2 font-bold text-gray-700 mb-2">
+                    <User size={18} />
                     Full Name *
                   </label>
                   <input
                     name="nombre"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                     value={form.nombre ?? ""}
                     onChange={handleChange}
                     required
@@ -1683,13 +1681,13 @@ const fetchPage = async (opts = {}) => {
                 </div>
 
                 <div>
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <Phone size={16} />
+                  <label className="flex items-center gap-2 font-bold text-gray-700 mb-2">
+                    <Phone size={18} />
                     Phone
                   </label>
                   <input
                     name="telefono"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                     value={form.telefono ?? ""}
                     onChange={handleChange}
                     placeholder="(555) 123-4567"
@@ -1697,14 +1695,14 @@ const fetchPage = async (opts = {}) => {
                 </div>
 
                 <div>
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <Mail size={16} />
+                  <label className="flex items-center gap-2 font-bold text-gray-700 mb-2">
+                    <Mail size={18} />
                     Email
                   </label>
                   <input
                     name="email"
                     type="email"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                     value={form.email ?? ""}
                     onChange={handleChange}
                     placeholder="email@example.com"
@@ -1712,13 +1710,13 @@ const fetchPage = async (opts = {}) => {
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                    <Building2 size={16} />
+                  <label className="flex items-center gap-2 font-bold text-gray-700 mb-2">
+                    <Building2 size={18} />
                     Business
                   </label>
                   <input
                     name="negocio"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                     value={form.negocio ?? ""}
                     onChange={handleChange}
                     placeholder="Business name"
@@ -1727,18 +1725,18 @@ const fetchPage = async (opts = {}) => {
 
                 {/* Address Information */}
                 <div className="md:col-span-2">
-                  <h4 className="flex items-center gap-2 font-semibold text-gray-700 mb-4">
-                    <MapPin size={16} />
+                  <h4 className="flex items-center gap-2 font-bold text-gray-800 mb-4 text-lg">
+                    <MapPin size={20} />
                     Address Information
                   </h4>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Street */}
                     <div className="md:col-span-2">
-                      <label className="font-medium text-gray-600 mb-1 block">Street</label>
+                      <label className="font-bold text-gray-700 mb-2 block">Street</label>
                       <input
                         name="calle"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
                         value={form.direccion?.calle ?? ""}
                         onChange={handleChange}
                         placeholder="123 Main St"
@@ -1747,10 +1745,10 @@ const fetchPage = async (opts = {}) => {
 
                     {/* ZIP (al escribir 5 dígitos autollenará ciudad/estado) */}
                     <div>
-                      <label className="font-medium text-gray-600 mb-1 block">ZIP Code</label>
+                      <label className="font-bold text-gray-700 mb-2 block">ZIP Code</label>
                       <input
                         name="zip"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
                         value={form.direccion?.zip ?? ""}
                         onChange={handleChange}
                         maxLength={5}
@@ -1762,10 +1760,10 @@ const fetchPage = async (opts = {}) => {
 
                     {/* City */}
                     <div>
-                      <label className="font-medium text-gray-600 mb-1 block">City</label>
+                      <label className="font-bold text-gray-700 mb-2 block">City</label>
                       <input
                         name="ciudad"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
                         value={form.direccion?.ciudad ?? ""}
                         onChange={handleChange}
                         placeholder="Boston"
@@ -1774,10 +1772,10 @@ const fetchPage = async (opts = {}) => {
 
                     {/* State (con datalist) */}
                     <div>
-                      <label className="font-medium text-gray-600 mb-1 block">State</label>
+                      <label className="font-bold text-gray-700 mb-2 block">State</label>
                       <input
                         name="estado"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all uppercase"
                         placeholder="MA"
                         value={estadoInput ?? ""}
                         onChange={handleChange}
@@ -1799,34 +1797,34 @@ const fetchPage = async (opts = {}) => {
               </div>
             </div>
 
-            <div className="p-4 sm:p-6 bg-gray-50 border-t border-gray-200 flex gap-3">
+            <div className="p-6 bg-gray-50 border-t-2 border-gray-200 flex gap-4">
               <button
                 type="submit"
                 disabled={isLoading}
-                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-sm"
+                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold px-6 py-3.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg"
               >
                 {isLoading ? (
                   <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                     Saving...
                   </>
                 ) : (
                   <>
-                    <Check size={16} />
+                    <Check size={20} />
                     Save Client
                   </>
                 )}
               </button>
               <button
                 type="button"
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-sm"
+                className="flex-1 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-bold px-6 py-3.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg"
                 onClick={() => {
                   setMostrarEdicion(false);
                   navigate("/clientes");
                 }}
                 disabled={isLoading}
               >
-                <X size={16} />
+                <X size={20} />
                 Cancel
               </button>
             </div>
@@ -1854,7 +1852,6 @@ function ClienteStatsModal({
 }) {
   if (!open || !cliente) return null;
 
-  // 🆕 Estado para controlar si se muestran todas las transacciones
   const [mostrarTodas, setMostrarTodas] = useState(false);
 
   const comprasPorMes = {};
@@ -1879,7 +1876,6 @@ function ClienteStatsModal({
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const saldo = Number(resumen?.balance ?? 0);
 
-  // 🆕 Filtrar y limitar ventas
   const ventasFiltradas = mesSeleccionado 
     ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado))
     : (resumen.ventas || []);
@@ -1891,79 +1887,79 @@ function ClienteStatsModal({
   const hayMasVentas = ventasFiltradas.length > 10;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-4xl h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-5xl h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header - STICKY */}
-        <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-20 shrink-0">
-          <button className="absolute right-4 top-4 text-white/80 hover:text-white transition-colors p-1" onClick={onClose}>
+        <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-20 shrink-0 shadow-lg">
+          <button className="absolute right-6 top-6 text-white/80 hover:text-white transition-colors bg-white/20 hover:bg-white/30 rounded-full p-2" onClick={onClose}>
             <X size={24} />
           </button>
 
           <button
-            className="absolute right-16 top-4 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-1"
+            className="absolute right-20 top-6 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl font-semibold flex items-center gap-2 transition-all"
             onClick={() => onEdit && onEdit()}
           >
-            <Edit size={16} />
-            <span className="hidden sm:inline">Edit</span>
+            <Edit size={18} />
+            Edit
           </button>
 
-          <div className="flex items-start gap-4">
-            <div className="bg-white/20 rounded-full p-3 shrink-0">
-              <User size={24} />
+          <div className="flex items-start gap-4 pr-32">
+            <div className="bg-white/20 rounded-2xl p-3 shrink-0 shadow-lg">
+              <User size={28} />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="text-xl sm:text-2xl font-bold truncate">{cliente.nombre}</h3>
-              <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                <div className="bg-white/10 rounded-lg p-3">
-                  <div className="uppercase tracking-wide text-xs text-white/70">Current Balance</div>
-                  <div className="text-xl font-bold">{saldo >= 0 ? `$${saldo.toFixed(2)}` : `-$${Math.abs(saldo).toFixed(2)}`}</div>
+              <h3 className="text-3xl font-bold truncate mb-3">{cliente.nombre}</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Current Balance</div>
+                  <div className="text-2xl font-bold mt-1">{saldo >= 0 ? `$${saldo.toFixed(2)}` : `-$${Math.abs(saldo).toFixed(2)}`}</div>
                 </div>
-                <div className="bg-white/10 rounded-lg p-3">
-                  <div className="uppercase tracking-wide text-xs text-white/70">Effective Limit</div>
-                  <div className="text-xl font-bold">${limite.toFixed(2)}</div>
+                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Effective Limit</div>
+                  <div className="text-2xl font-bold mt-1">${limite.toFixed(2)}</div>
                 </div>
-                <div className="bg-white/10 rounded-lg p-3">
-                  <div className="uppercase tracking-wide text-xs text-white/70">Available</div>
-                  <div className={`text-xl font-bold ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>${disponible.toFixed(2)}</div>
+                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Available</div>
+                  <div className={`text-2xl font-bold mt-1 ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>${disponible.toFixed(2)}</div>
                 </div>
               </div>
               {resumen?.cxc?.limite_manual_aplicado && (
-                <div className="mt-2 text-[11px] uppercase tracking-wide text-yellow-200">Manual limit applied for this client</div>
+                <div className="mt-3 text-xs uppercase tracking-wide text-yellow-200 font-bold">⚠️ Manual limit applied for this client</div>
               )}
 
-              <div className="mt-3 text-blue-100 flex items-center gap-3 flex-wrap text-xs sm:text-sm">
+              <div className="mt-4 text-blue-100 flex items-center gap-4 flex-wrap">
                 {cliente.email && (
                   <div className="flex items-center gap-2 truncate">
-                    <Mail size={14} className="shrink-0" />
+                    <Mail size={16} className="shrink-0" />
                     <span className="truncate">{cliente.email}</span>
                   </div>
                 )}
                 {cliente.telefono && (
                   <div className="flex items-center gap-2">
-                    <Phone size={14} />
+                    <Phone size={16} />
                     {formatPhoneForInput(cliente.telefono)}
                   </div>
                 )}
                 {cliente.negocio && (
                   <div className="flex items-center gap-2 truncate">
-                    <Building2 size={14} className="shrink-0" />
+                    <Building2 size={16} className="shrink-0" />
                     <span className="truncate">{cliente.negocio}</span>
                   </div>
                 )}
                 {cliente.direccion && (
                   <div className="flex items-center gap-2 truncate">
-                    <MapPin size={14} className="shrink-0" />
+                    <MapPin size={16} className="shrink-0" />
                     <span className="truncate max-w-xs">{prettyAddress(cliente.direccion)}</span>
                   </div>
                 )}
 
                 <button
                   onClick={onRefreshCredito}
-                  className="ml-auto bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1 shrink-0"
+                  className="ml-auto bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shrink-0 transition-all shadow-lg"
                   title="Refresh credit"
                 >
-                  <RefreshCcw size={14} />
-                  <span className="hidden sm:inline">Refresh</span>
+                  <RefreshCcw size={16} />
+                  Refresh
                 </button>
               </div>
             </div>
@@ -1978,51 +1974,57 @@ function ClienteStatsModal({
             paddingBottom: 'max(env(safe-area-inset-bottom), 24px)'
           }}
         >
-          <div className="p-4 sm:p-6">
+          <div className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5 shadow-lg">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-green-600 text-sm font-medium">Lifetime Sales</p>
-                    <p className="text-2xl font-bold text-green-700">${(resumen.ventas || []).reduce((s,v)=>s+Number(v.total_venta||0),0).toFixed(2)}</p>
+                    <p className="text-green-700 text-sm font-bold uppercase tracking-wide">Lifetime Sales</p>
+                    <p className="text-3xl font-bold text-green-800 mt-2">${(resumen.ventas || []).reduce((s,v)=>s+Number(v.total_venta||0),0).toFixed(2)}</p>
                   </div>
-                  <TrendingUp className="text-green-600" size={20} />
+                  <div className="bg-green-500 p-3 rounded-xl shadow-md">
+                    <TrendingUp className="text-white" size={24} />
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-200 rounded-xl p-4">
+              <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-2xl p-5 shadow-lg">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-blue-600 text-sm font-medium">Total Orders</p>
-                    <p className="text-2xl font-bold text-blue-700">{(resumen.ventas || []).length}</p>
+                    <p className="text-blue-700 text-sm font-bold uppercase tracking-wide">Total Orders</p>
+                    <p className="text-3xl font-bold text-blue-800 mt-2">{(resumen.ventas || []).length}</p>
                   </div>
-                  <FileText className="text-blue-600" size={20} />
+                  <div className="bg-blue-500 p-3 rounded-xl shadow-md">
+                    <FileText className="text-white" size={24} />
+                  </div>
                 </div>
               </div>
 
-              <div className={`bg-gradient-to-br ${(resumen?.balance ?? 0) > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border rounded-xl p-4`}>
+              <div className={`bg-gradient-to-br ${(resumen?.balance ?? 0) > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border-2 rounded-2xl p-5 shadow-lg`}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'} text-sm font-medium`}>Current Balance</p>
-                    <p className={`text-2xl font-bold ${(resumen?.balance ?? 0) > 0 ? 'text-red-700' : 'text-green-700'}`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
+                    <p className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-700' : 'text-green-700'} text-sm font-bold uppercase tracking-wide`}>Current Balance</p>
+                    <p className={`text-3xl font-bold ${(resumen?.balance ?? 0) > 0 ? 'text-red-800' : 'text-green-800'} mt-2`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
                   </div>
-                  <DollarSign className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`} size={20} />
+                  <div className={`${(resumen?.balance ?? 0) > 0 ? 'bg-red-500' : 'bg-green-500'} p-3 rounded-xl shadow-md`}>
+                    <DollarSign className="text-white" size={24} />
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Filtro por mes */}
             <div className="mb-6">
-              <label className="flex items-center gap-2 font-semibold text-gray-700 mb-2">
-                <Calendar size={16} />
+              <label className="flex items-center gap-2 font-bold text-gray-800 mb-3 text-lg">
+                <Calendar size={20} />
                 Filter by Month
               </label>
               <select
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white text-sm"
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white font-medium shadow-sm"
                 value={mesSeleccionado || ""}
                 onChange={e => {
                   setMesSeleccionado(e.target.value || null);
-                  setMostrarTodas(false); // Reset al cambiar filtro
+                  setMostrarTodas(false);
                 }}
               >
                 <option value="">All months</option>
@@ -2033,58 +2035,57 @@ function ClienteStatsModal({
             </div>
 
             {/* Chart */}
-            <div className="bg-gray-50 rounded-xl p-4 sm:p-6 mb-6">
-              <h4 className="font-bold mb-4 text-gray-800 flex items-center gap-2 text-sm sm:text-base">
-                <BarChart3 size={20} />
+            <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-2xl p-6 mb-6 border-2 border-gray-200 shadow-lg">
+              <h4 className="font-bold mb-4 text-gray-900 flex items-center gap-2 text-xl">
+                <BarChart3 size={24} />
                 Sales Trend (Last 12 Months)
               </h4>
-              <div className="h-64 sm:h-80">
+              <div className="h-80 sm:h-96">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={dataChart}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="mes" fontSize={12} stroke="#6b7280" tickLine={false} />
-                    <YAxis fontSize={12} stroke="#6b7280" tickLine={false} />
+                    <XAxis dataKey="mes" fontSize={12} stroke="#6b7280" tickLine={false} fontWeight="600" />
+                    <YAxis fontSize={12} stroke="#6b7280" tickLine={false} fontWeight="600" />
                     <Tooltip
                       formatter={v => [`$${Number(v).toFixed(2)}`, "Sales"]}
-                      labelStyle={{ color: '#374151' }}
+                      labelStyle={{ color: '#374151', fontWeight: '600' }}
                       contentStyle={{
                         backgroundColor: 'white',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                        border: '2px solid #3b82f6',
+                        borderRadius: '12px',
+                        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.15)'
                       }}
                     />
-                    <Bar dataKey="compras" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="compras" fill="#3b82f6" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* 🆕 Tabla ventas con límite de 10 */}
-            <div className="bg-gray-50 rounded-xl p-4 sm:p-6 mb-6">
+            {/* Tabla ventas con límite de 10 */}
+            <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-2xl p-6 mb-6 border-2 border-gray-200 shadow-lg">
               <div className="flex items-center justify-between mb-4">
-                <h4 className="font-bold text-gray-800 flex items-center gap-2 text-sm sm:text-base">
-                  <FileText size={20} />
+                <h4 className="font-bold text-gray-900 flex items-center gap-2 text-xl">
+                  <FileText size={24} />
                   Sales History {mesSeleccionado ? `for ${mesSeleccionado}` : "(all)"}
-                  <span className="text-xs font-normal text-gray-500">
+                  <span className="text-sm font-normal text-gray-500">
                     ({ventasMostrar.length} of {ventasFiltradas.length})
                   </span>
                 </h4>
                 
-                {/* 🆕 Botón Ver más/menos */}
                 {hayMasVentas && (
                   <button
                     onClick={() => setMostrarTodas(!mostrarTodas)}
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors"
+                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all shadow-md"
                   >
                     {mostrarTodas ? (
                       <>
-                        <ChevronUp size={14} />
+                        <ChevronUp size={16} />
                         Show Less
                       </>
                     ) : (
                       <>
-                        <ChevronDown size={14} />
+                        <ChevronDown size={16} />
                         View All ({ventasFiltradas.length})
                       </>
                     )}
@@ -2093,42 +2094,42 @@ function ClienteStatsModal({
               </div>
 
               {ventasFiltradas.length === 0 ? (
-                <div className="text-center py-8">
-                  <div className="bg-gray-200 rounded-full p-3 w-12 h-12 mx-auto mb-3 flex items-center justify-center">
-                    <FileText className="text-gray-400" size={24} />
+                <div className="text-center py-12">
+                  <div className="bg-gray-200 rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center shadow-inner">
+                    <FileText className="text-gray-400" size={32} />
                   </div>
-                  <p className="text-gray-500 font-medium">No sales found</p>
-                  <p className="text-gray-400 text-sm">This client hasn't made any purchases yet</p>
+                  <p className="text-gray-700 font-bold text-lg mb-1">No sales found</p>
+                  <p className="text-gray-500">This client hasn't made any purchases yet</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto -mx-4 sm:mx-0">
-                  <table className="w-full text-xs sm:text-sm">
+                <div className="overflow-x-auto -mx-6 sm:mx-0">
+                  <table className="w-full">
                     <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="text-left py-3 px-4 font-semibold text-gray-600">Order ID</th>
-                        <th className="text-left py-3 px-4 font-semibold text-gray-600">Date</th>
-                        <th className="text-right py-3 px-4 font-semibold text-gray-600">Total</th>
-                        <th className="text-right py-3 px-4 font-semibold text-gray-600">Paid</th>
-                        <th className="text-center py-3 px-4 font-semibold text-gray-600">Status</th>
+                      <tr className="border-b-2 border-gray-300 bg-gray-100">
+                        <th className="text-left py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Order ID</th>
+                        <th className="text-left py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Date</th>
+                        <th className="text-right py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Total</th>
+                        <th className="text-right py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Paid</th>
+                        <th className="text-center py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {ventasMostrar.map((v) => (
-                        <tr key={v.id} className="border-b border-gray-100 hover:bg-white transition-colors">
+                        <tr key={v.id} className="border-b border-gray-200 hover:bg-white transition-colors">
                           <td className="py-3 px-4">
-                            <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">{v.id.slice(0, 8)}…</span>
+                            <span className="font-mono text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-lg font-bold">{v.id.slice(0, 8)}…</span>
                           </td>
-                          <td className="py-3 px-4 text-gray-700">{v.fecha?.slice(0, 10)}</td>
-                          <td className="py-3 px-4 text-right font-semibold">${(v.total_venta || 0).toFixed(2)}</td>
-                          <td className="py-3 px-4 text-right font-semibold text-green-600">${(v.total_pagado || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4 text-gray-800 font-medium">{v.fecha?.slice(0, 10)}</td>
+                          <td className="py-3 px-4 text-right font-bold text-gray-900">${(v.total_venta || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4 text-right font-bold text-green-700">${(v.total_pagado || 0).toFixed(2)}</td>
                           <td className="py-3 px-4 text-center">
                             <span
-                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold shadow-sm ${
                                 v.estado_pago === "Paid"
-                                  ? "bg-green-100 text-green-800"
+                                  ? "bg-green-500 text-white"
                                   : v.estado_pago === "Partial"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : "bg-gray-100 text-gray-800"
+                                  ? "bg-yellow-500 text-white"
+                                  : "bg-gray-400 text-white"
                               }`}
                             >
                               {v.estado_pago || "Pending"}
@@ -2146,16 +2147,16 @@ function ClienteStatsModal({
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
               <button 
                 onClick={generatePDF} 
-                className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all"
               >
-                <FileText size={16} />
+                <Download size={18} />
                 Export PDF
               </button>
               <button 
                 onClick={() => onDelete?.(cliente)} 
-                className="bg-red-500 hover:bg-red-600 text-white px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                className="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all"
               >
-                <X size={16} />
+                <Trash2 size={18} />
                 Delete Client
               </button>
             </div>
@@ -2493,8 +2494,8 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
       // mensaje
       setMensaje(cambioDevuelto > 0
-        ? `Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`
-        : "Payment registered!"
+        ? `✅ Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`
+        : "✅ Payment registered successfully!"
       );
 
       // recibo
@@ -2512,10 +2513,10 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       // cerrar el modal
       setTimeout(() => {
         if (typeof onClose === "function") onClose();
-      }, 1500);
+      }, 1800);
 
     } catch (err) {
-      setMensaje("Error saving payment: " + (err?.message || "unknown"));
+      setMensaje("❌ Error saving payment: " + (err?.message || "unknown"));
     } finally {
       setGuardando(false);
       submitLockRef.current = false;
@@ -2524,38 +2525,38 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
-        <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md sm:max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
-          <div className="p-4 sm:p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20">
-            <h3 className="text-lg sm:text-xl font-bold flex items-center gap-2">
-              <DollarSign size={20} />
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
+        <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-md sm:max-w-3xl h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20 shadow-lg">
+            <h3 className="text-2xl font-bold flex items-center gap-2">
+              <DollarSign size={24} />
               Payment for {cliente.nombre}
             </h3>
-            <p className="text-green-100 mt-1 text-xs sm:text-sm">Record a new payment from this client</p>
+            <p className="text-green-100 mt-2">Record a new payment from this client</p>
           </div>
 
           <form onSubmit={guardarAbono} className="flex-1 flex flex-col min-h-0">
-            <div className="p-4 sm:p-6 overflow-y-auto flex-1">
-              <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4 sm:mb-6">
-                <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
-                  <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Balance</div>
-                  <div className={`text-lg sm:text-xl font-bold ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>${saldoActual.toFixed(2)}</div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border-2 border-gray-200">
+                  <div className="text-xs text-gray-500 uppercase font-bold">Balance</div>
+                  <div className={`text-2xl font-bold mt-1 ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>${saldoActual.toFixed(2)}</div>
                 </div>
-                <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
-                  <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Effective Limit</div>
-                  <div className="text-lg sm:text-xl font-bold">${limite.toFixed(2)}</div>
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border-2 border-blue-200">
+                  <div className="text-xs text-blue-600 uppercase font-bold">Effective Limit</div>
+                  <div className="text-2xl font-bold text-blue-700 mt-1">${limite.toFixed(2)}</div>
                 </div>
-                <div className="bg-gray-50 rounded-xl p-3 sm:p-4 border">
-                  <div className="text-[10px] sm:text-xs text-gray-500 uppercase">Available</div>
-                  <div className={`text-lg sm:text-xl font-bold ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${disponible.toFixed(2)}</div>
+                <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-xl p-4 border-2 border-emerald-200">
+                  <div className="text-xs text-emerald-600 uppercase font-bold">Available</div>
+                  <div className={`text-2xl font-bold mt-1 ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${disponible.toFixed(2)}</div>
                 </div>
               </div>
 
-              <div className="space-y-3 sm:space-y-4 mb-2">
+              <div className="space-y-4 mb-4">
                 <div>
-                  <label className="font-semibold text-gray-700 mb-2 block text-xs sm:text-sm">Payment Amount</label>
+                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Amount</label>
                   <input
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 text-lg"
+                    className="w-full px-4 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 text-2xl font-bold"
                     placeholder="0.00"
                     type="number" min="0.01" step="0.01"
                     value={monto}
@@ -2565,10 +2566,10 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-gray-700 mb-2 block text-xs sm:text-sm">Payment Method</label>
+                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Method</label>
                   <div className="flex gap-2">
                     <select
-                      className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 bg-white"
+                      className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white font-medium"
                       value={metodo}
                       onChange={e => setMetodo(e.target.value)}
                     >
@@ -2582,7 +2583,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                       <button
                         type="button"
                         onClick={handleGenerateQR}
-                        className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded-xl text-sm font-semibold shadow-md transition-colors flex items-center gap-2 whitespace-nowrap"
+                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 whitespace-nowrap"
                         title="Generar QR para pago con Stripe"
                       >
                         📱 QR
@@ -2592,18 +2593,18 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
                   {/* 🆕 CHECKBOX PARA FEE */}
                   {metodo === "Card" && (
-                    <div className="mt-3 pt-3 border-t border-gray-200">
-                      <label className="flex items-center gap-2 cursor-pointer">
+                    <div className="mt-4 pt-4 border-t-2 border-gray-200">
+                      <label className="flex items-center gap-3 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={applyCardFee}
                           onChange={(e) => setApplyCardFee(e.target.checked)}
-                          className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
+                          className="w-5 h-5 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
                         />
-                        <span className="text-sm text-gray-700">
+                        <span className="text-gray-700 font-semibold">
                           💳 Apply card fee ({cardFeePercentage}%)
                           {applyCardFee && Number(monto) > 0 && (
-                            <span className="ml-2 font-semibold text-purple-600">
+                            <span className="ml-2 font-bold text-purple-600 text-lg">
                               → Total: {fmtSafe(Number(monto) * (1 + cardFeePercentage / 100))}
                             </span>
                           )}
@@ -2611,8 +2612,8 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                       </label>
                       
                       {applyCardFee && (
-                        <div className="mt-2 flex items-center gap-2">
-                          <label className="text-xs text-gray-600">Fee %:</label>
+                        <div className="mt-3 flex items-center gap-3 bg-purple-50 rounded-xl p-3 border-2 border-purple-200">
+                          <label className="text-sm text-purple-700 font-bold">Fee %:</label>
                           <input
                             type="number"
                             min="0"
@@ -2620,9 +2621,9 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                             step="0.1"
                             value={cardFeePercentage}
                             onChange={(e) => setCardFeePercentage(Math.max(0, Math.min(10, Number(e.target.value))))}
-                            className="w-16 border rounded px-2 py-1 text-sm"
+                            className="w-20 border-2 border-purple-300 rounded-lg px-3 py-2 text-sm font-bold"
                           />
-                          <span className="text-xs text-gray-500">
+                          <span className="text-sm text-purple-600 font-semibold">
                             (Fee: {fmtSafe(Number(monto) * (cardFeePercentage / 100))})
                           </span>
                         </div>
@@ -2632,20 +2633,20 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                 </div>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 sm:p-4 mb-4">
+              <div className="bg-amber-50 border-2 border-amber-200 text-amber-800 rounded-xl p-4 mb-4 shadow-sm">
                 {montoNum <= 0 ? (
-                  <span className="text-xs sm:text-sm">Enter a payment amount to see details.</span>
+                  <span className="text-sm font-semibold">💡 Enter a payment amount to see details.</span>
                 ) : excedente > 0 ? (
-                  <div className="text-xs sm:text-sm">
-                    The payment exceeds the current balance by <span className="font-bold">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
+                  <div className="text-sm font-semibold">
+                    ⚠️ The payment exceeds the current balance by <span className="font-bold text-amber-900 text-lg">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
                   </div>
                 ) : (
                   (() => {
                     const newCents = Math.max(0, prevCents - payCents);
                     const newBalance = (newCents / 100).toFixed(2);
                     return (
-                      <div className="text-xs sm:text-sm">
-                        Payment will reduce balance to <span className="font-bold">${newBalance}</span>.
+                      <div className="text-sm font-semibold">
+                        ✅ Payment will reduce balance to <span className="font-bold text-green-700 text-lg">${newBalance}</span>.
                       </div>
                     );
                   })()
@@ -2653,32 +2654,32 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               </div>
 
               {mensaje && (
-                <div className={`mb-4 p-4 rounded-xl ${mensaje.includes("Error") || mensaje.includes("invalid") ? "bg-red-50 text-red-700 border border-red-200" : "bg-green-50 text-green-700 border border-green-200"}`}>
-                  <div className="flex items-center gap-2">
-                    {mensaje.includes("Error") ? <X size={16} /> : <Check size={16} />}
-                    <span className="text-xs sm:text-sm font-medium whitespace-pre-line">{mensaje}</span>
+                <div className={`mb-4 p-4 rounded-xl border-2 ${mensaje.includes("Error") || mensaje.includes("invalid") ? "bg-red-50 text-red-800 border-red-300" : "bg-green-50 text-green-800 border-green-300"}`}>
+                  <div className="flex items-center gap-3 font-semibold">
+                    {mensaje.includes("Error") ? <X size={20} /> : <Check size={20} />}
+                    <span className="whitespace-pre-line">{mensaje}</span>
                   </div>
                 </div>
               )}
 
               {/* Resumen de compras/pagos */}
-              <div className="bg-gray-50 rounded-xl p-4">
-                <h4 className="font-bold mb-3 text-gray-800 flex items-center gap-2">
-                  <TrendingUp size={16} />
+              <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-5 border-2 border-gray-200 shadow-sm">
+                <h4 className="font-bold mb-4 text-gray-900 flex items-center gap-2 text-lg">
+                  <TrendingUp size={20} />
                   Purchase History Summary
                 </h4>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <p className="text-xs sm:text-sm font-medium text-gray-600 mb-2">Monthly Purchases:</p>
-                    <div className="max-h-32 overflow-y-auto space-y-1">
+                    <p className="text-sm font-bold text-gray-700 mb-3">Monthly Purchases:</p>
+                    <div className="max-h-36 overflow-y-auto space-y-2">
                       {Object.keys(comprasPorMes).length === 0 ? (
-                        <p className="text-gray-500 text-xs italic">No sales registered</p>
+                        <p className="text-gray-500 text-sm italic">No sales registered</p>
                       ) : (
                         Object.entries(comprasPorMes).sort((a,b) => b[0].localeCompare(a[0])).map(([mes, total]) => (
-                          <div key={mes} className="flex justify-between items-center py-1">
-                            <span className="text-xs sm:text-sm text-gray-600">{mes}</span>
-                            <span className="font-semibold text-blue-600">${total.toFixed(2)}</span>
+                          <div key={mes} className="flex justify-between items-center py-2 bg-white rounded-lg px-3 border border-gray-200">
+                            <span className="text-sm text-gray-700 font-semibold">{mes}</span>
+                            <span className="font-bold text-blue-700">${total.toFixed(2)}</span>
                           </div>
                         ))
                       )}
@@ -2686,15 +2687,15 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                   </div>
 
                   <div>
-                    <p className="text-xs sm:text-sm font-medium text-gray-600 mb-2">Recent Payments:</p>
-                    <div className="max-h-32 overflow-y-auto space-y-1">
+                    <p className="text-sm font-bold text-gray-700 mb-3">Recent Payments:</p>
+                    <div className="max-h-36 overflow-y-auto space-y-2">
                       {resumen.pagos?.length === 0 ? (
-                        <p className="text-gray-500 text-xs italic">No previous payments</p>
+                        <p className="text-gray-500 text-sm italic">No previous payments</p>
                       ) : (
                         resumen.pagos.map(p => (
-                          <div key={p.id} className="flex justify-between items-center py-1">
-                            <span className="text-xs sm:text-sm text-gray-600">{p.fecha_pago?.slice(0,10)}</span>
-                            <span className="font-semibold text-green-600">${(p.monto || 0).toFixed(2)}</span>
+                          <div key={p.id} className="flex justify-between items-center py-2 bg-white rounded-lg px-3 border border-gray-200">
+                            <span className="text-sm text-gray-700 font-semibold">{p.fecha_pago?.slice(0,10)}</span>
+                            <span className="font-bold text-green-700">${(p.monto || 0).toFixed(2)}</span>
                           </div>
                         ))
                       )}
@@ -2702,46 +2703,46 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
                   </div>
                 </div>
 
-                <div className="border-t border-gray-200 pt-3">
+                <div className="border-t-2 border-gray-300 pt-4">
                   <div className="flex justify-between items-center">
-                    <span className="font-bold text-gray-700">Lifetime Total:</span>
-                    <span className="text-xl font-bold text-green-700">${totalLifetime.toFixed(2)}</span>
+                    <span className="font-bold text-gray-900 text-lg">Lifetime Total:</span>
+                    <span className="text-3xl font-bold text-green-700">${totalLifetime.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="h-[140px] sm:h-[120px]" />
+              <div className="h-[140px]" />
             </div>
 
             <div
-              className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl bg-white border border-gray-200 rounded-xl shadow-xl p-3 sm:p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
+              className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-3xl bg-white border-t-2 border-gray-200 rounded-t-xl shadow-2xl p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
               style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
             >
               <div className="flex gap-3">
                 <button
                   type="submit"
                   disabled={guardando}
-                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-xs sm:text-sm"
+                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
                 >
                   {guardando ? (
                     <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                       Processing...
                     </>
                   ) : (
                     <>
-                      <Check size={16} />
+                      <Check size={20} />
                       Record Payment
                     </>
                   )}
                 </button>
                 <button
                   type="button"
-                  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-xs sm:text-sm"
+                  className="flex-1 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
                   onClick={onClose}
                   disabled={guardando}
                 >
-                  <X size={16} />
+                  <X size={20} />
                   Cancel
                 </button>
               </div>
@@ -2752,69 +2753,69 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
       {/* 🆕 MODAL QR */}
       {showQRModal && (
-        <div className="fixed inset-0 z-[99999] bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-4 flex items-center justify-between">
-              <h3 className="font-bold text-lg flex items-center gap-2">
-                💳 Pago con Tarjeta - Stripe
+        <div className="fixed inset-0 z-[99999] bg-black/90 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-5 flex items-center justify-between">
+              <h3 className="font-bold text-xl flex items-center gap-2">
+                💳 Card Payment - Stripe
               </h3>
               <button
-                className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
+                className="text-white hover:bg-white/20 w-10 h-10 rounded-full transition-colors flex items-center justify-center"
                 onClick={handleCloseQRModal}
               >
                 ✖️
               </button>
             </div>
 
-            <div className="p-6 text-center space-y-4">
+            <div className="p-6 text-center space-y-5">
               {applyCardFee ? (
-                <div className="space-y-2">
-                  <div className="text-sm text-gray-600">Base Amount</div>
-                  <div className="text-xl font-semibold text-gray-900">{fmtSafe(monto)}</div>
+                <div className="space-y-3 bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-4 border-2 border-purple-200">
+                  <div className="text-sm text-gray-600 font-semibold">Base Amount</div>
+                  <div className="text-2xl font-bold text-gray-900">{fmtSafe(monto)}</div>
                   
-                  <div className="text-sm text-purple-600">+ Card Fee ({cardFeePercentage}%)</div>
-                  <div className="text-lg font-semibold text-purple-600">{fmtSafe(Number(monto) * (cardFeePercentage / 100))}</div>
+                  <div className="text-sm text-purple-700 font-bold">+ Card Fee ({cardFeePercentage}%)</div>
+                  <div className="text-xl font-bold text-purple-700">{fmtSafe(Number(monto) * (cardFeePercentage / 100))}</div>
                   
-                  <div className="border-t-2 border-gray-300 pt-2 mt-2">
-                    <div className="text-sm text-gray-600">Total to Charge</div>
-                    <div className="text-3xl font-bold text-gray-900">{fmtSafe(qrAmount)}</div>
+                  <div className="border-t-2 border-purple-300 pt-3 mt-3">
+                    <div className="text-sm text-gray-600 font-semibold">Total to Charge</div>
+                    <div className="text-4xl font-bold text-gray-900 mt-1">{fmtSafe(qrAmount)}</div>
                   </div>
                 </div>
               ) : (
-                <div className="text-2xl font-bold text-gray-900">
-                  Monto a Pagar: {fmtSafe(qrAmount)}
+                <div className="text-3xl font-bold text-gray-900 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 border-2 border-blue-200">
+                  Amount to Pay: {fmtSafe(qrAmount)}
                 </div>
               )}
 
               {qrCodeData && (
-                <div className="bg-white p-4 rounded-xl border-4 border-purple-200 inline-block">
+                <div className="bg-white p-5 rounded-2xl border-4 border-purple-300 inline-block shadow-xl">
                   <img 
                     src={qrCodeData} 
                     alt="QR Code de pago" 
-                    className="w-64 h-64"
+                    className="w-72 h-72"
                   />
                 </div>
               )}
 
-              <div className="space-y-2">
-                <p className="text-gray-700 font-semibold">
-                  📱 Escanea el código QR con tu teléfono
+              <div className="space-y-3 bg-blue-50 rounded-xl p-4 border-2 border-blue-200">
+                <p className="text-gray-900 font-bold text-lg">
+                  📱 Scan the QR code with your phone
                 </p>
-                <p className="text-sm text-gray-600">
-                  El cliente puede pagar de forma segura con su tarjeta
+                <p className="text-gray-700">
+                  The client can pay securely with their card
                 </p>
                 {applyCardFee && (
-                  <p className="text-xs text-purple-600 font-semibold">
-                    ⚠️ El monto incluye el {cardFeePercentage}% de cargo por procesamiento
+                  <p className="text-purple-700 font-bold text-sm">
+                    ⚠️ Amount includes {cardFeePercentage}% processing fee
                   </p>
                 )}
               </div>
 
               {qrPollingActive && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <div className="flex items-center justify-center gap-2 text-blue-700">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700"></div>
-                    <span className="font-semibold">Esperando confirmación del pago...</span>
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl p-4 shadow-inner">
+                  <div className="flex items-center justify-center gap-3 text-blue-800">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-800"></div>
+                    <span className="font-bold">Waiting for payment confirmation...</span>
                   </div>
                 </div>
               )}
@@ -2822,9 +2823,9 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
               <div className="pt-4">
                 <button
                   onClick={handleCloseQRModal}
-                  className="w-full bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
+                  className="w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white px-6 py-4 rounded-xl font-bold transition-all shadow-lg"
                 >
-                  Cerrar
+                  Close
                 </button>
               </div>
             </div>
