@@ -139,23 +139,31 @@ function usePrecloseRows(vanId, diasAtras = 21) {
         console.log("RPC data received:", data);
 
         // Procesar y normalizar los datos
-        const normalized = (data ?? [])
-          .map((r) => {
-            const iso = r.dia ?? r.fecha ?? r.day ?? r.f ?? null;
-            return {
-              dia: typeof iso === "string" ? iso.slice(0, 10) : null,
-              cash_expected: Number(r.cash_expected ?? r.cash ?? 0),
-              card_expected: Number(r.card_expected ?? r.card ?? 0),
-              transfer_expected: Number(r.transfer_expected ?? r.transfer ?? 0),
-              mix_unallocated: Number(r.mix_unallocated ?? r.mix ?? 0),
-            };
-          })
-          .filter((r) => {
-            const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
-            const hasCierre = fechasConCierre.has(r.dia);
-            console.log(`Filtering date ${r.dia}: valid=${isValid}, hasCierre=${hasCierre}`);
-            return isValid && !hasCierre;
-          });
+const normalized = (data ?? [])
+  .map((r) => {
+    const iso = r.dia ?? r.fecha ?? r.day ?? r.f ?? null;
+    return {
+      dia: typeof iso === "string" ? iso.slice(0, 10) : null,
+      cash_expected: Number(r.cash_expected ?? r.cash ?? 0),
+      card_expected: Number(r.card_expected ?? r.card ?? 0),
+      transfer_expected: Number(r.transfer_expected ?? r.transfer ?? 0),
+      mix_unallocated: Number(r.mix_unallocated ?? r.mix ?? 0),
+    };
+  })
+  // 👇 NUEVO FILTRO: ocultar días sin ninguna transacción
+  .filter((r) => {
+    const total = r.cash_expected + r.card_expected + r.transfer_expected + r.mix_unallocated;
+
+    // Excluir días con total 0.00
+    if (total <= 0) return false;
+
+    // Validaciones originales
+    const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
+    const hasCierre = fechasConCierre.has(r.dia);
+
+    return isValid && !hasCierre;
+  });
+
 
         // Ordenar por fecha descendente
         normalized.sort((a, b) => (a.dia < b.dia ? 1 : -1));
