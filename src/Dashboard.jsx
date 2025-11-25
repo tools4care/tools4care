@@ -606,10 +606,10 @@ export default function Dashboard() {
   }, [van?.id, rangeDays]);
 
   useEffect(() => {
-    if (ventas.length > 0) {
-      calcularMetricas();
-    }
-  }, [ventas, rangeDays]);
+  if (ventas.length > 0 || stockVan.length >= 0) {
+    calcularMetricas();
+  }
+}, [ventas, rangeDays, stockVan]);
 
   async function cargarClientes() {
     const { data } = await supabase.from("clientes").select("id, nombre");
@@ -699,22 +699,111 @@ export default function Dashboard() {
     setLoading(false);
   }
 
-  async function cargarStockVan(van_id) {
-    const { data } = await supabase
+  
+async function cargarStockVan(van_id) {
+  try {
+    console.log("🚐 Cargando stock para van_id:", van_id);
+    
+    // 1. Obtener productos con stock bajo en esta van
+    const { data: stockBajo, error: errorStock } = await supabase
       .from("stock_van")
-      .select("cantidad, producto_id, productos(nombre, codigo)")
+      .select(`
+        cantidad, 
+        producto_id, 
+        productos(nombre, codigo)
+      `)
       .eq("van_id", van_id)
       .lt("cantidad", 5)
       .order("cantidad", { ascending: true });
 
-    setStockVan(
-      (data || []).map((item) => ({
+    console.log("📦 Stock bajo encontrado:", stockBajo?.length || 0, stockBajo);
+    if (errorStock) console.error("❌ Error stock:", errorStock);
+
+    if (!stockBajo || stockBajo.length === 0) {
+      console.log("⚠️ No hay stock bajo");
+      setStockVan([]);
+      return;
+    }
+
+    // 2. Obtener IDs de ventas de esta van
+    const { data: ventasVan, error: errorVentas } = await supabase
+      .from("ventas")
+      .select("id")
+      .eq("van_id", van_id);
+
+    console.log("🛒 Ventas encontradas:", ventasVan?.length || 0);
+    if (errorVentas) console.error("❌ Error ventas:", errorVentas);
+
+    if (!ventasVan || ventasVan.length === 0) {
+      console.log("⚠️ No hay ventas para esta van");
+      setStockVan([]);
+      return;
+    }
+
+    const ventasIds = ventasVan.map(v => v.id);
+    console.log("📋 IDs de ventas:", ventasIds.length);
+
+    // 3. Obtener productos vendidos en esas ventas
+    const { data: detalleVentas, error: errorDetalle } = await supabase
+      .from("detalle_ventas")
+      .select("producto_id")
+      .in("venta_id", ventasIds);
+
+    console.log("🔍 Detalle ventas encontrado:", detalleVentas?.length || 0);
+    if (errorDetalle) console.error("❌ Error detalle:", errorDetalle);
+
+    // Si no hay detalles en detalle_ventas, intentar desde ventas.productos
+    let productosVendidos = new Set();
+    
+    if (!detalleVentas || detalleVentas.length === 0) {
+      console.log("⚠️ No hay detalle_ventas, intentando desde ventas.productos");
+      
+      const { data: ventasConProductos } = await supabase
+        .from("ventas")
+        .select("productos")
+        .eq("van_id", van_id)
+        .not("productos", "is", null);
+
+      console.log("📦 Ventas con productos JSON:", ventasConProductos?.length || 0);
+
+      if (ventasConProductos && ventasConProductos.length > 0) {
+        ventasConProductos.forEach(v => {
+          if (Array.isArray(v.productos)) {
+            v.productos.forEach(p => {
+              if (p.producto_id || p.producto || p.id) {
+                productosVendidos.add(p.producto_id || p.producto || p.id);
+              }
+            });
+          }
+        });
+      }
+    } else {
+      productosVendidos = new Set(detalleVentas.map(d => d.producto_id));
+    }
+
+    console.log("✅ Productos únicos vendidos:", productosVendidos.size, Array.from(productosVendidos).slice(0, 10));
+
+    // 4. Filtrar solo productos que se han vendido antes
+    const stockFiltrado = stockBajo
+      .filter(item => {
+        const vendido = productosVendidos.has(item.producto_id);
+        console.log(`  ${item.productos?.nombre || item.producto_id}: cantidad=${item.cantidad}, vendido=${vendido}`);
+        return vendido;
+      })
+      .map((item) => ({
         nombre: item.productos?.nombre || item.producto_id,
         codigo: item.productos?.codigo || item.producto_id,
         cantidad: item.cantidad,
-      }))
-    );
+      }));
+
+    console.log("🎯 Stock filtrado final:", stockFiltrado.length, stockFiltrado);
+    setStockVan(stockFiltrado);
+    
+  } catch (error) {
+    console.error("💥 Error general en cargarStockVan:", error);
+    setStockVan([]);
   }
+}
 
   function normalizeDetalleRows(rows) {
     return (rows || []).map((r) => ({
