@@ -143,6 +143,12 @@ const IconLocation = () => (
   </svg>
 );
 
+const IconSearch = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+  </svg>
+);
+
 /* ---------- Modal Low Stock ---------- */
 function LowStockModal({ open, items, onClose }) {
   const [q, setQ] = useState("");
@@ -542,6 +548,208 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
   const [horaVisita, setHoraVisita] = useState("");
   const [notas, setNotas] = useState("");
   const [guardando, setGuardando] = useState(false);
+  
+  // Estados para autocompletado
+  const [barberiasExistentes, setBarberiasExistentes] = useState([]);
+  const [sugerenciasNombre, setSugerenciasNombre] = useState([]);
+  const [sugerenciasDireccion, setSugerenciasDireccion] = useState([]);
+  const [mostrarSugerenciasNombre, setMostrarSugerenciasNombre] = useState(false);
+  const [mostrarSugerenciasDireccion, setMostrarSugerenciasDireccion] = useState(false);
+  const [autocompletado, setAutocompletado] = useState(false);
+
+  // Cargar barberías existentes cuando se abre el modal
+  useEffect(() => {
+    if (open && vanId) {
+      cargarBarberiasExistentes();
+    }
+    
+    // Limpiar formulario cuando se cierra el modal
+    if (!open) {
+      setBarberiaNombre("");
+      setDireccion("");
+      setTelefono("");
+      setHoraVisita("");
+      setNotas("");
+      setSugerenciasNombre([]);
+      setSugerenciasDireccion([]);
+      setMostrarSugerenciasNombre(false);
+      setMostrarSugerenciasDireccion(false);
+      setAutocompletado(false);
+    }
+  }, [open, vanId]);
+
+  async function cargarBarberiasExistentes() {
+    try {
+      console.log("🔄 Cargando barberías existentes para van_id:", vanId);
+      
+      // 1. Cargar desde rutas_barberias (barberías ya visitadas)
+      const { data: rutasData, error: rutasError } = await supabase
+        .from("rutas_barberias")
+        .select("barberia_nombre, direccion, telefono")
+        .eq("van_id", vanId);
+
+      if (rutasError) {
+        console.error("⚠️ Error cargando rutas:", rutasError);
+      }
+
+      // 2. Cargar desde clientes (todos los clientes/barberías del sistema)
+      const { data: clientesData, error: clientesError } = await supabase
+        .from("clientes")
+        .select("negocio, direccion, telefono")
+        .not("negocio", "is", null) // ← Solo traer donde negocio NO es null
+        .neq("negocio", ""); // ← Y tampoco string vacío
+
+      if (clientesError) {
+        console.error("⚠️ Error cargando clientes:", clientesError);
+      }
+
+      console.log("📦 Rutas cargadas:", rutasData?.length || 0);
+      console.log("📦 Clientes cargados:", clientesData?.length || 0);
+
+      // Combinar ambas fuentes y normalizar
+      const todasLasBarberias = [];
+      
+      // Agregar desde rutas_barberias
+      (rutasData || []).forEach(item => {
+        if (item.barberia_nombre && item.barberia_nombre.trim()) {
+          todasLasBarberias.push({
+            barberia_nombre: item.barberia_nombre.trim(),
+            direccion: item.direccion?.trim() || "",
+            telefono: item.telefono?.trim() || "",
+            fuente: "rutas"
+          });
+        }
+      });
+
+      // Agregar desde clientes
+      (clientesData || []).forEach(item => {
+        if (item.negocio && item.negocio.trim()) {
+          todasLasBarberias.push({
+            barberia_nombre: item.negocio.trim(),
+            direccion: item.direccion?.trim() || "",
+            telefono: item.telefono?.trim() || "",
+            fuente: "clientes"
+          });
+        }
+      });
+
+      // Eliminar duplicados basados en nombre (case-insensitive)
+      const uniques = [];
+      const seen = new Set();
+      
+      todasLasBarberias.forEach(item => {
+        try {
+          const key = item.barberia_nombre.toLowerCase().trim();
+          if (!seen.has(key) && key.length > 0) {
+            seen.add(key);
+            uniques.push(item);
+          }
+        } catch (error) {
+          console.warn("⚠️ Error procesando item:", item, error);
+        }
+      });
+
+      // Ordenar alfabéticamente
+      uniques.sort((a, b) => {
+        try {
+          return a.barberia_nombre.localeCompare(b.barberia_nombre);
+        } catch (error) {
+          return 0;
+        }
+      });
+
+      console.log("✅ Total de barberías únicas:", uniques.length);
+      console.log("📋 Primeras 10:", uniques.slice(0, 10));
+      
+      setBarberiasExistentes(uniques);
+    } catch (error) {
+      console.error("💥 Error general al cargar barberías:", error);
+      setBarberiasExistentes([]);
+    }
+  }
+
+  // Filtrar sugerencias por nombre
+  const handleNombreChange = (value) => {
+    setBarberiaNombre(value);
+    
+    if (!value || value.trim().length < 1) {
+      setSugerenciasNombre([]);
+      setMostrarSugerenciasNombre(false);
+      return;
+    }
+
+    try {
+      const searchTerm = value.toLowerCase().trim();
+      const filtradas = barberiasExistentes.filter(b => {
+        try {
+          return b.barberia_nombre && 
+                 b.barberia_nombre.toLowerCase().includes(searchTerm);
+        } catch (error) {
+          console.warn("⚠️ Error filtrando barbería:", b, error);
+          return false;
+        }
+      });
+
+      console.log("🔍 Buscando:", value, "Encontradas:", filtradas.length, filtradas.slice(0, 5));
+      setSugerenciasNombre(filtradas);
+      setMostrarSugerenciasNombre(filtradas.length > 0);
+    } catch (error) {
+      console.error("💥 Error en handleNombreChange:", error);
+      setSugerenciasNombre([]);
+      setMostrarSugerenciasNombre(false);
+    }
+  };
+
+  // Filtrar sugerencias por dirección
+  const handleDireccionChange = (value) => {
+    setDireccion(value);
+    
+    if (!value || value.trim().length < 1) {
+      setSugerenciasDireccion([]);
+      setMostrarSugerenciasDireccion(false);
+      return;
+    }
+
+    try {
+      const searchTerm = value.toLowerCase().trim();
+      const filtradas = barberiasExistentes.filter(b => {
+        try {
+          return b.direccion && 
+                 b.direccion.toLowerCase().includes(searchTerm);
+        } catch (error) {
+          console.warn("⚠️ Error filtrando dirección:", b, error);
+          return false;
+        }
+      });
+
+      console.log("🗺️ Buscando dirección:", value, "Encontradas:", filtradas.length);
+      setSugerenciasDireccion(filtradas);
+      setMostrarSugerenciasDireccion(filtradas.length > 0);
+    } catch (error) {
+      console.error("💥 Error en handleDireccionChange:", error);
+      setSugerenciasDireccion([]);
+      setMostrarSugerenciasDireccion(false);
+    }
+  };
+
+  // Seleccionar sugerencia y autocompletar
+  const seleccionarBarberia = (barberia) => {
+    try {
+      setBarberiaNombre(barberia.barberia_nombre || "");
+      setDireccion(barberia.direccion || "");
+      setTelefono(barberia.telefono || "");
+      setMostrarSugerenciasNombre(false);
+      setMostrarSugerenciasDireccion(false);
+      
+      // Mostrar feedback de autocompletado
+      setAutocompletado(true);
+      setTimeout(() => setAutocompletado(false), 2000);
+      
+      console.log("✅ Barbería seleccionada:", barberia);
+    } catch (error) {
+      console.error("💥 Error al seleccionar barbería:", error);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -568,6 +776,11 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
       setTelefono("");
       setHoraVisita("");
       setNotas("");
+      setSugerenciasNombre([]);
+      setSugerenciasDireccion([]);
+      setMostrarSugerenciasNombre(false);
+      setMostrarSugerenciasDireccion(false);
+      setAutocompletado(false);
       
       onRefresh();
       onClose();
@@ -598,31 +811,217 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Barbershop Name *
+          {/* Mensaje informativo si no hay barberías guardadas */}
+          {barberiasExistentes.length === 0 && (
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-3 mb-4">
+              <div className="flex items-start gap-2">
+                <div className="text-blue-600 mt-0.5">ℹ️</div>
+                <div className="text-sm text-blue-800">
+                  <strong>No barbershops found.</strong> Enter the details below to add your first one.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Mensaje cuando hay barberías disponibles */}
+          {barberiasExistentes.length > 0 && (
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-lg p-3 mb-4">
+              <div className="flex items-start gap-2">
+                <div className="text-purple-600 mt-0.5">✨</div>
+                <div className="text-sm text-purple-800">
+                  <strong>{barberiasExistentes.length} barbershop{barberiasExistentes.length !== 1 ? 's' : ''} available!</strong> Start typing to search and autofill.
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="relative">
+            <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center justify-between">
+              <span>Barbershop Name *</span>
+              {barberiasExistentes.length > 0 ? (
+                <span className="text-xs bg-gradient-to-r from-purple-100 to-pink-100 text-purple-700 px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-purple-300 font-bold">
+                  <IconSearch />
+                  {barberiasExistentes.length} in database
+                </span>
+              ) : (
+                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded-full">
+                  ✍️ Add new
+                </span>
+              )}
             </label>
-            <input
-              type="text"
-              value={barberiaNombre}
-              onChange={(e) => setBarberiaNombre(e.target.value)}
-              className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2.5 transition-colors"
-              placeholder="e.g., Classic Cuts Barbershop"
-              required
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={barberiaNombre}
+                onChange={(e) => handleNombreChange(e.target.value)}
+                onFocus={() => {
+                  try {
+                    if (barberiaNombre && barberiaNombre.length >= 1 && barberiasExistentes.length > 0) {
+                      const searchTerm = barberiaNombre.toLowerCase().trim();
+                      const filtradas = barberiasExistentes.filter(b => {
+                        try {
+                          return b.barberia_nombre && 
+                                 b.barberia_nombre.toLowerCase().includes(searchTerm);
+                        } catch (error) {
+                          return false;
+                        }
+                      });
+                      if (filtradas.length > 0) {
+                        setSugerenciasNombre(filtradas);
+                        setMostrarSugerenciasNombre(true);
+                      }
+                    }
+                  } catch (error) {
+                    console.error("Error en onFocus nombre:", error);
+                  }
+                }}
+                onBlur={() => setTimeout(() => setMostrarSugerenciasNombre(false), 300)}
+                className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg pl-10 pr-4 py-2.5 transition-colors"
+                placeholder="Start typing to search..."
+                required
+                autoComplete="off"
+              />
+              <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+                <IconSearch />
+              </div>
+            </div>
+            
+            {/* Dropdown de sugerencias por nombre */}
+            {mostrarSugerenciasNombre && sugerenciasNombre.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border-2 border-purple-300 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                <div className="sticky top-0 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-3 py-2 text-xs font-semibold flex items-center justify-between">
+                  <span>📍 {sugerenciasNombre.length} match{sugerenciasNombre.length !== 1 ? 'es' : ''} found</span>
+                  <span className="opacity-75">Click to autofill</span>
+                </div>
+                {sugerenciasNombre.map((barberia, idx) => (
+                  <div
+                    key={`${barberia.barberia_nombre || 'unknown'}-${idx}`}
+                    onClick={() => seleccionarBarberia(barberia)}
+                    className="px-4 py-3 hover:bg-gradient-to-r hover:from-purple-50 hover:to-pink-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-all group"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="font-bold text-gray-900 group-hover:text-purple-700 transition-colors">
+                            {barberia.barberia_nombre || "Sin nombre"}
+                          </div>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                            barberia.fuente === 'clientes' 
+                              ? 'bg-blue-100 text-blue-700' 
+                              : 'bg-green-100 text-green-700'
+                          }`}>
+                            {barberia.fuente === 'clientes' ? '👥 Client' : '✓ Visited'}
+                          </span>
+                        </div>
+                        {barberia.direccion && barberia.direccion.trim() && (
+                          <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                            <IconLocation />
+                            {barberia.direccion}
+                          </div>
+                        )}
+                        {barberia.telefono && barberia.telefono.trim() && (
+                          <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                            <IconPhone />
+                            {barberia.telefono}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-purple-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div>
+          <div className="relative">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               Address
             </label>
-            <input
-              type="text"
-              value={direccion}
-              onChange={(e) => setDireccion(e.target.value)}
-              className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2.5 transition-colors"
-              placeholder="e.g., 123 Main St, City"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={direccion}
+                onChange={(e) => handleDireccionChange(e.target.value)}
+                onFocus={() => {
+                  try {
+                    if (direccion && direccion.length >= 1 && barberiasExistentes.length > 0) {
+                      const searchTerm = direccion.toLowerCase().trim();
+                      const filtradas = barberiasExistentes.filter(b => {
+                        try {
+                          return b.direccion && 
+                                 b.direccion.toLowerCase().includes(searchTerm);
+                        } catch (error) {
+                          return false;
+                        }
+                      });
+                      if (filtradas.length > 0) {
+                        setSugerenciasDireccion(filtradas);
+                        setMostrarSugerenciasDireccion(true);
+                      }
+                    }
+                  } catch (error) {
+                    console.error("Error en onFocus dirección:", error);
+                  }
+                }}
+                onBlur={() => setTimeout(() => setMostrarSugerenciasDireccion(false), 300)}
+                className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg pl-10 pr-4 py-2.5 transition-colors"
+                placeholder="Start typing to search..."
+                autoComplete="off"
+              />
+              <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+                <IconLocation />
+              </div>
+            </div>
+            
+            {/* Dropdown de sugerencias por dirección */}
+            {mostrarSugerenciasDireccion && sugerenciasDireccion.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border-2 border-purple-300 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                <div className="sticky top-0 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-3 py-2 text-xs font-semibold flex items-center justify-between">
+                  <span>🗺️ {sugerenciasDireccion.length} location{sugerenciasDireccion.length !== 1 ? 's' : ''} found</span>
+                  <span className="opacity-75">Click to autofill</span>
+                </div>
+                {sugerenciasDireccion.map((barberia, idx) => (
+                  <div
+                    key={`${barberia.barberia_nombre || 'unknown'}-${idx}`}
+                    onClick={() => seleccionarBarberia(barberia)}
+                    className="px-4 py-3 hover:bg-gradient-to-r hover:from-purple-50 hover:to-pink-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-all group"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="font-bold text-gray-900 group-hover:text-purple-700 transition-colors">
+                            {barberia.barberia_nombre || "Sin nombre"}
+                          </div>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                            barberia.fuente === 'clientes' 
+                              ? 'bg-blue-100 text-blue-700' 
+                              : 'bg-green-100 text-green-700'
+                          }`}>
+                            {barberia.fuente === 'clientes' ? '👥 Client' : '✓ Visited'}
+                          </span>
+                        </div>
+                        {barberia.direccion && barberia.direccion.trim() && (
+                          <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                            <IconLocation />
+                            {barberia.direccion}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-purple-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -666,6 +1065,18 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
           <div className="text-xs text-gray-500 bg-purple-50 p-3 rounded-lg">
             <strong>Date:</strong> {dayjs(fechaSeleccionada).format("dddd, MMMM D, YYYY")}
           </div>
+
+          {/* Mensaje de autocompletado */}
+          {autocompletado && (
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-3 flex items-center gap-2 animate-pulse">
+              <div className="bg-green-500 text-white rounded-full p-1">
+                <IconCheck />
+              </div>
+              <span className="text-sm font-semibold text-green-700">
+                ✨ Information autofilled successfully!
+              </span>
+            </div>
+          )}
 
           <div className="flex gap-3">
             <button
