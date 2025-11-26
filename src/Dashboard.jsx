@@ -100,6 +100,49 @@ const IconClock = () => (
   </svg>
 );
 
+const IconMap = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+  </svg>
+);
+
+const IconCheck = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+  </svg>
+);
+
+const IconPlus = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+  </svg>
+);
+
+const IconEdit = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+  </svg>
+);
+
+const IconTrash = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+  </svg>
+);
+
+const IconPhone = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+  </svg>
+);
+
+const IconLocation = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
+
 /* ---------- Modal Low Stock ---------- */
 function LowStockModal({ open, items, onClose }) {
   const [q, setQ] = useState("");
@@ -491,6 +534,161 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
   );
 }
 
+/* ---------- Modal Gestión de Rutas ---------- */
+function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh }) {
+  const [barberiaNombre, setBarberiaNombre] = useState("");
+  const [direccion, setDireccion] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [horaVisita, setHoraVisita] = useState("");
+  const [notas, setNotas] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!barberiaNombre.trim() || !vanId) return;
+
+    setGuardando(true);
+    try {
+      const { error } = await supabase.from("rutas_barberias").insert({
+        van_id: vanId,
+        barberia_nombre: barberiaNombre.trim(),
+        direccion: direccion.trim() || null,
+        telefono: telefono.trim() || null,
+        dia: fechaSeleccionada,
+        hora_visita: horaVisita || null,
+        notas: notas.trim() || null,
+        visitada: false,
+      });
+
+      if (error) throw error;
+
+      // Limpiar formulario
+      setBarberiaNombre("");
+      setDireccion("");
+      setTelefono("");
+      setHoraVisita("");
+      setNotas("");
+      
+      onRefresh();
+      onClose();
+    } catch (error) {
+      console.error("Error al guardar barbería:", error);
+      alert("Error al guardar la barbería");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+        <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <IconMap />
+            <h3 className="font-bold text-lg">Add Barbershop</h3>
+          </div>
+          <button
+            className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
+            onClick={onClose}
+          >
+            ✖
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Barbershop Name *
+            </label>
+            <input
+              type="text"
+              value={barberiaNombre}
+              onChange={(e) => setBarberiaNombre(e.target.value)}
+              className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2.5 transition-colors"
+              placeholder="e.g., Classic Cuts Barbershop"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Address
+            </label>
+            <input
+              type="text"
+              value={direccion}
+              onChange={(e) => setDireccion(e.target.value)}
+              className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2.5 transition-colors"
+              placeholder="e.g., 123 Main St, City"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Phone
+            </label>
+            <input
+              type="tel"
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+              className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2.5 transition-colors"
+              placeholder="e.g., (555) 123-4567"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Visit Time
+            </label>
+            <input
+              type="time"
+              value={horaVisita}
+              onChange={(e) => setHoraVisita(e.target.value)}
+              className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2.5 transition-colors"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Notes
+            </label>
+            <textarea
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
+              className="w-full border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2.5 transition-colors resize-none"
+              rows={3}
+              placeholder="Special instructions, contact person, etc."
+            />
+          </div>
+
+          <div className="text-xs text-gray-500 bg-purple-50 p-3 rounded-lg">
+            <strong>Date:</strong> {dayjs(fechaSeleccionada).format("dddd, MMMM D, YYYY")}
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-4 rounded-lg transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={guardando || !barberiaNombre.trim()}
+              className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {guardando ? "Saving..." : "Add"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Tarjeta de Métrica Mejorada ---------- */
 function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo, valuePrefix = "" }) {
   const isPositive = trend > 0;
@@ -588,6 +786,12 @@ export default function Dashboard() {
     totalOrdenes: 0,
   });
 
+  // Estados para rutas de barberías
+  const [rutasBarberias, setRutasBarberias] = useState([]);
+  const [fechaRutaSeleccionada, setFechaRutaSeleccionada] = useState(dayjs().format("YYYY-MM-DD"));
+  const [showAddBarberia, setShowAddBarberia] = useState(false);
+  const [loadingRutas, setLoadingRutas] = useState(false);
+
   useEffect(() => {
     cargarClientes();
   }, []);
@@ -596,20 +800,22 @@ export default function Dashboard() {
     if (van?.id) {
       cargarDatos(van.id, rangeDays);
       cargarStockVan(van.id);
+      cargarRutasBarberias(van.id, fechaRutaSeleccionada);
     } else {
       setVentas([]);
       setVentasSerie([]);
       setProductosTop([]);
       setStockVan([]);
+      setRutasBarberias([]);
       setLoading(false);
     }
-  }, [van?.id, rangeDays]);
+  }, [van?.id, rangeDays, fechaRutaSeleccionada]);
 
   useEffect(() => {
-  if (ventas.length > 0 || stockVan.length >= 0) {
-    calcularMetricas();
-  }
-}, [ventas, rangeDays, stockVan]);
+    if (ventas.length > 0 || stockVan.length >= 0) {
+      calcularMetricas();
+    }
+  }, [ventas, rangeDays, stockVan]);
 
   async function cargarClientes() {
     const { data } = await supabase.from("clientes").select("id, nombre");
@@ -693,117 +899,143 @@ export default function Dashboard() {
           nombre: nameMap.get(producto_id) || producto_id,
         }))
         .sort((a, b) => b.cantidad - a.cantidad)
-        .slice(0, 10); // Top 10
+        .slice(0, 10);
     }
     setProductosTop(top);
     setLoading(false);
   }
 
-  
-async function cargarStockVan(van_id) {
-  try {
-    console.log("🚐 Cargando stock para van_id:", van_id);
-    
-    // 1. Obtener productos con stock bajo en esta van
-    const { data: stockBajo, error: errorStock } = await supabase
-      .from("stock_van")
-      .select(`
-        cantidad, 
-        producto_id, 
-        productos(nombre, codigo)
-      `)
-      .eq("van_id", van_id)
-      .lt("cantidad", 5)
-      .order("cantidad", { ascending: true });
-
-    console.log("📦 Stock bajo encontrado:", stockBajo?.length || 0, stockBajo);
-    if (errorStock) console.error("❌ Error stock:", errorStock);
-
-    if (!stockBajo || stockBajo.length === 0) {
-      console.log("⚠️ No hay stock bajo");
-      setStockVan([]);
-      return;
-    }
-
-    // 2. Obtener IDs de ventas de esta van
-    const { data: ventasVan, error: errorVentas } = await supabase
-      .from("ventas")
-      .select("id")
-      .eq("van_id", van_id);
-
-    console.log("🛒 Ventas encontradas:", ventasVan?.length || 0);
-    if (errorVentas) console.error("❌ Error ventas:", errorVentas);
-
-    if (!ventasVan || ventasVan.length === 0) {
-      console.log("⚠️ No hay ventas para esta van");
-      setStockVan([]);
-      return;
-    }
-
-    const ventasIds = ventasVan.map(v => v.id);
-    console.log("📋 IDs de ventas:", ventasIds.length);
-
-    // 3. Obtener productos vendidos en esas ventas
-    const { data: detalleVentas, error: errorDetalle } = await supabase
-      .from("detalle_ventas")
-      .select("producto_id")
-      .in("venta_id", ventasIds);
-
-    console.log("🔍 Detalle ventas encontrado:", detalleVentas?.length || 0);
-    if (errorDetalle) console.error("❌ Error detalle:", errorDetalle);
-
-    // Si no hay detalles en detalle_ventas, intentar desde ventas.productos
-    let productosVendidos = new Set();
-    
-    if (!detalleVentas || detalleVentas.length === 0) {
-      console.log("⚠️ No hay detalle_ventas, intentando desde ventas.productos");
-      
-      const { data: ventasConProductos } = await supabase
-        .from("ventas")
-        .select("productos")
+  async function cargarStockVan(van_id) {
+    try {
+      const { data: stockBajo, error: errorStock } = await supabase
+        .from("stock_van")
+        .select(`
+          cantidad, 
+          producto_id, 
+          productos(nombre, codigo)
+        `)
         .eq("van_id", van_id)
-        .not("productos", "is", null);
+        .lt("cantidad", 5)
+        .order("cantidad", { ascending: true });
 
-      console.log("📦 Ventas con productos JSON:", ventasConProductos?.length || 0);
+      if (errorStock) console.error("❌ Error stock:", errorStock);
 
-      if (ventasConProductos && ventasConProductos.length > 0) {
-        ventasConProductos.forEach(v => {
-          if (Array.isArray(v.productos)) {
-            v.productos.forEach(p => {
-              if (p.producto_id || p.producto || p.id) {
-                productosVendidos.add(p.producto_id || p.producto || p.id);
-              }
-            });
-          }
-        });
+      if (!stockBajo || stockBajo.length === 0) {
+        setStockVan([]);
+        return;
       }
-    } else {
-      productosVendidos = new Set(detalleVentas.map(d => d.producto_id));
+
+      const { data: ventasVan, error: errorVentas } = await supabase
+        .from("ventas")
+        .select("id")
+        .eq("van_id", van_id);
+
+      if (errorVentas) console.error("❌ Error ventas:", errorVentas);
+
+      if (!ventasVan || ventasVan.length === 0) {
+        setStockVan([]);
+        return;
+      }
+
+      const ventasIds = ventasVan.map(v => v.id);
+
+      const { data: detalleVentas, error: errorDetalle } = await supabase
+        .from("detalle_ventas")
+        .select("producto_id")
+        .in("venta_id", ventasIds);
+
+      if (errorDetalle) console.error("❌ Error detalle:", errorDetalle);
+
+      let productosVendidos = new Set();
+      
+      if (!detalleVentas || detalleVentas.length === 0) {
+        const { data: ventasConProductos } = await supabase
+          .from("ventas")
+          .select("productos")
+          .eq("van_id", van_id)
+          .not("productos", "is", null);
+
+        if (ventasConProductos && ventasConProductos.length > 0) {
+          ventasConProductos.forEach(v => {
+            if (Array.isArray(v.productos)) {
+              v.productos.forEach(p => {
+                if (p.producto_id || p.producto || p.id) {
+                  productosVendidos.add(p.producto_id || p.producto || p.id);
+                }
+              });
+            }
+          });
+        }
+      } else {
+        productosVendidos = new Set(detalleVentas.map(d => d.producto_id));
+      }
+
+      const stockFiltrado = stockBajo
+        .filter(item => productosVendidos.has(item.producto_id))
+        .map((item) => ({
+          nombre: item.productos?.nombre || item.producto_id,
+          codigo: item.productos?.codigo || item.producto_id,
+          cantidad: item.cantidad,
+        }));
+
+      setStockVan(stockFiltrado);
+      
+    } catch (error) {
+      console.error("💥 Error general en cargarStockVan:", error);
+      setStockVan([]);
     }
-
-    console.log("✅ Productos únicos vendidos:", productosVendidos.size, Array.from(productosVendidos).slice(0, 10));
-
-    // 4. Filtrar solo productos que se han vendido antes
-    const stockFiltrado = stockBajo
-      .filter(item => {
-        const vendido = productosVendidos.has(item.producto_id);
-        console.log(`  ${item.productos?.nombre || item.producto_id}: cantidad=${item.cantidad}, vendido=${vendido}`);
-        return vendido;
-      })
-      .map((item) => ({
-        nombre: item.productos?.nombre || item.producto_id,
-        codigo: item.productos?.codigo || item.producto_id,
-        cantidad: item.cantidad,
-      }));
-
-    console.log("🎯 Stock filtrado final:", stockFiltrado.length, stockFiltrado);
-    setStockVan(stockFiltrado);
-    
-  } catch (error) {
-    console.error("💥 Error general en cargarStockVan:", error);
-    setStockVan([]);
   }
-}
+
+  async function cargarRutasBarberias(vanId, fecha) {
+    setLoadingRutas(true);
+    try {
+      const { data, error } = await supabase
+        .from("rutas_barberias")
+        .select("*")
+        .eq("van_id", vanId)
+        .eq("dia", fecha)
+        .order("orden", { ascending: true })
+        .order("hora_visita", { ascending: true });
+
+      if (error) throw error;
+      setRutasBarberias(data || []);
+    } catch (error) {
+      console.error("Error al cargar rutas:", error);
+      setRutasBarberias([]);
+    } finally {
+      setLoadingRutas(false);
+    }
+  }
+
+  async function toggleVisitada(id, visitada) {
+    try {
+      const { error } = await supabase
+        .from("rutas_barberias")
+        .update({ visitada: !visitada })
+        .eq("id", id);
+
+      if (error) throw error;
+      cargarRutasBarberias(van.id, fechaRutaSeleccionada);
+    } catch (error) {
+      console.error("Error al actualizar:", error);
+    }
+  }
+
+  async function eliminarBarberia(id) {
+    if (!confirm("¿Eliminar esta barbería de la ruta?")) return;
+    
+    try {
+      const { error } = await supabase
+        .from("rutas_barberias")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+      cargarRutasBarberias(van.id, fechaRutaSeleccionada);
+    } catch (error) {
+      console.error("Error al eliminar:", error);
+    }
+  }
 
   function normalizeDetalleRows(rows) {
     return (rows || []).map((r) => ({
@@ -893,7 +1125,6 @@ async function cargarStockVan(van_id) {
     const diasConVentas = new Set(ventas.map(v => dayjs(v.fecha).format("YYYY-MM-DD"))).size;
     const promedioDiario = diasConVentas > 0 ? totalVentas / diasConVentas : 0;
     
-    // Crecimiento comparando primera mitad vs segunda mitad del período
     const mitad = Math.floor(rangeDays / 2);
     const fechaMitad = dayjs().subtract(mitad, "day");
     const ventasPrimera = ventas.filter(v => dayjs(v.fecha).isBefore(fechaMitad));
@@ -917,9 +1148,13 @@ async function cargarStockVan(van_id) {
     });
   };
 
-  // Datos para sparklines
   const sparklineData = ventasSerie.slice(-7).map(d => ({ value: d.total }));
   const maxProducto = productosTop.length > 0 ? productosTop[0].cantidad : 1;
+
+  // Estadísticas de ruta
+  const rutasCompletadas = rutasBarberias.filter(r => r.visitada).length;
+  const rutasPendientes = rutasBarberias.length - rutasCompletadas;
+  const progresoRuta = rutasBarberias.length > 0 ? (rutasCompletadas / rutasBarberias.length * 100) : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6">
@@ -964,7 +1199,173 @@ async function cargarStockVan(van_id) {
           </div>
         </div>
 
-        {/* Métricas Clave - Más Visuales */}
+        {/* NUEVA SECCIÓN: Ruta de Barberías del Día */}
+        <div className="bg-white rounded-3xl shadow-xl p-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-800 mb-1">Daily Route</h2>
+              <p className="text-sm text-gray-500">Barbershops to visit today</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="date"
+                value={fechaRutaSeleccionada}
+                onChange={(e) => setFechaRutaSeleccionada(e.target.value)}
+                className="border-2 border-gray-200 focus:border-purple-500 rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
+              />
+              <button
+                onClick={() => setShowAddBarberia(true)}
+                className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg transition-all flex items-center gap-2"
+              >
+                <IconPlus />
+                <span className="hidden sm:inline">Add</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Estadísticas de progreso */}
+          {rutasBarberias.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
+                <div className="text-xs text-blue-600 font-semibold uppercase mb-1">Total</div>
+                <div className="text-3xl font-bold text-gray-900">{rutasBarberias.length}</div>
+              </div>
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
+                <div className="text-xs text-green-600 font-semibold uppercase mb-1">Completed</div>
+                <div className="text-3xl font-bold text-gray-900">{rutasCompletadas}</div>
+              </div>
+              <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
+                <div className="text-xs text-amber-600 font-semibold uppercase mb-1">Pending</div>
+                <div className="text-3xl font-bold text-gray-900">{rutasPendientes}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Barra de progreso */}
+          {rutasBarberias.length > 0 && (
+            <div className="mb-6">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-semibold text-gray-700">Progress</span>
+                <span className="text-sm font-bold text-purple-600">{progresoRuta.toFixed(0)}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-purple-600 to-pink-600 transition-all duration-500 rounded-full"
+                  style={{ width: `${progresoRuta}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Lista de barberías */}
+          {loadingRutas ? (
+            <div className="text-center py-8">
+              <div className="inline-block w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+            </div>
+          ) : rutasBarberias.length === 0 ? (
+            <div className="text-center py-12 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl">
+              <div className="text-6xl mb-3">🗺️</div>
+              <div className="font-semibold text-gray-700 mb-2">No route planned</div>
+              <div className="text-sm text-gray-500 mb-4">Add barbershops to your daily route</div>
+              <button
+                onClick={() => setShowAddBarberia(true)}
+                className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition-all inline-flex items-center gap-2"
+              >
+                <IconPlus />
+                Add First Barbershop
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {rutasBarberias.map((barberia, idx) => (
+                <div
+                  key={barberia.id}
+                  className={`rounded-xl p-4 border-2 transition-all ${
+                    barberia.visitada
+                      ? "bg-gradient-to-r from-green-50 to-emerald-50 border-green-300 opacity-75"
+                      : "bg-white border-purple-200 hover:border-purple-400 hover:shadow-lg"
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    {/* Número de orden */}
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0 ${
+                      barberia.visitada
+                        ? "bg-green-500 text-white"
+                        : "bg-gradient-to-br from-purple-500 to-pink-500 text-white"
+                    }`}>
+                      {barberia.visitada ? "✓" : idx + 1}
+                    </div>
+
+                    {/* Información */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex-1">
+                          <h3 className={`font-bold text-lg ${barberia.visitada ? "line-through text-gray-500" : "text-gray-900"}`}>
+                            {barberia.barberia_nombre}
+                          </h3>
+                          {barberia.hora_visita && (
+                            <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
+                              <IconClock />
+                              <span>{barberia.hora_visita}</span>
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Botones de acción */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => toggleVisitada(barberia.id, barberia.visitada)}
+                            className={`p-2 rounded-lg transition-all ${
+                              barberia.visitada
+                                ? "bg-green-500 hover:bg-green-600 text-white"
+                                : "bg-purple-100 hover:bg-purple-200 text-purple-700"
+                            }`}
+                            title={barberia.visitada ? "Mark as pending" : "Mark as visited"}
+                          >
+                            <IconCheck />
+                          </button>
+                          <button
+                            onClick={() => eliminarBarberia(barberia.id)}
+                            className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 transition-all"
+                            title="Delete"
+                          >
+                            <IconTrash />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Detalles adicionales */}
+                      <div className="space-y-1">
+                        {barberia.direccion && (
+                          <div className="flex items-start gap-2 text-sm text-gray-600">
+                            <IconLocation className="flex-shrink-0 mt-0.5" />
+                            <span>{barberia.direccion}</span>
+                          </div>
+                        )}
+                        {barberia.telefono && (
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <IconPhone />
+                            <a href={`tel:${barberia.telefono}`} className="hover:text-purple-600 transition-colors">
+                              {barberia.telefono}
+                            </a>
+                          </div>
+                        )}
+                        {barberia.notas && (
+                          <div className="mt-2 bg-amber-50 border-l-4 border-amber-400 rounded p-2">
+                            <div className="text-xs text-amber-700 font-semibold mb-1">Notes:</div>
+                            <div className="text-sm text-gray-700">{barberia.notas}</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Métricas Clave */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <MetricCard
             title="Daily Average"
@@ -1120,7 +1521,7 @@ async function cargarStockVan(van_id) {
         {/* Sección de Productos y Alertas */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           
-          {/* Top 10 Productos - Rediseñado */}
+          {/* Top 10 Productos */}
           <div className="xl:col-span-2 bg-white rounded-3xl shadow-xl p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -1178,7 +1579,7 @@ async function cargarStockVan(van_id) {
             )}
           </div>
 
-          {/* Alerta de Stock Bajo - Rediseñado */}
+          {/* Alerta de Stock Bajo */}
           <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-3xl shadow-xl p-6 border-2 border-red-200">
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -1335,6 +1736,13 @@ async function cargarStockVan(van_id) {
         loading={cargandoDetalle}
         onClose={cerrarDetalleVenta}
         getNombreCliente={getNombreCliente}
+      />
+      <RutaBarberiaModal
+        open={showAddBarberia}
+        onClose={() => setShowAddBarberia(false)}
+        vanId={van?.id}
+        fechaSeleccionada={fechaRutaSeleccionada}
+        onRefresh={() => cargarRutasBarberias(van.id, fechaRutaSeleccionada)}
       />
     </div>
   );
