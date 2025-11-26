@@ -1847,312 +1847,991 @@ const fetchPage = async (opts = {}) => {
 }
 
 /* -------------------- MODAL: ESTADÍSTICAS -------------------- */
-// DENTRO DE Clientes.jsx - Reemplaza el componente ClienteStatsModal completo
+function ClienteStatsModal({
+  open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete, generatePDF, onRefreshCredito
+}) {
+  if (!open || !cliente) return null;
 
-function ClienteStatsModal({ cliente, onClose }) {
-  const [ventasData, setVentasData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filtroMes, setFiltroMes] = useState("todos");
   const [mostrarTodas, setMostrarTodas] = useState(false);
 
-  useEffect(() => {
-    if (!cliente?.id) return;
-    cargarVentas();
-  }, [cliente]);
+  const comprasPorMes = {};
+  let lifetimeTotal = 0;
+  (resumen.ventas || []).forEach(v => {
+    if (!v.fecha || !v.total_venta) return;
+    const mes = v.fecha.slice(0, 7);
+    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
+    lifetimeTotal += Number(v.total_venta || 0);
+  });
 
-  async function cargarVentas() {
-    try {
-      const { data, error } = await supabase
-        .from("detalle_ventas")
-        .select(`
-          id,
-          cantidad,
-          precio_unitario,
-          subtotal,
-          ventas!inner(
-            id,
-            fecha,
-            total,
-            metodo_pago
-          ),
-          productos(nombre, marca)
-        `)
-        .eq("ventas.cliente_id", cliente.id)
-        .order("ventas(fecha)", { ascending: false });
-
-      if (error) throw error;
-      setVentasData(data || []);
-    } catch (err) {
-      console.error("Error cargando ventas:", err);
-    } finally {
-      setLoading(false);
-    }
+  const mesesGrafico = [];
+  const hoy = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+    const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    mesesGrafico.unshift(label);
   }
+  const dataChart = mesesGrafico.map(mes => ({ mes: mes.slice(5), fullMes: mes, compras: comprasPorMes[mes] || 0 }));
 
-  const ventasFiltradas = useMemo(() => {
-    if (filtroMes === "todos") return ventasData;
-    const now = new Date();
-    const mesActual = now.getMonth();
-    const añoActual = now.getFullYear();
+  const limite = Number(resumen?.cxc?.limite ?? 0);
+  const disponible = Number(resumen?.cxc?.disponible ?? 0);
+  const saldo = Number(resumen?.balance ?? 0);
 
-    return ventasData.filter((v) => {
-      const fecha = new Date(v.ventas.fecha);
-      return fecha.getMonth() === mesActual && fecha.getFullYear() === añoActual;
-    });
-  }, [ventasData, filtroMes]);
-
-  const totalGastado = ventasFiltradas.reduce((sum, v) => sum + (v.subtotal || 0), 0);
-  const totalProductos = ventasFiltradas.reduce((sum, v) => sum + (v.cantidad || 0), 0);
-
-  const ventasMostrar = mostrarTodas ? ventasFiltradas : ventasFiltradas.slice(0, 10);
-
-  // Chart data
-  const chartData = useMemo(() => {
-    const ventasPorMes = {};
-    ventasData.forEach((v) => {
-      const fecha = new Date(v.ventas.fecha);
-      const mes = fecha.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-      ventasPorMes[mes] = (ventasPorMes[mes] || 0) + (v.subtotal || 0);
-    });
-
-    return Object.entries(ventasPorMes)
-      .sort((a, b) => new Date(a[0]) - new Date(b[0]))
-      .slice(-6)
-      .map(([mes, total]) => ({ mes, total }));
-  }, [ventasData]);
+  const ventasFiltradas = mesSeleccionado 
+    ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado))
+    : (resumen.ventas || []);
+  
+  const ventasMostrar = mostrarTodas 
+    ? ventasFiltradas 
+    : ventasFiltradas.slice(0, 10);
+  
+  const hayMasVentas = ventasFiltradas.length > 10;
 
   return (
-    <div 
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      {/* 🆕 MODAL CON ALTURA OPTIMIZADA Y PADDING INFERIOR */}
-      <div
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden"
-        style={{ maxHeight: "90vh" }} // 🆕 Altura máxima del 90% del viewport
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* HEADER FIJO */}
-        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-6 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                📊 Customer History
-              </h2>
-              <p className="text-purple-100 mt-1 text-lg font-semibold">
-                {cliente.nombre}
-              </p>
-              <p className="text-purple-200 text-sm mt-1">
-                {filtroMes === "todos" ? "Last 6 months analysis" : "Current month"}
-              </p>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-5xl h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header - STICKY */}
+        <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-20 shrink-0 shadow-lg">
+          <button className="absolute right-6 top-6 text-white/80 hover:text-white transition-colors bg-white/20 hover:bg-white/30 rounded-full p-2" onClick={onClose}>
+            <X size={24} />
+          </button>
+
+          <button
+            className="absolute right-20 top-6 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl font-semibold flex items-center gap-2 transition-all"
+            onClick={() => onEdit && onEdit()}
+          >
+            <Edit size={18} />
+            Edit
+          </button>
+
+          <div className="flex items-start gap-4 pr-32">
+            <div className="bg-white/20 rounded-2xl p-3 shrink-0 shadow-lg">
+              <User size={28} />
             </div>
-            <button
-              onClick={onClose}
-              className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
-            >
-              <X size={28} />
-            </button>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-3xl font-bold truncate mb-3">{cliente.nombre}</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Current Balance</div>
+                  <div className="text-2xl font-bold mt-1">{saldo >= 0 ? `$${saldo.toFixed(2)}` : `-$${Math.abs(saldo).toFixed(2)}`}</div>
+                </div>
+                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Effective Limit</div>
+                  <div className="text-2xl font-bold mt-1">${limite.toFixed(2)}</div>
+                </div>
+                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Available</div>
+                  <div className={`text-2xl font-bold mt-1 ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>${disponible.toFixed(2)}</div>
+                </div>
+              </div>
+              {resumen?.cxc?.limite_manual_aplicado && (
+                <div className="mt-3 text-xs uppercase tracking-wide text-yellow-200 font-bold">⚠️ Manual limit applied for this client</div>
+              )}
+
+              <div className="mt-4 text-blue-100 flex items-center gap-4 flex-wrap">
+                {cliente.email && (
+                  <div className="flex items-center gap-2 truncate">
+                    <Mail size={16} className="shrink-0" />
+                    <span className="truncate">{cliente.email}</span>
+                  </div>
+                )}
+                {cliente.telefono && (
+                  <div className="flex items-center gap-2">
+                    <Phone size={16} />
+                    {formatPhoneForInput(cliente.telefono)}
+                  </div>
+                )}
+                {cliente.negocio && (
+                  <div className="flex items-center gap-2 truncate">
+                    <Building2 size={16} className="shrink-0" />
+                    <span className="truncate">{cliente.negocio}</span>
+                  </div>
+                )}
+                {cliente.direccion && (
+                  <div className="flex items-center gap-2 truncate">
+                    <MapPin size={16} className="shrink-0" />
+                    <span className="truncate max-w-xs">{prettyAddress(cliente.direccion)}</span>
+                  </div>
+                )}
+
+                <button
+                  onClick={onRefreshCredito}
+                  className="ml-auto bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shrink-0 transition-all shadow-lg"
+                  title="Refresh credit"
+                >
+                  <RefreshCcw size={16} />
+                  Refresh
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* TABS */}
-        <div className="flex border-b bg-gray-50 flex-shrink-0">
-          <button className="flex-1 py-3 px-4 font-semibold text-purple-600 border-b-2 border-purple-600 bg-white">
-            💰 Balance History
-          </button>
-          <button className="flex-1 py-3 px-4 text-gray-500 hover:bg-gray-100">
-            📊 Credit Score
-          </button>
-          <button className="flex-1 py-3 px-4 text-gray-500 hover:bg-gray-100">
-            📋 Payment History
-          </button>
-        </div>
+        {/* Body - SCROLLABLE */}
+        <div 
+          className="flex-1 overflow-y-auto overscroll-contain"
+          style={{ 
+            WebkitOverflowScrolling: 'touch',
+            paddingBottom: 'max(env(safe-area-inset-bottom), 24px)'
+          }}
+        >
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-green-700 text-sm font-bold uppercase tracking-wide">Lifetime Sales</p>
+                    <p className="text-3xl font-bold text-green-800 mt-2">${(resumen.ventas || []).reduce((s,v)=>s+Number(v.total_venta||0),0).toFixed(2)}</p>
+                  </div>
+                  <div className="bg-green-500 p-3 rounded-xl shadow-md">
+                    <TrendingUp className="text-white" size={24} />
+                  </div>
+                </div>
+              </div>
 
-        {/* 🆕 CONTENIDO CON SCROLL Y PADDING INFERIOR */}
-        <div className="flex-1 overflow-y-auto p-6 pb-8">
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
+              <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-2xl p-5 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-blue-700 text-sm font-bold uppercase tracking-wide">Total Orders</p>
+                    <p className="text-3xl font-bold text-blue-800 mt-2">{(resumen.ventas || []).length}</p>
+                  </div>
+                  <div className="bg-blue-500 p-3 rounded-xl shadow-md">
+                    <FileText className="text-white" size={24} />
+                  </div>
+                </div>
+              </div>
+
+              <div className={`bg-gradient-to-br ${(resumen?.balance ?? 0) > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-green-50 to-emerald-50 border-green-200'} border-2 rounded-2xl p-5 shadow-lg`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={`${(resumen?.balance ?? 0) > 0 ? 'text-red-700' : 'text-green-700'} text-sm font-bold uppercase tracking-wide`}>Current Balance</p>
+                    <p className={`text-3xl font-bold ${(resumen?.balance ?? 0) > 0 ? 'text-red-800' : 'text-green-800'} mt-2`}>${Number(resumen?.balance ?? 0).toFixed(2)}</p>
+                  </div>
+                  <div className={`${(resumen?.balance ?? 0) > 0 ? 'bg-red-500' : 'bg-green-500'} p-3 rounded-xl shadow-md`}>
+                    <DollarSign className="text-white" size={24} />
+                  </div>
+                </div>
+              </div>
             </div>
-          ) : (
-            <>
-              {/* RESUMEN */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
-                  <div className="text-sm text-gray-600 mb-1">BALANCE</div>
-                  <div className="text-3xl font-bold text-blue-600">
-                    ${cliente.balance?.toFixed(2) || "0.00"}
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-xl border border-green-200">
-                  <div className="text-sm text-gray-600 mb-1">AVAILABLE</div>
-                  <div className="text-3xl font-bold text-green-600">
-                    ${(
-                      (cliente.limite_credito || 0) - (cliente.balance || 0)
-                    ).toFixed(2)}
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-4 rounded-xl border border-purple-200">
-                  <div className="text-sm text-gray-600 mb-1">TOTAL SPENT</div>
-                  <div className="text-3xl font-bold text-purple-600">
-                    ${totalGastado.toFixed(2)}
-                  </div>
-                </div>
+
+            {/* Filtro por mes */}
+            <div className="mb-6">
+              <label className="flex items-center gap-2 font-bold text-gray-800 mb-3 text-lg">
+                <Calendar size={20} />
+                Filter by Month
+              </label>
+              <select
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white font-medium shadow-sm"
+                value={mesSeleccionado || ""}
+                onChange={e => {
+                  setMesSeleccionado(e.target.value || null);
+                  setMostrarTodas(false);
+                }}
+              >
+                <option value="">All months</option>
+                {Object.keys(comprasPorMes).sort().reverse().map(mes => (
+                  <option key={mes} value={mes}>{mes}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Chart */}
+            <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-2xl p-6 mb-6 border-2 border-gray-200 shadow-lg">
+              <h4 className="font-bold mb-4 text-gray-900 flex items-center gap-2 text-xl">
+                <BarChart3 size={24} />
+                Sales Trend (Last 12 Months)
+              </h4>
+              <div className="h-80 sm:h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dataChart}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="mes" fontSize={12} stroke="#6b7280" tickLine={false} fontWeight="600" />
+                    <YAxis fontSize={12} stroke="#6b7280" tickLine={false} fontWeight="600" />
+                    <Tooltip
+                      formatter={v => [`$${Number(v).toFixed(2)}`, "Sales"]}
+                      labelStyle={{ color: '#374151', fontWeight: '600' }}
+                      contentStyle={{
+                        backgroundColor: 'white',
+                        border: '2px solid #3b82f6',
+                        borderRadius: '12px',
+                        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.15)'
+                      }}
+                    />
+                    <Bar dataKey="compras" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
+            </div>
 
-              {/* FILTRO DE MES */}
-              <div className="flex gap-2 mb-4">
-                <button
-                  onClick={() => setFiltroMes("todos")}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    filtroMes === "todos"
-                      ? "bg-purple-600 text-white shadow-lg"
-                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                  }`}
-                >
-                  All Time
-                </button>
-                <button
-                  onClick={() => setFiltroMes("actual")}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    filtroMes === "actual"
-                      ? "bg-purple-600 text-white shadow-lg"
-                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                  }`}
-                >
-                  This Month
-                </button>
-              </div>
-
-              {/* GRÁFICO */}
-              {chartData.length > 0 && (
-                <div className="mb-6 bg-gradient-to-br from-gray-50 to-blue-50 p-6 rounded-2xl border border-gray-200">
-                  <h3 className="font-bold text-lg mb-4 text-gray-700">
-                    📈 Balance Evolution
-                  </h3>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <AreaChart data={chartData}>
-                      <defs>
-                        <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8} />
-                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.1} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                      <XAxis
-                        dataKey="mes"
-                        tick={{ fontSize: 12 }}
-                        stroke="#6b7280"
-                      />
-                      <YAxis tick={{ fontSize: 12 }} stroke="#6b7280" />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "rgba(255, 255, 255, 0.95)",
-                          border: "1px solid #e5e7eb",
-                          borderRadius: "8px",
-                          padding: "8px 12px",
-                        }}
-                        formatter={(value) => [`$${value.toFixed(2)}`, "Total"]}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="total"
-                        stroke="#8b5cf6"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#colorTotal)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* TRANSACCIONES */}
-              <div className="bg-white rounded-xl border border-gray-200">
-                <div className="p-4 border-b bg-gradient-to-r from-gray-50 to-blue-50">
-                  <h3 className="font-bold text-lg text-gray-700">
-                    🛍️ Recent Transactions
-                  </h3>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {totalProductos} products • {ventasFiltradas.length} transactions
-                  </p>
-                </div>
-
-                {ventasMostrar.length === 0 ? (
-                  <div className="p-8 text-center text-gray-400">
-                    No transactions found
-                  </div>
-                ) : (
-                  <>
-                    <div className="divide-y">
-                      {ventasMostrar.map((venta) => (
-                        <div key={venta.id} className="p-4 hover:bg-gray-50 transition-colors">
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <div className="font-semibold text-gray-800">
-                                {venta.productos?.nombre || "Unknown Product"}
-                              </div>
-                              {venta.productos?.marca && (
-                                <div className="text-sm text-gray-500">
-                                  {venta.productos.marca}
-                                </div>
-                              )}
-                              <div className="text-xs text-gray-400 mt-1">
-                                {new Date(venta.ventas.fecha).toLocaleDateString("en-US", {
-                                  year: "numeric",
-                                  month: "short",
-                                  day: "numeric",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </div>
-                            </div>
-                            <div className="text-right ml-4">
-                              <div className="font-bold text-gray-800">
-                                ${venta.subtotal.toFixed(2)}
-                              </div>
-                              <div className="text-sm text-gray-500">
-                                Qty: {venta.cantidad} × ${venta.precio_unitario.toFixed(2)}
-                              </div>
-                              <div className="text-xs text-gray-400 capitalize mt-1">
-                                {venta.ventas.metodo_pago}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* BOTÓN VER MÁS/MENOS */}
-                    {ventasFiltradas.length > 10 && (
-                      <div className="p-4 border-t bg-gray-50">
-                        <button
-                          onClick={() => setMostrarTodas(!mostrarTodas)}
-                          className="w-full py-2 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md font-medium"
-                        >
-                          {mostrarTodas
-                            ? "Show Less"
-                            : `View All (${ventasFiltradas.length})`}
-                        </button>
-                      </div>
+            {/* Tabla ventas con límite de 10 */}
+            <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-2xl p-6 mb-6 border-2 border-gray-200 shadow-lg">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-bold text-gray-900 flex items-center gap-2 text-xl">
+                  <FileText size={24} />
+                  Sales History {mesSeleccionado ? `for ${mesSeleccionado}` : "(all)"}
+                  <span className="text-sm font-normal text-gray-500">
+                    ({ventasMostrar.length} of {ventasFiltradas.length})
+                  </span>
+                </h4>
+                
+                {hayMasVentas && (
+                  <button
+                    onClick={() => setMostrarTodas(!mostrarTodas)}
+                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all shadow-md"
+                  >
+                    {mostrarTodas ? (
+                      <>
+                        <ChevronUp size={16} />
+                        Show Less
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={16} />
+                        View All ({ventasFiltradas.length})
+                      </>
                     )}
-                  </>
+                  </button>
                 )}
               </div>
-            </>
-          )}
-        </div>
 
-        {/* 🆕 FOOTER FIJO CON BOTÓN DE CERRAR MÁS VISIBLE */}
-        <div className="flex-shrink-0 p-4 border-t bg-gradient-to-r from-gray-50 to-blue-50">
-          <button
-            onClick={onClose}
-            className="w-full py-3 px-6 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-xl hover:from-gray-700 hover:to-gray-800 transition-all shadow-lg font-semibold text-lg"
-          >
-            Close
-          </button>
+              {ventasFiltradas.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="bg-gray-200 rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center shadow-inner">
+                    <FileText className="text-gray-400" size={32} />
+                  </div>
+                  <p className="text-gray-700 font-bold text-lg mb-1">No sales found</p>
+                  <p className="text-gray-500">This client hasn't made any purchases yet</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto -mx-6 sm:mx-0">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b-2 border-gray-300 bg-gray-100">
+                        <th className="text-left py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Order ID</th>
+                        <th className="text-left py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Date</th>
+                        <th className="text-right py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Total</th>
+                        <th className="text-right py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Paid</th>
+                        <th className="text-center py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ventasMostrar.map((v) => (
+                        <tr key={v.id} className="border-b border-gray-200 hover:bg-white transition-colors">
+                          <td className="py-3 px-4">
+                            <span className="font-mono text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-lg font-bold">{v.id.slice(0, 8)}…</span>
+                          </td>
+                          <td className="py-3 px-4 text-gray-800 font-medium">{v.fecha?.slice(0, 10)}</td>
+                          <td className="py-3 px-4 text-right font-bold text-gray-900">${(v.total_venta || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4 text-right font-bold text-green-700">${(v.total_pagado || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span
+                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold shadow-sm ${
+                                v.estado_pago === "Paid"
+                                  ? "bg-green-500 text-white"
+                                  : v.estado_pago === "Partial"
+                                  ? "bg-yellow-500 text-white"
+                                  : "bg-gray-400 text-white"
+                              }`}
+                            >
+                              {v.estado_pago || "Pending"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Acciones secundarias */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
+              <button 
+                onClick={generatePDF} 
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all"
+              >
+                <Download size={18} />
+                Export PDF
+              </button>
+              <button 
+                onClick={() => onDelete?.(cliente)} 
+                className="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all"
+              >
+                <Trash2 size={18} />
+                Delete Client
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/* -------------------- MODAL: ABONO CON QR STRIPE -------------------- */
+function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
+  const { van } = useVan();
+
+  // Snapshot de saldo al abrir (evita saltos)
+  const [saldoBase, setSaldoBase] = useState(Number(resumen?.balance ?? cliente?.balance ?? 0));
+  const [cargandoSaldo, setCargandoSaldo] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setCargandoSaldo(true);
+      try {
+        const info = await safeGetCxc(cliente.id);
+        if (alive && info && typeof info.saldo === "number") {
+          setSaldoBase(Number(info.saldo));
+        }
+      } finally {
+        if (alive) setCargandoSaldo(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [cliente.id]);
+
+  // 🔒 Candado anti doble submit
+  const submitLockRef = useRef(false);
+
+  function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+
+  const [monto, setMonto] = useState("");
+  const [metodo, setMetodo] = useState("Cash");
+  const [guardando, setGuardando] = useState(false);
+  const [mensaje, setMensaje] = useState("");
+
+  // 🆕 ESTADOS PARA STRIPE QR
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrCodeData, setQRCodeData] = useState(null);
+  const [qrAmount, setQRAmount] = useState(0);
+  const [qrPollingActive, setQRPollingActive] = useState(false);
+  const qrPollingIntervalRef = useRef(null);
+
+  // 🆕 ESTADOS PARA FEE DE TARJETA
+  const [applyCardFee, setApplyCardFee] = useState(false);
+  const [cardFeePercentage, setCardFeePercentage] = useState(3);
+
+  useEffect(() => {
+    (async () => {
+      const info = await safeGetCxc(cliente.id);
+      if (info && setResumen) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
+    })();
+  }, [cliente.id, setResumen]);
+
+  const comprasPorMes = {};
+  let totalLifetime = 0;
+  (resumen.ventas || []).forEach(v => {
+    if (!v.fecha || !v.total_venta) return;
+    const mes = v.fecha.slice(0, 7);
+    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
+    totalLifetime += Number(v.total_venta || 0);
+  });
+
+  const saldoActual = Number(saldoBase ?? 0);
+  const disponible = Number(resumen?.cxc?.disponible ?? 0);
+  const limite = Number(resumen?.cxc?.limite ?? 0);
+  const montoNum = Number(monto || 0);
+
+  // Cálculo robusto en centavos
+  const prevCents = Math.max(0, Math.round(saldoActual * 100));
+  const payCents = Math.max(0, Math.round(montoNum * 100));
+  const excedenteCents = Math.max(0, payCents - prevCents);
+  const excedente = excedenteCents / 100;
+
+  // 🆕 FUNCIÓN PARA GENERAR QR
+  async function handleGenerateQR() {
+    let amount = Number(monto);
+
+    if (!amount || amount <= 0) {
+      setMensaje("⚠️ Ingresa un monto válido antes de generar el QR");
+      setTimeout(() => setMensaje(""), 2000);
+      return;
+    }
+
+    // Aplicar fee si está activado
+    const feeAmount = applyCardFee ? amount * (cardFeePercentage / 100) : 0;
+    const totalAmount = amount + feeAmount;
+
+    setQRAmount(totalAmount);
+
+    // Mostrar confirmación si hay fee
+    if (applyCardFee) {
+      const confirmed = window.confirm(
+        `💳 Card Fee Applied:\n\n` +
+        `Base amount: ${fmtSafe(amount)}\n` +
+        `Card fee (${cardFeePercentage}%): ${fmtSafe(feeAmount)}\n` +
+        `Total to charge: ${fmtSafe(totalAmount)}\n\n` +
+        `Continue?`
+      );
+      if (!confirmed) return;
+    }
+
+    // Crear sesión de pago
+    let checkoutUrl, sessionId;
+    try {
+      const created = await createStripeCheckoutSession(
+        totalAmount,
+        `Pago ${cliente?.nombre || "Cliente"} - ${van?.nombre || "Van"}` +
+        (applyCardFee ? ` (incluye ${cardFeePercentage}% fee)` : "")
+      );
+
+      checkoutUrl = created.url;
+      sessionId = created.sessionId;
+    } catch (e) {
+      setMensaje(`❌ Error generando checkout: ${e.message || e}`);
+      setTimeout(() => setMensaje(""), 3000);
+      return;
+    }
+
+    // Generar código QR
+    const qrData = await generateQRCode(checkoutUrl);
+    if (!qrData) {
+      setMensaje("❌ Error generando código QR");
+      setTimeout(() => setMensaje(""), 3000);
+      return;
+    }
+
+    // Mostrar modal y comenzar polling
+    setQRCodeData(qrData);
+    setShowQRModal(true);
+    setQRPollingActive(true);
+    startCheckoutPolling(sessionId, applyCardFee, amount, feeAmount);
+  }
+
+  // 🆕 FUNCIÓN DE POLLING
+  function startCheckoutPolling(sessionId, hasFee, baseAmount, feeAmount) {
+    if (qrPollingIntervalRef.current) {
+      clearInterval(qrPollingIntervalRef.current);
+    }
+
+    console.log("🌀 Iniciando polling para session:", sessionId);
+
+    let errorCount = 0;
+    const MAX_ERRORS = 3;
+
+    const timeoutId = setTimeout(() => {
+      if (qrPollingIntervalRef.current) {
+        clearInterval(qrPollingIntervalRef.current);
+        qrPollingIntervalRef.current = null;
+        setQRPollingActive(false);
+        setShowQRModal(false);
+        setMensaje("⏰ Payment timeout. Please verify manually.");
+      }
+    }, 5 * 60 * 1000);
+
+    qrPollingIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await checkStripeCheckoutStatus(sessionId);
+        
+        if (!res.ok) {
+          console.warn("⚠️ Error temporal en checkStripeCheckoutStatus:", res.error);
+          errorCount++;
+          if (errorCount >= MAX_ERRORS) {
+            clearInterval(qrPollingIntervalRef.current);
+            clearTimeout(timeoutId);
+            qrPollingIntervalRef.current = null;
+            setQRPollingActive(false);
+            setShowQRModal(false);
+            setMensaje("❌ Connection error with Stripe. Please verify your configuration.");
+          }
+          return;
+        }
+
+        errorCount = 0;
+
+        console.log("📊 Estado Stripe:", {
+          status: res.status,
+          paid: res.paid,
+          payment_status: res.payment_status,
+          session_status: res.session_status
+        });
+
+        if (res.paid === true || res.status === "complete") {
+          clearInterval(qrPollingIntervalRef.current);
+          clearTimeout(timeoutId);
+          qrPollingIntervalRef.current = null;
+          setQRPollingActive(false);
+
+          const paidAmount = Number(res.amount || 0) / 100;
+          
+          // Si hay fee, actualizar el monto base (sin fee)
+          const amountToSet = hasFee ? baseAmount : paidAmount;
+          
+          if (Number.isFinite(amountToSet) && amountToSet > 0) {
+            setMonto(Number(amountToSet.toFixed(2)));
+          }
+
+          setShowQRModal(false);
+
+          setMensaje(
+            "✅ Payment confirmed with Stripe!\n\n" +
+            `💰 Amount charged: ${fmtSafe(paidAmount)}\n` +
+            (hasFee ? `📊 Base amount: ${fmtSafe(baseAmount)}\n💳 Card fee (${cardFeePercentage}%): ${fmtSafe(feeAmount)}\n\n` : "") +
+            "👉 Click 'Record Payment' to complete."
+          );
+
+          return;
+        }
+
+        if (res.status === "expired") {
+          clearInterval(qrPollingIntervalRef.current);
+          clearTimeout(timeoutId);
+          qrPollingIntervalRef.current = null;
+          setQRPollingActive(false);
+          setMensaje("❌ Payment session expired.");
+          setShowQRModal(false);
+          return;
+        }
+      } catch (err) {
+        console.error("❌ Error durante el polling Stripe:", err);
+        errorCount++;
+        
+        if (errorCount >= MAX_ERRORS) {
+          clearInterval(qrPollingIntervalRef.current);
+          clearTimeout(timeoutId);
+          qrPollingIntervalRef.current = null;
+          setQRPollingActive(false);
+          setShowQRModal(false);
+          setMensaje("❌ Critical error. Please verify your connection and Stripe configuration.");
+        }
+      }
+    }, 3000);
+  }
+
+  // 🆕 CERRAR MODAL QR
+  function handleCloseQRModal() {
+    if (qrPollingIntervalRef.current) {
+      clearInterval(qrPollingIntervalRef.current);
+      qrPollingIntervalRef.current = null;
+    }
+    setQRPollingActive(false);
+    setShowQRModal(false);
+    setQRCodeData(null);
+  }
+
+  // 🆕 LIMPIAR AL DESMONTAR
+  useEffect(() => {
+    return () => {
+      if (qrPollingIntervalRef.current) {
+        clearInterval(qrPollingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Función guardarAbono
+  async function guardarAbono(e) {
+    e.preventDefault();
+
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    setGuardando(true);
+    setMensaje("");
+
+    try {
+      if (!van || !van.id) throw new Error("You must select a VAN before adding a payment.");
+
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+      const saldoActualUI = round2(Number(saldoBase ?? resumen?.balance ?? cliente?.balance ?? 0));
+      const montoIngresado = round2(Number(monto || 0));
+      if (!montoIngresado || montoIngresado <= 0) throw new Error("Invalid amount. Must be greater than 0.");
+      if (saldoActualUI <= 0) { setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`); return; }
+
+      const pagoAplicado = round2(Math.min(montoIngresado, saldoActualUI));
+      const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+
+      let rpcOk = false;
+      try {
+        const { error } = await supabase.rpc("cxc_registrar_pago", {
+          p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_idem: makeUUID(),
+        });
+        if (!error) rpcOk = true;
+      } catch (err) {
+        const msg = String(err?.message || "");
+        if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
+          const handleSecondCall = async () => {
+            try {
+              const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
+                p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_fecha: new Date().toISOString(),
+              });
+              if (!e2) {
+                rpcOk = true;
+              } else if (e2.code && e2.code !== "42883") {
+                throw e2;
+              }
+            } catch (e2) {
+              if (e2.code && e2.code !== "42883") {
+                throw e2;
+              }
+              rpcOk = true;
+            }
+          };
+          await handleSecondCall();
+        } else if (err?.code && err.code !== "42883") { 
+          throw err; 
+        }
+      }
+
+      if (!rpcOk) {
+        const { error: insErr } = await supabase.from("pagos").insert([{
+          cliente_id: cliente.id, monto: pagoAplicado, metodo_pago: metodo, fecha_pago: new Date().toISOString(),
+        }]);
+        if (insErr) throw insErr;
+      }
+
+      const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
+      setSaldoBase(saldoDespues);
+
+      // limpiar input
+      setMonto("");
+      setApplyCardFee(false);
+
+      // refrescar CxC/tabla
+      const info = await safeGetCxc(cliente.id);
+      if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
+      if (typeof refresh === "function") await refresh();
+
+      // mensaje
+      setMensaje(cambioDevuelto > 0
+        ? `✅ Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`
+        : "✅ Payment registered successfully!"
+      );
+
+      // recibo
+      const receiptPayload = {
+        clientName: cliente?.nombre || "",
+        creditNumber: getCreditNumber(cliente),
+        dateStr: new Date().toLocaleString(),
+        pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
+        amount: pagoAplicado,
+        prevBalance: saldoActualUI,
+        newBalance: saldoDespues,
+      };
+      try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
+
+      // cerrar el modal
+      setTimeout(() => {
+        if (typeof onClose === "function") onClose();
+      }, 1800);
+
+    } catch (err) {
+      setMensaje("❌ Error saving payment: " + (err?.message || "unknown"));
+    } finally {
+      setGuardando(false);
+      submitLockRef.current = false;
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
+        <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-md sm:max-w-3xl h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20 shadow-lg">
+            <h3 className="text-2xl font-bold flex items-center gap-2">
+              <DollarSign size={24} />
+              Payment for {cliente.nombre}
+            </h3>
+            <p className="text-green-100 mt-2">Record a new payment from this client</p>
+          </div>
+
+          <form onSubmit={guardarAbono} className="flex-1 flex flex-col min-h-0">
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border-2 border-gray-200">
+                  <div className="text-xs text-gray-500 uppercase font-bold">Balance</div>
+                  <div className={`text-2xl font-bold mt-1 ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>${saldoActual.toFixed(2)}</div>
+                </div>
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border-2 border-blue-200">
+                  <div className="text-xs text-blue-600 uppercase font-bold">Effective Limit</div>
+                  <div className="text-2xl font-bold text-blue-700 mt-1">${limite.toFixed(2)}</div>
+                </div>
+                <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-xl p-4 border-2 border-emerald-200">
+                  <div className="text-xs text-emerald-600 uppercase font-bold">Available</div>
+                  <div className={`text-2xl font-bold mt-1 ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${disponible.toFixed(2)}</div>
+                </div>
+              </div>
+
+              <div className="space-y-4 mb-4">
+                <div>
+                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Amount</label>
+                  <input
+                    className="w-full px-4 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 text-2xl font-bold"
+                    placeholder="0.00"
+                    type="number" min="0.01" step="0.01"
+                    value={monto}
+                    onChange={e => setMonto(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Method</label>
+                  <div className="flex gap-2">
+                    <select
+                      className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white font-medium"
+                      value={metodo}
+                      onChange={e => setMetodo(e.target.value)}
+                    >
+                      <option value="Cash">💵 Cash</option>
+                      <option value="Card">💳 Card</option>
+                      <option value="Transfer">🏦 Transfer</option>
+                    </select>
+
+                    {/* 🆕 BOTÓN QR PARA TARJETA */}
+                    {metodo === "Card" && (
+                      <button
+                        type="button"
+                        onClick={handleGenerateQR}
+                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 whitespace-nowrap"
+                        title="Generar QR para pago con Stripe"
+                      >
+                        📱 QR
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 🆕 CHECKBOX PARA FEE */}
+                  {metodo === "Card" && (
+                    <div className="mt-4 pt-4 border-t-2 border-gray-200">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyCardFee}
+                          onChange={(e) => setApplyCardFee(e.target.checked)}
+                          className="w-5 h-5 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
+                        />
+                        <span className="text-gray-700 font-semibold">
+                          💳 Apply card fee ({cardFeePercentage}%)
+                          {applyCardFee && Number(monto) > 0 && (
+                            <span className="ml-2 font-bold text-purple-600 text-lg">
+                              → Total: {fmtSafe(Number(monto) * (1 + cardFeePercentage / 100))}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                      
+                      {applyCardFee && (
+                        <div className="mt-3 flex items-center gap-3 bg-purple-50 rounded-xl p-3 border-2 border-purple-200">
+                          <label className="text-sm text-purple-700 font-bold">Fee %:</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="10"
+                            step="0.1"
+                            value={cardFeePercentage}
+                            onChange={(e) => setCardFeePercentage(Math.max(0, Math.min(10, Number(e.target.value))))}
+                            className="w-20 border-2 border-purple-300 rounded-lg px-3 py-2 text-sm font-bold"
+                          />
+                          <span className="text-sm text-purple-600 font-semibold">
+                            (Fee: {fmtSafe(Number(monto) * (cardFeePercentage / 100))})
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-amber-50 border-2 border-amber-200 text-amber-800 rounded-xl p-4 mb-4 shadow-sm">
+                {montoNum <= 0 ? (
+                  <span className="text-sm font-semibold">💡 Enter a payment amount to see details.</span>
+                ) : excedente > 0 ? (
+                  <div className="text-sm font-semibold">
+                    ⚠️ The payment exceeds the current balance by <span className="font-bold text-amber-900 text-lg">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
+                  </div>
+                ) : (
+                  (() => {
+                    const newCents = Math.max(0, prevCents - payCents);
+                    const newBalance = (newCents / 100).toFixed(2);
+                    return (
+                      <div className="text-sm font-semibold">
+                        ✅ Payment will reduce balance to <span className="font-bold text-green-700 text-lg">${newBalance}</span>.
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+
+              {mensaje && (
+                <div className={`mb-4 p-4 rounded-xl border-2 ${mensaje.includes("Error") || mensaje.includes("invalid") ? "bg-red-50 text-red-800 border-red-300" : "bg-green-50 text-green-800 border-green-300"}`}>
+                  <div className="flex items-center gap-3 font-semibold">
+                    {mensaje.includes("Error") ? <X size={20} /> : <Check size={20} />}
+                    <span className="whitespace-pre-line">{mensaje}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Resumen de compras/pagos */}
+              <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-5 border-2 border-gray-200 shadow-sm">
+                <h4 className="font-bold mb-4 text-gray-900 flex items-center gap-2 text-lg">
+                  <TrendingUp size={20} />
+                  Purchase History Summary
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <p className="text-sm font-bold text-gray-700 mb-3">Monthly Purchases:</p>
+                    <div className="max-h-36 overflow-y-auto space-y-2">
+                      {Object.keys(comprasPorMes).length === 0 ? (
+                        <p className="text-gray-500 text-sm italic">No sales registered</p>
+                      ) : (
+                        Object.entries(comprasPorMes).sort((a,b) => b[0].localeCompare(a[0])).map(([mes, total]) => (
+                          <div key={mes} className="flex justify-between items-center py-2 bg-white rounded-lg px-3 border border-gray-200">
+                            <span className="text-sm text-gray-700 font-semibold">{mes}</span>
+                            <span className="font-bold text-blue-700">${total.toFixed(2)}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-bold text-gray-700 mb-3">Recent Payments:</p>
+                    <div className="max-h-36 overflow-y-auto space-y-2">
+                      {resumen.pagos?.length === 0 ? (
+                        <p className="text-gray-500 text-sm italic">No previous payments</p>
+                      ) : (
+                        resumen.pagos.map(p => (
+                          <div key={p.id} className="flex justify-between items-center py-2 bg-white rounded-lg px-3 border border-gray-200">
+                            <span className="text-sm text-gray-700 font-semibold">{p.fecha_pago?.slice(0,10)}</span>
+                            <span className="font-bold text-green-700">${(p.monto || 0).toFixed(2)}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t-2 border-gray-300 pt-4">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-gray-900 text-lg">Lifetime Total:</span>
+                    <span className="text-3xl font-bold text-green-700">${totalLifetime.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-[140px]" />
+            </div>
+
+            <div
+              className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-3xl bg-white border-t-2 border-gray-200 rounded-t-xl shadow-2xl p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
+              style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
+            >
+              <div className="flex gap-3">
+                <button
+                  type="submit"
+                  disabled={guardando}
+                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
+                >
+                  {guardando ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Check size={20} />
+                      Record Payment
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
+                  onClick={onClose}
+                  disabled={guardando}
+                >
+                  <X size={20} />
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* 🆕 MODAL QR */}
+      {showQRModal && (
+        <div className="fixed inset-0 z-[99999] bg-black/90 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-5 flex items-center justify-between">
+              <h3 className="font-bold text-xl flex items-center gap-2">
+                💳 Card Payment - Stripe
+              </h3>
+              <button
+                className="text-white hover:bg-white/20 w-10 h-10 rounded-full transition-colors flex items-center justify-center"
+                onClick={handleCloseQRModal}
+              >
+                ✖️
+              </button>
+            </div>
+
+            <div className="p-6 text-center space-y-5">
+              {applyCardFee ? (
+                <div className="space-y-3 bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-4 border-2 border-purple-200">
+                  <div className="text-sm text-gray-600 font-semibold">Base Amount</div>
+                  <div className="text-2xl font-bold text-gray-900">{fmtSafe(monto)}</div>
+                  
+                  <div className="text-sm text-purple-700 font-bold">+ Card Fee ({cardFeePercentage}%)</div>
+                  <div className="text-xl font-bold text-purple-700">{fmtSafe(Number(monto) * (cardFeePercentage / 100))}</div>
+                  
+                  <div className="border-t-2 border-purple-300 pt-3 mt-3">
+                    <div className="text-sm text-gray-600 font-semibold">Total to Charge</div>
+                    <div className="text-4xl font-bold text-gray-900 mt-1">{fmtSafe(qrAmount)}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-3xl font-bold text-gray-900 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 border-2 border-blue-200">
+                  Amount to Pay: {fmtSafe(qrAmount)}
+                </div>
+              )}
+
+              {qrCodeData && (
+                <div className="bg-white p-5 rounded-2xl border-4 border-purple-300 inline-block shadow-xl">
+                  <img 
+                    src={qrCodeData} 
+                    alt="QR Code de pago" 
+                    className="w-72 h-72"
+                  />
+                </div>
+              )}
+
+              <div className="space-y-3 bg-blue-50 rounded-xl p-4 border-2 border-blue-200">
+                <p className="text-gray-900 font-bold text-lg">
+                  📱 Scan the QR code with your phone
+                </p>
+                <p className="text-gray-700">
+                  The client can pay securely with their card
+                </p>
+                {applyCardFee && (
+                  <p className="text-purple-700 font-bold text-sm">
+                    ⚠️ Amount includes {cardFeePercentage}% processing fee
+                  </p>
+                )}
+              </div>
+
+              {qrPollingActive && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl p-4 shadow-inner">
+                  <div className="flex items-center justify-center gap-3 text-blue-800">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-800"></div>
+                    <span className="font-bold">Waiting for payment confirmation...</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4">
+                <button
+                  onClick={handleCloseQRModal}
+                  className="w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white px-6 py-4 rounded-xl font-bold transition-all shadow-lg"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
