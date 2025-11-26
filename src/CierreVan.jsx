@@ -172,69 +172,59 @@ export default function CierreVan() {
   }, [fechasSeleccionadas, van?.id]);
 
   // ✅ Cargar TOTALES ESPERADOS usando el MISMO RPC que PreCierre
-  useEffect(() => {
-    if (!van?.id || fechasSeleccionadas.length === 0) return;
+ useEffect(() => {
+  if (!van?.id || fechasSeleccionadas.length === 0) return;
 
-    const loadResumen = async () => {
-      try {
-        const p_from = fechasSeleccionadas.reduce(
-          (min, d) => (d < min ? d : min),
-          fechasSeleccionadas[0]
-        );
-        const p_to = fechasSeleccionadas.reduce(
-          (max, d) => (d > max ? d : max),
-          fechasSeleccionadas[0]
-        );
+  const loadResumen = async () => {
+    try {
+      const p_from = fechasSeleccionadas.reduce(
+        (min, d) => (d < min ? d : min),
+        fechasSeleccionadas[0]
+      );
+      const p_to = fechasSeleccionadas.reduce(
+        (max, d) => (d > max ? d : max),
+        fechasSeleccionadas[0]
+      );
 
-        console.log(
-          "🔄 Cargando resumen esperado (RPC) para",
-          van.id,
-          "de",
+      const { data, error } = await supabase.rpc(
+        "closeout_pre_resumen_filtrado",
+        {
+          p_van_id: van.id,
           p_from,
-          "a",
-          p_to
-        );
-
-        const { data, error } = await supabase.rpc(
-          "closeout_pre_resumen_filtrado",
-          {
-            p_van_id: van.id,
-            p_from,
-            p_to,
-          }
-        );
-
-        if (error) {
-          console.error("RPC error en CierreVan:", error);
-          throw error;
+          p_to,
         }
+      );
 
-        const map = {};
-        (data || []).forEach((r) => {
-          const iso = (r.dia ?? r.fecha ?? r.day ?? r.f ?? "").slice(0, 10);
-          if (!iso) return;
-          // Solo nos interesan las fechas actualmente seleccionadas
-          if (!fechasSeleccionadas.includes(iso)) return;
-
-          map[iso] = {
-            cash: Number(r.cash_expected ?? r.cash ?? 0),
-            card: Number(r.card_expected ?? r.card ?? 0),
-            transfer: Number(r.transfer_expected ?? r.transfer ?? 0),
-            mix: Number(r.mix_unallocated ?? r.mix ?? 0),
-          };
-        });
-
-        console.log("✅ Resumen esperado por fecha (Cierre):", map);
-        setResumenPorFecha(map);
-      } catch (err) {
-        console.error("❌ Error loading expected totals:", err);
-        setMensaje("Error loading expected totals: " + err.message);
-        setTipoMensaje("error");
+      if (error) {
+        console.error("RPC error en CierreVan:", error);
+        throw error;
       }
-    };
 
-    loadResumen();
-  }, [van?.id, fechasSeleccionadas]);
+      const map = {};
+      (data || []).forEach((r) => {
+        const iso = (r.dia ?? r.fecha ?? r.day ?? r.f ?? "").slice(0, 10);
+        if (!iso) return;
+        if (!fechasSeleccionadas.includes(iso)) return;
+
+        // ✅ SOLO 3 CAMPOS AHORA (sin mix)
+        map[iso] = {
+          cash: Number(r.cash_expected ?? 0),
+          card: Number(r.card_expected ?? 0),
+          transfer: Number(r.transfer_expected ?? 0),
+        };
+      });
+
+      console.log("✅ Resumen esperado por fecha (Cierre):", map);
+      setResumenPorFecha(map);
+    } catch (err) {
+      console.error("❌ Error loading expected totals:", err);
+      setMensaje("Error loading expected totals: " + err.message);
+      setTipoMensaje("error");
+    }
+  };
+
+  loadResumen();
+}, [van?.id, fechasSeleccionadas]);
 
   // Sync input states with real values
   useEffect(() => {
@@ -442,32 +432,30 @@ export default function CierreVan() {
   };
 
   // ⚙️ Función auxiliar: totales por fecha usando RESUMEN (RPC) + total_venta
-  const calcularTotalesPorFecha = (fecha, ventas) => {
-    let totalVentas = 0;
-    (ventas || []).forEach((venta) => {
-      totalVentas += Number(venta.total_venta || 0);
-    });
+const calcularTotalesPorFecha = (fecha, ventas) => {
+  let totalVentas = 0;
+  (ventas || []).forEach((venta) => {
+    totalVentas += Number(venta.total_venta || 0);
+  });
 
-    const r = resumenPorFecha[fecha] || {};
-    const totalEfectivo = Number(r.cash || 0);
-    const totalTarjeta = Number(r.card || 0);
-    const totalTransferencia = Number(r.transfer || 0);
-    // Usamos "mix" como "otros" en cierre
-    const totalOtros = Number(r.mix || 0);
+  const r = resumenPorFecha[fecha] || {};
+  const totalEfectivo = Number(r.cash || 0);
+  const totalTarjeta = Number(r.card || 0);
+  const totalTransferencia = Number(r.transfer || 0);
+  // ✅ ELIMINADO: const totalOtros = Number(r.mix || 0);
 
-    const totalCaja =
-      totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
+  const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
 
-    return {
-      totalVentas,
-      totalEfectivo,
-      totalTarjeta,
-      totalTransferencia,
-      totalOtros,
-      totalCaja,
-      diferencia: 0,
-    };
+  return {
+    totalVentas,
+    totalEfectivo,
+    totalTarjeta,
+    totalTransferencia,
+    totalOtros: 0, // ✅ Siempre 0, ya no usamos "mix"
+    totalCaja,
+    diferencia: 0,
   };
+};
 
   /* ========================= PDF Generation ========================= */
   const handleGenerarPDF = () => {
@@ -942,81 +930,71 @@ export default function CierreVan() {
   };
 
   /* ========================= Calculated Totals ========================= */
-  const totales = useMemo(() => {
-    // Total de ventas viene de ventasPorFecha (no hay problema de duplicado aquí)
-    const todasLasVentas = Object.values(ventasPorFecha).flat();
-    let totalVentas = 0;
-    todasLasVentas.forEach((venta) => {
-      totalVentas += Number(venta.total_venta || 0);
-    });
+const totales = useMemo(() => {
+  const todasLasVentas = Object.values(ventasPorFecha).flat();
+  let totalVentas = 0;
+  todasLasVentas.forEach((venta) => {
+    totalVentas += Number(venta.total_venta || 0);
+  });
 
-    // Totales de métodos de pago vienen del RPC (resumenPorFecha),
-    // que es el MISMO cálculo que PreCierre.
-    let totalEfectivo = 0;
-    let totalTarjeta = 0;
-    let totalTransferencia = 0;
-    let totalOtros = 0;
+  let totalEfectivo = 0;
+  let totalTarjeta = 0;
+  let totalTransferencia = 0;
+  // ✅ ELIMINADO: let totalOtros = 0;
 
-    fechasSeleccionadas.forEach((fecha) => {
-      const r = resumenPorFecha[fecha];
-      if (!r) return;
-      totalEfectivo += Number(r.cash || 0);
-      totalTarjeta += Number(r.card || 0);
-      totalTransferencia += Number(r.transfer || 0);
-      // Usamos mix_unallocated como "Otros"
-      totalOtros += Number(r.mix || 0);
-    });
+  fechasSeleccionadas.forEach((fecha) => {
+    const r = resumenPorFecha[fecha];
+    if (!r) return;
+    totalEfectivo += Number(r.cash || 0);
+    totalTarjeta += Number(r.card || 0);
+    totalTransferencia += Number(r.transfer || 0);
+    // ✅ ELIMINADO: totalOtros += Number(r.mix || 0);
+  });
 
-    const totalCaja =
-      totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
-    const totalReal = cashReal + cardReal + transferReal + otherReal;
-    const diferencia = Math.abs(totalCaja - totalReal);
+  const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
+  const totalReal = cashReal + cardReal + transferReal + otherReal;
+  const diferencia = Math.abs(totalCaja - totalReal);
 
-    return {
-      totalVentas,
-      totalEfectivo,
-      totalTarjeta,
-      totalTransferencia,
-      totalOtros,
-      totalCaja,
-      diferencia,
-    };
-  }, [
-    ventasPorFecha,
-    resumenPorFecha,
-    fechasSeleccionadas,
-    cashReal,
-    cardReal,
-    transferReal,
-    otherReal,
-  ]);
+  return {
+    totalVentas,
+    totalEfectivo,
+    totalTarjeta,
+    totalTransferencia,
+    totalOtros: 0, // ✅ Siempre 0
+    totalCaja,
+    diferencia,
+  };
+}, [
+  ventasPorFecha,
+  resumenPorFecha,
+  fechasSeleccionadas,
+  cashReal,
+  cardReal,
+  transferReal,
+  otherReal,
+]);
 
   /* ========================= Chart Data ========================= */
-  const datosMetodosPago = useMemo(() => {
-    return [
-      {
-        name: "Cash",
-        value: totales.totalEfectivo,
-        color: getPaymentMethodColor("efectivo"),
-      },
-      {
-        name: "Card",
-        value: totales.totalTarjeta,
-        color: getPaymentMethodColor("tarjeta"),
-      },
-      {
-        name: "Transfer",
-        value: totales.totalTransferencia,
-        color: getPaymentMethodColor("transferencia"),
-      },
-      {
-        // Mostramos "Other" pero internamente viene de "mix" del RPC
-        name: "Other",
-        value: totales.totalOtros,
-        color: getPaymentMethodColor("otro"),
-      },
-    ].filter((item) => item.value > 0);
-  }, [totales]);
+const datosMetodosPago = useMemo(() => {
+  return [
+    {
+      name: "Cash",
+      value: totales.totalEfectivo,
+      color: getPaymentMethodColor("efectivo"),
+    },
+    {
+      name: "Card",
+      value: totales.totalTarjeta,
+      color: getPaymentMethodColor("tarjeta"),
+    },
+    {
+      name: "Transfer",
+      value: totales.totalTransferencia,
+      color: getPaymentMethodColor("transferencia"),
+    },
+    // ✅ ELIMINADO: "Other" ya no existe
+  ].filter((item) => item.value > 0);
+}, [totales]);
 
   // Datos por fecha para gráfico y tabla (usando resumenPorFecha)
   const datosPorFecha = useMemo(() => {
