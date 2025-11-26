@@ -1847,6 +1847,7 @@ const fetchPage = async (opts = {}) => {
 }
 
 /* -------------------- MODAL: ESTADÍSTICAS -------------------- */
+/* -------------------- MODAL: ESTADÍSTICAS (HEADER COMPACTO) -------------------- */
 function ClienteStatsModal({
   open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete, generatePDF, onRefreshCredito
 }) {
@@ -1889,79 +1890,89 @@ function ClienteStatsModal({
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-5xl h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header - STICKY */}
-        <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-20 shrink-0 shadow-lg">
-          <button className="absolute right-6 top-6 text-white/80 hover:text-white transition-colors bg-white/20 hover:bg-white/30 rounded-full p-2" onClick={onClose}>
-            <X size={24} />
-          </button>
-
-          <button
-            className="absolute right-20 top-6 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl font-semibold flex items-center gap-2 transition-all"
-            onClick={() => onEdit && onEdit()}
-          >
-            <Edit size={18} />
-            Edit
-          </button>
-
-          <div className="flex items-start gap-4 pr-32">
-            <div className="bg-white/20 rounded-2xl p-3 shrink-0 shadow-lg">
-              <User size={28} />
+        {/* 🆕 HEADER COMPACTO - STICKY */}
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-20 shrink-0 shadow-lg">
+          {/* Top bar con nombre y botones */}
+          <div className="p-4 flex items-center justify-between border-b border-white/20">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="bg-white/20 rounded-xl p-2 shrink-0">
+                <User size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-xl font-bold truncate">{cliente.nombre}</h3>
+                {resumen?.cxc?.limite_manual_aplicado && (
+                  <div className="text-xs uppercase tracking-wide text-yellow-200 font-bold">⚠️ Manual limit</div>
+                )}
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-3xl font-bold truncate mb-3">{cliente.nombre}</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
-                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Current Balance</div>
-                  <div className="text-2xl font-bold mt-1">{saldo >= 0 ? `$${saldo.toFixed(2)}` : `-$${Math.abs(saldo).toFixed(2)}`}</div>
-                </div>
-                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
-                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Effective Limit</div>
-                  <div className="text-2xl font-bold mt-1">${limite.toFixed(2)}</div>
-                </div>
-                <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
-                  <div className="uppercase tracking-wide text-xs text-white/70 font-semibold">Available</div>
-                  <div className={`text-2xl font-bold mt-1 ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>${disponible.toFixed(2)}</div>
-                </div>
+            
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={onRefreshCredito}
+                className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-colors"
+                title="Refresh credit"
+              >
+                <RefreshCcw size={16} />
+              </button>
+              <button
+                className="bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg font-semibold flex items-center gap-1.5 transition-colors text-sm"
+                onClick={() => onEdit && onEdit()}
+              >
+                <Edit size={16} />
+                Edit
+              </button>
+              <button 
+                className="text-white/80 hover:text-white bg-white/20 hover:bg-white/30 rounded-lg p-2 transition-colors" 
+                onClick={onClose}
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Cards compactas en una fila */}
+          <div className="px-4 pb-3 pt-2">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
+                <div className="text-[10px] uppercase tracking-wide text-white/70 font-bold">Current Balance</div>
+                <div className="text-lg font-bold mt-0.5">{saldo >= 0 ? `$${saldo.toFixed(2)}` : `-$${Math.abs(saldo).toFixed(2)}`}</div>
               </div>
-              {resumen?.cxc?.limite_manual_aplicado && (
-                <div className="mt-3 text-xs uppercase tracking-wide text-yellow-200 font-bold">⚠️ Manual limit applied for this client</div>
+              <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
+                <div className="text-[10px] uppercase tracking-wide text-white/70 font-bold">Effective Limit</div>
+                <div className="text-lg font-bold mt-0.5">${limite.toFixed(2)}</div>
+              </div>
+              <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
+                <div className="text-[10px] uppercase tracking-wide text-white/70 font-bold">Available</div>
+                <div className={`text-lg font-bold mt-0.5 ${disponible >= 0 ? "text-emerald-200" : "text-rose-200"}`}>${disponible.toFixed(2)}</div>
+              </div>
+            </div>
+
+            {/* Info de contacto compacta */}
+            <div className="mt-2 flex items-center gap-3 flex-wrap text-xs text-blue-100">
+              {cliente.email && (
+                <div className="flex items-center gap-1 truncate">
+                  <Mail size={12} className="shrink-0" />
+                  <span className="truncate">{cliente.email}</span>
+                </div>
               )}
-
-              <div className="mt-4 text-blue-100 flex items-center gap-4 flex-wrap">
-                {cliente.email && (
-                  <div className="flex items-center gap-2 truncate">
-                    <Mail size={16} className="shrink-0" />
-                    <span className="truncate">{cliente.email}</span>
-                  </div>
-                )}
-                {cliente.telefono && (
-                  <div className="flex items-center gap-2">
-                    <Phone size={16} />
-                    {formatPhoneForInput(cliente.telefono)}
-                  </div>
-                )}
-                {cliente.negocio && (
-                  <div className="flex items-center gap-2 truncate">
-                    <Building2 size={16} className="shrink-0" />
-                    <span className="truncate">{cliente.negocio}</span>
-                  </div>
-                )}
-                {cliente.direccion && (
-                  <div className="flex items-center gap-2 truncate">
-                    <MapPin size={16} className="shrink-0" />
-                    <span className="truncate max-w-xs">{prettyAddress(cliente.direccion)}</span>
-                  </div>
-                )}
-
-                <button
-                  onClick={onRefreshCredito}
-                  className="ml-auto bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shrink-0 transition-all shadow-lg"
-                  title="Refresh credit"
-                >
-                  <RefreshCcw size={16} />
-                  Refresh
-                </button>
-              </div>
+              {cliente.telefono && (
+                <div className="flex items-center gap-1">
+                  <Phone size={12} />
+                  {formatPhoneForInput(cliente.telefono)}
+                </div>
+              )}
+              {cliente.negocio && (
+                <div className="flex items-center gap-1 truncate">
+                  <Building2 size={12} className="shrink-0" />
+                  <span className="truncate">{cliente.negocio}</span>
+                </div>
+              )}
+              {cliente.direccion && (
+                <div className="flex items-center gap-1 truncate">
+                  <MapPin size={12} className="shrink-0" />
+                  <span className="truncate max-w-xs">{prettyAddress(cliente.direccion)}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2834,4 +2845,4 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
       )}
     </>
   );
-}
+} 
