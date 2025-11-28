@@ -601,7 +601,7 @@ export default function Sales() {
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState("");
   const [adjustNote, setAdjustNote] = useState("Saldo viejo importado");
-
+  const [savingAdjust, setSavingAdjust] = useState(false);
   // ---- UI
   const [showPaymentDetails, setShowPaymentDetails] = useState(false);
   const [invTick, setInvTick] = useState(0);
@@ -3551,16 +3551,17 @@ disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > c
               </div>
 
               <label className="block text-sm font-medium text-gray-700">Amount</label>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={adjustAmount}
-                onChange={(e) => setAdjustAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full border rounded-lg px-3 py-2"
-                autoFocus
-              />
+            <input
+  type="number"
+  min="0.01"
+  step="0.01"
+  value={adjustAmount}
+  onChange={(e) => setAdjustAmount(e.target.value)}
+  placeholder="0.00"
+  className="w-full border rounded-lg px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+  disabled={savingAdjust} // 🆕 AGREGAR
+  autoFocus
+/>
 
               <label className="block text-sm font-medium text-gray-700">Note (optional)</label>
               <input
@@ -3573,40 +3574,64 @@ disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > c
                 <button className="flex-1 bg-gray-500 hover:bg-gray-600 text-white rounded-lg px-4 py-2" onClick={() => setShowAdjustModal(false)}>
                   Cancel
                 </button>
-                <button
-                  className="flex-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg px-4 py-2"
-                  onClick={async () => {
-                    const amt = Number(adjustAmount);
-                    const { id: uid } = usuario || {};
-                    if (!selectedClient?.id) return;
-                    if (!amt || isNaN(amt) || amt <= 0) {
-                      alert("Monto inválido");
-                      return;
-                    }
-                    const { error } = await supabase.rpc("cxc_crear_ajuste_inicial", {
-                      p_cliente_id: selectedClient.id,
-                      p_monto: amt,
-                      p_usuario_id: uid,
-                      p_nota: adjustNote || null,
-                    });
-                    if (error) {
-                      alert("Error: " + error.message);
-                      return;
-                    }
-                    try {
-                      const info = await getCxcCliente(selectedClient.id);
-                      if (info) {
-                        setCxcLimit(info.limite);
-                        setCxcAvailable(info.disponible);
-                        setCxcBalance(info.saldo);
-                      }
-                    } catch {}
-                    setShowAdjustModal(false);
-                    alert("✅ Opening balance saved");
-                  }}
-                >
-                  Save
-                </button>
+<button
+  className="flex-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+  disabled={savingAdjust} // 🆕 DESHABILITAR MIENTRAS GUARDA
+  onClick={async () => {
+    const amt = Number(adjustAmount);
+    const { id: uid } = usuario || {};
+    
+    if (!selectedClient?.id) {
+      alert("No hay cliente seleccionado");
+      return;
+    }
+    
+    if (!amt || isNaN(amt) || amt <= 0) {
+      alert("Monto inválido");
+      return;
+    }
+
+    setSavingAdjust(true); // 🆕 DESHABILITAR BOTÓN
+    
+    try {
+      const { error } = await supabase.rpc("cxc_crear_ajuste_inicial", {
+        p_cliente_id: selectedClient.id,
+        p_monto: amt,
+        p_usuario_id: uid,
+        p_nota: adjustNote || null,
+      });
+      
+      if (error) {
+        throw error;
+      }
+
+      // Refrescar crédito
+      try {
+        const info = await getCxcCliente(selectedClient.id);
+        if (info) {
+          setCxcLimit(info.limite);
+          setCxcAvailable(info.disponible);
+          setCxcBalance(info.saldo);
+        }
+      } catch (refreshErr) {
+        console.warn("Error refreshing credit:", refreshErr);
+      }
+      
+      // Cerrar modal y resetear
+      setShowAdjustModal(false);
+      setAdjustAmount("");
+      setAdjustNote("Saldo viejo importado");
+      alert("✅ Opening balance saved");
+      
+    } catch (error) {
+      alert("❌ Error: " + (error.message || error));
+    } finally {
+      setSavingAdjust(false); // 🆕 REHABILITAR BOTÓN
+    }
+  }}
+>
+  {savingAdjust ? "💾 Guardando..." : "Save"} {/* 🆕 TEXTO DINÁMICO */}
+</button>
               </div>
             </div>
           </div>
