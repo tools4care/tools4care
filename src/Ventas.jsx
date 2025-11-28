@@ -268,8 +268,14 @@ function writePendingLS(arr) {
 
 function removePendingFromLSById(id) {
   const cur = readPendingLS();
+  console.log(`🗑️ Intentando eliminar venta pendiente: ${id}`);
+  console.log(`📋 Ventas pendientes actuales:`, cur.map(v => v.id));
+  
   const filtered = id ? cur.filter((x) => x.id !== id) : cur;
   writePendingLS(filtered);
+  
+  console.log(`✅ Ventas pendientes después de eliminar:`, filtered.map(v => v.id));
+  
   return filtered;
 }
 
@@ -647,6 +653,26 @@ export default function Sales() {
   useEffect(() => {
     setPendingSales(readPendingLS());
   }, []);
+  /* ---------- Sincronizar pendientes con localStorage ---------- */
+useEffect(() => {
+  const syncPending = () => {
+    const fromLS = readPendingLS();
+    setPendingSales(fromLS);
+  };
+
+  // Sincronizar cuando la ventana recibe foco
+  window.addEventListener('focus', syncPending);
+  
+  // Sincronizar cuando el documento se vuelve visible
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncPending();
+  });
+
+  return () => {
+    window.removeEventListener('focus', syncPending);
+    document.removeEventListener('visibilitychange', syncPending);
+  };
+}, []);
 
   /* ---------- CARGAR CLIENTES RECIENTES ---------- */
   useEffect(() => {
@@ -1770,25 +1796,46 @@ useEffect(() => {
 
   /* ========== HANDLERS ========== */
 
-  function clearSale() {
-    setClientSearch("");
-    setClients([]);
-    setSelectedClient(null);
-    setProductSearch("");
-    setProducts([]);
-    setTopProducts([]);
-    setAllProducts([]);
-    setNotes("");
-    setPayments([{ forma: "efectivo", monto: 0 }]);
-    setPaymentError("");
-    setSaving(false);
-    setStep(1);
-    window.pendingSaleId = null;
-    // 🆕 Limpiar fees
-    setApplyCardFee({});
-    // ✅ FIX: Resetear auto-fill
-    setPaymentAutoFilled(false);
+function clearSale() {
+  // Limpiar búsquedas y listas
+  setClientSearch("");
+  setClients([]);
+  setSelectedClient(null);
+  setProductSearch("");
+  setProducts([]);
+  setTopProducts([]);
+  setAllProducts([]);
+  setNotes("");
+  
+  // Limpiar pagos
+  setPayments([{ forma: "efectivo", monto: 0 }]);
+  setPaymentError("");
+  
+  // Limpiar estados de guardado
+  setSaving(false);
+  
+  // Volver al paso 1
+  setStep(1);
+  
+  // 🆕 LIMPIAR ID DE VENTA PENDIENTE
+  const currentId = window.pendingSaleId;
+  window.pendingSaleId = null;
+  
+  // 🆕 ACTUALIZAR LISTA DE PENDIENTES (eliminar la actual si existe)
+  if (currentId) {
+    const updated = removePendingFromLSById(currentId);
+    setPendingSales(updated);
   }
+  
+  // Limpiar fees
+  setApplyCardFee({});
+  
+  // Resetear auto-fill
+  setPaymentAutoFilled(false);
+  
+  // Limpiar cart
+  setCart([]);
+}
 
   async function requestAndSendNotifications({ client, payload }) {
     if (!client) return;
@@ -1926,21 +1973,42 @@ function handleChangePayment(index, field, value) {
     setShowScanner(false);
   }
 
-  function handleSelectPendingSale(sale) {
-    setSelectedClient(sale.client);
-    setCart(sale.cart);
-    setPayments(sale.payments);
-    setNotes(sale.notes);
-    setStep(sale.step);
-    window.pendingSaleId = sale.id;
-    setModalPendingSales(false);
-  }
+function handleSelectPendingSale(sale) {
+  setSelectedClient(sale.client);
+  setCart(sale.cart);
+  setPayments(sale.payments);
+  setNotes(sale.notes);
+  setStep(sale.step);
+  window.pendingSaleId = sale.id;
+  
+  // 🆕 CERRAR MODAL INMEDIATAMENTE
+  setModalPendingSales(false);
+  
+  // 🆕 SCROLL AL TOP (opcional, para mejor UX)
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 
   function handleDeletePendingSale(id) {
-    const updated = removePendingFromLSById(id);
-    setPendingSales(updated);
-    if (window.pendingSaleId === id) window.pendingSaleId = null;
+  // 🆕 CONFIRMACIÓN
+  const confirmed = window.confirm(
+    "¿Estás seguro de eliminar esta venta pendiente?\n\n" +
+    "Esta acción no se puede deshacer."
+  );
+  
+  if (!confirmed) return;
+  
+  // Eliminar de localStorage y actualizar estado
+  const updated = removePendingFromLSById(id);
+  setPendingSales(updated);
+  
+  // Si es la venta actual, limpiar el ID global
+  if (window.pendingSaleId === id) {
+    window.pendingSaleId = null;
   }
+  
+  // 🆕 NOTIFICACIÓN
+  console.log(`✅ Venta pendiente ${id} eliminada correctamente`);
+}
 
   function renderAddress(address) {
     if (!address) return "No address";
@@ -2009,7 +2077,11 @@ function handleChangePayment(index, field, value) {
             `✅ Se sincronizará automáticamente cuando vuelva la conexión.`
           );
 
-          removePendingFromLSById(currentPendingId);
+          if (currentPendingId) {
+  const updated = removePendingFromLSById(currentPendingId);
+  setPendingSales(updated); // 🆕 ACTUALIZAR ESTADO
+  window.pendingSaleId = null; // 🆕 LIMPIAR ID GLOBAL
+}
           clearSale();
           return;
         } catch (offlineError) {
@@ -2404,12 +2476,28 @@ function handleChangePayment(index, field, value) {
     );
   }
 
-  function renderPendingSalesModal() {
-    return (
-      <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden">
-          <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between">
-            <h3 className="font-bold text-lg flex items-center gap-2">📂 Pending Sales</h3>
+function renderPendingSalesModal() {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden">
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between">
+          <h3 className="font-bold text-lg flex items-center gap-2">
+            📂 Pending Sales
+          </h3>
+          
+          {/* 🆕 BOTÓN DE REFRESH */}
+          <div className="flex items-center gap-2">
+            <button
+              className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
+              onClick={() => {
+                const updated = readPendingLS();
+                setPendingSales(updated);
+              }}
+              title="Refresh pending sales"
+            >
+              🔄
+            </button>
+            
             <button
               className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
               onClick={() => setModalPendingSales(false)}
@@ -2417,6 +2505,7 @@ function handleChangePayment(index, field, value) {
               ✖️
             </button>
           </div>
+        </div>
 
           <div className="p-4 overflow-y-auto max-h-[60vh]">
             {pendingSales.length === 0 ? (
