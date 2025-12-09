@@ -23,53 +23,33 @@ function normMetodo(s) {
 }
 
 function breakdownPago(item) {
-  const out = { cash: 0, card: 0, transfer: 0 };
-  const add = (k, v) => (out[k] += Number(v || 0));
-  const map = {
-    efectivo: "cash",
-    cash: "cash",
-    card: "card",
-    tarjeta: "card",
-    transfer: "transfer",
-    transferencia: "transfer",
-    wire: "transfer",
-    zelle: "transfer",
-    bank: "transfer",
-  };
-
-  const candidates = [
-    item?.pago,
-    item?.pagos_detalle,
-    item?.payment_details,
-    item?.detalle_pagos,
-  ];
+function breakdownPago(item) {
+  const out = { cash: 0, card: 0, transfer: 0, mix: 0 };
   
-  for (let c of candidates) {
-    if (!c) continue;
+  // Si el item tiene un campo de pago desglosado (como en ventas)
+  if (item?.pago) {
     try {
-      if (typeof c === "string") c = JSON.parse(c);
-    } catch {}
-    
-    if (Array.isArray(c)) {
-      for (const r of c) {
-        const m = String(r?.metodo || r?.type || r?.metodo_pago || "").toLowerCase();
-        const k = map[m];
-        const v = Number(r?.monto ?? r?.amount ?? r?.total ?? 0);
-        if (k) add(k, v);
+      const pagoData = typeof item.pago === 'string' ? JSON.parse(item.pago) : item.pago;
+      
+      // Procesar el desglose del pago
+      if (pagoData.map) {
+        if (pagoData.map.efectivo) out.cash += Number(pagoData.map.efectivo);
+        if (pagoData.map.tarjeta) out.card += Number(pagoData.map.tarjeta);
+        if (pagoData.map.transferencia) out.transfer += Number(pagoData.map.transferencia);
+        if (pagoData.map.otro) out.mix += Number(pagoData.map.otro);
       }
-    } else if (typeof c === "object") {
-      const obj = c.map && typeof c.map === "object" ? c.map : c;
-      for (const [k, v] of Object.entries(obj)) {
-        const kk = map[String(k).toLowerCase()];
-        if (kk) add(kk, v);
-      }
+    } catch (e) {
+      console.warn("Error parsing payment data:", e);
     }
   }
-
-  if (out.cash + out.card + out.transfer === 0) {
-    const k = map[String(item?.metodo_pago || "").toLowerCase()];
-    const v = Number(item?.monto ?? item?.amount ?? item?.total ?? 0);
-    if (k && v) add(k, v);
+  
+  // Si el item es un pago directo (desde tabla pagos)
+  if (item?.monto && !item?.venta_id) {
+    const metodo = normMetodo(item.metodo_pago);
+    if (metodo === "Cash") out.cash += Number(item.monto);
+    else if (metodo === "Card") out.card += Number(item.monto);
+    else if (metodo === "Transfer") out.transfer += Number(item.monto);
+    else out.mix += Number(item.monto);
   }
   
   return out;
@@ -137,120 +117,133 @@ async function calcularCierreCompleto(van_id, fecha) {
       pagosCxC: pagosCxC?.length || 0 
     });
 
-    // 3️⃣ PROCESAR VENTAS
-    const ventasDetalle = (ventas || []).map(v => {
-      const breakdown = breakdownPago(v);
-      const total = Number(v.total_venta || 0);
-      const pagado = Number(v.total_pagado || 0);
-      const pendiente = total - pagado;
+ // 3️⃣ OBTENER VENTAS DEL DÍA CON SUS PAGOS ASOCIADOS
+  const { data: ventas, error: ventasError } = await supabase.rpc(
+    "ventas_no_cerradas_por_van_by_id",
+    {
+      van_id_param: van_id,
+      fecha_inicio: fecha,
+      fecha_fin: fecha,
+    }
+  );
 
-      return {
-        id: v.id,
-        fecha: v.fecha,
-        cliente: v.cliente_nombre || "Quick sale",
-        total,
-        pagado,
-        pendiente,
-        metodo: normMetodo(v.metodo_pago),
-        breakdown,
-      };
-    });
+  // 4️⃣ OBTENER PAGOS DIRECTOS (solo para deudas, no asociados a ventas del día)
+  const { data: pagosDirectos, error: pagosError } = await supabase
+    .from("pagos")
+    .select(`
+      id,
+      cliente_id,
+      monto,
+      metodo_pago,
+      fecha_pago,
+      created_at,
+      notas,
+      referencia,
+      venta_id
+    `)
+    .eq("van_id", van_id)
+    .gte("fecha_pago", `${fecha}T00:00:00`)
+    .lte("fecha_pago", `${fecha}T23:59:59`)
+    .is("venta_id", null); // Solo pagos no asociados a ventas
 
-    // 4️⃣ PROCESAR PAGOS A CxC
-    const pagosCxCDetalle = (pagosCxC || []).map(p => {
-      const metodoRaw = String(p.metodo_pago || "").toLowerCase();
-      const monto = Number(p.monto || 0);
-      
-      let breakdown = { cash: 0, card: 0, transfer: 0 };
-      
-      if (["cash", "efectivo"].includes(metodoRaw)) {
-        breakdown.cash = monto;
-      } else if (["card", "tarjeta", "credit", "debit"].includes(metodoRaw)) {
-        breakdown.card = monto;
-      } else if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(metodoRaw)) {
-        breakdown.transfer = monto;
-      } else if (metodoRaw === "mix") {
-        breakdown = breakdownPago(p);
-      } else {
-        breakdown.cash = monto;
-      }
+  // ... (código existente)
 
-      return {
-        id: p.id,
-        fecha: p.fecha_pago || p.created_at,
-        cliente: p.clientes?.nombre 
-          ? `${p.clientes.nombre} ${p.clientes.apellido || ''}`.trim()
-          : "Cliente",
-        monto,
-        metodo: normMetodo(p.metodo_pago),
-        breakdown,
-        notas: p.notas || "",
-        referencia: p.referencia || "",
-      };
-    });
-
-    // 5️⃣ TOTALES POR MÉTODO
-    const totales = {
-      ventas: {
-        cash: 0,
-        card: 0,
-        transfer: 0,
-        total: 0,
-      },
-      pagosCxC: {
-        cash: 0,
-        card: 0,
-        transfer: 0,
-        total: 0,
-      },
-      esperado: {
-        cash: 0,
-        card: 0,
-        transfer: 0,
-        total: 0,
-      },
-    };
-
-    ventasDetalle.forEach(v => {
-      totales.ventas.cash += v.breakdown.cash || 0;
-      totales.ventas.card += v.breakdown.card || 0;
-      totales.ventas.transfer += v.breakdown.transfer || 0;
-      totales.ventas.total += v.pagado;
-    });
-
-    pagosCxCDetalle.forEach(p => {
-      totales.pagosCxC.cash += p.breakdown.cash || 0;
-      totales.pagosCxC.card += p.breakdown.card || 0;
-      totales.pagosCxC.transfer += p.breakdown.transfer || 0;
-      totales.pagosCxC.total += p.monto;
-    });
-
-    totales.esperado.cash = totales.ventas.cash + totales.pagosCxC.cash;
-    totales.esperado.card = totales.ventas.card + totales.pagosCxC.card;
-    totales.esperado.transfer = totales.ventas.transfer + totales.pagosCxC.transfer;
-    totales.esperado.total = totales.ventas.total + totales.pagosCxC.total;
-
-    console.log('💰 Totales calculados:', totales);
+  // 5️⃣ PROCESAR VENTAS (solo ventas del día)
+  const ventasDetalle = (ventas || []).map(v => {
+    const breakdown = breakdownPago(v);
+    const total = Number(v.total_venta || 0);
+    const pagado = Number(v.total_pagado || 0);
+    const pendiente = total - pagado;
 
     return {
-      fecha,
-      van_id,
-      ventas: ventasDetalle,
-      pagosCxC: pagosCxCDetalle,
-      totales,
-      resumen: {
-        cantidadVentas: ventasDetalle.length,
-        cantidadPagosCxC: pagosCxCDetalle.length,
-        totalVentasGeneradas: ventasDetalle.reduce((sum, v) => sum + v.total, 0),
-        totalCobrado: totales.esperado.total,
-        pendienteCobro: ventasDetalle.reduce((sum, v) => sum + v.pendiente, 0),
-      }
+      id: v.id,
+      fecha: v.fecha,
+      cliente: v.cliente_nombre || "Quick sale",
+      total,
+      pagado,
+      pendiente,
+      metodo: normMetodo(v.metodo_pago),
+      breakdown,
+      esVentaDelDia: true, // Marcar como venta del día
     };
+  });
 
-  } catch (error) {
-    console.error('❌ Error en calcularCierreCompleto:', error);
-    throw error;
-  }
+  // 6️⃣ PROCESAR PAGOS DIRECTOS (solo para deudas)
+  const pagosDirectosDetalle = (pagosDirectos || []).map(p => {
+    const metodoRaw = String(p.metodo_pago || "").toLowerCase();
+    const monto = Number(p.monto || 0);
+    
+    let breakdown = { cash: 0, card: 0, transfer: 0, mix: 0 };
+    
+    if (["cash", "efectivo"].includes(metodoRaw)) {
+      breakdown.cash = monto;
+    } else if (["card", "tarjeta", "credit", "debit"].includes(metodoRaw)) {
+      breakdown.card = monto;
+    } else if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(metodoRaw)) {
+      breakdown.transfer = monto;
+    } else {
+      breakdown.mix = monto;
+    }
+
+    return {
+      id: p.id,
+      fecha: p.fecha_pago || p.created_at,
+      cliente: p.cliente_nombre || "Cliente",
+      monto,
+      metodo: normMetodo(p.metodo_pago),
+      breakdown,
+      esPagoDirecto: true, // Marcar como pago directo
+      notas: p.notas || "",
+      referencia: p.referencia || "",
+    };
+  });
+
+  // 7️⃣ COMBINAR Y EVITAR DUPLICACIONES
+  const todasLasTransacciones = [
+    ...ventasDetalle,
+    ...pagosDirectosDetalle
+  ];
+
+  // 8️⃣ TOTALES POR MÉTODO (sin duplicaciones)
+  const totales = {
+    ventas: { cash: 0, card: 0, transfer: 0, total: 0 },
+    pagosDirectos: { cash: 0, card: 0, transfer: 0, total: 0 },
+    esperado: { cash: 0, card: 0, transfer: 0, total: 0 },
+  };
+
+  todasLasTransacciones.forEach(trans => {
+    if (trans.esVentaDelDia) {
+      totales.ventas.cash += trans.breakdown.cash || 0;
+      totales.ventas.card += trans.breakdown.card || 0;
+      totales.ventas.transfer += trans.breakdown.transfer || 0;
+      totales.ventas.total += trans.pagado;
+    } else if (trans.esPagoDirecto) {
+      totales.pagosDirectos.cash += trans.breakdown.cash || 0;
+      totales.pagosDirectos.card += trans.breakdown.card || 0;
+      totales.pagosDirectos.transfer += trans.breakdown.transfer || 0;
+      totales.pagosDirectos.total += trans.monto;
+    }
+  });
+
+  totales.esperado.cash = totales.ventas.cash + totales.pagosDirectos.cash;
+  totales.esperado.card = totales.ventas.card + totales.pagosDirectos.card;
+  totales.esperado.transfer = totales.ventas.transfer + totales.pagosDirectos.transfer;
+  totales.esperado.total = totales.ventas.total + totales.pagosDirectos.total;
+
+  return {
+    fecha,
+    van_id,
+    ventas: ventasDetalle,
+    pagosDirectos: pagosDirectosDetalle,
+    totales,
+    resumen: {
+      cantidadVentas: ventasDetalle.length,
+      cantidadPagosDirectos: pagosDirectosDetalle.length,
+      totalVentasGeneradas: ventasDetalle.reduce((sum, v) => sum + v.total, 0),
+      totalCobrado: totales.esperado.total,
+      pendienteCobro: ventasDetalle.reduce((sum, v) => sum + v.pendiente, 0),
+    }
+  };
 }
 
 /* ======================= PDF ======================= */
