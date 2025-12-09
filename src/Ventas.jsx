@@ -6,6 +6,12 @@ import { useUsuario } from "./UsuarioContext";
 import { useNavigate } from "react-router-dom";
 import { BarcodeScanner } from "./BarcodeScanner";
 import QRCode from "qrcode"; // npm install qrcode
+import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
+import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
+
+
+
+
 
 // 🆕 MODO OFFLINE - Agregar estas 3 líneas
 import { useOffline } from "./hooks/useOffline";
@@ -324,80 +330,6 @@ async function registrarPagoCxC({ cliente_id, monto, metodo, van_id }) {
   }
 }
 
-async function getCxcCliente(clienteId) {
-  if (!clienteId) return null;
-
-  let saldo = 0;
-  let limitePolitica = 0;
-  let limiteManual = null;
-
-  try {
-    const { data } = await supabase
-      .from("v_cxc_cliente_detalle")
-      .select("*")
-      .eq("cliente_id", clienteId)
-      .maybeSingle();
-
-    if (data) {
-      saldo = Number(data.saldo ?? data.balance ?? 0);
-      limitePolitica = Number(
-        data.limite_politica ?? data.limite ?? data.credit_limit ?? 0
-      );
-      limiteManual = data.limite_manual != null ? Number(data.limite_manual) : null;
-    }
-  } catch (e) {
-    console.warn("Error loading CxC data:", e.message || e);
-  }
-
-  if (limiteManual == null) {
-    try {
-      const { data: cli } = await supabase
-        .from("clientes")
-        .select("limite_manual")
-        .eq("id", clienteId)
-        .maybeSingle();
-      if (cli && cli.limite_manual != null) limiteManual = Number(cli.limite_manual);
-    } catch {}
-  }
-
-  const limite =
-    limiteManual != null && !Number.isNaN(limiteManual) && limiteManual > 0
-      ? limiteManual
-      : limitePolitica;
-
-  const disponible = Math.max(0, limite - Math.max(0, saldo));
-
-  return { saldo, limite, limitePolitica, limiteManual, disponible };
-}
-
-function subscribeClienteCxC(clienteId, onChange) {
-  if (!clienteId) return { unsubscribe() {} };
-
-  const tables = [
-    { table: "clientes", event: "UPDATE" },
-    { table: "cxc_movimientos", event: "*" },
-    { table: "ventas", event: "*" },
-    { table: "pagos", event: "*" },
-  ];
-
-  const channels = tables.map(({ table, event }) =>
-    supabase.channel(`cxc-${table}-${clienteId}`).on(
-      "postgres_changes",
-      { event, schema: "public", table, filter: `cliente_id=eq.${clienteId}` },
-      () => onChange?.()
-    ).subscribe()
-  );
-
-  return {
-    unsubscribe() {
-      try {
-        channels.forEach(ch => supabase.removeChannel(ch));
-      } catch (err) {
-        console.warn("Error unsubscribing:", err.message || err);
-      }
-    },
-  };
-}
 
 /* ========================= SMS / Email helpers ========================= */
 function isIOS() {
@@ -554,6 +486,77 @@ export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
+
+  // ====================== AGENTE DE CRÉDITO ======================
+  const [clientRisk, setClientRisk] = useState(null);
+  const [clientBehavior, setClientBehavior] = useState(null);
+  const [creditProfile, setCreditProfile] = useState(null);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [creditAvailableAfter, setCreditAvailableAfter] = useState(0);
+
+
+// ===========================================================
+//  FUNCIÓN PRINCIPAL DEL AGENTE DE CRÉDITO (CORREGIDA COMPLETA)
+// ===========================================================
+async function runCreditAgent(clienteId, montoVenta = 0) {
+  try {
+    if (!clienteId) return;
+
+    setAgentLoading(true);
+
+    // 1) Historial vendido/pagado
+    const history = await getClientHistory(clienteId);
+
+    // 2) Perfil de crédito actual
+    const profile = await getCxcCliente(clienteId);
+
+    setClientBehavior(history);
+    setCreditProfile(profile);
+
+    if (!profile) {
+      setClientRisk(null);
+      setCreditAvailableAfter(0);
+      setAgentLoading(false);
+      return;
+    }
+
+    // 3) Limpieza
+    const limite = Number(String(profile.limite).replace(/[^0-9.-]+/g, ""));
+    const saldo  = Number(String(profile.saldo).replace(/[^0-9.-]+/g, ""));
+    const disponible = Math.max(0, limite - saldo);
+
+    setCreditAvailableAfter(disponible);
+
+    console.log("CREDIT DEBUG:", {
+      limiteOriginal: profile.limite,
+      saldoOriginal: profile.saldo,
+      limiteClean: limite,
+      saldoClean: saldo,
+      disponible
+    });
+
+    // 4) Motor de riesgo
+    const risk = evaluateCredit({
+      saldo,
+      limite,
+      diasRetraso: profile.diasRetraso,
+      montoVenta,
+      historialVentas: history.ventasDetalles || [],
+      historialPagos: history.pagosDetalles || [],
+      lastSaleDate: profile.lastSaleDate || history.lastSaleDate || null,
+    });
+
+    console.log("RISK ENGINE RESULT:", risk);
+
+    // 5) Guardar estado
+    setClientRisk(risk);
+
+  } catch (err) {
+    console.error("Error en runCreditAgent:", err);
+  } finally {
+    setAgentLoading(false);
+  }
+}
 
  // 🆕 HOOKS MODO OFFLINE - Agregar estas 2 líneas
   const { isOffline } = useOffline();
@@ -970,7 +973,8 @@ useEffect(() => {
           return next;
         });
 
-        setClients(enriched);
+        setClients(Array.isArray(enriched) ? enriched : []);
+
       } catch (err) {
         console.error("Error searching clients:", err);
         setClients([]);
@@ -1034,7 +1038,7 @@ useEffect(() => {
     refreshCxC();
 
     if (selectedClient?.id) {
-      sub = subscribeClienteCxC(selectedClient.id, refreshCxC);
+sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
       window.addEventListener("focus", onFocus);
       document.addEventListener("visibilitychange", onVisible);
       timer = setInterval(refreshCxC, 20000);
@@ -1161,7 +1165,8 @@ useEffect(() => {
         rows = rows.map(r => ({ ...r, cantidad: stockMap.get(r.producto_id) ?? 0 }));
         rows = rows.filter(r => Number(r.cantidad) > 0);
 
-        setTopProducts(rows);
+        setTopProducts(Array.isArray(rows) ? rows : []);
+
         // 🆕 Guardar en caché para uso offline
         await guardarTopProductos(van.id, rows);
         return;
@@ -1339,7 +1344,8 @@ useEffect(() => {
         },
       }));
       
-      setAllProducts(rows);
+      setAllProducts(Array.isArray(rows) ? rows : []);
+
       setProductsLoaded(true);
       setAllProductsLoading(false);
       
@@ -1544,7 +1550,7 @@ useEffect(() => {
       )
     : 0;
 
-  const creditAvailableAfter = Math.max(0, creditLimit - balanceAfter);
+
   const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
   /* ---------- Guardar venta pendiente local ---------- */
@@ -2027,6 +2033,32 @@ function handleSelectPendingSale(sale) {
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
+/* ========== AGENTE DE CRÉDITO: VALIDACIÓN PREVIA A GUARDAR ========== */
+if (selectedClient?.id) {
+  // Ejecutar agente contra el total actual
+  await runCreditAgent(selectedClient.id, saleTotal);
+
+  // Esperar carga
+  if (clientRisk) {
+    // 🔴 Riesgo ALTO → bloquear
+    if (clientRisk.nivel === "alto") {
+      setSaving(false);
+      alert("⛔ This client has HIGH RISK.\nSale blocked by Credit Agent.\n\nRecommendation:\n- Request partial payment\n- Reduce amount\n- Clear old debt first");
+      return;
+    }
+
+    // 🟡 Riesgo MEDIO → advertir
+    if (clientRisk.nivel === "medio") {
+      const ok = window.confirm(
+        "⚠️ Warning: This client has MEDIUM RISK.\n\nDo you want to continue the sale?"
+      );
+      if (!ok) {
+        setSaving(false);
+        return;
+      }
+    }
+  }
+}
 
     const currentPendingId = window.pendingSaleId;
 
@@ -2617,7 +2649,8 @@ function renderStepClient() {
                     Credit #: <span className="font-mono font-semibold">{creditNum}</span>
                   </span>
                 </div>
-                {clientHistory.lastSaleDate && (
+                {clientHistory?.lastSaleDate && (
+
   <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
     <span>🕒</span>
     <span className="text-xs font-semibold">
@@ -2706,6 +2739,285 @@ function renderStepClient() {
               </div>
             )}
           </div>
+{/* ================== AGENTE DE RIESGO MEJORADO ================== */}
+{clientRisk && (
+  <div
+    className={`mt-4 p-4 rounded-lg border-2 shadow-md ${
+      clientRisk.nivel === "bajo" && "border-green-400 bg-gradient-to-r from-green-50 to-emerald-50"
+    } ${
+      clientRisk.nivel === "medio" && "border-yellow-400 bg-gradient-to-r from-yellow-50 to-amber-50"
+    } ${
+      clientRisk.nivel === "alto" && "border-orange-400 bg-gradient-to-r from-orange-50 to-red-50"
+    } ${
+      clientRisk.nivel === "critico" && "border-red-500 bg-gradient-to-r from-red-100 to-pink-100"
+    }`}
+  >
+    {/* ENCABEZADO */}
+    <div className="flex items-center justify-between mb-3">
+      <div>
+        <div className="font-bold text-lg flex items-center gap-2">
+          {clientRisk.emoji || "🔵"}
+          {clientRisk.nivel === "bajo" && "Riesgo Bajo — Cliente Excelente"}
+          {clientRisk.nivel === "medio" && "Riesgo Medio — Seguimiento Normal"}
+          {clientRisk.nivel === "alto" && "Riesgo Alto — ⚠️ Precaución"}
+          {clientRisk.nivel === "critico" && "Riesgo Crítico — 🛑 ALERTA"}
+        </div>
+        <div className="text-xs text-gray-600 mt-1">
+          Score de crédito: <span className="font-bold">{clientRisk.score || 0}/100</span>
+        </div>
+      </div>
+      
+      {/* ACCIÓN RECOMENDADA */}
+      {clientRisk.accion && (
+        <div className={`px-3 py-1 rounded-full text-xs font-bold ${
+          clientRisk.accion === "aprobar" && "bg-green-100 text-green-800"
+        } ${
+          clientRisk.accion === "aprobar_con_cuidado" && "bg-yellow-100 text-yellow-800"
+        } ${
+          clientRisk.accion === "pago_parcial" && "bg-orange-100 text-orange-800"
+        } ${
+          clientRisk.accion === "rechazar" && "bg-red-100 text-red-800"
+        }`}>
+          {clientRisk.accion === "aprobar" && "✅ APROBAR"}
+          {clientRisk.accion === "aprobar_con_cuidado" && "⚠️ CUIDADO"}
+          {clientRisk.accion === "pago_parcial" && "💰 PAGO PARCIAL"}
+          {clientRisk.accion === "rechazar" && "🛑 NO APROBAR"}
+        </div>
+      )}
+    </div>
+
+    {/* MÉTRICAS CLAVE */}
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <div className="bg-white/70 rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-gray-600 uppercase font-semibold">Crédito Disponible</div>
+        <div className={`text-lg font-bold ${
+          creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"
+        }`}>
+          {fmt(clientRisk.disponible || 0)}
+        </div>
+      </div>
+
+      <div className="bg-white/70 rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-gray-600 uppercase font-semibold">Límite Seguro</div>
+        <div className="text-lg font-bold text-blue-600">
+          {fmt(clientRisk.limiteSeguro || 0)}
+        </div>
+      </div>
+
+      <div className="bg-white/70 rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-gray-600 uppercase font-semibold">Uso de Crédito</div>
+        <div className={`text-lg font-bold ${
+          (clientRisk.ratio || 0) < 0.5 ? "text-green-600" : 
+          (clientRisk.ratio || 0) < 0.8 ? "text-yellow-600" : "text-red-600"
+        }`}>
+          {((clientRisk.ratio || 0) * 100).toFixed(0)}%
+        </div>
+      </div>
+
+      <div className="bg-white/70 rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-gray-600 uppercase font-semibold">Promedio Compra</div>
+        <div className="text-lg font-bold text-gray-700">
+          {fmt(clientRisk.promedioVentas || 0)}
+        </div>
+      </div>
+    </div>
+
+    {/* ALERTAS CRÍTICAS */}
+    {(clientRisk.diasRetraso > 30 || clientRisk.diasDesdeUltimoPago > 60) && (
+      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+        <div className="text-sm font-semibold text-red-800 mb-1">🚨 ALERTAS CRÍTICAS</div>
+        {clientRisk.diasRetraso > 30 && (
+          <div className="text-xs text-red-700">
+            • Atraso actual: <b>{clientRisk.diasRetraso} días</b>
+          </div>
+        )}
+        {clientRisk.diasDesdeUltimoPago > 60 && (
+          <div className="text-xs text-red-700">
+            • Días sin pagar: <b>{clientRisk.diasDesdeUltimoPago} días</b>
+          </div>
+        )}
+        {clientRisk.analisisDeudas && clientRisk.analisisDeudas.totalVencido > 0 && (
+          <div className="text-xs text-red-700">
+            • Deuda vencida: <b>{fmt(clientRisk.analisisDeudas.totalVencido)}</b>
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* MONTO MÁXIMO RECOMENDADO */}
+    {clientRisk.montoMaximoRecomendadoVenta > 0 && (
+      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="text-sm font-semibold text-blue-800 mb-1">
+          💡 Monto Máximo Recomendado
+        </div>
+        <div className="text-lg font-bold text-blue-600">
+          {fmt(clientRisk.montoMaximoRecomendadoVenta)}
+        </div>
+        {clientRisk.montoVenta > 0 && clientRisk.montoVenta > clientRisk.montoMaximoRecomendadoVenta && (
+          <div className="text-xs text-blue-700 mt-1">
+            • El monto solicitado ({fmt(clientRisk.montoVenta)}) supera lo recomendado
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* ANÁLISIS DE COMPORTAMIENTO */}
+    <div className="space-y-3">
+      {/* Patrón de Pago */}
+      {clientRisk.patronPago && (
+        <div className="bg-white/70 rounded-lg p-3 border">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg">
+              {clientRisk.patronPago.patron === "puntual" && "💎"}
+              {clientRisk.patronPago.patron === "normal" && "✅"}
+              {clientRisk.patronPago.patron === "tardio" && "⚠️"}
+              {clientRisk.patronPago.patron === "problematico" && "🚨"}
+              {!clientRisk.patronPago.patron && "❓"}
+            </span>
+            <div>
+              <div className="text-sm font-semibold text-gray-800">
+                {clientRisk.patronPago.descripcion || "Sin datos suficientes"}
+              </div>
+              {clientRisk.patronPago.promedioDias !== undefined && (
+                <div className="text-xs text-gray-600">
+                  Paga en promedio: <b>{clientRisk.patronPago.promedioDias} días</b>
+                  {clientRisk.patronPago.consistencia !== undefined && (
+                    <span className="ml-2">
+                      • Consistencia: <b>{clientRisk.patronPago.consistencia}%</b>
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {clientRisk.patronPago.puntualidad !== undefined && (
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className={`h-2 rounded-full transition-all ${
+                  clientRisk.patronPago.puntualidad >= 80 ? "bg-green-500" :
+                  clientRisk.patronPago.puntualidad >= 60 ? "bg-yellow-500" : "bg-red-500"
+                }`}
+                style={{ width: `${clientRisk.patronPago.puntualidad}%` }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Deudas Vencidas (si está disponible) */}
+      {clientRisk.analisisDeudas && clientRisk.analisisDeudas.totalVencido > 0 && (
+        <div className="bg-white/70 rounded-lg p-3 border border-red-200">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg text-red-600">🚨</span>
+            <div>
+              <div className="text-sm font-semibold text-gray-800">
+                Deudas Vencidas Detectadas
+              </div>
+              <div className="text-xs text-gray-600">
+                Total vencido: <b>{fmt(clientRisk.analisisDeudas.totalVencido)}</b>
+                {clientRisk.analisisDeudas.diasMaxVencido > 0 && (
+                  <span className="ml-2">
+                    • Máximo vencido: <b>{clientRisk.analisisDeudas.diasMaxVencido} días</b>
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          {clientRisk.analisisDeudas.deudasCriticas > 0 && (
+            <div className="text-xs text-red-700">
+              • {clientRisk.analisisDeudas.deudasCriticas} deudas críticas detectadas
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tendencia de Consumo */}
+      {clientRisk.tendenciaConsumo && (
+        <div className="bg-white/70 rounded-lg p-3 border">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">
+              {clientRisk.tendenciaConsumo.tendencia === "creciente" && "📈"}
+              {clientRisk.tendenciaConsumo.tendencia === "estable" && "➡️"}
+              {clientRisk.tendenciaConsumo.tendencia === "decreciente" && "📉"}
+              {clientRisk.tendenciaConsumo.tendencia === "insuficiente" && "❓"}
+            </span>
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-gray-800">
+                {clientRisk.tendenciaConsumo.descripcion || "Sin tendencia clara"}
+              </div>
+              {clientRisk.tendenciaConsumo.promedioReciente !== undefined && (
+                <div className="text-xs text-gray-600">
+                  Promedio reciente: <b>{fmt(clientRisk.tendenciaConsumo.promedioReciente)}</b>
+                  {clientRisk.tendenciaConsumo.promedioAntiguo !== undefined && (
+                    <span className="ml-2">
+                      • Anterior: <b>{fmt(clientRisk.tendenciaConsumo.promedioAntiguo)}</b>
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Frecuencia de Compra */}
+      {clientRisk.frecuencia && (
+        <div className="bg-white/70 rounded-lg p-3 border">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">
+              {clientRisk.frecuencia.frecuencia === "muy_alta" && "🔥"}
+              {clientRisk.frecuencia.frecuencia === "alta" && "⚡"}
+              {clientRisk.frecuencia.frecuencia === "normal" && "🔄"}
+              {clientRisk.frecuencia.frecuencia === "baja" && "⏰"}
+              {clientRisk.frecuencia.frecuencia === "muy_baja" && "😴"}
+              {clientRisk.frecuencia.frecuencia === "nueva" && "🆕"}
+            </span>
+            <div>
+              <div className="text-sm font-semibold text-gray-800">
+                {clientRisk.frecuencia.descripcion || "Cliente nuevo"}
+              </div>
+              {clientRisk.frecuencia.diasEntreFechas && (
+                <div className="text-xs text-gray-600">
+                  Compra cada <b>{clientRisk.frecuencia.diasEntreFechas} días</b>
+                </div>
+              )}
+              {clientRisk.diasInactivo > 0 && (
+                <div className="text-xs text-gray-600">
+                  Última compra: <b>hace {clientRisk.diasInactivo} días</b>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* RECOMENDACIONES DEL AGENTE */}
+    <div className="mt-4 bg-white/70 rounded-lg p-3 border">
+      <div className="font-semibold text-sm text-gray-800 mb-2 flex items-center gap-2">
+        🤖 Recomendaciones del Agente:
+      </div>
+      <ul className="space-y-1">
+        {(clientRisk.recomendaciones || []).map((r, i) => (
+          <li key={i} className="text-xs text-gray-700 flex items-start gap-2">
+            <span className="text-blue-600 mt-0.5">•</span>
+            <span className="flex-1">{r}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    {/* BOTÓN PARA REFRESCAR ANÁLISIS */}
+    <button
+      onClick={async () => {
+        await runCreditAgent(selectedClient.id, saleTotal);
+      }}
+      className="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 rounded-lg font-semibold transition-colors"
+    >
+      🔄 Actualizar Análisis
+    </button>
+  </div>
+)}
 
           <div className="mt-4 flex justify-between">
             <button
@@ -2729,6 +3041,8 @@ function renderStepClient() {
                 setCart([]);
                 setPayments([{ forma: "efectivo", monto: 0 }]);
                 setSelectedClient(null);
+                
+
               }}
             >
               🔄 Change client
@@ -2812,6 +3126,7 @@ function renderStepClient() {
                   setCart([]);
                   setPayments([{ forma: "efectivo", monto: 0 }]);
                   setSelectedClient(c);
+                   runCreditAgent(c.id);
                 }}
                 className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-blue-200 rounded-lg px-3 py-2 transition-all duration-200 min-w-[140px]"
               >
@@ -2897,6 +3212,8 @@ function renderStepClient() {
                 setCart([]);
                 setPayments([{ forma: "efectivo", monto: 0 }]);
                 setSelectedClient(c);
+                runCreditAgent(c.id);
+
               }}
             >
               <div className="space-y-2">
@@ -2948,11 +3265,12 @@ function renderStepClient() {
                   </div>
                 )}
 
-                {(clientHistory.has || balance !== 0) && (
+                {(clientHistory?.ventas > 0 || balance !== 0) && (
+
                   <div className="flex items-center justify-between pt-1 border-t border-gray-200">
                     <div className="flex items-center gap-3 text-xs text-gray-600">
                       <span>💳 #{getCreditNumber(c)}</span>
-                      {clientHistory.ventas > 0 && (
+                      {clientHistory?.ventas > 0 && (
                         <span className="bg-gray-100 px-2 py-0.5 rounded">
                           🛒 {clientHistory.ventas}
                         </span>
@@ -2978,6 +3296,10 @@ function renderStepClient() {
             setCart([]);
             setPayments([{ forma: "efectivo", monto: 0 }]);
             setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 });
+            setClientRisk(null);
+setClientBehavior(null);
+setCreditProfile(null);
+
           }}
           className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-4 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200"
         >
@@ -3047,9 +3369,8 @@ function renderStepProducts() {
           </div>
         )}
 
-        {products.map((p) => {
+        {(products || []).map((p) => {
           const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
-
           const name = p.productos?.nombre ?? p.nombre ?? "—";
           const code = p.productos?.codigo ?? p.codigo ?? "N/A";
           const brand = p.productos?.marca ?? p.marca ?? "—";
@@ -3073,7 +3394,6 @@ function renderStepProducts() {
                   )}
                   {inCart && <span className="text-green-600">✅</span>}
                 </div>
-
                 <div className="text-sm text-gray-600 mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <span>🔢 Code: {code}</span>
                   <span>📊 Stock: {stock}</span>
@@ -3206,8 +3526,8 @@ function renderStepProducts() {
         />
       </div>
 
-      javascript{selectedClient && selectedClient.id && ( /* 🆕 Solo mostrar si NO es Quick Sale */
-  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {selectedClient && selectedClient.id && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {balanceBefore > 0 && (
             <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
               <div className="text-xs text-red-600 uppercase font-semibold">Outstanding Balance</div>
@@ -3232,7 +3552,10 @@ function renderStepProducts() {
       )}
 
       <div className="flex flex-col sm:flex-row gap-3 pt-4">
-        <button className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1" onClick={() => setStep(1)}>
+        <button 
+          className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1" 
+          onClick={() => setStep(1)}
+        >
           ← Back
         </button>
         <button
@@ -3254,14 +3577,14 @@ function renderStepProducts() {
     </div>
   );
 }
-/* ======================== Paso 3: Pago (🆕 CON BOTÓN A/R Y CAMPO BORRABLE) ======================== */
+/* ======================== Paso 3: Pago ======================== */
 function renderStepPayment() {
-// Render label del método de pago, reemplazando por "Monto a A/R" si está bloqueado
-const getPaymentLabel = (p) => {
-  if (p?.toAR) return "Monto a A/R";
-  const found = PAYMENT_METHODS.find(fp => fp.key === p.forma);
-  return found?.label ?? p.forma ?? "Método";
-};
+  // Render label del método de pago, reemplazando por "Monto a A/R" si está bloqueado
+  const getPaymentLabel = (p) => {
+    if (p?.toAR) return "Monto a A/R";
+    const found = PAYMENT_METHODS.find(fp => fp.key === p.forma);
+    return found?.label ?? p.forma ?? "Método";
+  };
 
   return (
     <div className="space-y-6">
@@ -3306,125 +3629,124 @@ const getPaymentLabel = (p) => {
           {payments.map((p, i) => (
             <div className="bg-gray-50 rounded-lg p-3 border" key={i}>
               <div className="flex flex-col gap-3">
-{/* 🔹 PRIMERA FILA: Select/Label y monto */}
-<div className="flex items-center gap-2">
-  {/* Si está en A/R, mostramos un label fijo; si no, el select normal */}
-  {p?.toAR ? (
-    <div className="flex-1 border-2 border-amber-300 bg-amber-50 rounded-lg px-3 py-2 font-semibold text-amber-800">
-      {getPaymentLabel(p)}
-    </div>
-  ) : (
-    <select
-      value={p.forma}
-      onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
-      className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
-    >
-      {PAYMENT_METHODS.map((fp) => (
-        <option key={fp.key} value={fp.key}>
-          {fp.label}
-        </option>
-      ))}
-    </select>
-  )}
+                {/* 🔹 PRIMERA FILA: Select/Label y monto */}
+                <div className="flex items-center gap-2">
+                  {/* Si está en A/R, mostramos un label fijo; si no, el select normal */}
+                  {p?.toAR ? (
+                    <div className="flex-1 border-2 border-amber-300 bg-amber-50 rounded-lg px-3 py-2 font-semibold text-amber-800">
+                      {getPaymentLabel(p)}
+                    </div>
+                  ) : (
+                    <select
+                      value={p.forma}
+                      onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
+                      className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
+                    >
+                      {PAYMENT_METHODS.map((fp) => (
+                        <option key={fp.key} value={fp.key}>
+                          {fp.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
 
-  <div className="flex items-center gap-2">
-    <span className="text-lg font-bold">$</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold">$</span>
 
-    {/* Input de monto: si está en A/R, se bloquea y muestra amountToCredit */}
-    <input
-      type="text"
-      value={p?.toAR ? String(Number(amountToCredit).toFixed(2)) : (p.monto === 0 ? '' : p.monto)}
-      onChange={(e) => {
-        if (p?.toAR) return; // bloqueado si está en A/R
-        const val = e.target.value.trim();
-        handleChangePayment(i, "monto", val || 0);
-      }}
-      onFocus={(e) => {
-        if (p?.toAR) return; // bloqueado si está en A/R
-        if (p.monto === 0) e.target.value = '';
-      }}
-      onBlur={(e) => {
-        if (p?.toAR) return; // bloqueado si está en A/R
-        const val = e.target.value.trim();
-        if (val === '' || val === '.' || val === '0') {
-          handleChangePayment(i, "monto", 0);
-        } else {
-          const num = parseFloat(val);
-          if (!isNaN(num) && num > 0) {
-            handleChangePayment(i, "monto", Number(num.toFixed(2)));
-          } else {
-            handleChangePayment(i, "monto", 0);
-          }
-        }
-      }}
-      readOnly={!!p?.toAR}
-      disabled={!!p?.toAR}
-      className={`w-28 border-2 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none
-                  ${p?.toAR ? "bg-amber-50 border-amber-300 text-amber-800 cursor-not-allowed" : "border-gray-300"}`}
-      placeholder="0.00"
-      title={p?.toAR ? "Bloqueado: enviado a CxC (A/R)" : ""}
-    />
-  </div>
+                    {/* Input de monto: si está en A/R, se bloquea y muestra amountToCredit */}
+                    <input
+                      type="text"
+                      value={p?.toAR ? String(Number(amountToCredit).toFixed(2)) : (p.monto === 0 ? '' : p.monto)}
+                      onChange={(e) => {
+                        if (p?.toAR) return; // bloqueado si está en A/R
+                        const val = e.target.value.trim();
+                        handleChangePayment(i, "monto", val || 0);
+                      }}
+                      onFocus={(e) => {
+                        if (p?.toAR) return; // bloqueado si está en A/R
+                        if (p.monto === 0) e.target.value = '';
+                      }}
+                      onBlur={(e) => {
+                        if (p?.toAR) return; // bloqueado si está en A/R
+                        const val = e.target.value.trim();
+                        if (val === '' || val === '.' || val === '0') {
+                          handleChangePayment(i, "monto", 0);
+                        } else {
+                          const num = parseFloat(val);
+                          if (!isNaN(num) && num > 0) {
+                            handleChangePayment(i, "monto", Number(num.toFixed(2)));
+                          } else {
+                            handleChangePayment(i, "monto", 0);
+                          }
+                        }
+                      }}
+                      readOnly={!!p?.toAR}
+                      disabled={!!p?.toAR}
+                      className={`w-28 border-2 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none
+                                  ${p?.toAR ? "bg-amber-50 border-amber-300 text-amber-800 cursor-not-allowed" : "border-gray-300"}`}
+                      placeholder="0.00"
+                      title={p?.toAR ? "Bloqueado: enviado a CxC (A/R)" : ""}
+                    />
+                  </div>
 
-  {payments.length > 1 && !p?.toAR && (
-    <button
-      className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
-      onClick={() => handleRemovePayment(i)}
-      title="Eliminar este método de pago"
-    >
-      ✖️
-    </button>
-  )}
-</div>
+                  {payments.length > 1 && !p?.toAR && (
+                    <button
+                      className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
+                      onClick={() => handleRemovePayment(i)}
+                      title="Eliminar este método de pago"
+                    >
+                      ✖️
+                    </button>
+                  )}
+                </div>
 
-{/* Si está en A/R, muestra el balance seleccionado */}
-{p?.toAR && (
-  <div className="text-sm text-amber-700 mt-1">
-    Balance seleccionado → <b>{fmt(amountToCredit)}</b>
-  </div>
-)}
+                {/* Si está en A/R, muestra el balance seleccionado */}
+                {p?.toAR && (
+                  <div className="text-sm text-amber-700 mt-1">
+                    Balance seleccionado → <b>{fmt(amountToCredit)}</b>
+                  </div>
+                )}
 
-{/* 🔹 SEGUNDA FILA: Botones de acción */}
-<div className="flex items-center gap-2">
-  {/* Toggle A/R */}
-  {!p?.toAR ? (
-    <button
-      onClick={() => {
-        // Bloquear: marcar como A/R y poner monto 0 (como antes)
-        handleChangePayment(i, "monto", 0);
-        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: true } : x));
-      }}
-      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
-      title="Enviar este saldo a Cuentas por Cobrar (A/R)"
-    >
-      📋 To A/R
-    </button>
-  ) : (
-    <button
-      onClick={() => {
-        // Desbloquear: quitar modo A/R
-        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x));
-      }}
-      className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
-      title="Deshacer: volver a editar el monto"
-    >
-      ↩️ Undo A/R
-    </button>
-  )}
+                {/* 🔹 SEGUNDA FILA: Botones de acción */}
+                <div className="flex items-center gap-2">
+                  {/* Toggle A/R */}
+                  {!p?.toAR ? (
+                    <button
+                      onClick={() => {
+                        // Bloquear: marcar como A/R y poner monto 0
+                        handleChangePayment(i, "monto", 0);
+                        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: true } : x));
+                      }}
+                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
+                      title="Enviar este saldo a Cuentas por Cobrar (A/R)"
+                    >
+                      📋 To A/R
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        // Desbloquear: quitar modo A/R
+                        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x));
+                      }}
+                      className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
+                      title="Deshacer: volver a editar el monto"
+                    >
+                      ↩️ Undo A/R
+                    </button>
+                  )}
 
-  {/* Botón QR para tarjeta (solo cuando NO está en A/R y la forma es tarjeta) */}
-  {!p?.toAR && p.forma === "tarjeta" && (
-    <button
-      onClick={() => handleGenerateQR(i)}
-      className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-md transition-colors flex items-center justify-center gap-1"
-      title="Generar QR para pago con Stripe"
-    >
-      📱 QR Pay
-    </button>
-  )}
-</div>
+                  {/* Botón QR para tarjeta (solo cuando NO está en A/R y la forma es tarjeta) */}
+                  {!p?.toAR && p.forma === "tarjeta" && (
+                    <button
+                      onClick={() => handleGenerateQR(i)}
+                      className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-md transition-colors flex items-center justify-center gap-1"
+                      title="Generar QR para pago con Stripe"
+                    >
+                      📱 QR Pay
+                    </button>
+                  )}
+                </div>
 
-                
                 {/* 🆕 CHECKBOX PARA FEE DE TARJETA */}
                 {p.forma === "tarjeta" && (
                   <div className="pt-2 border-t border-gray-200">
@@ -3556,10 +3878,11 @@ const getPaymentLabel = (p) => {
         >
           ← Back
         </button>
-  <button
-  className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
-disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}  onClick={saveSale}
->
+        <button
+          className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
+          disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
+          onClick={saveSale}
+        >
           {saving ? "💾 Saving..." : "💾 Save Sale"}
         </button>
       </div>
