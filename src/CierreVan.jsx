@@ -251,57 +251,56 @@ export default function CierreVan() {
     setMensaje("Loading data for selected dates...");
     setTipoMensaje("info");
 
-    try {
-      const ventasTemp = {};
-      const pagosTemp = {};
+     try {
+    const ventasTemp = {};
+    const pagosTemp = {};
 
-      // Cargar datos para cada fecha
-      for (const fecha of fechasSeleccionadas) {
-        console.log(`📅 Cargando datos para ${fecha}`);
+    // Cargar datos para cada fecha
+    for (const fecha of fechasSeleccionadas) {
+      console.log(`📅 Cargando datos para ${fecha}`);
 
-        // Usar Eastern Time para los rangos
-        const inicioDia = `${fecha}T00:00:00-05:00`; // Medianoche ET
-        const finDia = `${fecha}T23:59:59-05:00`; // 11:59 PM ET
+      // Usar Eastern Time para los rangos
+      const { start, end } = easternDayBounds(fecha);
 
-        // Cargar ventas
-        const { data: ventas, error: ventasError } = await supabase
-          .from("ventas")
-          .select(
-            `
-            id, created_at, total_venta, total_pagado, estado_pago,
-            cliente_id, clientes:cliente_id (id, nombre), pago, van_id, usuario_id
-          `
-          )
-          .eq("van_id", van.id)
-          .gte("created_at", inicioDia)
-          .lte("created_at", finDia)
-          .order("created_at", { ascending: false });
+      // Cargar ventas del día
+      const { data: ventas, error: ventasError } = await supabase
+        .from("ventas")
+        .select(`
+          id, created_at, total_venta, total_pagado, estado_pago,
+          cliente_id, clientes:cliente_id (id, nombre),
+          pago, metodo_pago
+        `)
+        .eq("van_id", van.id)
+        .gte("created_at", start)
+        .lte("created_at", end)
+        .order("created_at", { ascending: false });
 
-        if (ventasError) throw ventasError;
-        ventasTemp[fecha] = ventas || [];
-        console.log(`✅ ${ventas?.length || 0} ventas cargadas para ${fecha}`);
+      if (ventasError) throw ventasError;
+      ventasTemp[fecha] = ventas || [];
+      console.log(`✅ ${ventas?.length || 0} ventas cargadas para ${fecha}`);
 
-        // Cargar pagos directos
-        const { data: pagos, error: pagosError } = await supabase
-          .from("pagos")
-          .select(
-            `
-            id, fecha_pago, monto, metodo_pago,
-            cliente_id, clientes:cliente_id (id, nombre), van_id, usuario_id
-          `
-          )
-          .eq("van_id", van.id)
-          .gte("fecha_pago", inicioDia)
-          .lte("fecha_pago", finDia)
-          .order("fecha_pago", { ascending: false });
+      // Cargar pagos directos (solo para deudas, no asociados a ventas del día)
+      const { data: pagos, error: pagosError } = await supabase
+        .from("pagos")
+        .select(`
+          id, fecha_pago, monto, metodo_pago,
+          cliente_id, clientes:cliente_id (id, nombre),
+          venta_id
+        `)
+        .eq("van_id", van.id)
+        .gte("fecha_pago", start)
+        .lte("fecha_pago", end)
+        .is("venta_id", null) // Solo pagos no asociados a ventas
+        .order("fecha_pago", { ascending: false });
 
-        if (pagosError) throw pagosError;
-        pagosTemp[fecha] = pagos || [];
-        console.log(`✅ ${pagos?.length || 0} pagos cargados para ${fecha}`);
-      }
+      if (pagosError) throw pagosError;
+      pagosTemp[fecha] = pagos || [];
+      console.log(`✅ ${pagos?.length || 0} pagos directos cargados para ${fecha}`);
+    }
 
-      setVentasPorFecha(ventasTemp);
-      setPagosPorFecha(pagosTemp);
+    setVentasPorFecha(ventasTemp);
+    setPagosPorFecha(pagosTemp);
+
 
       const totalVentas = Object.values(ventasTemp).reduce(
         (sum, v) => sum + v.length,
