@@ -1,4 +1,4 @@
-// src/App.jsx
+import { useState, useEffect } from "react";
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
@@ -41,6 +41,102 @@ import Suplidores from "./Suplidores";
 
 // 💰 Comisiones (NUEVO)
 import ComisionesPage from './pages/ComisionesPage';
+
+// Componente de carga con animación mejorada
+const LoadingScreen = () => {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      {/* Decorative elements */}
+      <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-blue-400/20 to-indigo-400/20 rounded-full blur-3xl"></div>
+      <div className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-purple-400/20 to-pink-400/20 rounded-full blur-3xl"></div>
+
+      {/* Contenedor principal de la animación */}
+      <div className="relative z-10 text-center">
+        {/* Logo animado */}
+        <div className="mb-8">
+          <div className="relative w-32 h-32 mx-auto">
+            {/* Círculo de fondo con animación de pulso */}
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl animate-pulse"></div>
+            
+            {/* Logo SVG con animación de rotación */}
+            <svg className="w-20 h-20 text-white absolute inset-0 m-auto animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ animationDuration: '3s' }}>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05A2.5 2.5 0 0115.95 16H17a1 1 0 001-1v-5a1 1 0 00-.293-.707l-2-2A1 1 0 0015 7h-1z" />
+            </svg>
+          </div>
+        </div>
+
+        {/* Título con animación de parpadeo gradual */}
+        <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-6 animate-pulse" style={{ animationDuration: '2s' }}>
+          TOOLS4CARE
+        </h1>
+
+        {/* Efecto de partículas animadas */}
+        <div className="flex justify-center mb-6">
+          <div className="flex space-x-2">
+            <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.5s' }}></div>
+            <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '150ms', animationDuration: '1.5s' }}></div>
+            <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '300ms', animationDuration: '1.5s' }}></div>
+          </div>
+        </div>
+
+        {/* Texto de carga con animación de desvanecimiento */}
+        <div className="relative">
+          <p className="text-xl text-gray-600 font-medium opacity-0 animate-fade-in" style={{ animationDuration: '1s', animationDelay: '0.5s' }}>
+            Cargando Sistema de Ventas...
+          </p>
+          
+          {/* Línea de progreso animada */}
+          <div className="w-64 h-1 bg-gray-200 rounded-full mt-4 mx-auto overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full animate-progress" style={{ animationDuration: '2s' }}></div>
+          </div>
+        </div>
+
+        {/* Efectos de fondo adicionales */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-20 left-20 w-2 h-2 bg-blue-400 rounded-full animate-float" style={{ animationDuration: '4s' }}></div>
+          <div className="absolute top-40 right-32 w-3 h-3 bg-indigo-400 rounded-full animate-float" style={{ animationDuration: '5s', animationDelay: '1s' }}></div>
+          <div className="absolute bottom-32 left-40 w-2 h-2 bg-purple-400 rounded-full animate-float" style={{ animationDuration: '6s', animationDelay: '2s' }}></div>
+          <div className="absolute bottom-20 right-20 w-3 h-3 bg-pink-400 rounded-full animate-float" style={{ animationDuration: '7s', animationDelay: '3s' }}></div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Estilos CSS para las animaciones
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  @keyframes progress {
+    from { width: 0%; }
+    to { width: 100%; }
+  }
+  
+  @keyframes float {
+    0% { transform: translateY(0) translateX(0); opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translateY(-100px) translateX(30px); opacity: 0; }
+  }
+  
+  .animate-fade-in {
+    animation: fade-in;
+  }
+  
+  .animate-progress {
+    animation: progress;
+  }
+  
+  .animate-float {
+    animation: float;
+  }
+`;
+document.head.appendChild(style);
 
 function PrivateRoute({ children }) {
   const { usuario, cargando } = useUsuario();
@@ -102,6 +198,21 @@ function LayoutPrivado() {
 }
 
 export default function App() {
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Simula la carga inicial de la aplicación
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 3000); // 3 segundos de carga inicial para mostrar la animación completa
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (isLoading) {
+    return <LoadingScreen />;
+  }
+
   return (
     <UsuarioProvider>
       <VanProvider>
