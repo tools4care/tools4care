@@ -16,108 +16,16 @@ function normMetodo(s) {
   const x = String(s || "").trim().toLowerCase();
   if (["cash", "efectivo"].includes(x)) return "Cash";
   if (["card", "tarjeta", "credit", "debit"].includes(x)) return "Card";
-  if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(x))
-    return "Transfer";
+  if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(x)) return "Transfer";
   if (["mix", "mixed", "mixto"].includes(x)) return "Mix";
   return x ? x[0].toUpperCase() + x.slice(1) : "-";
 }
 
 function breakdownPago(item) {
-function breakdownPago(item) {
-  const out = { cash: 0, card: 0, transfer: 0, mix: 0 };
-  
-  // Si el item tiene un campo de pago desglosado (como en ventas)
-  if (item?.pago) {
-    try {
-      const pagoData = typeof item.pago === 'string' ? JSON.parse(item.pago) : item.pago;
-      
-      // Procesar el desglose del pago
-      if (pagoData.map) {
-        if (pagoData.map.efectivo) out.cash += Number(pagoData.map.efectivo);
-        if (pagoData.map.tarjeta) out.card += Number(pagoData.map.tarjeta);
-        if (pagoData.map.transferencia) out.transfer += Number(pagoData.map.transferencia);
-        if (pagoData.map.otro) out.mix += Number(pagoData.map.otro);
-      }
-    } catch (e) {
-      console.warn("Error parsing payment data:", e);
-    }
-  }
-  
-  // Si el item es un pago directo (desde tabla pagos)
-  if (item?.monto && !item?.venta_id) {
-    const metodo = normMetodo(item.metodo_pago);
-    if (metodo === "Cash") out.cash += Number(item.monto);
-    else if (metodo === "Card") out.card += Number(item.monto);
-    else if (metodo === "Transfer") out.transfer += Number(item.monto);
-    else out.mix += Number(item.monto);
-  }
-  
-  return out;
-}
-
-async function loadImageAsDataURL(src) {
-  try {
-    const res = await fetch(src, { cache: "no-cache" });
-    const blob = await res.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    });
-  } catch (error) {
-    console.warn("No se pudo cargar el logo:", error);
-    return null;
-  }
-}
-
-/* ======================= CALCULAR CIERRE COMPLETO ======================= */
 async function calcularCierreCompleto(van_id, fecha) {
-  console.log('📊 Iniciando cálculo de cierre para:', { van_id, fecha });
-  
-  try {
-    // 1️⃣ VENTAS DEL DÍA
-    const { data: ventas, error: ventasError } = await supabase.rpc(
-      "ventas_no_cerradas_por_van_by_id",
-      {
-        van_id_param: van_id,
-        fecha_inicio: fecha,
-        fecha_fin: fecha,
-      }
-    );
+  // ... (código existente)
 
-    if (ventasError) throw ventasError;
-
-    // 2️⃣ PAGOS A CxC DEL DÍA (solo pagos NO ligados a ventas del día)
-    const { data: pagosCxC, error: pagosError } = await supabase
-      .from("pagos")
-      .select(`
-        id,
-        cliente_id,
-        monto,
-        metodo_pago,
-        fecha_pago,
-        created_at,
-        notas,
-        referencia,
-        venta_id,
-        clientes:cliente_id (
-          nombre,
-          apellido
-        )
-      `)
-      .eq("van_id", van_id)
-      .gte("fecha_pago", `${fecha}T00:00:00`)
-      .lte("fecha_pago", `${fecha}T23:59:59`)
-      .is("venta_id", null);
-
-    if (pagosError) throw pagosError;
-
-    console.log('✅ Datos obtenidos:', { 
-      ventas: ventas?.length || 0, 
-      pagosCxC: pagosCxC?.length || 0 
-    });
-
- // 3️⃣ OBTENER VENTAS DEL DÍA CON SUS PAGOS ASOCIADOS
+  // 1️⃣ VENTAS DEL DÍA
   const { data: ventas, error: ventasError } = await supabase.rpc(
     "ventas_no_cerradas_por_van_by_id",
     {
@@ -127,7 +35,9 @@ async function calcularCierreCompleto(van_id, fecha) {
     }
   );
 
-  // 4️⃣ OBTENER PAGOS DIRECTOS (solo para deudas, no asociados a ventas del día)
+  if (ventasError) throw ventasError;
+
+  // 2️⃣ PAGOS DIRECTOS SOLO PARA DEUDAS (no asociados a ventas del día)
   const { data: pagosDirectos, error: pagosError } = await supabase
     .from("pagos")
     .select(`
@@ -142,13 +52,13 @@ async function calcularCierreCompleto(van_id, fecha) {
       venta_id
     `)
     .eq("van_id", van_id)
-    .gte("fecha_pago", `${fecha}T00:00:00`)
-    .lte("fecha_pago", `${fecha}T23:59:59`)
+    .gte("fecha_pago", start)
+    .lte("fecha_pago", end)
     .is("venta_id", null); // Solo pagos no asociados a ventas
 
-  // ... (código existente)
+  if (pagosError) throw pagosError;
 
-  // 5️⃣ PROCESAR VENTAS (solo ventas del día)
+  // 3️⃣ PROCESAR VENTAS (solo las ventas del día)
   const ventasDetalle = (ventas || []).map(v => {
     const breakdown = breakdownPago(v);
     const total = Number(v.total_venta || 0);
@@ -164,11 +74,11 @@ async function calcularCierreCompleto(van_id, fecha) {
       pendiente,
       metodo: normMetodo(v.metodo_pago),
       breakdown,
-      esVentaDelDia: true, // Marcar como venta del día
+      esVentaDelDia: true,
     };
   });
 
-  // 6️⃣ PROCESAR PAGOS DIRECTOS (solo para deudas)
+  // 4️⃣ PROCESAR PAGOS DIRECTOS (solo para deudas)
   const pagosDirectosDetalle = (pagosDirectos || []).map(p => {
     const metodoRaw = String(p.metodo_pago || "").toLowerCase();
     const monto = Number(p.monto || 0);
@@ -192,39 +102,36 @@ async function calcularCierreCompleto(van_id, fecha) {
       monto,
       metodo: normMetodo(p.metodo_pago),
       breakdown,
-      esPagoDirecto: true, // Marcar como pago directo
+      esPagoDirecto: true,
       notas: p.notas || "",
       referencia: p.referencia || "",
     };
   });
 
-  // 7️⃣ COMBINAR Y EVITAR DUPLICACIONES
-  const todasLasTransacciones = [
-    ...ventasDetalle,
-    ...pagosDirectosDetalle
-  ];
-
-  // 8️⃣ TOTALES POR MÉTODO (sin duplicaciones)
+  // 5️⃣ TOTALES POR MÉTODO (sin duplicaciones)
   const totales = {
     ventas: { cash: 0, card: 0, transfer: 0, total: 0 },
     pagosDirectos: { cash: 0, card: 0, transfer: 0, total: 0 },
     esperado: { cash: 0, card: 0, transfer: 0, total: 0 },
   };
 
-  todasLasTransacciones.forEach(trans => {
-    if (trans.esVentaDelDia) {
-      totales.ventas.cash += trans.breakdown.cash || 0;
-      totales.ventas.card += trans.breakdown.card || 0;
-      totales.ventas.transfer += trans.breakdown.transfer || 0;
-      totales.ventas.total += trans.pagado;
-    } else if (trans.esPagoDirecto) {
-      totales.pagosDirectos.cash += trans.breakdown.cash || 0;
-      totales.pagosDirectos.card += trans.breakdown.card || 0;
-      totales.pagosDirectos.transfer += trans.breakdown.transfer || 0;
-      totales.pagosDirectos.total += trans.monto;
-    }
+  // Sumar solo las ventas del día
+  ventasDetalle.forEach(v => {
+    totales.ventas.cash += v.breakdown.cash || 0;
+    totales.ventas.card += v.breakdown.card || 0;
+    totales.ventas.transfer += v.breakdown.transfer || 0;
+    totales.ventas.total += v.pagado;
   });
 
+  // Sumar solo los pagos directos (deudas)
+  pagosDirectosDetalle.forEach(p => {
+    totales.pagosDirectos.cash += p.breakdown.cash || 0;
+    totales.pagosDirectos.card += p.breakdown.card || 0;
+    totales.pagosDirectos.transfer += p.breakdown.transfer || 0;
+    totales.pagosDirectos.total += p.monto;
+  });
+
+  // Totales combinados
   totales.esperado.cash = totales.ventas.cash + totales.pagosDirectos.cash;
   totales.esperado.card = totales.ventas.card + totales.pagosDirectos.card;
   totales.esperado.transfer = totales.ventas.transfer + totales.pagosDirectos.transfer;

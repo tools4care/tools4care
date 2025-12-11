@@ -8,7 +8,7 @@ import { BarcodeScanner } from "./BarcodeScanner";
 import QRCode from "qrcode"; // npm install qrcode
 import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
-
+import { v4 as uuidv4 } from 'uuid';
 
 
 
@@ -2033,6 +2033,10 @@ function handleSelectPendingSale(sale) {
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
+
+     // 🆕 Generar transaction_id único para esta transacción física
+  const transactionId = uuidv4();
+  console.log('💳 Transaction ID generado:', transactionId);
 /* ========== AGENTE DE CRÉDITO: VALIDACIÓN PREVIA A GUARDAR ========== */
 if (selectedClient?.id) {
   // Ejecutar agente contra el total actual
@@ -2208,14 +2212,15 @@ if (selectedClient?.id) {
       });
 
       const pagoJson = {
-        metodos: metodosAplicados,
-        map: paymentMap,
-        total_ingresado: Number(paid.toFixed(2)),
-        aplicado_venta: Number(paidForSaleNow.toFixed(2)),
-        aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
-        cambio: Number(changeNow.toFixed(2)),
-        ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
-      };
+  metodos: metodosAplicados,
+  map: paymentMap,
+  total_ingresado: Number(paid.toFixed(2)),
+  aplicado_venta: Number(paidForSaleNow.toFixed(2)),
+  aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
+  cambio: Number(changeNow.toFixed(2)),
+  ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
+  transaction_id: transactionId, // 🆕 UUID para deduplicación
+};
 
       const { data: ventaRow, error: insErr } = await supabase
   .from('ventas')
@@ -2333,22 +2338,23 @@ if (selectedClient?.id) {
         }
 
         // 💰 1) Registrar el pago REAL en tabla `pagos`
-        const { error: pagoCxCErr } = await supabase
-          .from("pagos")
-          .insert([
-            {
-              venta_id: null, // 👈 MUY IMPORTANTE: este pago es para deuda vieja, no para esta venta
-              cliente_id: selectedClient.id,
-              van_id: van.id ?? null,
-              usuario_id: usuario.id ?? null,
-              fecha_pago: new Date().toISOString(),
-              monto: montoParaCxC,
-              metodo_pago: metodoPrincipal, // "Cash", "Card", "Transfer", etc.
-              referencia: `Pago CxC dentro de venta ${ventaId}`,
-              notas: "Pago a cuenta por cobrar aplicado desde pantalla de ventas",
-              idem_key: idemKey, // null si no se pudo generar; igual es opcional
-            },
-          ]);
+     const { error: pagoCxCErr } = await supabase
+  .from("pagos")
+  .insert([
+    {
+      venta_id: null,
+      cliente_id: selectedClient.id,
+      van_id: van.id ?? null,
+      usuario_id: usuario.id ?? null,
+      fecha_pago: new Date().toISOString(),
+      monto: montoParaCxC,
+      metodo_pago: metodoPrincipal,
+      referencia: `Pago CxC dentro de venta ${ventaId}`,
+      notas: "Pago a cuenta por cobrar aplicado desde pantalla de ventas",
+      idem_key: idemKey,
+      transaction_id: transactionId, // 🆕 Mismo UUID que la venta
+    },
+  ]);
 
         if (pagoCxCErr) {
           console.error("❌ Error insertando pago CxC en tabla pagos:", pagoCxCErr);
