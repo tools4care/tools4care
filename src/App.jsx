@@ -42,7 +42,7 @@ import Suplidores from "./Suplidores";
 // 💰 Comisiones (NUEVO)
 import ComisionesPage from './pages/ComisionesPage';
 
-// Componente de carga con animación mejorada
+// Componente de carga profesional
 const LoadingScreen = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
@@ -52,59 +52,58 @@ const LoadingScreen = () => {
 
       {/* Contenedor principal de la animación */}
       <div className="relative z-10 text-center">
-        {/* Logo animado */}
+        {/* Logo con efecto de brillo animado */}
         <div className="mb-8">
           <div className="relative w-32 h-32 mx-auto">
-            {/* Círculo de fondo con animación de pulso */}
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl animate-pulse"></div>
+            {/* Efecto de brillo circular */}
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl opacity-20 animate-pulse"></div>
             
-            {/* Logo SVG con animación de rotación */}
-            <svg className="w-20 h-20 text-white absolute inset-0 m-auto animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ animationDuration: '3s' }}>
+            {/* Logo SVG con animación de suavizado */}
+            <svg className="w-20 h-20 text-white absolute inset-0 m-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05A2.5 2.5 0 0115.95 16H17a1 1 0 001-1v-5a1 1 0 00-.293-.707l-2-2A1 1 0 0015 7h-1z" />
             </svg>
           </div>
         </div>
 
-        {/* Título con animación de parpadeo gradual */}
-        <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-6 animate-pulse" style={{ animationDuration: '2s' }}>
+        {/* Título con animación de desvanecimiento gradual */}
+        <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-6 animate-fade-in" style={{ animationDuration: '1.5s' }}>
           TOOLS4CARE
         </h1>
 
-        {/* Efecto de partículas animadas */}
-        <div className="flex justify-center mb-6">
-          <div className="flex space-x-2">
-            <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.5s' }}></div>
-            <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '150ms', animationDuration: '1.5s' }}></div>
-            <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '300ms', animationDuration: '1.5s' }}></div>
-          </div>
-        </div>
+        {/* Línea divisoria animada */}
+        <div className="w-64 h-px bg-gradient-to-r from-transparent via-blue-400 to-transparent mx-auto mb-6 animate-shimmer" style={{ animationDuration: '2s' }}></div>
 
         {/* Texto de carga con animación de desvanecimiento */}
-        <div className="relative">
-          <p className="text-xl text-gray-600 font-medium opacity-0 animate-fade-in" style={{ animationDuration: '1s', animationDelay: '0.5s' }}>
-            Cargando Sistema de Ventas...
-          </p>
-          
-          {/* Línea de progreso animada */}
-          <div className="w-64 h-1 bg-gray-200 rounded-full mt-4 mx-auto overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full animate-progress" style={{ animationDuration: '2s' }}></div>
-          </div>
+        <p className="text-lg text-gray-600 font-medium mb-8 animate-fade-in" style={{ animationDuration: '1.5s', animationDelay: '0.3s' }}>
+          Cargando Sistema de Ventas...
+        </p>
+
+        {/* Efecto de partículas modernas */}
+        <div className="flex justify-center space-x-4 mb-8">
+          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style={{ animationDuration: '1.5s', animationDelay: '0s' }}></div>
+          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" style={{ animationDuration: '1.5s', animationDelay: '0.2s' }}></div>
+          <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" style={{ animationDuration: '1.5s', animationDelay: '0.4s' }}></div>
         </div>
 
-        {/* Efectos de fondo adicionales */}
+        {/* Efecto de carga progresiva */}
+        <div className="w-64 h-1 bg-gray-200 rounded-full mx-auto overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full animate-progress" style={{ animationDuration: '2.5s' }}></div>
+        </div>
+
+        {/* Efectos de fondo adicionales sutiles */}
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-20 left-20 w-2 h-2 bg-blue-400 rounded-full animate-float" style={{ animationDuration: '4s' }}></div>
-          <div className="absolute top-40 right-32 w-3 h-3 bg-indigo-400 rounded-full animate-float" style={{ animationDuration: '5s', animationDelay: '1s' }}></div>
-          <div className="absolute bottom-32 left-40 w-2 h-2 bg-purple-400 rounded-full animate-float" style={{ animationDuration: '6s', animationDelay: '2s' }}></div>
-          <div className="absolute bottom-20 right-20 w-3 h-3 bg-pink-400 rounded-full animate-float" style={{ animationDuration: '7s', animationDelay: '3s' }}></div>
+          <div className="absolute top-20 left-20 w-1 h-1 bg-blue-300 rounded-full animate-float" style={{ animationDuration: '6s' }}></div>
+          <div className="absolute top-40 right-32 w-1 h-1 bg-indigo-300 rounded-full animate-float" style={{ animationDuration: '7s', animationDelay: '1s' }}></div>
+          <div className="absolute bottom-32 left-40 w-1 h-1 bg-purple-300 rounded-full animate-float" style={{ animationDuration: '8s', animationDelay: '2s' }}></div>
+          <div className="absolute bottom-20 right-20 w-1 h-1 bg-pink-300 rounded-full animate-float" style={{ animationDuration: '9s', animationDelay: '3s' }}></div>
         </div>
       </div>
     </div>
   );
 };
 
-// Estilos CSS para las animaciones
+// Estilos CSS para las animaciones profesionales
 const style = document.createElement('style');
 style.textContent = `
   @keyframes fade-in {
@@ -115,6 +114,11 @@ style.textContent = `
   @keyframes progress {
     from { width: 0%; }
     to { width: 100%; }
+  }
+  
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
   }
   
   @keyframes float {
@@ -130,6 +134,12 @@ style.textContent = `
   
   .animate-progress {
     animation: progress;
+  }
+  
+  .animate-shimmer {
+    background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.5), transparent);
+    background-size: 200% 100%;
+    animation: shimmer;
   }
   
   .animate-float {
@@ -204,7 +214,7 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => {
       setIsLoading(false);
-    }, 3000); // 3 segundos de carga inicial para mostrar la animación completa
+    }, 2500); // 2.5 segundos de carga inicial
 
     return () => clearTimeout(timer);
   }, []);
