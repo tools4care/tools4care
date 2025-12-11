@@ -533,6 +533,9 @@ export default function Productos() {
   const [pagina, setPagina] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  
+  // 🆕 AÑADIR ESTE ESTADO PARA EL BOTÓN "ADD PRODUCT"
+  const [guardandoProducto, setGuardandoProducto] = useState(false);
 
   const [modalAbierto, setModalAbierto] = useState(false);
   const [productoActual, setProductoActual] = useState(null);
@@ -793,19 +796,23 @@ export default function Productos() {
   async function guardarProducto(e) {
     e.preventDefault();
     setMensaje("");
+    setGuardandoProducto(true); // 🆕 MARCAR COMO GUARDANDO
 
     if (!productoActual.codigo || !productoActual.nombre || !productoActual.precio) {
       setMensaje("Complete all required fields.");
+      setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
       return;
     }
 
     const { data: existentes, error: errorExistente } = await supabase.from("productos").select("id").eq("codigo", productoActual.codigo);
     if (errorExistente) {
       setMensaje("Error checking for duplicate code: " + errorExistente.message);
+      setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
       return;
     }
     if (existentes && existentes.length > 0 && (!productoActual.id || existentes[0].id !== productoActual.id)) {
       setMensaje("Error: There is already a product with this code/UPC.");
+      setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
       return;
     }
 
@@ -826,7 +833,10 @@ export default function Productos() {
 
     if (dataProducto.bulk_unit_price != null && dataProducto.costo != null && dataProducto.bulk_unit_price < dataProducto.costo) {
       const ok = window.confirm("⚠️ The bulk unit price is below cost. Do you still want to save?");
-      if (!ok) return;
+      if (!ok) {
+        setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
+        return;
+      }
     }
 
     let productoId = productoActual.id;
@@ -836,6 +846,7 @@ export default function Productos() {
       const { error } = await supabase.from("productos").update(dataProducto).eq("id", productoActual.id);
       if (error) {
         setMensaje(error.message?.toLowerCase().includes("unique") ? "Error: This code/UPC is already in use. Please use another one." : "Error: " + error.message);
+        setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
         return;
       }
       savedMessage = "Product updated successfully.";
@@ -843,6 +854,7 @@ export default function Productos() {
       const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
       if (error) {
         setMensaje(error.message?.toLowerCase().includes("unique") ? "Error: This code/UPC is already in use. Please use another one." : "Error: " + error.message);
+        setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
         return;
       }
       productoId = data.id;
@@ -864,6 +876,7 @@ export default function Productos() {
     await cargarProductos();
     window.alert(savedMessage);
     cerrarModal();
+    setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO AL FINAL
   }
 
   async function eliminarProducto() {
@@ -1032,9 +1045,10 @@ export default function Productos() {
         <button 
           onClick={() => agregarProductoNuevo()} 
           className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap flex items-center justify-center gap-2"
+          disabled={guardandoProducto} // 🆕 DESACTIVAR MIENTRAS SE GUARDA
         >
           <span>+</span>
-          <span>Add product</span>
+          <span>{guardandoProducto ? "Saving..." : "Add product"}</span> {/* 🆕 CAMBIAR TEXTO SEGÚN ESTADO */}
         </button>
       </div>
 
@@ -1523,7 +1537,7 @@ export default function Productos() {
                     🖨️ Print label
                   </button>
                   {productoActual.id && (
-                    <button type="button" className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2 text-sm sm:text-base" onClick={eliminarProducto} disabled={disabled}>
+                    <button type="button" className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2 text-sm sm:text-base" onClick={eliminarProducto}disabled={disabled}>
                       Delete
                     </button>
                   )}
