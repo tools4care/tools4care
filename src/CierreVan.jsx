@@ -1,4 +1,5 @@
 // src/CierreVan.jsx - Cierre de múltiples días con Eastern Time
+// ✅ CORREGIDO: Evita duplicación de pagos usando SOLO el RPC
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
@@ -84,23 +85,70 @@ function formatUS(isoDay) {
   });
 }
 
+// Función para obtener rangos de tiempo en Eastern Time
+function easternDayBounds(isoDay) {
+  if (!isoDay) return { start: "", end: "" };
+  
+  const date = new Date(isoDay + "T00:00:00");
+  const easternStart = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  easternStart.setHours(0, 0, 0, 0);
+  
+  const easternEnd = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  easternEnd.setHours(23, 59, 59, 999);
+  
+  return { 
+    start: easternStart.toISOString(), 
+    end: easternEnd.toISOString() 
+  };
+}
+
+
 /* ========================= Main Component ========================= */
 export default function CierreVan() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
+  // ============================
+  // Cargar transacciones reales
+  // ============================
+  async function loadTransaccionesDelDia(fecha) {
+    const { start, end } = easternDayBounds(fecha);
+
+    const { data, error } = await supabase
+      .from("pagos")
+      .select(`
+        id,
+        monto,
+        metodo,
+        created_at,
+        cliente_id,
+        clientes:cliente_id ( nombre )
+      `)
+      .eq("van_id", van.id)
+      .gte("created_at", start)
+      .lte("created_at", end)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Error cargando transacciones:", error);
+      return [];
+    }
+
+    return data;
+  }
 
   // Estados principales
   const [fechasSeleccionadas, setFechasSeleccionadas] = useState([]);
-  const [ventasPorFecha, setVentasPorFecha] = useState({}); // { "2025-11-22": [...ventas] }
-  const [pagosPorFecha, setPagosPorFecha] = useState({}); // { "2025-11-22": [...pagos] }
+  const [ventasPorFecha, setVentasPorFecha] = useState({}); // Solo para mostrar lista
   const [cargando, setCargando] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [tipoMensaje, setTipoMensaje] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
-  // Totales "esperados" por fecha (mismas cifras que PreCierre / RPC)
-  // { "2025-11-23": { cash, card, transfer, mix } }
+
+
+
+  // ✅ FUENTE DE VERDAD: Totales del RPC (sin duplicación)
   const [resumenPorFecha, setResumenPorFecha] = useState({});
 
   // Payment method input states
@@ -164,67 +212,73 @@ export default function CierreVan() {
     }
   }, []);
 
-  // Cargar datos cuando cambien las fechas o el van
+  // Cargar datos cuando cambian las fechas o el van
   useEffect(() => {
     if (fechasSeleccionadas.length > 0 && van?.id) {
       cargarDatosMultiplesFechas();
     }
   }, [fechasSeleccionadas, van?.id]);
 
-  // ✅ Cargar TOTALES ESPERADOS usando el MISMO RPC que PreCierre
- useEffect(() => {
-  if (!van?.id || fechasSeleccionadas.length === 0) return;
+  // ✅ SOLUCIÓN: Usar SOLO el RPC para los totales esperados
+  useEffect(() => {
+    if (!van?.id || fechasSeleccionadas.length === 0) return;
 
-  const loadResumen = async () => {
-    try {
-      const p_from = fechasSeleccionadas.reduce(
-        (min, d) => (d < min ? d : min),
-        fechasSeleccionadas[0]
-      );
-      const p_to = fechasSeleccionadas.reduce(
-        (max, d) => (d > max ? d : max),
-        fechasSeleccionadas[0]
-      );
+    const loadResumen = async () => {
+      try {
+        const p_from = fechasSeleccionadas.reduce(
+          (min, d) => (d < min ? d : min),
+          fechasSeleccionadas[0]
+        );
+        const p_to = fechasSeleccionadas.reduce(
+          (max, d) => (d > max ? d : max),
+          fechasSeleccionadas[0]
+        );
 
-      const { data, error } = await supabase.rpc(
-        "closeout_pre_resumen_filtrado",
-        {
-          p_van_id: van.id,
-          p_from,
-          p_to,
+        console.log('📊 Cargando totales desde RPC para:', { p_from, p_to });
+
+        // 🎯 CLAVE: Este RPC calcula correctamente sin duplicar
+        const { data, error } = await supabase.rpc(
+          "closeout_pre_resumen_filtrado",
+          {
+            p_van_id: van.id,
+            p_from,
+            p_to,
+          }
+        );
+
+        if (error) {
+          console.error("❌ RPC error:", error);
+          throw error;
         }
-      );
 
-      if (error) {
-        console.error("RPC error en CierreVan:", error);
-        throw error;
+        console.log('✅ Datos del RPC recibidos:', data);
+
+        const map = {};
+        (data || []).forEach((r) => {
+          const iso = (r.dia ?? r.fecha ?? r.day ?? r.f ?? "").slice(0, 10);
+          if (!iso || !fechasSeleccionadas.includes(iso)) return;
+
+          // ✅ Estos son los totales CORRECTOS (sin duplicación)
+          map[iso] = {
+            cash: Number(r.cash_expected ?? 0),
+            card: Number(r.card_expected ?? 0),
+            transfer: Number(r.transfer_expected ?? 0),
+          };
+
+          console.log(`💰 Totales para ${iso}:`, map[iso]);
+        });
+
+        console.log("✅ Resumen completo por fecha:", map);
+        setResumenPorFecha(map);
+      } catch (err) {
+        console.error("❌ Error loading expected totals:", err);
+        setMensaje("Error loading expected totals: " + err.message);
+        setTipoMensaje("error");
       }
+    };
 
-      const map = {};
-      (data || []).forEach((r) => {
-        const iso = (r.dia ?? r.fecha ?? r.day ?? r.f ?? "").slice(0, 10);
-        if (!iso) return;
-        if (!fechasSeleccionadas.includes(iso)) return;
-
-        // ✅ SOLO 3 CAMPOS AHORA (sin mix)
-        map[iso] = {
-          cash: Number(r.cash_expected ?? 0),
-          card: Number(r.card_expected ?? 0),
-          transfer: Number(r.transfer_expected ?? 0),
-        };
-      });
-
-      console.log("✅ Resumen esperado por fecha (Cierre):", map);
-      setResumenPorFecha(map);
-    } catch (err) {
-      console.error("❌ Error loading expected totals:", err);
-      setMensaje("Error loading expected totals: " + err.message);
-      setTipoMensaje("error");
-    }
-  };
-
-  loadResumen();
-}, [van?.id, fechasSeleccionadas]);
+    loadResumen();
+  }, [van?.id, fechasSeleccionadas]);
 
   // Sync input states with real values
   useEffect(() => {
@@ -243,7 +297,26 @@ export default function CierreVan() {
     setOtherReal(otherInput === "" ? 0 : Number(otherInput));
   }, [otherInput]);
 
-  // ✅ Cargar ventas y pagos para MÚLTIPLES FECHAS con Eastern Time
+  const [transacciones, setTransacciones] = useState([]);
+
+useEffect(() => {
+  if (!fechasSeleccionadas.length || !van?.id) return;
+
+  const cargarTodas = async () => {
+    let temp = [];
+    for (const fecha of fechasSeleccionadas) {
+      const t = await loadTransaccionesDelDia(fecha);
+      temp = [...temp, ...t];
+    }
+    setTransacciones(
+      temp.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    );
+  };
+
+  cargarTodas();
+}, [fechasSeleccionadas, van?.id]);
+
+  // ✅ Cargar ventas SOLO para mostrar la lista (NO para calcular totales)
   const cargarDatosMultiplesFechas = async () => {
     if (!van?.id || fechasSeleccionadas.length === 0) return;
 
@@ -251,68 +324,43 @@ export default function CierreVan() {
     setMensaje("Loading data for selected dates...");
     setTipoMensaje("info");
 
-     try {
-    const ventasTemp = {};
-    const pagosTemp = {};
+    try {
+      const ventasTemp = {};
 
-    // Cargar datos para cada fecha
-    for (const fecha of fechasSeleccionadas) {
-      console.log(`📅 Cargando datos para ${fecha}`);
+      // Cargar datos para cada fecha
+      for (const fecha of fechasSeleccionadas) {
+        console.log(`📅 Cargando datos para ${fecha}`);
 
-      // Usar Eastern Time para los rangos
-      const { start, end } = easternDayBounds(fecha);
+        // Usar Eastern Time para los rangos
+        const { start, end } = easternDayBounds(fecha);
 
-      // Cargar ventas del día
-      const { data: ventas, error: ventasError } = await supabase
-        .from("ventas")
-        .select(`
-          id, created_at, total_venta, total_pagado, estado_pago,
-          cliente_id, clientes:cliente_id (id, nombre),
-          pago, metodo_pago
-        `)
-        .eq("van_id", van.id)
-        .gte("created_at", start)
-        .lte("created_at", end)
-        .order("created_at", { ascending: false });
+        // Cargar ventas del día (solo para mostrar)
+        const { data: ventas, error: ventasError } = await supabase
+          .from("ventas")
+          .select(`
+            id, created_at, total_venta, total_pagado, estado_pago,
+            cliente_id, clientes:cliente_id (id, nombre),
+            pago, metodo_pago
+          `)
+          .eq("van_id", van.id)
+          .gte("created_at", start)
+          .lte("created_at", end)
+          .order("created_at", { ascending: false });
 
-      if (ventasError) throw ventasError;
-      ventasTemp[fecha] = ventas || [];
-      console.log(`✅ ${ventas?.length || 0} ventas cargadas para ${fecha}`);
+        if (ventasError) throw ventasError;
+        ventasTemp[fecha] = ventas || [];
+        console.log(`✅ ${ventas?.length || 0} ventas cargadas para ${fecha}`);
+      }
 
-      // Cargar pagos directos (solo para deudas, no asociados a ventas del día)
-      const { data: pagos, error: pagosError } = await supabase
-        .from("pagos")
-        .select(`
-          id, fecha_pago, monto, metodo_pago,
-          cliente_id, clientes:cliente_id (id, nombre),
-          venta_id
-        `)
-        .eq("van_id", van.id)
-        .gte("fecha_pago", start)
-        .lte("fecha_pago", end)
-        .is("venta_id", null) // Solo pagos no asociados a ventas
-        .order("fecha_pago", { ascending: false });
-
-      if (pagosError) throw pagosError;
-      pagosTemp[fecha] = pagos || [];
-      console.log(`✅ ${pagos?.length || 0} pagos directos cargados para ${fecha}`);
-    }
-
-    setVentasPorFecha(ventasTemp);
-    setPagosPorFecha(pagosTemp);
-
+      setVentasPorFecha(ventasTemp);
 
       const totalVentas = Object.values(ventasTemp).reduce(
         (sum, v) => sum + v.length,
         0
       );
-      const totalPagos = Object.values(pagosTemp).reduce(
-        (sum, p) => sum + p.length,
-        0
-      );
 
       setMensaje(
-        `Loaded ${totalVentas} sales and ${totalPagos} payments for ${fechasSeleccionadas.length} dates`
+        `Loaded ${totalVentas} sales for ${fechasSeleccionadas.length} dates`
       );
       setTipoMensaje("success");
     } catch (err) {
@@ -377,23 +425,35 @@ export default function CierreVan() {
 
       // Crear un cierre por cada fecha seleccionada
       const cierresPromises = fechasSeleccionadas.map(async (fecha) => {
-        const ventasFecha = ventasPorFecha[fecha] || [];
-        const totalesFecha = calcularTotalesPorFecha(fecha, ventasFecha);
+        const r = resumenPorFecha[fecha] || {};
+        
+        // Usar los totales del RPC (sin duplicación)
+        const totalEfectivo = Number(r.cash || 0);
+        const totalTarjeta = Number(r.card || 0);
+        const totalTransferencia = Number(r.transfer || 0);
+        const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
 
         // Distribución simple del real: igual para cada día
         const cajaRealFecha = totalReal / fechasSeleccionadas.length;
-        const discrepanciaFecha = totalesFecha.totalCaja - cajaRealFecha;
+        const discrepanciaFecha = totalCaja - cajaRealFecha;
+
+        // Total de ventas (solo para registro)
+        const ventasFecha = ventasPorFecha[fecha] || [];
+        const totalVentas = ventasFecha.reduce(
+          (sum, v) => sum + Number(v.total_venta || 0),
+          0
+        );
 
         return supabase.from("cierres_dia").upsert([
           {
             van_id: van.id,
             fecha: fecha,
             usuario_id: usuario.id,
-            total_ventas: totalesFecha.totalVentas,
-            total_efectivo: totalesFecha.totalEfectivo,
-            total_tarjeta: totalesFecha.totalTarjeta,
-            total_transferencia: totalesFecha.totalTransferencia,
-            total_otros: totalesFecha.totalOtros,
+            total_ventas: totalVentas,
+            total_efectivo: totalEfectivo,
+            total_tarjeta: totalTarjeta,
+            total_transferencia: totalTransferencia,
+            total_otros: 0,
             caja_real: cajaRealFecha,
             discrepancia: discrepanciaFecha,
             observaciones: observacionesCompletas,
@@ -429,32 +489,6 @@ export default function CierreVan() {
       setCargando(false);
     }
   };
-
-  // ⚙️ Función auxiliar: totales por fecha usando RESUMEN (RPC) + total_venta
-const calcularTotalesPorFecha = (fecha, ventas) => {
-  let totalVentas = 0;
-  (ventas || []).forEach((venta) => {
-    totalVentas += Number(venta.total_venta || 0);
-  });
-
-  const r = resumenPorFecha[fecha] || {};
-  const totalEfectivo = Number(r.cash || 0);
-  const totalTarjeta = Number(r.card || 0);
-  const totalTransferencia = Number(r.transfer || 0);
-  // ✅ ELIMINADO: const totalOtros = Number(r.mix || 0);
-
-  const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
-
-  return {
-    totalVentas,
-    totalEfectivo,
-    totalTarjeta,
-    totalTransferencia,
-    totalOtros: 0, // ✅ Siempre 0, ya no usamos "mix"
-    totalCaja,
-    diferencia: 0,
-  };
-};
 
   /* ========================= PDF Generation ========================= */
   const handleGenerarPDF = () => {
@@ -929,93 +963,107 @@ const calcularTotalesPorFecha = (fecha, ventas) => {
   };
 
   /* ========================= Calculated Totals ========================= */
-const totales = useMemo(() => {
-  const todasLasVentas = Object.values(ventasPorFecha).flat();
-  let totalVentas = 0;
-  todasLasVentas.forEach((venta) => {
-    totalVentas += Number(venta.total_venta || 0);
-  });
+  
+  // ✅ CORRECCIÓN PRINCIPAL: Usar SOLO resumenPorFecha del RPC
+  const totales = useMemo(() => {
+    // Total de ventas (solo para display)
+    const todasLasVentas = Object.values(ventasPorFecha).flat();
+    let totalVentas = 0;
+    todasLasVentas.forEach((venta) => {
+      totalVentas += Number(venta.total_venta || 0);
+    });
 
-  let totalEfectivo = 0;
-  let totalTarjeta = 0;
-  let totalTransferencia = 0;
-  // ✅ ELIMINADO: let totalOtros = 0;
+    // 🎯 TOTALES DE COBRADO: usar SOLO el RPC (sin duplicación)
+    let totalEfectivo = 0;
+    let totalTarjeta = 0;
+    let totalTransferencia = 0;
 
-  fechasSeleccionadas.forEach((fecha) => {
-    const r = resumenPorFecha[fecha];
-    if (!r) return;
-    totalEfectivo += Number(r.cash || 0);
-    totalTarjeta += Number(r.card || 0);
-    totalTransferencia += Number(r.transfer || 0);
-    // ✅ ELIMINADO: totalOtros += Number(r.mix || 0);
-  });
+    fechasSeleccionadas.forEach((fecha) => {
+      const r = resumenPorFecha[fecha];
+      if (!r) return;
+      
+      totalEfectivo += Number(r.cash || 0);
+      totalTarjeta += Number(r.card || 0);
+      totalTransferencia += Number(r.transfer || 0);
+      
+      console.log(`📊 Sumando ${fecha}:`, {
+        cash: r.cash,
+        card: r.card,
+        transfer: r.transfer
+      });
+    });
 
-  const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
-  const totalReal = cashReal + cardReal + transferReal + otherReal;
-  const diferencia = Math.abs(totalCaja - totalReal);
+    const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
+    const totalReal = cashReal + cardReal + transferReal + otherReal;
+    const diferencia = Math.abs(totalCaja - totalReal);
 
-  return {
-    totalVentas,
-    totalEfectivo,
-    totalTarjeta,
-    totalTransferencia,
-    totalOtros: 0, // ✅ Siempre 0
-    totalCaja,
-    diferencia,
-  };
-}, [
-  ventasPorFecha,
-  resumenPorFecha,
-  fechasSeleccionadas,
-  cashReal,
-  cardReal,
-  transferReal,
-  otherReal,
-]);
+    console.log('💰 TOTALES FINALES:', {
+      totalEfectivo,
+      totalTarjeta,
+      totalTransferencia,
+      totalCaja,
+      totalReal,
+      diferencia
+    });
+
+    return {
+      totalVentas,        // Solo para display
+      totalEfectivo,      // Del RPC ✅
+      totalTarjeta,       // Del RPC ✅
+      totalTransferencia, // Del RPC ✅
+      totalOtros: 0,
+      totalCaja,
+      diferencia,
+    };
+  }, [
+    ventasPorFecha,     // Solo para total de ventas (display)
+    resumenPorFecha,    // ✅ FUENTE DE VERDAD
+    fechasSeleccionadas,
+    cashReal,
+    cardReal,
+    transferReal,
+    otherReal,
+  ]);
 
   /* ========================= Chart Data ========================= */
-const datosMetodosPago = useMemo(() => {
-  return [
-    {
-      name: "Cash",
-      value: totales.totalEfectivo,
-      color: getPaymentMethodColor("efectivo"),
-    },
-    {
-      name: "Card",
-      value: totales.totalTarjeta,
-      color: getPaymentMethodColor("tarjeta"),
-    },
-    {
-      name: "Transfer",
-      value: totales.totalTransferencia,
-      color: getPaymentMethodColor("transferencia"),
-    },
-    // ✅ ELIMINADO: "Other" ya no existe
-  ].filter((item) => item.value > 0);
-}, [totales]);
+  const datosMetodosPago = useMemo(() => {
+    return [
+      {
+        name: "Cash",
+        value: totales.totalEfectivo,
+        color: getPaymentMethodColor("efectivo"),
+      },
+      {
+        name: "Card",
+        value: totales.totalTarjeta,
+        color: getPaymentMethodColor("tarjeta"),
+      },
+      {
+        name: "Transfer",
+        value: totales.totalTransferencia,
+        color: getPaymentMethodColor("transferencia"),
+      },
+    ].filter((item) => item.value > 0);
+  }, [totales]);
 
-  // Datos por fecha para gráfico y tabla (usando resumenPorFecha)
+  // Datos por fecha para gráfico y tabla
   const datosPorFecha = useMemo(() => {
     return fechasSeleccionadas.map((fecha) => {
       const r = resumenPorFecha[fecha] || {
         cash: 0,
         card: 0,
         transfer: 0,
-        mix: 0,
       };
       const total =
         Number(r.cash || 0) +
         Number(r.card || 0) +
-        Number(r.transfer || 0) +
-        Number(r.mix || 0);
+        Number(r.transfer || 0);
 
       return {
         fecha: formatUS(fecha),
         cash: Number(r.cash || 0),
         card: Number(r.card || 0),
         transfer: Number(r.transfer || 0),
-        other: Number(r.mix || 0),
         total,
       };
     });
@@ -1141,11 +1189,14 @@ const datosMetodosPago = useMemo(() => {
               </div>
 
               <div className="mb-2">
-                <p className="text-sm text-gray-600">System Total</p>
+                <p className="text-sm text-gray-600">System Total (from RPC)</p>
                 <p className="text-lg font-bold text-green-800">
                   {totales.totalEfectivo > 0
                     ? fmtCurrency(totales.totalEfectivo)
                     : "$0.00"}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  ✅ No duplications
                 </p>
               </div>
 
@@ -1189,11 +1240,14 @@ const datosMetodosPago = useMemo(() => {
               </div>
 
               <div className="mb-2">
-                <p className="text-sm text-gray-600">System Total</p>
+                <p className="text-sm text-gray-600">System Total (from RPC)</p>
                 <p className="text-lg font-bold text-blue-800">
                   {totales.totalTarjeta > 0
                     ? fmtCurrency(totales.totalTarjeta)
                     : "$0.00"}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  ✅ No duplications
                 </p>
               </div>
 
@@ -1237,11 +1291,14 @@ const datosMetodosPago = useMemo(() => {
               </div>
 
               <div className="mb-2">
-                <p className="text-sm text-gray-600">System Total</p>
+                <p className="text-sm text-gray-600">System Total (from RPC)</p>
                 <p className="text-lg font-bold text-purple-800">
                   {totales.totalTransferencia > 0
                     ? fmtCurrency(totales.totalTransferencia)
                     : "$0.00"}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  ✅ No duplications
                 </p>
               </div>
 
@@ -1529,191 +1586,56 @@ const datosMetodosPago = useMemo(() => {
               </div>
             </div>
 
-            {/* Recent Transactions List */}
-            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6">
-              <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <FileText size={20} />
-                Recent Transactions
-              </h3>
-              <div className="h-64 overflow-y-auto">
-                {(() => {
-                  // Combinar todas las transacciones (ventas + pagos directos)
-                  const todasLasVentas = Object.values(
-                    ventasPorFecha
-                  ).flat();
-                  const todosLosPagos = Object.values(
-                    pagosPorFecha
-                  ).flat();
 
-                  // Mapear ventas con sus métodos de pago
-                  const ventasConMetodo = todasLasVentas.flatMap(
-                    (venta) => {
-                      const items = [];
-                      if (venta.pago?.map) {
-                        if (venta.pago.map.efectivo > 0) {
-                          items.push({
-                            cliente:
-                              venta.clientes?.nombre ||
-                              "N/A",
-                            fecha: venta.created_at,
-                            metodo: "efectivo",
-                            monto: venta.pago.map
-                              .efectivo,
-                            tipo: "venta",
-                          });
-                        }
-                        if (venta.pago.map.tarjeta > 0) {
-                          items.push({
-                            cliente:
-                              venta.clientes?.nombre ||
-                              "N/A",
-                            fecha: venta.created_at,
-                            metodo: "tarjeta",
-                            monto: venta.pago.map
-                              .tarjeta,
-                            tipo: "venta",
-                          });
-                        }
-                        if (
-                          venta.pago.map.transferencia >
-                          0
-                        ) {
-                          items.push({
-                            cliente:
-                              venta.clientes?.nombre ||
-                              "N/A",
-                            fecha: venta.created_at,
-                            metodo: "transferencia",
-                            monto: venta.pago.map
-                              .transferencia,
-                            tipo: "venta",
-                          });
-                        }
-                        if (venta.pago.map.otro > 0) {
-                          items.push({
-                            cliente:
-                              venta.clientes?.nombre ||
-                              "N/A",
-                            fecha: venta.created_at,
-                            metodo: "otro",
-                            monto: venta.pago.map.otro,
-                            tipo: "venta",
-                          });
-                        }
-                      }
-                      return items;
-                    }
-                  );
+{/* Recent Transactions List */}
+<div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6">
+  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+    <FileText size={20} />
+    Recent Transactions
+  </h3>
 
-                  // Normalizar método de pago (español/inglés)
-                  const normalizeMetodo = (metodo) => {
-                    const m = String(metodo || "").toLowerCase();
-                    if (m === "cash") return "efectivo";
-                    if (m === "card") return "tarjeta";
-                    if (m === "transfer") return "transferencia";
-                    if (m === "other") return "otro";
-                    return m;
-                  };
+  <div className="space-y-2 h-64 overflow-y-auto">
+    {transacciones.slice(0, 10).map((t) => (
+      <div
+        key={t.id}
+        className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+      >
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-900 truncate">
+            {t.clientes?.nombre || "N/A"}
+          </p>
+          <div className="flex items-center gap-2 mt-1">
+            <span
+              className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
+                t.metodo === "efectivo"
+                  ? "bg-green-100 text-green-800"
+                  : t.metodo === "tarjeta"
+                  ? "bg-blue-100 text-blue-800"
+                  : t.metodo === "transferencia"
+                  ? "bg-purple-100 text-purple-800"
+                  : "bg-amber-100 text-amber-800"
+              }`}
+            >
+              {getPaymentMethodLabel(t.metodo)}
+            </span>
+            <span className="text-xs text-gray-500">
+              {new Date(t.created_at).toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+          </div>
+        </div>
 
-                  // Mapear pagos directos
-                  const pagosConMetodo = todosLosPagos.map(
-                    (pago) => ({
-                      cliente:
-                        pago.clientes?.nombre || "N/A",
-                      fecha: pago.fecha_pago,
-                      metodo: normalizeMetodo(
-                        pago.metodo_pago
-                      ),
-                      monto: pago.monto,
-                      tipo: "pago",
-                    })
-                  );
-
-                  // Combinar y ordenar por fecha
-                  const todasTransacciones = [
-                    ...ventasConMetodo,
-                    ...pagosConMetodo,
-                  ]
-                    .sort(
-                      (a, b) =>
-                        new Date(b.fecha) -
-                        new Date(a.fecha)
-                    )
-                    .slice(0, 10); // Últimas 10 transacciones
-
-                  if (todasTransacciones.length === 0) {
-                    return (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <FileText
-                          size={32}
-                          className="mb-2 opacity-50"
-                        />
-                        <p className="text-sm">
-                          No transactions found
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="space-y-2">
-                      {todasTransacciones.map(
-                        (trans, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">
-                                {trans.cliente}
-                              </p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span
-                                  className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
-                                    trans.metodo ===
-                                    "efectivo"
-                                      ? "bg-green-100 text-green-800"
-                                      : trans.metodo ===
-                                        "tarjeta"
-                                      ? "bg-blue-100 text-blue-800"
-                                      : trans.metodo ===
-                                        "transferencia"
-                                      ? "bg-purple-100 text-purple-800"
-                                      : "bg-amber-100 text-amber-800"
-                                  }`}
-                                >
-                                  {getPaymentMethodLabel(
-                                    trans.metodo
-                                  )}
-                                </span>
-                                <span className="text-xs text-gray-500">
-                                  {new Date(
-                                    trans.fecha
-                                  ).toLocaleTimeString(
-                                    "en-US",
-                                    {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    }
-                                  )}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="ml-2">
-                              <p className="text-sm font-bold text-gray-900">
-                                {fmtCurrency(
-                                  trans.monto
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
+        <div className="ml-2">
+          <p className="text-sm font-bold text-gray-900">
+            {fmtCurrency(t.monto)}
+          </p>
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
           </div>
         )}
 
@@ -1754,9 +1676,6 @@ const datosMetodosPago = useMemo(() => {
                       Sales
                     </th>
                     <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Payments
-                    </th>
-                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Cash
                     </th>
                     <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1784,10 +1703,6 @@ const datosMetodosPago = useMemo(() => {
                         </td>
                         <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {(ventasPorFecha[fechaISO] ||
-                            []).length}
-                        </td>
-                        <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {(pagosPorFecha[fechaISO] ||
                             []).length}
                         </td>
                         <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">
@@ -1858,10 +1773,13 @@ const datosMetodosPago = useMemo(() => {
               </div>
             </div>
           </div>
-        </div>
+       </div>
       </div>
 
+      
+
       {/* Cash breakdown modal */}
+
       {showCashBreakdownModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
