@@ -1,4 +1,3 @@
-// src/components/Sidebar.jsx
 import { Link, useLocation } from "react-router-dom";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -14,7 +13,7 @@ import {
   LogOut,
   CreditCard,
   UserCircle2,
-  DollarSign, // 👈 NUEVO para Comisiones
+  DollarSign,
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -51,20 +50,29 @@ export default function Sidebar() {
   const isAdmin = usuario?.rol === "admin";
 
   return (
-    <aside className="bg-[#162941] text-white min-h-screen w-[220px] flex flex-col justify-between py-5 px-3">
+    <aside className="bg-[#162941] text-white min-h-screen w-[220px] flex flex-col justify-between py-5 px-3 transition-all duration-300">
       <div>
-        <div className="font-bold text-lg mb-6 ml-2 tracking-wide">TOOLS4CARE</div>
+        <div className="font-bold text-lg mb-6 ml-2 tracking-wide transition-all duration-300 hover:scale-105">
+          TOOLS4CARE
+        </div>
         <nav className="flex flex-col gap-2">
           {menu.map(({ to, icon, text }) => (
             <Link
               key={to}
               to={to}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium hover:bg-[#23395d] transition ${
-                location.pathname === to ? "bg-[#23395d]" : ""
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-all duration-300 transform hover:scale-105 ${
+                location.pathname === to 
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg" 
+                  : "hover:bg-[#23395d] hover:shadow-md"
               }`}
             >
-              {icon}
-              <span>{text}</span>
+              <div className={`transition-transform duration-300 ${location.pathname === to ? 'scale-110' : 'scale-100'}`}>
+                {icon}
+              </div>
+              <span className="transition-all duration-300">{text}</span>
+              {location.pathname === to && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full animate-pulse"></div>
+              )}
             </Link>
           ))}
 
@@ -79,12 +87,19 @@ export default function Sidebar() {
                 <Link
                   key={to}
                   to={to}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium hover:bg-[#23395d] transition ${
-                    location.pathname === to ? "bg-[#23395d]" : ""
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-all duration-300 transform hover:scale-105 ${
+                    location.pathname === to 
+                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg" 
+                      : "hover:bg-[#23395d] hover:shadow-md"
                   }`}
                 >
-                  {icon}
-                  <span>{text}</span>
+                  <div className={`transition-transform duration-300 ${location.pathname === to ? 'scale-110' : 'scale-100'}`}>
+                    {icon}
+                  </div>
+                  <span className="transition-all duration-300">{text}</span>
+                  {location.pathname === to && (
+                    <div className="ml-auto w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                  )}
                 </Link>
               ))}
             </>
@@ -100,19 +115,19 @@ export default function Sidebar() {
               localStorage.removeItem("van");
               window.location.href = "/vanselector";
             }}
-            className="w-full bg-yellow-400 hover:bg-yellow-500 text-black py-2 px-3 rounded-lg font-semibold transition mb-2"
+            className="w-full bg-yellow-400 hover:bg-yellow-500 text-black py-2 px-3 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
           >
             Change VAN
           </button>
         )}
         <button
           onClick={handleLogout}
-          className="w-full bg-red-600 hover:bg-red-700 py-2 px-3 rounded-lg font-semibold flex items-center gap-2 justify-center"
+          className="w-full bg-red-600 hover:bg-red-700 py-2 px-3 rounded-lg font-semibold flex items-center gap-2 justify-center transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
         >
           <LogOut size={20} /> Log out
         </button>
 
-        <div className="text-xs mt-5 text-gray-300">
+        <div className="text-xs mt-5 text-gray-300 transition-all duration-300 hover:scale-105">
           <div className="mb-1">User:</div>
           <div className="font-semibold">{usuario?.email || "-"}</div>
           <div className="mb-1 mt-2 text-gray-400">VAN:</div>
