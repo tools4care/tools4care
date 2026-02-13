@@ -7,7 +7,8 @@ import Storefront from "./storefront/Storefront.jsx";
 import Checkout from "./storefront/Checkout.jsx";
 
 import { UsuarioProvider } from "./UsuarioContext";
-import { VanProvider } from "./hooks/VanContext";
+import VanProvider from "./hooks/VanContext";
+
 
 import "./index.css";
 
