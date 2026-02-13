@@ -34,7 +34,8 @@ import PaymentSuccess from "./PaymentSuccess";
 import PaymentCancelled from "./PaymentCancelled";
 
 import { UsuarioProvider, useUsuario } from "./UsuarioContext";
-import { VanProvider, useVan } from "./hooks/VanContext";
+import VanProvider, { useVan } from "./hooks/VanContext";
+
 
 // Suplidores
 import Suplidores from "./Suplidores";

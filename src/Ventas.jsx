@@ -10,6 +10,9 @@ import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 import { v4 as uuidv4 } from 'uuid';
 
+import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
+
+
 
 
 
@@ -561,7 +564,22 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
  // 🆕 HOOKS MODO OFFLINE - Agregar estas 2 líneas
   const { isOffline } = useOffline();
   const { sincronizar, ventasPendientes } = useSync();
-
+// 🆕 PENDING SALES EN LA NUBE (reemplaza localStorage)  // <--- AGREGA //
+  const {
+    pendingSales: cloudPendingSales,
+    loading: cloudPendingLoading,
+    stats: pendingStats,
+    deviceInfo,
+    createPendingSale,
+    updatePendingSale,
+    upsertPendingSale,
+    takePendingSale,
+    releasePendingSale,
+    completePendingSale,
+    cancelPendingSale,
+    deletePendingSale,
+    refresh: refreshPendingSales,
+  } = usePendingSalesCloud();
   /* ---- Estado base ---- */
   const [clientSearch, setClientSearch] = useState("");
   const [debouncedClientSearch, setDebouncedClientSearch] = useState("");
@@ -585,8 +603,14 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [paymentError, setPaymentError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const [pendingSales, setPendingSales] = useState([]);
+
+  // pendingSales ahora viene del hook cloudPendingSales
+  const pendingSales = cloudPendingSales;
   const [modalPendingSales, setModalPendingSales] = useState(false);
+  
+  // ID de la venta pendiente actual en la nube
+  const [currentCloudPendingId, setCurrentCloudPendingId] = useState(null);
+
 
   const [step, setStep] = useState(1);
 
@@ -627,7 +651,8 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [qrPaymentIndex, setQRPaymentIndex] = useState(null);
   const [qrPollingActive, setQRPollingActive] = useState(false);
   const qrPollingIntervalRef = useRef(null);
-
+ // 🆕 AGREGAR ESTO: Referencia para el timer del auto-save
+  const autoSaveTimerRef = useRef(null);
   // 🆕 ESTADOS PARA FEE DE TARJETA
   const [applyCardFee, setApplyCardFee] = useState({});
   const [cardFeePercentage, setCardFeePercentage] = useState(3);
@@ -652,30 +677,6 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
     return () => clearTimeout(t);
   }, [clientSearch]);
 
-  /* ---------- Cargar pendientes ---------- */
-  useEffect(() => {
-    setPendingSales(readPendingLS());
-  }, []);
-  /* ---------- Sincronizar pendientes con localStorage ---------- */
-useEffect(() => {
-  const syncPending = () => {
-    const fromLS = readPendingLS();
-    setPendingSales(fromLS);
-  };
-
-  // Sincronizar cuando la ventana recibe foco
-  window.addEventListener('focus', syncPending);
-  
-  // Sincronizar cuando el documento se vuelve visible
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) syncPending();
-  });
-
-  return () => {
-    window.removeEventListener('focus', syncPending);
-    document.removeEventListener('visibilitychange', syncPending);
-  };
-}, []);
 
   /* ---------- CARGAR CLIENTES RECIENTES ---------- */
   useEffect(() => {
@@ -1513,6 +1514,50 @@ useEffect(() => {
   /* ---------- Totales & crédito ---------- */
   const cartSafe = Array.isArray(cart) ? cart : [];
 
+  // 🆕 AUTO-SAVE: PEGAR EL BLOQUE AQUÍ
+  useEffect(() => {
+    // Limpiar timer anterior
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    const hasMeaning =
+      cartSafe.length > 0 ||
+      payments.some((p) => Number(p.monto) > 0) ||
+      (notes && notes.trim().length > 0);
+
+    // No guardar si no hay cliente, no hay datos significativos, o ya terminamos
+    if (!selectedClient || !hasMeaning || step >= 4) return;
+
+    // Debounce de 2 segundos para no bombardear la DB
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const saleData = {
+          client: selectedClient,
+          cart: cartSafe,
+          payments,
+          notes,
+          step,
+        };
+
+        const saved = await upsertPendingSale(currentCloudPendingId, saleData);
+
+        if (saved?.id && saved.id !== currentCloudPendingId) {
+          setCurrentCloudPendingId(saved.id);
+        }
+      } catch (err) {
+        console.warn('Auto-save to cloud failed:', err.message);
+        // No mostrar error al usuario, es background save
+      }
+    }, 2000);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [selectedClient?.id, cartSafe.length, payments, notes, step]);
+
   const saleTotal = cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
   const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
 
@@ -1553,32 +1598,6 @@ useEffect(() => {
 
   const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
-  /* ---------- Guardar venta pendiente local ---------- */
-  useEffect(() => {
-    const hasMeaning =
-      cartSafe.length > 0 ||
-      payments.some((p) => Number(p.monto) > 0) ||
-      (notes && notes.trim().length > 0);
-
-    if (selectedClient && hasMeaning && step < 4) {
-      const id =
-        window.pendingSaleId ||
-        (window.pendingSaleId = `${selectedClient?.id ?? "quick"}-${Date.now()}`);
-
-      const newPending = {
-        id,
-        client: selectedClient,
-        cart: cartSafe,
-        payments,
-        notes,
-        step,
-        date: new Date().toISOString(),
-      };
-
-      const updated = upsertPendingInLS(newPending);
-      setPendingSales(updated);
-    }
-  }, [selectedClient, cartSafe, payments, notes, step]);
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
 useEffect(() => {
@@ -1823,15 +1842,7 @@ function clearSale() {
   // Volver al paso 1
   setStep(1);
   
-  // 🆕 LIMPIAR ID DE VENTA PENDIENTE
-  const currentId = window.pendingSaleId;
-  window.pendingSaleId = null;
-  
-  // 🆕 ACTUALIZAR LISTA DE PENDIENTES (eliminar la actual si existe)
-  if (currentId) {
-    const updated = removePendingFromLSById(currentId);
-    setPendingSales(updated);
-  }
+ setCurrentCloudPendingId(null);
   
   // Limpiar fees
   setApplyCardFee({});
@@ -1979,42 +1990,71 @@ function handleChangePayment(index, field, value) {
     setShowScanner(false);
   }
 
-function handleSelectPendingSale(sale) {
-  setSelectedClient(sale.client);
-  setCart(sale.cart);
-  setPayments(sale.payments);
-  setNotes(sale.notes);
-  setStep(sale.step);
-  window.pendingSaleId = sale.id;
-  
-  // 🆕 CERRAR MODAL INMEDIATAMENTE
-  setModalPendingSales(false);
-  
-  // 🆕 SCROLL AL TOP (opcional, para mejor UX)
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-  function handleDeletePendingSale(id) {
-  // 🆕 CONFIRMACIÓN
-  const confirmed = window.confirm(
-    "¿Estás seguro de eliminar esta venta pendiente?\n\n" +
-    "Esta acción no se puede deshacer."
-  );
-  
-  if (!confirmed) return;
-  
-  // Eliminar de localStorage y actualizar estado
-  const updated = removePendingFromLSById(id);
-  setPendingSales(updated);
-  
-  // Si es la venta actual, limpiar el ID global
-  if (window.pendingSaleId === id) {
-    window.pendingSaleId = null;
+ async function handleSelectPendingSale(sale) {
+    // Si es una pending sale de la nube
+    if (sale.id && sale.cliente_data) {
+      try {
+        // Intentar "tomar" la venta (lock)
+        await takePendingSale(sale.id);
+      } catch (err) {
+        alert('⚠️ ' + (err.message || 'Could not take this sale. It may be in use by another device.'));
+        return;
+      }
+      
+      // Restaurar datos del cliente
+      const clientData = sale.cliente_data || {};
+      setSelectedClient({
+        ...clientData,
+        id: sale.cliente_id || clientData.id,
+      });
+      
+      setCart(Array.isArray(sale.cart) ? sale.cart : []);
+      setPayments(
+        Array.isArray(sale.payments) && sale.payments.length > 0
+          ? sale.payments
+          : [{ forma: 'efectivo', monto: 0 }]
+      );
+      setNotes(sale.notes || '');
+      setStep(sale.step || 1);
+      setCurrentCloudPendingId(sale.id);
+      
+      // Ejecutar agente de crédito si tiene cliente
+      if (sale.cliente_id) {
+        runCreditAgent(sale.cliente_id);
+      }
+    } else {
+      // Legacy: pending sale de localStorage
+      setSelectedClient(sale.client);
+      setCart(sale.cart);
+      setPayments(sale.payments);
+      setNotes(sale.notes);
+      setStep(sale.step);
+      window.pendingSaleId = sale.id;
+    }
+    
+    setModalPendingSales(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
-  
-  // 🆕 NOTIFICACIÓN
-  console.log(`✅ Venta pendiente ${id} eliminada correctamente`);
-}
+
+async function handleDeletePendingSale(id) {
+    const confirmed = window.confirm(
+      "¿Estás seguro de eliminar esta venta pendiente?\n\nEsta acción no se puede deshacer."
+    );
+    if (!confirmed) return;
+    
+    try {
+      await cancelPendingSale(id);
+    } catch (err) {
+      removePendingFromLSById(id);
+    }
+    
+    if (currentCloudPendingId === id) {
+      setCurrentCloudPendingId(null);
+    }
+    if (window.pendingSaleId === id) {
+      window.pendingSaleId = null;
+    }
+  }
 
   function renderAddress(address) {
     if (!address) return "No address";
@@ -2401,8 +2441,15 @@ if (selectedClient?.id) {
         availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
       };
 
-      removePendingFromLSById(currentPendingId);
-      await requestAndSendNotifications({ client: selectedClient, payload });
+      if (currentCloudPendingId) {
+    await completePendingSale(currentCloudPendingId, ventaId);
+  }
+  // También limpiar localStorage legacy
+  if (currentPendingId) {
+    removePendingFromLSById(currentPendingId);
+  }
+  
+  await requestAndSendNotifications({ client: selectedClient, payload });
 
       alert(
         `✅ Sale saved successfully` +
@@ -2521,17 +2568,21 @@ function renderPendingSalesModal() {
         <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between">
           <h3 className="font-bold text-lg flex items-center gap-2">
             📂 Pending Sales
+            {cloudPendingLoading && (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+            )}
           </h3>
           
-          {/* 🆕 BOTÓN DE REFRESH */}
           <div className="flex items-center gap-2">
+            {/* Indicador de dispositivo actual */}
+            <span className="text-xs bg-white/20 px-2 py-1 rounded-full">
+              {deviceInfo.isPC ? '💻 PC' : deviceInfo.isPhone ? '📱 Phone' : '📱 Tablet'}
+            </span>
+            
             <button
               className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
-              onClick={() => {
-                const updated = readPendingLS();
-                setPendingSales(updated);
-              }}
-              title="Refresh pending sales"
+              onClick={() => refreshPendingSales()}
+              title="Refresh"
             >
               🔄
             </button>
@@ -2545,28 +2596,129 @@ function renderPendingSalesModal() {
           </div>
         </div>
 
-          <div className="p-4 overflow-y-auto max-h-[60vh]">
-            {pendingSales.length === 0 ? (
-              <div className="text-gray-400 text-center py-8">📭 No pending sales</div>
-            ) : (
-              <div className="space-y-3">
-                {pendingSales.map((v) => (
-                  <div key={v.id} className="bg-gray-50 rounded-lg p-4 border">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                      <div className="flex-1">
-                        <div className="font-bold text-gray-900">👤 {v.client?.nombre || "Quick sale"}</div>
-                        <div className="text-sm text-gray-600 mt-1">
-                          📦 {v.cart.length} products · 📅 {new Date(v.date).toLocaleDateString()}{" "}
-                          {new Date(v.date).toLocaleTimeString()}
+        {/* Stats rápidos */}
+        {pendingStats.total > 0 && (
+          <div className="px-4 pt-3 flex gap-2">
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-semibold">
+              📋 {pendingStats.preparadas} ready
+            </span>
+            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-semibold">
+              ⏳ {pendingStats.enProgreso} in progress
+            </span>
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full font-semibold">
+              🔗 Synced across devices
+            </span>
+          </div>
+        )}
+
+        <div className="p-4 overflow-y-auto max-h-[60vh]">
+          {pendingSales.length === 0 ? (
+            <div className="text-gray-400 text-center py-8">
+              <div className="text-4xl mb-2">📭</div>
+              <div>No pending sales</div>
+              <div className="text-xs mt-1">
+                Sales prepared on any device will appear here
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pendingSales.map((v) => {
+                const clientName = v.cliente_data?.nombre || 'Quick sale';
+                const clientBusiness = v.cliente_data?.negocio;
+                const cartCount = Array.isArray(v.cart) ? v.cart.length : 0;
+                const total = Number(v.total_estimado || 0);
+                const isLocked = v.locked_by && v.locked_by !== deviceInfo.id;
+                const isMine = v.dispositivo_id === deviceInfo.id;
+                const createdOnPC = v.dispositivo === 'pc';
+                const createdOnPhone = v.dispositivo === 'phone';
+                
+                return (
+                  <div 
+                    key={v.id} 
+                    className={`rounded-lg p-4 border-2 transition-all ${
+                      isLocked 
+                        ? 'bg-gray-100 border-gray-300 opacity-60' 
+                        : v.estado === 'en_progreso'
+                        ? 'bg-amber-50 border-amber-300'
+                        : 'bg-gray-50 border-gray-200 hover:border-blue-300'
+                    }`}
+                  >
+                    <div className="flex flex-col gap-3">
+                      {/* Header con info del cliente */}
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+                            👤 {clientName}
+                            {clientBusiness && (
+                              <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">
+                                {clientBusiness}
+                              </span>
+                            )}
+                          </div>
+                          
+                          <div className="text-sm text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
+                            <span>📦 {cartCount} products</span>
+                            {total > 0 && (
+                              <span className="font-semibold text-blue-700">
+                                💰 ${total.toFixed(2)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
+                      
+                      {/* Badges de estado y dispositivo */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Dispositivo origen */}
+                        <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
+                          createdOnPC 
+                            ? 'bg-indigo-100 text-indigo-700' 
+                            : 'bg-green-100 text-green-700'
+                        }`}>
+                          {createdOnPC ? '💻 From PC' : createdOnPhone ? '📱 From Phone' : '📱 Mobile'}
+                        </span>
+                        
+                        {/* Estado */}
+                        <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
+                          v.estado === 'preparada'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}>
+                          {v.estado === 'preparada' ? '✅ Ready' : '⏳ In progress'}
+                        </span>
+                        
+                        {/* Step */}
+                        <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">
+                          Step {v.step}/3
+                        </span>
+                        
+                        {/* Lock indicator */}
+                        {isLocked && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-semibold">
+                            🔒 In use
+                          </span>
+                        )}
+                        
+                        {/* Time */}
+                        <span className="text-xs text-gray-500">
+                          {new Date(v.updated_at || v.created_at).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      
+                      {/* Botones de acción */}
                       <div className="flex gap-2">
                         <button
-                          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                          className={`flex-1 text-white px-4 py-2 rounded-lg font-semibold shadow-md transition-all duration-200 ${
+                            isLocked
+                              ? 'bg-gray-400 cursor-not-allowed'
+                              : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:shadow-lg'
+                          }`}
+                          disabled={isLocked}
                           onClick={() => handleSelectPendingSale(v)}
                         >
-                          ▶️ Resume
+                          {isLocked ? '🔒 Locked' : '▶️ Resume'}
                         </button>
+                        
                         <button
                           className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
                           onClick={() => handleDeletePendingSale(v.id)}
@@ -2576,14 +2728,15 @@ function renderPendingSalesModal() {
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 /* ======================== Paso 1: Cliente ======================== */
 function renderStepClient() {
   const clientsSafe = Array.isArray(clients) ? clients : [];
@@ -2609,7 +2762,7 @@ function renderStepClient() {
               onClick={() => setModalPendingSales(true)}
               type="button"
             >
-              📂 Pending ({pendingSales.length})
+              📂 Pending ({pendingStats.total})
             </button>
             <button
               onClick={() => navigate("/clientes/nuevo", { replace: false })}
@@ -3088,7 +3241,8 @@ function renderStepClient() {
             onClick={() => setModalPendingSales(true)}
             type="button"
           >
-            📂 Pending ({pendingSales.length})
+            📂 Pending ({pendingStats.total})
+
           </button>
           <button
             onClick={() => navigate("/clientes/nuevo", { replace: false })}
