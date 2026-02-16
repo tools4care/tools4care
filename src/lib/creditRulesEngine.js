@@ -1,91 +1,214 @@
 // src/lib/creditRulesEngine.js
 // ============================================================
-// MOTOR DE REGLAS DE CRÉDITO DINÁMICO
-// Ciclo: 18 días | Visitas: semanal/quincenal
+// MOTOR DE REGLAS DE CRÉDITO v3 — CON PPR
 // ============================================================
-//
-// REGLAS:
-// R1: Pago mínimo 50% de compra nueva
-// R2: Deuda vieja > 10 días → pagar 40% antes de comprar
-// R3: Acuerdo roto → límite baja 25%
-// R4: 2+ acuerdos rotos → crédito congelado
-// R5: Máximo 2-3 cuotas en 18 días
-// R6: Excepción del vendedor con registro
+// PPR = Payment-to-Purchase Ratio (últimas N visitas)
+// Controla: pago mínimo, límite dinámico, excepciones
 // ============================================================
-
-/**
- * @typedef {Object} AcuerdoResumen
- * @property {number} acuerdos_activos
- * @property {number} acuerdos_rotos
- * @property {number} acuerdos_completados
- * @property {number} deuda_en_acuerdos
- * @property {number} cuotas_vencidas_total
- * @property {number} max_atraso_activo
- * @property {string|null} proxima_cuota_fecha
- * @property {number|null} proxima_cuota_monto
- */
-
-/**
- * @typedef {Object} CreditRulesResult
- * @property {boolean} permitido - ¿Se puede hacer la venta a crédito?
- * @property {string} nivel - 'verde' | 'amarillo' | 'rojo' | 'congelado'
- * @property {number} pagoMinimoVenta - Mínimo que debe pagar de esta venta
- * @property {number} pagoMinimoDeudaVieja - Mínimo que debe pagar de deuda anterior
- * @property {number} pagoMinimoTotal - Suma de ambos mínimos
- * @property {number} limiteEfectivo - Límite ajustado después de penalizaciones
- * @property {number} disponibleEfectivo - Disponible real después de reglas
- * @property {number} penalizacionPct - % de penalización aplicada al límite
- * @property {string[]} reglas - Reglas que se activaron
- * @property {string[]} advertencias - Warnings para el vendedor
- * @property {Object|null} acuerdoSugerido - Sugerencia de plan de pago
- * @property {boolean} requiereExcepcion - Si necesita override del vendedor
- * @property {string|null} motivoBloqueo - Razón del bloqueo si aplica
- */
 
 // ========================= CONFIGURACIÓN =========================
 const CONFIG = {
-  // Ciclo de visitas
   DIAS_PLAZO_MAX: 18,
-  DIAS_CUOTA_INTERVAL: 7,        // cada 7 días por defecto
+  DIAS_CUOTA_INTERVAL: 7,
   MAX_CUOTAS: 8,
 
-  // Regla R1: Pago mínimo de compra nueva
-  PCT_PAGO_MINIMO_VENTA: 0.50,   // 50%
+  // PPR
+  PPR_VENTANA: 5,                    // últimas 5 visitas para calcular PPR
+  PPR_EXCELENTE: 1.2,
+  PPR_BUENO: 1.0,
+  PPR_ESTABLE: 0.8,
+  PPR_ALERTA: 0.5,
 
-  // Regla R2: Pago mínimo de deuda vieja
-  DIAS_DEUDA_VIEJA_TRIGGER: 10,  // si deuda tiene > 10 días
-  PCT_PAGO_MINIMO_DEUDA: 0.40,   // debe pagar 40% de deuda vieja
+  // Pago mínimo base (% de compra nueva)
+  PAGO_MIN_BASE: 0.50,              // 50% siempre
 
-  // Regla R3: Penalización por acuerdo roto
-  PCT_PENALIZACION_ACUERDO_ROTO: 0.25, // reduce 25% del límite
+  // Pago mínimo extra de deuda vieja según PPR
+  PAGO_DEUDA_PPR_EXCELENTE: 0.00,   // no requiere extra
+  PAGO_DEUDA_PPR_BUENO: 0.00,       // no requiere extra
+  PAGO_DEUDA_PPR_ESTABLE: 0.10,     // 10% de deuda vieja
+  PAGO_DEUDA_PPR_ALERTA: 0.20,      // 20% de deuda vieja
+  PAGO_DEUDA_PPR_PELIGRO: 0.30,     // 30% de deuda vieja
 
-  // Regla R4: Congelamiento
-  MAX_ACUERDOS_ROTOS_PARA_CONGELAR: 2,
+  // Multiplicadores de límite según PPR
+  LIMITE_MULT_EXCELENTE: 1.10,      // +10%
+  LIMITE_MULT_BUENO: 1.00,          // sin cambio
+  LIMITE_MULT_ESTABLE: 0.90,        // -10%
+  LIMITE_MULT_ALERTA: 0.75,         // -25%
+  LIMITE_MULT_PELIGRO: 0.50,        // -50%
 
-  // Regla R5: Cuotas vencidas
-  MAX_CUOTAS_VENCIDAS_PERMITIDAS: 1,  // máximo 1 cuota vencida antes de bloquear
+  // Penalizaciones
+  PEN_ACUERDO_ROTO: 0.25,           // -25% por acuerdo roto
+  MAX_ACUERDOS_ROTOS_CONGELAR: 2,
+  MAX_CUOTAS_VENCIDAS: 1,
+  PEN_CUOTA_VENCIDA: 0.10,          // -10% por cuota vencida
+  PEN_INACTIVO_CON_DEUDA: 0.20,     // -20% si inactivo 30+ días con deuda
+  DIAS_INACTIVO_TRIGGER: 30,
 
-  // Tolerancias
-  TOLERANCIA_MONTO: 0.01,         // $0.01 de tolerancia en comparaciones
-  DIAS_GRACIA_CUOTA: 2,           // 2 días de gracia después del vencimiento
+  // Deuda vieja
+  DIAS_DEUDA_VIEJA_TRIGGER: 10,
+
+  // Excepciones
+  MAX_EXCEPCIONES_MES: 2,
+
+  // Tolerancia
+  TOLERANCIA: 0.01,
+  DIAS_GRACIA_CUOTA: 2,
 };
 
 export { CONFIG as CREDIT_RULES_CONFIG };
 
+
+// ========================= CÁLCULO DE PPR =========================
+
+/**
+ * Calcula el PPR (Payment-to-Purchase Ratio) de las últimas N visitas
+ * @param {Array} ventas - [{fecha, total}] ordenadas desc
+ * @param {Array} pagos - [{fecha, monto_pagado}] ordenadas desc
+ * @param {number} ventana - últimas N visitas
+ * @returns {Object}
+ */
+export function calcularPPR(ventas = [], pagos = [], ventana = CONFIG.PPR_VENTANA) {
+  if (ventas.length === 0) {
+    return { ppr: 1.0, clasificacion: "nuevo", totalComprado: 0, totalPagado: 0, visitas: 0, tendencia: "neutral" };
+  }
+
+  // Tomar últimas N ventas
+  const ventasRecientes = ventas.slice(0, ventana);
+  const totalComprado = ventasRecientes.reduce((s, v) => s + Number(v.total || 0), 0);
+
+  // Pagos en el mismo período
+  let fechaInicio = null;
+  if (ventasRecientes.length > 0) {
+    const fechas = ventasRecientes.map(v => new Date(v.fecha)).filter(d => !isNaN(d));
+    if (fechas.length > 0) {
+      fechaInicio = new Date(Math.min(...fechas));
+    }
+  }
+
+  let totalPagado = 0;
+  if (fechaInicio) {
+    for (const p of pagos) {
+      const fp = new Date(p.fecha);
+      if (!isNaN(fp) && fp >= fechaInicio) {
+        totalPagado += Number(p.monto_pagado || 0);
+      }
+    }
+  } else {
+    // Sin fecha, usar todos los pagos limitados
+    totalPagado = pagos.slice(0, ventana * 2).reduce((s, p) => s + Number(p.monto_pagado || 0), 0);
+  }
+
+  const ppr = totalComprado > 0 ? r2(totalPagado / totalComprado) : 1.0;
+
+  // Clasificación
+  let clasificacion;
+  if (ppr >= CONFIG.PPR_EXCELENTE) clasificacion = "excelente";
+  else if (ppr >= CONFIG.PPR_BUENO) clasificacion = "bueno";
+  else if (ppr >= CONFIG.PPR_ESTABLE) clasificacion = "estable";
+  else if (ppr >= CONFIG.PPR_ALERTA) clasificacion = "alerta";
+  else clasificacion = "peligro";
+
+  // Tendencia: comparar PPR de últimas 3 vs anteriores
+  let tendencia = "neutral";
+  if (ventas.length >= 6) {
+    const mitad = Math.min(3, Math.floor(ventana / 2));
+    const compradoReciente = ventas.slice(0, mitad).reduce((s, v) => s + Number(v.total || 0), 0);
+    const compradoAnterior = ventas.slice(mitad, mitad * 2).reduce((s, v) => s + Number(v.total || 0), 0);
+
+    let pagadoReciente = 0, pagadoAnterior = 0;
+    const fechaMitad = ventas[mitad] ? new Date(ventas[mitad].fecha) : new Date();
+
+    for (const p of pagos) {
+      const fp = new Date(p.fecha);
+      if (isNaN(fp)) continue;
+      if (fp >= fechaMitad) pagadoReciente += Number(p.monto_pagado || 0);
+      else if (fechaInicio && fp >= fechaInicio) pagadoAnterior += Number(p.monto_pagado || 0);
+    }
+
+    const pprReciente = compradoReciente > 0 ? pagadoReciente / compradoReciente : 1;
+    const pprAnterior = compradoAnterior > 0 ? pagadoAnterior / compradoAnterior : 1;
+
+    if (pprReciente > pprAnterior + 0.15) tendencia = "mejorando";
+    else if (pprReciente < pprAnterior - 0.15) tendencia = "empeorando";
+  }
+
+  return {
+    ppr: Math.min(ppr, 3.0), // cap at 3.0
+    clasificacion,
+    totalComprado: r2(totalComprado),
+    totalPagado: r2(totalPagado),
+    visitas: ventasRecientes.length,
+    tendencia,
+  };
+}
+
+
+// ========================= PAGO MÍNIMO DINÁMICO =========================
+
+function calcularPagoMinimoPorPPR(pprClasificacion, montoVenta, saldoActual) {
+  // Pago mínimo de la compra nueva = siempre 50%
+  const pagoMinimoVenta = r2(montoVenta * CONFIG.PAGO_MIN_BASE);
+
+  // Pago extra de deuda vieja según PPR
+  let pctDeuda = 0;
+  switch (pprClasificacion) {
+    case "excelente": pctDeuda = CONFIG.PAGO_DEUDA_PPR_EXCELENTE; break;
+    case "bueno": pctDeuda = CONFIG.PAGO_DEUDA_PPR_BUENO; break;
+    case "estable": pctDeuda = CONFIG.PAGO_DEUDA_PPR_ESTABLE; break;
+    case "alerta": pctDeuda = CONFIG.PAGO_DEUDA_PPR_ALERTA; break;
+    case "peligro": pctDeuda = CONFIG.PAGO_DEUDA_PPR_PELIGRO; break;
+    default: pctDeuda = CONFIG.PAGO_DEUDA_PPR_ESTABLE;
+  }
+
+  const pagoMinimoDeuda = r2(saldoActual * pctDeuda);
+  return { pagoMinimoVenta, pagoMinimoDeuda, pctDeuda };
+}
+
+
+// ========================= LÍMITE DINÁMICO =========================
+
+function calcularMultiplicadorLimite(pprData, acuerdos, diasInactivo, saldoActual) {
+  let mult = 1.0;
+
+  // PPR multiplicador
+  switch (pprData.clasificacion) {
+    case "excelente": mult *= CONFIG.LIMITE_MULT_EXCELENTE; break;
+    case "bueno": mult *= CONFIG.LIMITE_MULT_BUENO; break;
+    case "estable": mult *= CONFIG.LIMITE_MULT_ESTABLE; break;
+    case "alerta": mult *= CONFIG.LIMITE_MULT_ALERTA; break;
+    case "peligro": mult *= CONFIG.LIMITE_MULT_PELIGRO; break;
+  }
+
+  // Penalización por acuerdos rotos
+  const rotos = acuerdos?.acuerdos_rotos || 0;
+  if (rotos > 0) {
+    mult *= Math.max(0.25, 1 - (rotos * CONFIG.PEN_ACUERDO_ROTO));
+  }
+
+  // Penalización por cuotas vencidas
+  const cuotasVencidas = acuerdos?.cuotas_vencidas_total || 0;
+  if (cuotasVencidas > 0) {
+    mult *= Math.max(0.5, 1 - (cuotasVencidas * CONFIG.PEN_CUOTA_VENCIDA));
+  }
+
+  // Penalización por inactividad con deuda
+  if (diasInactivo >= CONFIG.DIAS_INACTIVO_TRIGGER && saldoActual > 0) {
+    mult *= (1 - CONFIG.PEN_INACTIVO_CON_DEUDA);
+  }
+
+  // Bonus por tendencia mejorando
+  if (pprData.tendencia === "mejorando") {
+    mult *= 1.05; // +5% bonus
+  }
+
+  return r2(Math.max(0, Math.min(1.5, mult)));
+}
+
+
 // ========================= MOTOR PRINCIPAL =========================
 
 /**
- * Evalúa si un cliente puede tomar crédito y cuánto debe pagar
- *
- * @param {Object} params
- * @param {number} params.montoVenta - Total de la venta actual
- * @param {number} params.saldoActual - Saldo/deuda actual del cliente
- * @param {number} params.limiteBase - Límite de crédito (manual o política)
- * @param {number} params.diasDeuda - Días desde la deuda más vieja sin pagar
- * @param {AcuerdoResumen|null} params.acuerdos - Resumen de acuerdos
- * @param {number} params.montoPagadoAhora - Lo que el cliente va a pagar en esta visita
- * @param {Object} [params.historial] - Historial de comportamiento
- * @returns {CreditRulesResult}
+ * Evalúa reglas de crédito con PPR
  */
 export function evaluarReglasCredito({
   montoVenta = 0,
@@ -95,6 +218,10 @@ export function evaluarReglasCredito({
   acuerdos = null,
   montoPagadoAhora = 0,
   historial = {},
+  // Nuevos params para PPR
+  ventasDetalle = [],
+  pagosDetalle = [],
+  diasInactivo = 0,
 }) {
   const reglas = [];
   const advertencias = [];
@@ -102,161 +229,141 @@ export function evaluarReglasCredito({
   let requiereExcepcion = false;
   let motivoBloqueo = null;
 
-  // --- Datos del acuerdo ---
   const acuerdosRotos = acuerdos?.acuerdos_rotos || 0;
   const acuerdosActivos = acuerdos?.acuerdos_activos || 0;
   const cuotasVencidas = acuerdos?.cuotas_vencidas_total || 0;
-  const deudaEnAcuerdos = acuerdos?.deuda_en_acuerdos || 0;
-  const maxAtrasoActivo = acuerdos?.max_atraso_activo || 0;
+
+  // ==================== CALCULAR PPR ====================
+  const pprData = calcularPPR(ventasDetalle, pagosDetalle);
+  reglas.push(`PPR: ${pprData.ppr.toFixed(2)} (${pprData.clasificacion}) — ${pprData.visitas} visits`);
 
   // ==================== R4: CONGELAMIENTO ====================
-  // 2+ acuerdos rotos → crédito congelado
-  if (acuerdosRotos >= CONFIG.MAX_ACUERDOS_ROTOS_PARA_CONGELAR) {
-    permitido = false;
-    motivoBloqueo = `Credit FROZEN: ${acuerdosRotos} broken payment agreements. Client must pay ALL outstanding debt before new credit.`;
-    reglas.push(`R4: Crédito congelado (${acuerdosRotos} acuerdos rotos)`);
-
+  if (acuerdosRotos >= CONFIG.MAX_ACUERDOS_ROTOS_CONGELAR) {
     return {
       permitido: false,
-      nivel: 'congelado',
-      pagoMinimoVenta: montoVenta, // debe pagar 100%
-      pagoMinimoDeudaVieja: saldoActual, // debe pagar todo
-      pagoMinimoTotal: montoVenta + saldoActual,
+      nivel: "congelado",
+      ppr: pprData,
+      pagoMinimoVenta: montoVenta,
+      pagoMinimoDeudaVieja: saldoActual,
+      pagoMinimoTotal: r2(montoVenta + saldoActual),
       limiteEfectivo: 0,
       disponibleEfectivo: 0,
+      multiplicadorLimite: 0,
       penalizacionPct: 100,
-      reglas,
-      advertencias: ['🔒 CRÉDITO CONGELADO — Solo venta de contado'],
+      reglas: [...reglas, `R4: FROZEN (${acuerdosRotos} broken agreements)`],
+      advertencias: ["🔒 CREDIT FROZEN — Cash only until all debt is paid"],
       acuerdoSugerido: null,
       requiereExcepcion: true,
-      motivoBloqueo,
+      motivoBloqueo: `Credit FROZEN: ${acuerdosRotos} broken agreements`,
+      montoMaximo: 0,
     };
   }
 
-  // ==================== R3: PENALIZACIÓN POR ACUERDOS ROTOS ====================
-  let penalizacionPct = 0;
-  if (acuerdosRotos > 0) {
-    penalizacionPct = Math.min(
-      acuerdosRotos * CONFIG.PCT_PENALIZACION_ACUERDO_ROTO * 100,
-      75 // máximo 75% de penalización
-    );
-    reglas.push(`R3: Penalización ${penalizacionPct}% por ${acuerdosRotos} acuerdo(s) roto(s)`);
-    advertencias.push(`⚠️ Limit reduced ${penalizacionPct}% due to ${acuerdosRotos} broken agreement(s)`);
+  // ==================== PPR PELIGRO + sin pagos recientes ====================
+  if (pprData.clasificacion === "peligro" && pprData.visitas >= 3) {
+    advertencias.push("🔴 PPR < 0.5 — Client pays much less than they buy. Require higher payment.");
+    reglas.push("PPR-DANGER: Cliente paga menos del 50% de lo que compra");
   }
 
-  const limiteEfectivo = Math.max(0, limiteBase * (1 - penalizacionPct / 100));
-  const disponibleEfectivo = Math.max(0, limiteEfectivo - saldoActual);
+  // ==================== CALCULAR PAGO MÍNIMO ====================
+  const { pagoMinimoVenta, pagoMinimoDeuda, pctDeuda } = calcularPagoMinimoPorPPR(
+    pprData.clasificacion, montoVenta, saldoActual
+  );
 
-  // ==================== R5: CUOTAS VENCIDAS ====================
-  if (cuotasVencidas > CONFIG.MAX_CUOTAS_VENCIDAS_PERMITIDAS) {
+  // Si tiene cuotas vencidas, el mínimo de deuda es al menos la cuota
+  let pagoMinimoDeudaFinal = pagoMinimoDeuda;
+  if (cuotasVencidas > 0 && acuerdos?.proxima_cuota_monto) {
+    const cuotaPendiente = Number(acuerdos.proxima_cuota_monto);
+    pagoMinimoDeudaFinal = Math.max(pagoMinimoDeudaFinal, cuotaPendiente);
+    reglas.push(`R5: Overdue installment $${cuotaPendiente.toFixed(2)} added to minimum`);
+  }
+
+  // Deuda vieja trigger
+  if (saldoActual > CONFIG.TOLERANCIA && diasDeuda > CONFIG.DIAS_DEUDA_VIEJA_TRIGGER && pctDeuda > 0) {
+    reglas.push(`R2: Old debt ${diasDeuda}d → must pay ${(pctDeuda * 100).toFixed(0)}% = $${pagoMinimoDeudaFinal.toFixed(2)}`);
+    advertencias.push(`⚠️ Old debt (${diasDeuda}d): Pay at least $${pagoMinimoDeudaFinal.toFixed(2)} of $${saldoActual.toFixed(2)}`);
+  }
+
+  const pagoMinimoTotal = r2(pagoMinimoVenta + pagoMinimoDeudaFinal);
+  reglas.push(`Pago mínimo total: $${pagoMinimoTotal.toFixed(2)} (venta: $${pagoMinimoVenta.toFixed(2)} + deuda: $${pagoMinimoDeudaFinal.toFixed(2)})`);
+
+  // ==================== CALCULAR LÍMITE DINÁMICO ====================
+  const multiplicador = calcularMultiplicadorLimite(pprData, acuerdos, diasInactivo, saldoActual);
+  const limiteEfectivo = r2(limiteBase * multiplicador);
+  const disponibleEfectivo = r2(Math.max(0, limiteEfectivo - saldoActual));
+  const penalizacionPct = r2((1 - multiplicador) * 100);
+
+  reglas.push(`Limit: $${limiteBase.toFixed(2)} × ${multiplicador} = $${limiteEfectivo.toFixed(2)} (available: $${disponibleEfectivo.toFixed(2)})`);
+
+  if (penalizacionPct > 0) {
+    advertencias.push(`📉 Credit limit reduced ${penalizacionPct.toFixed(0)}% (PPR: ${pprData.ppr.toFixed(2)}, ${pprData.clasificacion})`);
+  }
+
+  // ==================== CUOTAS VENCIDAS ====================
+  if (cuotasVencidas > CONFIG.MAX_CUOTAS_VENCIDAS) {
     requiereExcepcion = true;
-    advertencias.push(
-      `🚨 ${cuotasVencidas} overdue installment(s). Client should pay before taking more credit.`
-    );
-    reglas.push(`R5: ${cuotasVencidas} cuotas vencidas (máx permitido: ${CONFIG.MAX_CUOTAS_VENCIDAS_PERMITIDAS})`);
+    advertencias.push(`🚨 ${cuotasVencidas} overdue installments — collect payment first`);
+    reglas.push(`R5: ${cuotasVencidas} overdue installments`);
   }
 
-  // ==================== R1: PAGO MÍNIMO DE VENTA NUEVA ====================
-  const pagoMinimoVenta = r2(montoVenta * CONFIG.PCT_PAGO_MINIMO_VENTA);
-  reglas.push(`R1: Pago mínimo venta = ${pct(CONFIG.PCT_PAGO_MINIMO_VENTA)} de ${fmt(montoVenta)} = ${fmt(pagoMinimoVenta)}`);
-
-  // ==================== R2: PAGO MÍNIMO DE DEUDA VIEJA ====================
-  let pagoMinimoDeudaVieja = 0;
-
-  if (saldoActual > CONFIG.TOLERANCIA_MONTO && diasDeuda > CONFIG.DIAS_DEUDA_VIEJA_TRIGGER) {
-    pagoMinimoDeudaVieja = r2(saldoActual * CONFIG.PCT_PAGO_MINIMO_DEUDA);
-    reglas.push(
-      `R2: Deuda vieja ${fmt(saldoActual)} tiene ${diasDeuda} días (> ${CONFIG.DIAS_DEUDA_VIEJA_TRIGGER}). ` +
-      `Mínimo a pagar: ${pct(CONFIG.PCT_PAGO_MINIMO_DEUDA)} = ${fmt(pagoMinimoDeudaVieja)}`
-    );
-    advertencias.push(
-      `⚠️ Old debt (${diasDeuda} days): Must pay at least ${fmt(pagoMinimoDeudaVieja)} of ${fmt(saldoActual)} before new credit`
-    );
-  }
-
-  // Si tiene acuerdo activo con cuota próxima, el mínimo de deuda vieja
-  // es al menos la cuota vencida/próxima
-  if (acuerdos?.proxima_cuota_monto && cuotasVencidas > 0) {
-    const cuotaVencida = Number(acuerdos.proxima_cuota_monto);
-    if (cuotaVencida > pagoMinimoDeudaVieja) {
-      pagoMinimoDeudaVieja = r2(cuotaVencida);
-      reglas.push(`R2+: Cuota vencida ${fmt(cuotaVencida)} es mayor que el 40%, se usa como mínimo`);
-    }
-  }
-
-  const pagoMinimoTotal = r2(pagoMinimoVenta + pagoMinimoDeudaVieja);
-
-  // ==================== VERIFICAR CRÉDITO DISPONIBLE ====================
+  // ==================== VERIFICAR CRÉDITO ====================
   const creditoNecesario = Math.max(0, montoVenta - montoPagadoAhora);
-
-  if (creditoNecesario > disponibleEfectivo + CONFIG.TOLERANCIA_MONTO) {
+  if (creditoNecesario > disponibleEfectivo + CONFIG.TOLERANCIA) {
     requiereExcepcion = true;
-    advertencias.push(
-      `❌ Needs ${fmt(creditoNecesario)} credit but only ${fmt(disponibleEfectivo)} available (limit: ${fmt(limiteEfectivo)})`
-    );
+    advertencias.push(`❌ Needs $${creditoNecesario.toFixed(2)} credit, only $${disponibleEfectivo.toFixed(2)} available`);
   }
 
   // ==================== VERIFICAR PAGO MÍNIMO ====================
-  if (montoPagadoAhora < pagoMinimoTotal - CONFIG.TOLERANCIA_MONTO) {
+  if (montoPagadoAhora > 0 && montoPagadoAhora < pagoMinimoTotal - CONFIG.TOLERANCIA) {
     const faltante = r2(pagoMinimoTotal - montoPagadoAhora);
     requiereExcepcion = true;
-    advertencias.push(
-      `💰 Minimum payment: ${fmt(pagoMinimoTotal)} (paying ${fmt(montoPagadoAhora)}, short ${fmt(faltante)})`
-    );
+    advertencias.push(`💰 Min payment: $${pagoMinimoTotal.toFixed(2)} (short $${faltante.toFixed(2)})`);
   }
 
-  // ==================== DETERMINAR NIVEL ====================
+  // ==================== NIVEL ====================
   let nivel;
-  if (!permitido) {
-    nivel = 'congelado';
-  } else if (requiereExcepcion) {
-    nivel = cuotasVencidas > 1 || acuerdosRotos > 0 ? 'rojo' : 'amarillo';
-  } else if (saldoActual > 0 || acuerdosActivos > 0) {
-    nivel = 'amarillo';
-  } else {
-    nivel = 'verde';
-  }
+  if (!permitido) nivel = "congelado";
+  else if (pprData.clasificacion === "peligro" || acuerdosRotos > 0 || cuotasVencidas > 1) nivel = "rojo";
+  else if (requiereExcepcion || pprData.clasificacion === "alerta") nivel = "amarillo";
+  else if (pprData.clasificacion === "excelente" || pprData.clasificacion === "bueno") nivel = "verde";
+  else nivel = "amarillo";
 
-  // ==================== SUGERENCIA DE ACUERDO ====================
+  // ==================== MONTO MÁXIMO RECOMENDADO ====================
+  const montoMaximo = r2(Math.max(0, disponibleEfectivo));
+
+  // ==================== ACUERDO SUGERIDO ====================
   const montoACredito = Math.max(0, montoVenta - montoPagadoAhora);
   let acuerdoSugerido = null;
-
-  if (montoACredito > CONFIG.TOLERANCIA_MONTO) {
+  if (montoACredito > CONFIG.TOLERANCIA) {
     acuerdoSugerido = generarPlanPago(montoACredito);
   }
 
   return {
     permitido,
     nivel,
+    ppr: pprData,
     pagoMinimoVenta,
-    pagoMinimoDeudaVieja,
+    pagoMinimoDeudaVieja: pagoMinimoDeudaFinal,
     pagoMinimoTotal,
     limiteEfectivo,
     disponibleEfectivo,
+    multiplicadorLimite: multiplicador,
     penalizacionPct,
     reglas,
     advertencias,
     acuerdoSugerido,
     requiereExcepcion,
     motivoBloqueo,
+    montoMaximo,
   };
 }
 
 
 // ========================= PLAN DE PAGO =========================
 
-/**
- * Genera un plan de cuotas para un monto dado
- * @param {number} monto - Monto total a financiar
- * @param {Object} [opciones]
- * @param {number} [opciones.numCuotas] - Número de cuotas (auto si no se da)
- * @param {number} [opciones.diasPlazo] - Plazo total en días
- * @returns {Object} Plan de pagos con cuotas
- */
 export function generarPlanPago(monto, opciones = {}) {
   let numCuotas = opciones.numCuotas || null;
 
-  // Auto-determinar número de cuotas según monto (si no se especifica)
   if (!numCuotas) {
     if (monto <= 30) numCuotas = 1;
     else if (monto <= 80) numCuotas = 2;
@@ -264,12 +371,9 @@ export function generarPlanPago(monto, opciones = {}) {
     else if (monto <= 400) numCuotas = 4;
     else numCuotas = 5;
   }
-  // Forzar entre 1 y MAX_CUOTAS
   numCuotas = Math.max(1, Math.min(numCuotas, CONFIG.MAX_CUOTAS));
 
-  // Plazo: se adapta al número de cuotas (mínimo 18 días, o cuotas × 7 días)
   const diasPlazo = opciones.diasPlazo || Math.max(CONFIG.DIAS_PLAZO_MAX, numCuotas * CONFIG.DIAS_CUOTA_INTERVAL);
-
   const montoPorCuota = r2(monto / numCuotas);
   const hoy = new Date();
   const cuotas = [];
@@ -279,21 +383,14 @@ export function generarPlanPago(monto, opciones = {}) {
     const fechaVencimiento = new Date(hoy);
     fechaVencimiento.setDate(fechaVencimiento.getDate() + diasOffset);
 
-    // Ajustar último pago para cubrir centavos
     const esUltima = i === numCuotas - 1;
-    const montoCuota = esUltima
-      ? r2(monto - montoPorCuota * (numCuotas - 1))
-      : montoPorCuota;
+    const montoCuota = esUltima ? r2(monto - montoPorCuota * (numCuotas - 1)) : montoPorCuota;
 
     cuotas.push({
       numero_cuota: i + 1,
       monto: montoCuota,
       fecha_vencimiento: fechaVencimiento.toISOString(),
-      fecha_display: fechaVencimiento.toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-      }),
+      fecha_display: fechaVencimiento.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
       dias_desde_hoy: diasOffset,
     });
   }
@@ -301,66 +398,33 @@ export function generarPlanPago(monto, opciones = {}) {
   const fechaLimite = new Date(hoy);
   fechaLimite.setDate(fechaLimite.getDate() + diasPlazo);
 
-  return {
-    monto_total: monto,
-    num_cuotas: numCuotas,
-    dias_plazo: diasPlazo,
-    fecha_limite: fechaLimite.toISOString(),
-    cuotas,
-  };
+  return { monto_total: monto, num_cuotas: numCuotas, dias_plazo: diasPlazo, fecha_limite: fechaLimite.toISOString(), cuotas };
 }
 
 
 // ========================= SMS BUILDER =========================
 
-/**
- * Construye mensaje SMS con el acuerdo de pago
- * @param {Object} params
- * @returns {string}
- */
-export function buildPaymentAgreementSMS({
-  clientName,
-  montoVenta,
-  montoPagado,
-  montoCredito,
-  cuotas = [],
-  companyName = 'Tools4Care',
-}) {
+export function buildPaymentAgreementSMS({ clientName, montoVenta, montoPagado, montoCredito, cuotas = [], companyName = "Tools4Care" }) {
   const lines = [];
-  lines.push(`${companyName} — Payment Agreement`);
+  lines.push(`${companyName} - Payment Agreement`);
   lines.push(`Customer: ${clientName}`);
-  lines.push(`Date: ${new Date().toLocaleDateString('en-US')}`);
-  lines.push('');
-  lines.push(`Sale total: $${Number(montoVenta).toFixed(2)}`);
-  lines.push(`Paid today: $${Number(montoPagado).toFixed(2)}`);
-  lines.push(`Balance (credit): $${Number(montoCredito).toFixed(2)}`);
-  lines.push('');
-  lines.push('📅 PAYMENT SCHEDULE:');
-
+  lines.push(`Date: ${new Date().toLocaleDateString("en-US")}`);
+  lines.push("");
+  lines.push(`Sale: $${Number(montoVenta).toFixed(2)}`);
+  lines.push(`Paid: $${Number(montoPagado).toFixed(2)}`);
+  lines.push(`Credit: $${Number(montoCredito).toFixed(2)}`);
+  lines.push("");
+  lines.push("PAYMENT SCHEDULE:");
   for (const c of cuotas) {
-    lines.push(`  #${c.numero_cuota}: $${Number(c.monto).toFixed(2)} — Due ${c.fecha_display}`);
+    lines.push(`  #${c.numero_cuota}: $${Number(c.monto).toFixed(2)} - ${c.fecha_display}`);
   }
-
-  lines.push('');
-  lines.push('⚠️ Late payments may reduce your credit limit.');
-  lines.push('Thank you for your business!');
-  lines.push('');
-  lines.push('Msg&data rates may apply. Reply STOP to opt out.');
-
-  return lines.join('\n');
+  lines.push("");
+  lines.push("Late payments may reduce your credit limit.");
+  lines.push("Reply STOP to opt out.");
+  return lines.join("\n");
 }
 
 
 // ========================= HELPERS =========================
 
-function r2(n) {
-  return Math.round(Number(n || 0) * 100) / 100;
-}
-
-function fmt(n) {
-  return `$${Number(n || 0).toFixed(2)}`;
-}
-
-function pct(n) {
-  return `${(Number(n) * 100).toFixed(0)}%`;
-}
+function r2(n) { return Math.round(Number(n || 0) * 100) / 100; }
