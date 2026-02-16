@@ -282,6 +282,35 @@ export function usePendingSalesCloud() {
     }
   }, [deviceId, deviceType, pendingSales]);
 
+  // ===================== FORZAR TOMA (Desbloquear) =====================
+  // Esta función ignora si está bloqueada por otro dispositivo y asigna el bloqueo al actual
+  const forceTakePendingSale = useCallback(async (id) => {
+    try {
+      // Actualizamos directamente para forzar el bloqueo a este dispositivo
+      const { data, error } = await supabase
+        .from('ventas_pendientes')
+        .update({
+          locked_by: deviceId,
+          locked_at: new Date().toISOString(),
+          estado: 'en_progreso' // Aseguramos que pase a progreso
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Actualizamos el estado local inmediatamente para que la UI reaccione
+      setPendingSales(prev => prev.map(s => s.id === id ? data : s));
+
+      console.log(`🔓 Venta ${id} desbloqueada y tomada forzosamente por ${deviceType} (${deviceId})`);
+      return data;
+    } catch (err) {
+      console.error('Error forzando toma de venta:', err);
+      throw err;
+    }
+  }, [deviceId, deviceType]);
+
   // ===================== LIBERAR =====================
 
   const releasePendingSale = useCallback(async (id) => {
@@ -379,6 +408,7 @@ export function usePendingSalesCloud() {
     completePendingSale,
     cancelPendingSale,
     deletePendingSale,
+    forceTakePendingSale, // <--- AGREGADO: Función para desbloquear y retomar
     refresh: fetchPendingSales,
   };
 }
