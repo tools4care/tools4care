@@ -630,6 +630,15 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [currentCloudPendingId, setCurrentCloudPendingId] = useState(null);
 
 
+  // 🆕 DEVOLUCIONES: Estados nuevos
+const [appMode, setAppMode] = useState('venta'); // 'venta' | 'devolucion'
+const [clientSalesHistory, setClientSalesHistory] = useState([]); // Lista de facturas
+const [selectedInvoice, setSelectedInvoice] = useState(null); // Factura seleccionada
+const [returnQuantities, setReturnQuantities] = useState({}); // { detalle_id: cantidad }
+const [returnReason, setReturnReason] = useState("");
+const [processingReturn, setProcessingReturn] = useState(false);
+
+
   const [step, setStep] = useState(1);
 
  const [clientHistory, setClientHistory] = useState({
@@ -1023,7 +1032,7 @@ useEffect(() => {
     loadClients();
   }, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length]);
 
-  /* ---------- Historial al seleccionar cliente ---------- */
+/* ---------- Historial al seleccionar cliente ---------- */
 useEffect(() => {
   async function fetchHistory() {
     const id = selectedClient?.id;
@@ -1031,9 +1040,125 @@ useEffect(() => {
       setClientHistory({ has: false, ventas: 0, pagos: 0, loading: false, lastSaleDate: null });
       return;
     }
+    
+// 🆕 DEVOLUCIONES: Si estamos en modo devolución, cargar facturas con tracking de devoluciones
+if (appMode === 'devolucion') {
+  try {
+    // Paso 1: Obtener ventas del cliente (SOLO tipo 'venta', no devoluciones)
+    const { data: ventasData, error: ventasError } = await supabase
+      .from('ventas')
+      .select('id, created_at, total, estado_pago')
+      .eq('cliente_id', id)
+      .eq('van_id', van.id)
+      .eq('tipo', 'venta')  // 🔴 FIX: Solo ventas originales
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (ventasError) throw ventasError;
+
+    if (!ventasData || ventasData.length === 0) {
+      setClientSalesHistory([]);
+      return;
+    }
+
+    const ventaIds = ventasData.map(v => v.id);
+
+    // Paso 2: Obtener detalles de las ventas
+    const { data: detallesData, error: detallesError } = await supabase
+      .from('detalle_ventas')
+      .select('id, venta_id, cantidad, precio_unitario, producto_id')
+      .in('venta_id', ventaIds);
+
+    if (detallesError) throw detallesError;
+
+    // Paso 3: Obtener información de productos
+    const productoIds = [...new Set(detallesData?.map(d => d.producto_id).filter(Boolean))];
+    const { data: productosData } = await supabase
+      .from('productos')
+      .select('id, nombre')
+      .in('id', productoIds);
+
+    const productosMap = new Map(productosData?.map(p => [p.id, p]) || []);
+
+    // 🆕 Paso 4: Obtener cantidades ya devueltas de cada item
+    let devolucionesMap = new Map(); // detalle_venta_id -> cantidad_devuelta
+    try {
+      const { data: devData } = await supabase
+        .from('devoluciones_detalle')
+        .select('detalle_venta_id, cantidad_devuelta')
+        .in('venta_origen_id', ventaIds);
+
+      if (devData) {
+        for (const row of devData) {
+          const prev = devolucionesMap.get(row.detalle_venta_id) || 0;
+          devolucionesMap.set(row.detalle_venta_id, prev + row.cantidad_devuelta);
+        }
+      }
+    } catch {
+      // Tabla devoluciones_detalle no existe aún — ignorar silenciosamente
+      console.warn('Tabla devoluciones_detalle no disponible aún');
+    }
+
+    // 🆕 Paso 5: Obtener total ya devuelto por cada venta
+    let devolucionesPorVenta = new Map();
+    try {
+      const { data: devVentasData } = await supabase
+        .from('ventas')
+        .select('venta_origen_id, total')
+        .eq('tipo', 'devolucion')
+        .in('venta_origen_id', ventaIds);
+
+      if (devVentasData) {
+        for (const row of devVentasData) {
+          const prev = devolucionesPorVenta.get(row.venta_origen_id) || 0;
+          devolucionesPorVenta.set(row.venta_origen_id, prev + Number(row.total));
+        }
+      }
+    } catch {
+      console.warn('No se pudieron obtener devoluciones previas');
+    }
+
+    // Paso 6: Construir objeto final con tracking de devoluciones
+    const ventasConDetalles = ventasData.map(venta => {
+      const detalles = (detallesData || [])
+        .filter(d => d.venta_id === venta.id)
+        .map(d => {
+          const cantidadDevuelta = devolucionesMap.get(d.id) || 0;
+          return {
+            id: d.id,
+            cantidad: d.cantidad,
+            cantidad_devuelta: cantidadDevuelta,
+            cantidad_disponible: d.cantidad - cantidadDevuelta,
+            precio_unitario: d.precio_unitario,
+            producto_id: d.producto_id,
+            productos: {
+              id: d.producto_id,
+              nombre: productosMap.get(d.producto_id)?.nombre || 'Producto eliminado',
+            },
+          };
+        });
+
+      const totalDevuelto = devolucionesPorVenta.get(venta.id) || 0;
+
+      return {
+        ...venta,
+        detalle_ventas: detalles,
+        total_devuelto: totalDevuelto,
+        tiene_devoluciones: totalDevuelto > 0,
+      };
+    });
+
+    setClientSalesHistory(ventasConDetalles);
+  } catch (err) {
+    console.error("Error fetch history (returns):", err);
+    setClientSalesHistory([]);
+  }
+  return; // Detener flujo normal
+}
+
+    // === FLUJO NORMAL DE VENTA (Tu código existente) ===
     setClientHistory((h) => ({ ...h, loading: true }));
     
-    // 🆕 Incluir última venta
     const [{ count: vCount }, { count: pCount }, { data: lastSale }] = await Promise.all([
       supabase.from("ventas").select("id", { count: "exact", head: true }).eq("cliente_id", id),
       supabase.from("pagos").select("id", { count: "exact", head: true }).eq("cliente_id", id),
@@ -1046,7 +1171,7 @@ useEffect(() => {
     setClientHistory({ has, ventas: vCount || 0, pagos: pCount || 0, loading: false, lastSaleDate });
   }
   fetchHistory();
-}, [selectedClient?.id]);
+}, [selectedClient?.id, appMode, van?.id]); // 🆕 AGREGAR 'appMode' Y 'van?.id' a las dependencias
 
   /* ---------- Traer límite/disponible/saldo ---------- */
   useEffect(() => {
@@ -1896,6 +2021,12 @@ function clearSale() {
   
   // Limpiar cart
   setCart([]);
+    // 🆕 DEVOLUCIONES: Resetear modo
+  setAppMode('venta');
+  setClientSalesHistory([]);
+  setSelectedInvoice(null);
+  setReturnQuantities({});
+  setReturnReason("");
 }
 
   async function requestAndSendNotifications({ client, payload }) {
@@ -2122,6 +2253,269 @@ function handleChangePayment(index, field, value) {
       alert('❌ Error al intentar desbloquear: ' + err.message);
     }
   }
+
+// 🆕 DEVOLUCIONES: Handler CORREGIDO para procesar devoluciones
+async function handleProcessReturn() {
+  setProcessingReturn(true);
+  try {
+    // 1. Construir lista de items a devolver
+    const itemsToReturn = [];
+    let totalRefund = 0;
+
+    for (const item of selectedInvoice.detalle_ventas) {
+      const qty = Number(returnQuantities[item.id] || 0);
+      if (qty <= 0) continue;
+
+      // 🔴 FIX: Validar contra cantidad DISPONIBLE (original - ya devuelta)
+      const maxAvailable = item.cantidad_disponible ?? item.cantidad;
+      if (qty > maxAvailable) {
+        throw new Error(
+          `No puedes devolver ${qty} de "${item.productos.nombre}". ` +
+          `Disponible para devolver: ${maxAvailable}`
+        );
+      }
+
+      itemsToReturn.push({
+        detalle_venta_id: item.id,
+        producto_id: item.productos?.id || item.producto_id,
+        cantidad: qty,
+        precio_unitario: item.precio_unitario,
+        nombre: item.productos?.nombre || 'Producto',
+      });
+      totalRefund += qty * item.precio_unitario;
+    }
+
+    if (itemsToReturn.length === 0) {
+      alert("Selecciona al menos un producto para devolver.");
+      setProcessingReturn(false);
+      return;
+    }
+
+    // Confirmación con desglose
+    const itemsSummary = itemsToReturn
+      .map(it => `• ${it.nombre} x${it.cantidad} = ${fmt(it.cantidad * it.precio_unitario)}`)
+      .join('\n');
+
+    if (!confirm(
+      `🔄 Confirmar Devolución\n\n` +
+      `${itemsSummary}\n\n` +
+      `Total a devolver: ${fmt(totalRefund)}\n` +
+      `Estado original: ${selectedInvoice.estado_pago}\n\n` +
+      (selectedInvoice.estado_pago === 'pagado' 
+        ? `💵 Se debe entregar ${fmt(totalRefund)} en efectivo al cliente`
+        : `📋 Se reducirá la deuda del cliente en ${fmt(totalRefund)}`) +
+      `\n\n¿Continuar?`
+    )) {
+      setProcessingReturn(false);
+      return;
+    }
+
+    // 2. ✅ INTENTAR USAR RPC TRANSACCIONAL (más seguro)
+    try {
+      const itemsJson = itemsToReturn.map(it => ({
+        detalle_venta_id: it.detalle_venta_id,
+        producto_id: it.producto_id,
+        cantidad: it.cantidad,
+        precio_unitario: it.precio_unitario,
+      }));
+
+      const { data: rpcResult, error: rpcErr } = await supabase.rpc('procesar_devolucion', {
+        p_venta_origen_id: selectedInvoice.id,
+        p_cliente_id: selectedClient.id,  // 🔴 FIX: usar selectedClient.id, NO selectedInvoice.cliente_id
+        p_van_id: van.id,
+        p_usuario_id: usuario.id,
+        p_motivo: returnReason || "Devolución en tienda",
+        p_items: itemsJson,
+      });
+
+      if (rpcErr) throw rpcErr;
+
+      if (!rpcResult?.ok) {
+        throw new Error(rpcResult?.error || 'Error desconocido en RPC');
+      }
+
+     // 3. Mostrar resultado con desglose
+if (rpcResult.requiere_reembolso_efectivo) {
+  const cashBack = Number(rpcResult.cash_refund || 0);
+  const debtReduced = Number(rpcResult.cxc_adjustment || 0);
+  
+  let message = `✅ Devolución procesada exitosamente.\n\n`;
+  
+  if (cashBack > 0) {
+    message += `💵 Devolver al cliente en EFECTIVO: ${fmt(cashBack)}\n`;
+  }
+  if (debtReduced > 0) {
+    message += `📋 Deuda reducida en: ${fmt(debtReduced)}\n`;
+  }
+  
+  message += `\nTotal devolución: ${fmt(totalRefund)}`;
+  message += `\nID: ${rpcResult.devolucion_id?.slice(0, 8)}...`;
+  
+  alert(message);
+} else {
+  alert(
+    `✅ Devolución procesada.\n\n` +
+    `📋 Deuda reducida en ${fmt(Number(rpcResult.cxc_adjustment || 0))}.\n\n` +
+    `ID: ${rpcResult.devolucion_id?.slice(0, 8)}...`
+  );
+}
+
+      // Resetear UI
+      setSelectedInvoice(null);
+      setReturnQuantities({});
+      setReturnReason("");
+      
+      // Recargar inventario
+      reloadInventory();
+      
+      // Recargar historial del cliente
+      if (selectedClient?.id) {
+        runCreditAgent(selectedClient.id);
+      }
+
+      return; // Éxito con RPC
+
+    } catch (rpcFallbackErr) {
+      // Si el RPC no existe, usar fallback manual
+      if (rpcFallbackErr?.code === '42883') {
+        console.warn('RPC procesar_devolucion no disponible, usando fallback manual');
+        // Continúa abajo con el fallback
+      } else {
+        throw rpcFallbackErr;
+      }
+    }
+
+    // ===== FALLBACK MANUAL (si el RPC no existe) =====
+    
+    // 2b. Crear registro de devolución en 'ventas'
+    const { data: returnSale, error: insertErr } = await supabase
+      .from('ventas')
+      .insert([{
+        cliente_id: selectedClient.id,  // 🔴 FIX: selectedClient.id
+        van_id: van.id,
+        usuario_id: usuario.id,
+        total: totalRefund,
+        tipo: 'devolucion',
+        venta_origen_id: selectedInvoice.id,
+        motivo_devolucion: returnReason || "Devolución en tienda",
+        estado_pago: 'reembolsado',
+        notas: `Devolución de factura #${selectedInvoice.id.slice(0, 8)}...`,
+      }])
+      .select()
+      .single();
+
+    if (insertErr) throw insertErr;
+
+    // 3b. Crear detalles de la devolución
+    const detallesReturn = itemsToReturn.map(item => ({
+      venta_id: returnSale.id,
+      producto_id: item.producto_id,
+      cantidad: item.cantidad,
+      precio_unitario: item.precio_unitario,
+      descuento: 0,
+    }));
+
+    const { error: detErr } = await supabase.from('detalle_ventas').insert(detallesReturn);
+    if (detErr) console.error("Error insertando detalles devolución:", detErr);
+
+    // 3c. 🆕 Registrar en tracking de devoluciones
+    const trackingRecords = itemsToReturn.map(item => ({
+      venta_origen_id: selectedInvoice.id,
+      venta_devolucion_id: returnSale.id,
+      detalle_venta_id: item.detalle_venta_id,
+      producto_id: item.producto_id,
+      cantidad_devuelta: item.cantidad,
+      precio_unitario: item.precio_unitario,
+      motivo: returnReason || "Devolución en tienda",
+      usuario_id: usuario.id,
+      van_id: van.id,
+    }));
+
+    await supabase.from('devoluciones_detalle').insert(trackingRecords).catch(e => {
+      console.warn('Tracking devoluciones no disponible:', e.message);
+    });
+
+    // 4b. Actualizar Inventario (Devolver stock)
+    for (const item of itemsToReturn) {
+      try {
+        await supabase.rpc('incrementar_stock_van', {
+          p_van_id: van.id,
+          p_producto_id: item.producto_id,
+          p_cantidad: item.cantidad,
+        });
+      } catch {
+        // Fallback manual
+        const { data: currentStock } = await supabase
+          .from('stock_van')
+          .select('cantidad')
+          .eq('van_id', van.id)
+          .eq('producto_id', item.producto_id)
+          .single();
+
+        if (currentStock) {
+          await supabase
+            .from('stock_van')
+            .update({ cantidad: currentStock.cantidad + item.cantidad })
+            .eq('van_id', van.id)
+            .eq('producto_id', item.producto_id);
+        } else {
+          // Si no existía, crearlo
+          await supabase
+            .from('stock_van')
+            .insert({ van_id: van.id, producto_id: item.producto_id, cantidad: item.cantidad });
+        }
+      }
+    }
+
+    // 5b. Ajustar CxC si la venta original fue a crédito
+    if (['pendiente', 'parcial'].includes(selectedInvoice.estado_pago)) {
+      // 🔴 FIX: Usar monto POSITIVO con tipo 'devolucion' 
+      // (el sistema CxC interpreta por tipo, no por signo)
+      const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
+        cliente_id: selectedClient.id,  // 🔴 FIX: selectedClient.id
+        tipo: 'devolucion',
+        monto: totalRefund,  // 🔴 FIX: Positivo, el tipo 'devolucion' indica que reduce
+        venta_id: returnSale.id,
+        usuario_id: usuario.id,
+        fecha: new Date().toISOString(),
+        van_id: van.id,
+        nota: `Devolución de mercancía (Ref: Venta #${selectedInvoice.id.slice(0, 6)})`,
+      }]);
+
+      if (cxcErr) {
+        console.error("Error en CxC:", cxcErr);
+        // No bloquear — la devolución ya se procesó
+      }
+
+      alert(
+        `✅ Devolución procesada.\n` +
+        `📋 Deuda reducida en ${fmt(totalRefund)}.`
+      );
+    } else {
+      // Si fue pagado al contado
+      alert(
+        `✅ Devolución procesada.\n` +
+        `💵 Entregar ${fmt(totalRefund)} al cliente en efectivo.`
+      );
+    }
+
+    // Resetear UI
+    setSelectedInvoice(null);
+    setReturnQuantities({});
+    setReturnReason("");
+    reloadInventory();
+    
+    if (selectedClient?.id) {
+      runCreditAgent(selectedClient.id);
+    }
+
+  } catch (err) {
+    console.error("Error en devolución:", err);
+    alert("❌ Error procesando devolución:\n\n" + err.message);
+  } finally {
+    setProcessingReturn(false);
+  }
+}
 async function handleDeletePendingSale(id) {
     const confirmed = window.confirm(
       "¿Estás seguro de eliminar esta venta pendiente?\n\nEsta acción no se puede deshacer."
@@ -2720,6 +3114,214 @@ if (selectedClient?.id) {
     );
   }
 
+  // 🆕 DEVOLUCIONES: Renderizar lista de facturas
+function renderClientInvoiceList() {
+  if (appMode !== 'devolucion' || !selectedClient || clientSalesHistory.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-4 mb-4 shadow-sm">
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="font-bold text-orange-900 flex items-center gap-2">
+          📜 Historial de Ventas: {selectedClient.nombre}
+        </h3>
+        <button 
+          onClick={() => setAppMode('venta')}
+          className="text-xs text-orange-700 underline hover:text-orange-900"
+        >
+          ❌ Salir de Devolución
+        </button>
+      </div>
+
+      <div className="space-y-2 max-h-64 overflow-y-auto">
+        {clientSalesHistory.map((sale) => {
+          const totalDevuelto = sale.total_devuelto || 0;
+          const fullReturned = totalDevuelto >= sale.total;
+          
+          // 🆕 Verificar si todos los items ya fueron devueltos
+          const allItemsReturned = sale.detalle_ventas?.every(
+            d => (d.cantidad_disponible ?? d.cantidad) <= 0
+          );
+
+          return (
+            <button
+              key={sale.id}
+              onClick={() => {
+                if (fullReturned || allItemsReturned) {
+                  alert('⚠️ Esta venta ya fue completamente devuelta.');
+                  return;
+                }
+                setSelectedInvoice(sale);
+              }}
+              disabled={fullReturned || allItemsReturned}
+              className={`w-full text-left bg-white border rounded-lg p-3 transition-all flex justify-between items-center group ${
+                fullReturned || allItemsReturned
+                  ? 'border-gray-300 opacity-50 cursor-not-allowed'
+                  : selectedInvoice?.id === sale.id 
+                    ? 'border-orange-500 ring-2 ring-orange-200' 
+                    : 'border-orange-100 hover:border-orange-400 hover:bg-orange-100'
+              }`}
+            >
+              <div>
+                <div className="font-bold text-gray-800 group-hover:text-orange-700 flex items-center gap-2">
+                  #{sale.id.slice(0, 8)}...
+                  {sale.tiene_devoluciones && (
+                    <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                      🔄 Parcialmente devuelto
+                    </span>
+                  )}
+                  {(fullReturned || allItemsReturned) && (
+                    <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
+                      ✅ Completamente devuelto
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {new Date(sale.created_at).toLocaleString()}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-bold text-gray-900">{fmt(sale.total)}</div>
+                {totalDevuelto > 0 && (
+                  <div className="text-xs text-orange-600">
+                    Devuelto: {fmt(totalDevuelto)}
+                  </div>
+                )}
+                <div className={`text-xs font-semibold ${
+                  sale.estado_pago === 'pendiente' ? 'text-red-600' : 'text-green-600'
+                }`}>
+                  {sale.estado_pago}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// 🆕 DEVOLUCIONES: Renderizar detalles y formulario de devolución
+function renderReturnDetails() {
+  if (appMode !== 'devolucion' || !selectedInvoice) return null;
+
+  const totalReturn = Object.entries(returnQuantities).reduce((sum, [itemId, qty]) => {
+    const item = selectedInvoice.detalle_ventas.find(d => d.id === itemId);
+    return sum + (Number(qty) * Number(item?.precio_unitario || 0));
+  }, 0);
+
+  return (
+    <div className="bg-white border-2 border-orange-200 rounded-xl p-4 shadow-sm mb-4">
+      <div className="flex justify-between items-center mb-4 border-b pb-2">
+        <h3 className="font-bold text-orange-900">
+          🔄 Devolución: Factura #{selectedInvoice.id.slice(0, 8)}...
+        </h3>
+        <button 
+          onClick={() => { setSelectedInvoice(null); setReturnQuantities({}); }}
+          className="text-xs text-gray-500 underline"
+        >
+          Cambiar factura
+        </button>
+      </div>
+
+      <div className="space-y-2 mb-4">
+        <p className="text-sm text-gray-600 font-semibold">Selecciona productos a devolver:</p>
+        
+        {selectedInvoice.detalle_ventas.map((item) => {
+          // 🆕 Usar cantidad disponible (descontando devoluciones previas)
+          const maxQty = item.cantidad_disponible ?? item.cantidad;
+          const alreadyReturned = item.cantidad_devuelta || 0;
+          const currentReturn = Number(returnQuantities[item.id] || 0);
+          
+          if (maxQty <= 0) {
+            // Item completamente devuelto
+            return (
+              <div key={item.id} className="flex items-center justify-between border p-2 rounded bg-gray-100 opacity-50">
+                <div className="flex-1">
+                  <span className="font-semibold text-sm line-through">{item.productos.nombre}</span>
+                  <span className="text-xs text-gray-500 ml-2">✅ Completamente devuelto</span>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={item.id} className="flex items-center justify-between border p-2 rounded bg-gray-50">
+              <div className="flex-1">
+                <span className="font-semibold text-sm">{item.productos.nombre}</span>
+                <div className="text-xs text-gray-500">
+                  {fmt(item.precio_unitario)} c/u · 
+                  Comprado: {item.cantidad}
+                  {alreadyReturned > 0 && (
+                    <span className="text-orange-600 ml-1">
+                      · Ya devuelto: {alreadyReturned}
+                    </span>
+                  )}
+                  · <span className="font-semibold text-green-700">Disponible: {maxQty}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  className="w-7 h-7 rounded bg-red-200 text-red-700 font-bold hover:bg-red-300 flex items-center justify-center"
+                  onClick={() => {
+                    if (currentReturn > 0) {
+                      setReturnQuantities(prev => ({...prev, [item.id]: currentReturn - 1}));
+                    }
+                  }}
+                >−</button>
+                <span className="w-8 text-center font-bold">{currentReturn}</span>
+                <button 
+                  className="w-7 h-7 rounded bg-green-200 text-green-700 font-bold hover:bg-green-300 flex items-center justify-center"
+                  onClick={() => {
+                    if (currentReturn < maxQty) {
+                      setReturnQuantities(prev => ({...prev, [item.id]: currentReturn + 1}));
+                    }
+                  }}
+                >+</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Motivo */}
+      <div className="mb-4">
+        <label className="block text-xs font-bold text-gray-700 mb-1">
+          Motivo de devolución (Opcional):
+        </label>
+        <input
+          type="text"
+          className="w-full border p-2 rounded text-sm"
+          placeholder="Ej. Producto dañado, No le gustó, Error en pedido..."
+          value={returnReason}
+          onChange={(e) => setReturnReason(e.target.value)}
+        />
+      </div>
+
+      {/* Total de devolución */}
+      {totalReturn > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4 text-center">
+          <div className="text-xs text-orange-600 uppercase font-semibold">Total a Devolver</div>
+          <div className="text-2xl font-bold text-orange-800">{fmt(totalReturn)}</div>
+          <div className="text-xs text-gray-600 mt-1">
+            {selectedInvoice.estado_pago === 'pagado' 
+              ? '💵 Se devolverá en efectivo' 
+              : '📋 Se reducirá de la deuda'}
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={handleProcessReturn}
+        disabled={processingReturn || Object.values(returnQuantities).every(q => !q || q === 0)}
+        className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white py-3 rounded-lg font-bold transition-colors text-lg"
+      >
+        {processingReturn ? "⏳ Procesando..." : `🔄 Confirmar Devolución (${fmt(totalReturn)})`}
+      </button>
+    </div>
+  );
+}
 function renderPendingSalesModal() {
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
@@ -3076,11 +3678,13 @@ function renderStepClient() {
   onRefresh={() => runCreditAgent(selectedClient.id, saleTotal)}
 />
 
-<PaymentAgreementsPanel
-  clienteId={selectedClient?.id}
-  clienteName={selectedClient?.nombre}
-  onRefresh={() => runCreditAgent(selectedClient.id, saleTotal)}
-/>
+
+
+{/* 🆕 DEVOLUCIONES: Lista de facturas */}
+{renderClientInvoiceList()}
+
+{/* 🆕 DEVOLUCIONES: Detalles de devolución */}
+{renderReturnDetails()}
 
           <div className="mt-4 flex justify-between">
             <button
@@ -3214,12 +3818,37 @@ function renderStepClient() {
       )}
 
       <div className="relative">
-        <input
-          type="text"
-          placeholder="🔍 Name · Phone · Email · Address · Business..."
-          className="w-full border-2 border-gray-300 rounded-lg p-4 text-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-          value={clientSearch}
-          onChange={(e) => setClientSearch(e.target.value)}
+<input
+  type="text"
+  placeholder={
+    appMode === 'devolucion' 
+      ? "🔍 Escribe #devolucion para salir, o busca cliente..." 
+      : "🔍 Name · Phone · Email · Address · Business..."
+  }
+  className={`w-full border-2 rounded-lg p-4 text-lg outline-none transition-all ${
+    appMode === 'devolucion'
+      ? 'border-orange-500 bg-orange-50 text-orange-900 focus:border-orange-700 focus:ring-2 focus:ring-orange-200'
+      : 'border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200'
+  }`}
+  value={clientSearch}
+  onChange={(e) => {
+    const value = e.target.value;
+    
+    // 🆕 DEVOLUCIONES: Detectar código de devolución
+    if (value.trim().toLowerCase() === "#devolucion") {
+      setAppMode('devolucion');
+      setClientSearch("");
+      alert("🔄 MODO DEVOLUCIÓN ACTIVADO\n\nBusca el cliente para ver sus facturas.");
+      return;
+    }
+
+    // Salir del modo devolución si borran todo (opcional)
+    if (appMode === 'devolucion' && value === "") {
+      // setAppMode('venta'); // Descomentar si quieres salida automática
+    }
+
+    setClientSearch(value);
+  }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && clientSearch.trim() === SECRET_CODE) {
               setMigrationMode((v) => !v);
@@ -3896,6 +4525,15 @@ function renderStepPayment() {
           </div>
         )}
       </div>
+
+      {/* Payment Agreements - Acuerdos de pago del cliente */}
+{selectedClient?.id && (
+  <PaymentAgreementsPanel
+    clienteId={selectedClient.id}
+    clienteName={selectedClient?.nombre}
+    onRefresh={() => runCreditAgent(selectedClient.id, saleTotal)}
+  />
+)}
 
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-4">
         <div className="grid grid-cols-2 gap-4 text-center">
