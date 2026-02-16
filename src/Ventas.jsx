@@ -596,6 +596,7 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
     cancelPendingSale,
     deletePendingSale,
     refresh: refreshPendingSales,
+    forceTakePendingSale,
   } = usePendingSalesCloud();
   /* ---- Estado base ---- */
   const [clientSearch, setClientSearch] = useState("");
@@ -2079,6 +2080,48 @@ function handleChangePayment(index, field, value) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+    async function handleForceUnlockAndTake(sale) {
+    const confirmed = window.confirm(
+      `⚠️ Esta venta está bloqueada en otro dispositivo.\n\n` +
+      `¿Deseas DESBLOQUEARLA y continuar en este equipo?\n\n` +
+      `El otro dispositivo podría perder el control si sigue abierto.`
+    );
+    
+    if (!confirmed) return;
+
+    try {
+      // 1. Forzar el desbloqueo en la nube
+      const updatedSale = await forceTakePendingSale(sale.id);
+
+      // 2. Cargar los datos en el formulario (similar a handleSelectPendingSale pero saltando el check de bloqueo)
+      const clientData = updatedSale.cliente_data || {};
+      setSelectedClient({
+        ...clientData,
+        id: updatedSale.cliente_id || clientData.id,
+      });
+      
+      setCart(Array.isArray(updatedSale.cart) ? updatedSale.cart : []);
+      setPayments(
+        Array.isArray(updatedSale.payments) && updatedSale.payments.length > 0
+          ? updatedSale.payments
+          : [{ forma: 'efectivo', monto: 0 }]
+      );
+      setNotes(updatedSale.notes || '');
+      setStep(updatedSale.step || 1);
+      setCurrentCloudPendingId(updatedSale.id);
+      
+      // Ejecutar agente de crédito si tiene cliente
+      if (updatedSale.cliente_id) {
+        runCreditAgent(updatedSale.cliente_id);
+      }
+
+      setModalPendingSales(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    } catch (err) {
+      alert('❌ Error al intentar desbloquear: ' + err.message);
+    }
+  }
 async function handleDeletePendingSale(id) {
     const confirmed = window.confirm(
       "¿Estás seguro de eliminar esta venta pendiente?\n\nEsta acción no se puede deshacer."
@@ -2821,27 +2864,34 @@ function renderPendingSalesModal() {
                         </span>
                       </div>
                       
-                      {/* Botones de acción */}
+                                    {/* Botones de acción */}
                       <div className="flex gap-2">
-                        <button
-                          className={`flex-1 text-white px-4 py-2 rounded-lg font-semibold shadow-md transition-all duration-200 ${
-                            isLocked
-                              ? 'bg-gray-400 cursor-not-allowed'
-                              : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:shadow-lg'
-                          }`}
-                          disabled={isLocked}
-                          onClick={() => handleSelectPendingSale(v)}
-                        >
-                          {isLocked ? '🔒 Locked' : '▶️ Resume'}
-                        </button>
+                        {isLocked ? (
+                          // Si está bloqueado, mostramos botón para Desbloquear
+                          <button
+                            className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md transition-all duration-200"
+                            onClick={() => handleForceUnlockAndTake(v)}
+                            title="Forzar desbloqueo y tomar esta venta"
+                          >
+                            🔓 Desbloquear
+                          </button>
+                        ) : (
+                          // Si no está bloqueada, botón normal de Retomar
+                          <button
+                            className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:shadow-lg text-white px-4 py-2 rounded-lg font-semibold shadow-md transition-all duration-200"
+                            onClick={() => handleSelectPendingSale(v)}
+                          >
+                            ▶️ Retomar
+                          </button>
+                        )}
                         
                         <button
-                          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-                          onClick={() => handleDeletePendingSale(v.id)}
-                        >
-                          🗑️
-                        </button>
-                      </div>
+          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+          onClick={() => handleDeletePendingSale(v.id)}
+        >
+          🗑️
+        </button>
+      </div>
                     </div>
                   </div>
                 );
