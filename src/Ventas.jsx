@@ -7,10 +7,13 @@ import { useNavigate } from "react-router-dom";
 import { BarcodeScanner } from "./BarcodeScanner";
 import QRCode from "qrcode"; // npm install qrcode
 import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
+import { evaluarReglasCredito, generarPlanPago, buildPaymentAgreementSMS } from "./lib/creditRulesEngine";
+import { getAcuerdosResumen, crearAcuerdo, aplicarPagoAAcuerdos, actualizarVencidas, getDiasDeudaMasVieja, isAgreementSystemAvailable } from "./lib/paymentAgreements";
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 import { v4 as uuidv4 } from 'uuid';
 
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
+import AgreementModal from "./components/AgreementModal";
 
 
 
@@ -504,13 +507,12 @@ export default function Sales() {
 async function runCreditAgent(clienteId, montoVenta = 0) {
   try {
     if (!clienteId) return;
-
     setAgentLoading(true);
 
-    // 1) Historial vendido/pagado
+    // 1) Historial
     const history = await getClientHistory(clienteId);
 
-    // 2) Perfil de crédito actual
+    // 2) Perfil CxC
     const profile = await getCxcCliente(clienteId);
 
     setClientBehavior(history);
@@ -519,41 +521,54 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
     if (!profile) {
       setClientRisk(null);
       setCreditAvailableAfter(0);
+      setAcuerdosResumen(null);
+      setReglasCredito(null);
       setAgentLoading(false);
       return;
     }
 
-    // 3) Limpieza
     const limite = Number(String(profile.limite).replace(/[^0-9.-]+/g, ""));
     const saldo  = Number(String(profile.saldo).replace(/[^0-9.-]+/g, ""));
     const disponible = Math.max(0, limite - saldo);
-
     setCreditAvailableAfter(disponible);
 
-    console.log("CREDIT DEBUG:", {
-      limiteOriginal: profile.limite,
-      saldoOriginal: profile.saldo,
-      limiteClean: limite,
-      saldoClean: saldo,
-      disponible
-    });
+    // 3) 🆕 Acuerdos de pago
+    let acuerdos = null;
+    let reglas = null;
 
-    // 4) Motor de riesgo
+    if (agreementSystemReady) {
+      await actualizarVencidas(clienteId);
+      acuerdos = await getAcuerdosResumen(clienteId);
+      setAcuerdosResumen(acuerdos);
+
+      const diasDeuda = await getDiasDeudaMasVieja(clienteId);
+      const montoPagando = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+
+      reglas = evaluarReglasCredito({
+        montoVenta: montoVenta || saleTotal,
+        saldoActual: saldo,
+        limiteBase: limite,
+        diasDeuda,
+        acuerdos,
+        montoPagadoAhora: montoPagando,
+      });
+      setReglasCredito(reglas);
+    }
+
+    // 4) Scoring
     const risk = evaluateCredit({
       saldo,
       limite,
-      diasRetraso: profile.diasRetraso,
-      montoVenta,
+      diasRetraso: profile.diasRetraso || 0,
+      montoVenta: montoVenta || saleTotal,
       historialVentas: history.ventasDetalles || [],
       historialPagos: history.pagosDetalles || [],
       lastSaleDate: profile.lastSaleDate || history.lastSaleDate || null,
+      acuerdosResumen: acuerdos,
+      reglasCredito: reglas,
     });
 
-    console.log("RISK ENGINE RESULT:", risk);
-
-    // 5) Guardar estado
     setClientRisk(risk);
-
   } catch (err) {
     console.error("Error en runCreditAgent:", err);
   } finally {
@@ -656,6 +671,16 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   // 🆕 ESTADOS PARA FEE DE TARJETA
   const [applyCardFee, setApplyCardFee] = useState({});
   const [cardFeePercentage, setCardFeePercentage] = useState(3);
+
+  // ---- ACUERDOS DE PAGO
+const [acuerdosResumen, setAcuerdosResumen] = useState(null);
+const [reglasCredito, setReglasCredito] = useState(null);
+const [showAgreementModal, setShowAgreementModal] = useState(false);
+const [agreementPlan, setAgreementPlan] = useState(null);
+const [agreementException, setAgreementException] = useState(false);
+const [agreementExceptionNote, setAgreementExceptionNote] = useState("");
+const [agreementSystemReady, setAgreementSystemReady] = useState(false);
+const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
   // ---- DASHBOARD Y CLIENTES RECIENTES
   const [recentClients, setRecentClients] = useState([]);
@@ -802,7 +827,15 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
 
     probeAddressShape();
   }, []);
+// Verificar si el sistema de acuerdos está disponible
+useEffect(() => {
+  isAgreementSystemAvailable().then(setAgreementSystemReady);
+}, []);
 
+// Verificar si el sistema de acuerdos está disponible
+  useEffect(() => {
+    isAgreementSystemAvailable().then(setAgreementSystemReady);
+  }, []);
   /* ---------- CLIENTES (búsqueda OPTIMIZADA con CACHE) ---------- */
   useEffect(() => {
     async function loadClients() {
@@ -1849,6 +1882,14 @@ function clearSale() {
   
   // Resetear auto-fill
   setPaymentAutoFilled(false);
+
+  // Limpiar acuerdos
+  setAcuerdosResumen(null);
+  setReglasCredito(null);
+  setAgreementPlan(null);
+  setAgreementException(false);
+  setAgreementExceptionNote("");
+  setPendingAgreementData(null);
   
   // Limpiar cart
   setCart([]);
@@ -2073,6 +2114,20 @@ async function handleDeletePendingSale(id) {
   async function saveSale() {
     setSaving(true);
     setPaymentError("");
+     // Si hay crédito y el modal de acuerdo no se ha confirmado aún, mostrarlo
+    const amountToCreditCheck = saleTotal - payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+    
+    if (amountToCreditCheck > 0.01 && agreementSystemReady && !pendingAgreementData) {
+      setPendingAgreementData({
+        montoCredito: Number(amountToCreditCheck.toFixed(2)),
+        saldoActual: creditProfile?.saldo || 0,
+        clientName: selectedClient?.nombre || '',
+        waiting: true,
+      });
+      setSaving(false);
+      return; // No continuar — el modal llamará a saveSale de nuevo
+    }
+   
 
      // 🆕 Generar transaction_id único para esta transacción física
   const transactionId = uuidv4();
@@ -2414,6 +2469,18 @@ if (selectedClient?.id) {
         }
       }
 
+ // 🆕 APLICAR PAGO A CUOTAS DE ACUERDOS
+      if (montoParaCxC > 0) {
+        try {
+          const { data: resCuotas } = await supabase.rpc('aplicar_pago_a_cuotas', {
+            p_cliente_id: selectedClient.id,
+            p_monto: montoParaCxC,
+          });
+          if (resCuotas?.ok) console.log('✅ Cuotas actualizadas desde venta:', resCuotas);
+        } catch (e) {
+          console.warn('⚠️ Error cuotas desde venta:', e.message);
+        }
+      }
 
       const prevDue = Math.max(0, balanceBefore);
       const balancePost = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
@@ -2440,29 +2507,76 @@ if (selectedClient?.id) {
         availableBefore: creditAvailable,
         availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
       };
+// 🆕 CREAR ACUERDO DE PAGO si hay crédito
+      if (pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady) {
+        try {
+          // Usar el plan que el vendedor seleccionó en el modal
+          const cuotasSeleccionadas = pendingAgreementData?.plan?.num_cuotas || null;
+          
+          const resultAcuerdo = await crearAcuerdo({
+            clienteId: selectedClient.id,
+            ventaId: ventaId,
+            vanId: van.id,
+            usuarioId: usuario.id,
+            montoCredito: Number(pendingFromThisSale.toFixed(2)),
+            numCuotas: cuotasSeleccionadas,
+            excepcionVendedor: pendingAgreementData?.isException || false,
+            excepcionNota: pendingAgreementData?.exceptionNote || null,
+          });
 
-      if (currentCloudPendingId) {
-    await completePendingSale(currentCloudPendingId, ventaId);
-  }
-  // También limpiar localStorage legacy
-  if (currentPendingId) {
-    removePendingFromLSById(currentPendingId);
-  }
-  
-  await requestAndSendNotifications({ client: selectedClient, payload });
+          if (resultAcuerdo.ok) {
+            console.log('✅ Acuerdo de pago creado:', resultAcuerdo.acuerdo.id);
+            setAgreementPlan(resultAcuerdo.acuerdo.plan);
+          }
+        } catch (e) {
+          console.warn('⚠️ Error creando acuerdo (no bloquea la venta):', e.message);
+        }
+      }
 
-      alert(
-        `✅ Sale saved successfully` +
-          (pendingFromThisSale > 0 ? `\n📌 Unpaid (to credit): ${fmt(pendingFromThisSale)}` : "") +
-          (changeNow > 0 ? `\n💰 Change to give: ${fmt(changeNow)}` : "")
+// ========== 🆕 PEGAR AQUÍ — SMS CON CALENDARIO ==========
+      const agreementPlanForSMS = agreementPlan || (
+        pendingFromThisSale > 0
+          ? generarPlanPago(pendingFromThisSale, { numCuotas: pendingAgreementData?.numCuotas })
+          : null
       );
 
-      reloadInventory();
+      if (agreementPlanForSMS && agreementPlanForSMS.cuotas?.length > 0) {
+        const scheduleLines = agreementPlanForSMS.cuotas
+          .map(c => `#${c.numero_cuota}: $${c.monto.toFixed(2)} due ${c.fecha_display}`)
+          .join('\n');
+        
+        const payloadWithSchedule = {
+          ...payload,
+          notas: (payload.notas || '') + '\n---\nPAYMENT SCHEDULE:\n' + scheduleLines,
+        };
+
+        try {
+          await requestAndSendNotifications({
+            client: selectedClient,
+            payload: payloadWithSchedule,
+          });
+        } catch (smsErr) {
+          console.warn('SMS error (non-blocking):', smsErr.message);
+          try {
+            await requestAndSendNotifications({ client: selectedClient, payload });
+          } catch { /* silenciar */ }
+        }
+      } else {
+        await requestAndSendNotifications({ client: selectedClient, payload });
+      }
+
+      // ✅ Limpiar venta pendiente si existía
+      if (currentPendingId) {
+        const updated = removePendingFromLSById(currentPendingId);
+        setPendingSales(updated);
+        window.pendingSaleId = null;
+      }
+
       clearSale();
 
     } catch (err) {
-      setPaymentError("❌ Error saving sale: " + (err?.message || ""));
-      console.error(err);
+      console.error("❌ Error en saveSale:", err);
+      setPaymentError("❌ " + (err.message || "Error saving sale"));
     } finally {
       setSaving(false);
     }
@@ -3175,6 +3289,75 @@ function renderStepClient() {
     >
       🔄 Actualizar Análisis
     </button>
+  </div>
+)}
+
+{/* 🆕 PANEL DE ACUERDOS ACTIVOS */}
+{acuerdosResumen && (acuerdosResumen.acuerdos_activos > 0 || acuerdosResumen.acuerdos_rotos > 0) && (
+  <div className="mt-4 p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
+    <div className="font-bold text-blue-800 mb-3 flex items-center gap-2">
+      📋 Payment Agreements
+    </div>
+    
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+      <div className="bg-white rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-gray-600 uppercase font-semibold">Active</div>
+        <div className="text-lg font-bold text-blue-600">{acuerdosResumen.acuerdos_activos}</div>
+      </div>
+      <div className="bg-white rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-gray-600 uppercase font-semibold">Completed</div>
+        <div className="text-lg font-bold text-green-600">{acuerdosResumen.acuerdos_completados}</div>
+      </div>
+      <div className="bg-white rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-red-600 uppercase font-semibold">Broken</div>
+        <div className="text-lg font-bold text-red-600">{acuerdosResumen.acuerdos_rotos}</div>
+      </div>
+      <div className="bg-white rounded-lg p-2 text-center border">
+        <div className="text-[10px] text-gray-600 uppercase font-semibold">Overdue</div>
+        <div className="text-lg font-bold text-orange-600">{acuerdosResumen.cuotas_vencidas_total}</div>
+      </div>
+    </div>
+
+    {acuerdosResumen.deuda_en_acuerdos > 0 && (
+      <div className="bg-white rounded-lg p-3 border mb-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-700">Debt in active agreements:</span>
+          <span className="font-bold text-red-600">${Number(acuerdosResumen.deuda_en_acuerdos).toFixed(2)}</span>
+        </div>
+      </div>
+    )}
+
+    {acuerdosResumen.proxima_cuota_fecha && (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-amber-800">📅 Next installment:</span>
+          <div className="text-right">
+            <div className="font-bold text-amber-800">
+              ${Number(acuerdosResumen.proxima_cuota_monto || 0).toFixed(2)}
+            </div>
+            <div className="text-xs text-amber-600">
+              Due {new Date(acuerdosResumen.proxima_cuota_fecha).toLocaleDateString('en-US')}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {reglasCredito?.nivel === 'congelado' && (
+      <div className="mt-3 bg-red-100 border-2 border-red-400 rounded-lg p-3 text-center">
+        <div className="text-red-800 font-bold">🔒 CREDIT FROZEN</div>
+        <div className="text-sm text-red-700 mt-1">Cash only until all debt is paid</div>
+      </div>
+    )}
+
+    {reglasCredito?.nivel === 'rojo' && (
+      <div className="mt-3 bg-orange-100 border-2 border-orange-400 rounded-lg p-3 text-center">
+        <div className="text-orange-800 font-bold">⚠️ Minimum Payment Required</div>
+        <div className="text-sm text-orange-700 mt-1">
+          Must pay at least ${reglasCredito.pagoMinimoTotal.toFixed(2)} before new credit
+        </div>
+      </div>
+    )}
   </div>
 )}
 
@@ -4091,6 +4274,30 @@ function renderStepPayment() {
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
           {modalPendingSales && renderPendingSalesModal()}
           {showQRModal && renderQRModal()}
+
+        <AgreementModal
+            isOpen={!!pendingAgreementData?.waiting}
+            onClose={() => {
+              setPendingAgreementData(null);
+              setSaving(false);
+            }}
+            onConfirm={(result) => {
+              setPendingAgreementData({
+                ...pendingAgreementData,
+                waiting: false,
+                plan: result.plan,
+                numCuotas: result.numCuotas,
+                isException: result.isException,
+                exceptionNote: result.exceptionNote,
+              });
+              setTimeout(() => saveSale(), 100);
+            }}
+            montoCredito={pendingAgreementData?.montoCredito || 0}
+            clientName={pendingAgreementData?.clientName || ''}
+            saldoActual={pendingAgreementData?.saldoActual || 0}
+            reglasCredito={reglasCredito}
+          />
+
           {step === 1 && renderStepClient()}
           {step === 2 && renderStepProducts()}
           {step === 3 && renderStepPayment()}
