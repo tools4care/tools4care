@@ -2493,7 +2493,19 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
       const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
       setSaldoBase(saldoDespues);
-
+// 🆕 Aplicar pago a cuotas de acuerdos
+try {
+  const { data: resultCuotas } = await supabase.rpc('aplicar_pago_a_cuotas', {
+    p_cliente_id: cliente.id,
+    p_monto: pagoAplicado,
+  });
+  console.log('📋 Resultado cuotas:', resultCuotas);
+  if (resultCuotas?.ok) {
+    console.log('✅ Cuotas actualizadas:', resultCuotas);
+  }
+} catch (cuotaErr) {
+  console.warn('⚠️ Error aplicando pago a cuotas:', cuotaErr.message);
+}
       // limpiar input
       setMonto("");
       setApplyCardFee(false);

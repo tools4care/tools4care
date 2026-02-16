@@ -1,549 +1,278 @@
-/* ============================================================
-   AGENTE DE CRÉDITO INTELIGENTE - VERSIÓN MEJORADA
-   ============================================================
-   FILOSOFÍA:
-   "El mejor cliente es el que PAGA A TIEMPO, 
-    no necesariamente el que usa poco crédito"
-   
-   PESOS DE SCORING:
-   - Comportamiento de pago: 45%
-   - Días de retraso: 40%
-   - Uso de crédito: 10% (solo penaliza sobregiro extremo)
-   - Frecuencia de compra: 5%
-   
-   REGLA DE ORO:
-   Sin atrasos + uso < 90% = VERDE automático
-   ============================================================ */
+// src/agents/creditAgent.js
+// ============================================================
+// AGENTE DE CRÉDITO v2 — CON ACUERDOS DE PAGO
+// ============================================================
+// Integra:
+// - Motor de scoring original (mejorado)
+// - creditRulesEngine (reglas dinámicas R1-R6)
+// - paymentAgreements (acuerdos de pago)
+// ============================================================
 
 import { supabase } from "../supabaseClient";
+import {
+  evaluarReglasCredito,
+  generarPlanPago,
+  buildPaymentAgreementSMS,
+  CREDIT_RULES_CONFIG,
+} from "../lib/creditRulesEngine";
+import {
+  getAcuerdosResumen,
+  getDiasDeudaMasVieja,
+  actualizarVencidas,
+  isAgreementSystemAvailable,
+} from "../lib/paymentAgreements";
+
+
+// ========================= GET CLIENT HISTORY =========================
 
 /**
- * Obtiene historial completo del cliente (ventas + pagos últimos 90 días)
- */
-/**
- * Obtiene historial completo del cliente (sin límite de tiempo) - VERSIÓN ROBUSTA
+ * Obtiene historial completo del cliente (ventas + pagos)
  */
 export async function getClientHistory(clienteId) {
   if (!clienteId) {
     return {
-      ventas: 0,
-      totalVentas: 0,
-      pagos: 0,
-      totalPagos: 0,
-      ventasDetalles: [],
-      pagosDetalles: [],
-      lastSaleDate: null,
-      lastPaymentDate: null,
-      deudas: [],
-      deudasVencidas: [],
+      ventas: 0, totalVentas: 0,
+      pagos: 0, totalPagos: 0,
+      ventasDetalles: [], pagosDetalles: [],
+      lastSaleDate: null, lastPaymentDate: null,
+      deudas: [], deudasVencidas: [],
     };
   }
 
   try {
-    // Obtener TODAS las ventas (intentando diferentes nombres de columna)
+    // Ventas
     let ventas = [];
-    let ventasErr = null;
-    
-    // Intentar con diferentes nombres de columna para fecha
-    const fechaColumns = ['fecha', 'created_at', 'date'];
-    for (const fechaCol of fechaColumns) {
+    for (const col of ["created_at", "fecha", "date"]) {
       try {
-        const { data: ventasData, error: errorVentas } = await supabase
+        const { data, error } = await supabase
           .from("ventas")
-          .select(`id, ${fechaCol}, total, cliente_id`)
+          .select(`id, ${col}, total, total_venta, total_pagado, cliente_id`)
           .eq("cliente_id", clienteId)
-          .order(fechaCol, { ascending: false });
-          
-        if (!errorVentas && ventasData && ventasData.length > 0) {
-          ventas = ventasData.map(v => ({ ...v, fecha: v[fechaCol] }));
-          ventasErr = null;
+          .order(col, { ascending: false });
+        if (!error && data?.length > 0) {
+          ventas = data.map((v) => ({
+            ...v,
+            fecha: v[col],
+            total: Number(v.total_venta || v.total || 0),
+          }));
           break;
         }
-      } catch (e) {
-        // Continuar con el siguiente intento
-      }
-    }
-    
-    if (ventasErr) {
-      console.error("Error al obtener ventas:", ventasErr);
-      throw ventasErr;
+      } catch { /* next */ }
     }
 
-    // Obtener TODOS los pagos (intentando diferentes nombres de columna)
+    // Pagos (intentar cxc_pagos y pagos)
     let pagos = [];
-    let pagosErr = null;
-    
-    for (const fechaCol of fechaColumns) {
+    try {
+      const { data } = await supabase
+        .from("pagos")
+        .select("id, fecha_pago, monto, cliente_id")
+        .eq("cliente_id", clienteId)
+        .order("fecha_pago", { ascending: false });
+      if (data?.length > 0) {
+        pagos = data.map((p) => ({
+          ...p,
+          fecha: p.fecha_pago,
+          monto_pagado: Number(p.monto || 0),
+        }));
+      }
+    } catch { /* ignore */ }
+
+    if (pagos.length === 0) {
       try {
-        const { data: pagosData, error: errorPagos } = await supabase
+        const { data } = await supabase
           .from("cxc_pagos")
-          .select(`id, ${fechaCol}, monto_pagado, cliente_id`)
+          .select("id, fecha_pago, monto, cliente_id")
           .eq("cliente_id", clienteId)
-          .order(fechaCol, { ascending: false });
-          
-        if (!errorPagos && pagosData && pagosData.length > 0) {
-          pagos = pagosData.map(p => ({ ...p, fecha: p[fechaCol] }));
-          pagosErr = null;
-          break;
+          .order("fecha_pago", { ascending: false });
+        if (data?.length > 0) {
+          pagos = data.map((p) => ({
+            ...p,
+            fecha: p.fecha_pago,
+            monto_pagado: Number(p.monto || 0),
+          }));
         }
-      } catch (e) {
-        // Continuar con el siguiente intento
-      }
-    }
-    
-    if (pagosErr) {
-      console.error("Error al obtener pagos:", pagosErr);
-      throw pagosErr;
+      } catch { /* ignore */ }
     }
 
-    // Obtener deudas pendientes (intentando diferentes nombres de columna)
+    // Deudas (ventas con saldo pendiente)
     let deudas = [];
-    let deudasErr = null;
-    
-    for (const fechaCol of fechaColumns) {
-      try {
-        const { data: deudasData, error: errorDeudas } = await supabase
-          .from("cxc")
-          .select(`id, ${fechaCol}, monto_pendiente, venta_id, estado`)
-          .eq("cliente_id", clienteId)
-          .eq("estado", "pendiente")
-          .order(fechaCol, { ascending: true });
-          
-        if (!errorDeudas && deudasData && deudasData.length > 0) {
-          deudas = deudasData.map(d => ({ ...d, fecha_vencimiento: d[fechaCol] }));
-          deudasErr = null;
-          break;
-        }
-      } catch (e) {
-        // Continuar con el siguiente intento
+    try {
+      const { data } = await supabase
+        .from("ventas")
+        .select("id, created_at, total_venta, total_pagado")
+        .eq("cliente_id", clienteId)
+        .gt("total_venta", 0);
+
+      if (data) {
+        deudas = data
+          .filter((v) => {
+            const pendiente = Number(v.total_venta || 0) - Number(v.total_pagado || 0);
+            return pendiente > 0.01;
+          })
+          .map((v) => ({
+            id: v.id,
+            fecha_vencimiento: v.created_at,
+            monto_pendiente: Number(v.total_venta || 0) - Number(v.total_pagado || 0),
+            estado: "pendiente",
+          }));
       }
-    }
-    
-    if (deudasErr) {
-      console.error("Error al obtener deudas:", deudasErr);
-      throw deudasErr;
-    }
+    } catch { /* ignore */ }
 
-    // Filtrar deudas vencidas
     const hoy = new Date();
-    const deudasVencidas = deudas.filter(d => {
+    const deudasVencidas = deudas.filter((d) => {
       if (!d.fecha_vencimiento) return false;
-      const fechaVencimiento = new Date(d.fecha_vencimiento);
-      return fechaVencimiento < hoy;
+      return new Date(d.fecha_vencimiento) < hoy;
     });
 
-    // Procesar ventas
-    const ventasFiltradas = ventas?.filter(v => v.fecha) || [];
-    const totalVentas = ventasFiltradas.reduce((sum, v) => sum + Number(v.total || 0), 0);
-
-    // Procesar pagos
-    const pagosFiltrados = pagos?.filter(p => p.fecha) || [];
-    const totalPagos = pagosFiltrados.reduce((sum, p) => sum + Number(p.monto_pagado || 0), 0);
-
-    // Obtener la última fecha de venta y pago
-    const lastSaleDate = ventasFiltradas.length > 0 ? ventasFiltradas[0].fecha : null;
-    const lastPaymentDate = pagosFiltrados.length > 0 ? pagosFiltrados[0].fecha : null;
-
-    console.log("Historial del cliente:", {
-      totalVentas,
-      totalPagos,
-      ultimaVenta: lastSaleDate,
-      ultimoPago: lastPaymentDate,
-      numVentas: ventasFiltradas.length,
-      numPagos: pagosFiltrados.length,
-      numDeudas: deudas.length,
-      numDeudasVencidas: deudasVencidas.length
-    });
+    const totalVentas = ventas.reduce((s, v) => s + Number(v.total || 0), 0);
+    const totalPagos = pagos.reduce((s, p) => s + Number(p.monto_pagado || 0), 0);
 
     return {
-      ventas: ventasFiltradas.length,
+      ventas: ventas.length,
       totalVentas,
-      pagos: pagosFiltrados.length,
+      pagos: pagos.length,
       totalPagos,
-      ventasDetalles: ventasFiltradas,
-      pagosDetalles: pagosFiltrados,
-      lastSaleDate,
-      lastPaymentDate,
+      ventasDetalles: ventas,
+      pagosDetalles: pagos,
+      lastSaleDate: ventas[0]?.fecha || null,
+      lastPaymentDate: pagos[0]?.fecha || null,
       deudas,
       deudasVencidas,
     };
   } catch (err) {
     console.error("Error en getClientHistory:", err);
     return {
-      ventas: 0,
-      totalVentas: 0,
-      pagos: 0,
-      totalPagos: 0,
-      ventasDetalles: [],
-      pagosDetalles: [],
-      lastSaleDate: null,
-      lastPaymentDate: null,
-      deudas: [],
-      deudasVencidas: [],
+      ventas: 0, totalVentas: 0,
+      pagos: 0, totalPagos: 0,
+      ventasDetalles: [], pagosDetalles: [],
+      lastSaleDate: null, lastPaymentDate: null,
+      deudas: [], deudasVencidas: [],
     };
   }
 }
 
-/**
- * Obtiene perfil de crédito con manejo de errores mejorado - VERSIÓN ROBUSTA
- */
-export async function getCreditProfile(clienteId) {
-  if (!clienteId) return null;
 
-  try {
-    // Intentar obtener el perfil desde la vista
-    const { data, error } = await supabase
-      .from("v_cxc_cliente_detalle")
-      .select("*")
-      .eq("cliente_id", clienteId)
-      .single();
+// ========================= ANÁLISIS HELPERS =========================
 
-    if (error) {
-      // Si no funciona con la vista, intentar con la tabla directamente
-      if (error.code === "PGRST116") {
-        console.warn("Vista no encontrada, intentando con tabla...");
-        const { data: tableData, error: tableError } = await supabase
-          .from("cxc_clientes")
-          .select("*")
-          .eq("id", clienteId)
-          .single();
-          
-        if (tableError) {
-          console.error("Error al obtener perfil de crédito desde tabla:", tableError);
-          return null;
-        }
-        
-        console.log("Perfil de crédito obtenido desde tabla:", {
-          id: tableData.id,
-          limite: tableData.limite,
-          saldo: tableData.saldo,
-          dias_retraso: tableData.dias_retraso,
-          ultima_venta: tableData.ultima_venta,
-          ultimo_pago: tableData.ultimo_pago
-        });
-        
-        return tableData;
-      }
-      
-      console.error("Error al obtener perfil de crédito:", error);
-      return null;
-    }
-
-    // Verificar que el perfil tenga los campos necesarios
-    if (!data) {
-      console.warn("Perfil de crédito vacío para el cliente:", clienteId);
-      return null;
-    }
-
-    console.log("Perfil de crédito obtenido desde vista:", {
-      id: data.cliente_id,
-      limite: data.limite,
-      saldo: data.saldo,
-      dias_retraso: data.dias_retraso,
-      ultima_venta: data.ultima_venta,
-      ultimo_pago: data.ultimo_pago
-    });
-
-    return data;
-  } catch (err) {
-    console.error("Error en getCreditProfile:", err);
-    return null;
-  }
-}
-/**
- * Analiza envejecimiento de deudas - CRÍTICO PARA EVALUACIÓN
- */
-function analyzeDebtAging(deudas) {
-  if (!deudas || deudas.length === 0) {
-    return {
-      totalVencido: 0,
-      diasMaxVencido: 0,
-      promedioVencido: 0,
-      deudasCriticas: 0,
-      montoCritico: 0,
-    };
-  }
-
-  const hoy = new Date();
-  let totalVencido = 0;
-  let diasMaxVencido = 0;
-  let diasAcumulado = 0;
-  let deudasCriticas = 0;
-  let montoCritico = 0;
-
-  deudas.forEach(deuda => {
-    const diasVencido = Math.floor((hoy - new Date(deuda.fecha_vencimiento)) / (1000 * 60 * 60 * 24));
-    const monto = Number(deuda.monto_pendiente);
-    
-    if (diasVencido > 0) {
-      totalVencido += monto;
-      diasAcumulado += diasVencido;
-      
-      if (diasVencido > diasMaxVencido) {
-        diasMaxVencido = diasVencido;
-      }
-      
-      // Deudas críticas: más de 30 días vencidas o montos importantes (> 20% del límite)
-      if (diasVencido > 30 || monto > 10000) { // 10000 es un monto importante, ajustar según negocio
-        deudasCriticas++;
-        montoCritico += monto;
-      }
-    }
-  });
-
-  return {
-    totalVencido,
-    diasMaxVencido,
-    promedioVencido: deudas.length > 0 ? diasAcumulado / deudas.length : 0,
-    deudasCriticas,
-    montoCritico,
-  };
-}
-
-/**
- * Analiza patrón de pago - ENFOQUE PRINCIPAL MEJORADO
- */
 function analyzePaymentPattern(historialPagos, diasRetraso = 0, deudasVencidas = []) {
-  // Cliente sin historial pero sin atrasos = EXCELENTE
   if (historialPagos.length < 2) {
     if (diasRetraso === 0) {
-      return {
-        patron: "puntual",
-        puntualidad: 95, // MUY ALTO para beneficiar
-        descripcion: "Cliente nuevo - sin atrasos registrados",
-        promedioDias: 0,
-        consistencia: 90, // ALTA consistencia por defecto
-        fiabilidad: 95,
-      };
+      return { patron: "puntual", puntualidad: 95, descripcion: "New client — no delays", promedioDias: 0, consistencia: 90, fiabilidad: 95 };
     } else if (diasRetraso <= 5) {
-      return {
-        patron: "normal",
-        puntualidad: 75,
-        descripcion: `Pagador nuevo con ${diasRetraso} días de retraso leve`,
-        promedioDias: diasRetraso,
-        consistencia: 70,
-        fiabilidad: 80,
-      };
+      return { patron: "normal", puntualidad: 75, descripcion: `New client — ${diasRetraso} day slight delay`, promedioDias: diasRetraso, consistencia: 70, fiabilidad: 80 };
     } else if (diasRetraso <= 15) {
-      return {
-        patron: "tardio",
-        puntualidad: 50,
-        descripcion: `Pagador nuevo con ${diasRetraso} días de retraso`,
-        promedioDias: diasRetraso,
-        consistencia: 50,
-        fiabilidad: 60,
-      };
+      return { patron: "tardio", puntualidad: 50, descripcion: `New client — ${diasRetraso} day delay`, promedioDias: diasRetraso, consistencia: 50, fiabilidad: 60 };
     } else {
-      return {
-        patron: "problematico",
-        puntualidad: 25,
-        descripcion: `Pagador nuevo con ${diasRetraso} días de retraso grave`,
-        promedioDias: diasRetraso,
-        consistencia: 30,
-        fiabilidad: 30,
-      };
+      return { patron: "problematico", puntualidad: 25, descripcion: `New client — ${diasRetraso} day serious delay`, promedioDias: diasRetraso, consistencia: 30, fiabilidad: 30 };
     }
   }
 
-  const fechasOrdenadas = historialPagos
-    .map((p) => new Date(p.fecha))
-    .sort((a, b) => a - b);
-
+  const fechas = historialPagos.map((p) => new Date(p.fecha)).sort((a, b) => a - b);
   let sumaIntervalos = 0;
   let pagosTarde = 0;
-  let sumaRetrasos = 0;
-  
-  // Analizar cada pago comparado con el anterior
-  for (let i = 1; i < fechasOrdenadas.length; i++) {
-    const dias = (fechasOrdenadas[i] - fechasOrdenadas[i - 1]) / (1000 * 60 * 60 * 24);
+
+  for (let i = 1; i < fechas.length; i++) {
+    const dias = (fechas[i] - fechas[i - 1]) / 86400000;
     sumaIntervalos += dias;
-    
-    // Si tardó más de 15 días, considerar como pago tardío
-    if (dias > 15) {
-      pagosTarde++;
-      sumaRetrasos += dias - 15;
-    }
+    if (dias > 15) pagosTarde++;
   }
 
-  const promedioDias = Math.round(sumaIntervalos / (fechasOrdenadas.length - 1));
-  const porcentajePagosTarde = pagosTarde / (fechasOrdenadas.length - 1);
-  
-  // Ajustar puntualidad según historial de atrasos
+  const promedioDias = Math.round(sumaIntervalos / (fechas.length - 1));
+  const pctTarde = pagosTarde / (fechas.length - 1);
+
   let puntualidad = 100;
-  if (porcentajePagosTarde > 0.5) {
-    puntualidad -= 40; // Más de la mitad de los pagos tarde
-  } else if (porcentajePagosTarde > 0.3) {
-    puntualidad -= 25; // Más del 30% de los pagos tarde
-  } else if (porcentajePagosTarde > 0.1) {
-    puntualidad -= 15; // Más del 10% de los pagos tarde
-  } else if (porcentajePagosTarde > 0) {
-    puntualidad -= 5; // Algunos pagos tarde
-  }
-  
-  // Penalizar por deudas vencidas importantes
+  if (pctTarde > 0.5) puntualidad -= 40;
+  else if (pctTarde > 0.3) puntualidad -= 25;
+  else if (pctTarde > 0.1) puntualidad -= 15;
+  else if (pctTarde > 0) puntualidad -= 5;
+
   if (deudasVencidas.length > 0) {
-    const maxDiasVencido = Math.max(...deudasVencidas.map(d => 
-      Math.floor((new Date() - new Date(d.fecha_vencimiento)) / (1000 * 60 * 60 * 24))
-    ));
-    
-    if (maxDiasVencido > 60) {
-      puntualidad -= 30; // Deuda muy vencida
-    } else if (maxDiasVencido > 30) {
-      puntualidad -= 20; // Deuda vencida
-    } else if (maxDiasVencido > 15) {
-      puntualidad -= 10; // Deuda ligeramente vencida
-    }
+    const maxDias = Math.max(
+      ...deudasVencidas.map((d) =>
+        Math.floor((Date.now() - new Date(d.fecha_vencimiento).getTime()) / 86400000)
+      )
+    );
+    if (maxDias > 60) puntualidad -= 30;
+    else if (maxDias > 30) puntualidad -= 20;
+    else if (maxDias > 15) puntualidad -= 10;
   }
 
   let patron, descripcion;
-  if (promedioDias <= 7 && puntualidad > 85) {
-    patron = "puntual";
-    descripcion = `Pagador puntual (paga cada ${promedioDias} días)`;
-  } else if (promedioDias <= 15 && puntualidad > 70) {
-    patron = "normal";
-    descripcion = `Pagador normal (paga en ${promedioDias} días)`;
-  } else if (promedioDias <= 30 && puntualidad > 50) {
-    patron = "tardio";
-    descripcion = `Pagador tardío (paga en ${promedioDias} días)`;
-  } else {
-    patron = "problematico";
-    descripcion = `Pagador problemático (paga cada ${promedioDias} días)`;
-  }
+  if (promedioDias <= 7 && puntualidad > 85) { patron = "puntual"; descripcion = `Pays every ${promedioDias} days`; }
+  else if (promedioDias <= 15 && puntualidad > 70) { patron = "normal"; descripcion = `Pays in ${promedioDias} days`; }
+  else if (promedioDias <= 30 && puntualidad > 50) { patron = "tardio"; descripcion = `Late payer (${promedioDias} days)`; }
+  else { patron = "problematico"; descripcion = `Problem payer (${promedioDias} days)`; }
 
-  const desviacion = Math.abs(promedioDias - 15) / 15;
-  const consistencia = Math.max(30, Math.round(100 - desviacion * 50));
-  
-  // Fiabilidad combinada de puntualidad y consistencia
-  const fiabilidad = Math.round((puntualidad + consistencia) / 2);
+  const consistencia = Math.max(30, Math.round(100 - (Math.abs(promedioDias - 15) / 15) * 50));
+  const fiabilidad = Math.round((Math.max(0, puntualidad) + consistencia) / 2);
 
-  return {
-    patron,
-    puntualidad: Math.max(0, puntualidad),
-    descripcion,
-    promedioDias,
-    consistencia,
-    fiabilidad,
-  };
+  return { patron, puntualidad: Math.max(0, puntualidad), descripcion, promedioDias, consistencia, fiabilidad };
 }
 
-/**
- * Analiza tendencia de consumo
- */
-function analyzeConsumptionTrend(ventasDetalles) {
-  if (ventasDetalles.length < 4) {
-    return {
-      tendencia: "insuficiente",
-      cambio: 0,
-      descripcion: "Historial insuficiente para evaluar tendencia",
-    };
-  }
+function analyzeConsumptionTrend(ventas) {
+  if (ventas.length < 4) return { tendencia: "insuficiente", cambio: 0, descripcion: "Not enough history" };
 
-  const mitad = Math.floor(ventasDetalles.length / 2);
-  const recientes = ventasDetalles.slice(0, mitad);
-  const antiguas = ventasDetalles.slice(mitad);
+  const mitad = Math.floor(ventas.length / 2);
+  const recientes = ventas.slice(0, mitad);
+  const antiguas = ventas.slice(mitad);
 
-  const promedioReciente = recientes.reduce((s, v) => s + Number(v.total), 0) / recientes.length;
-  const promedioAntiguo = antiguas.reduce((s, v) => s + Number(v.total), 0) / antiguas.length;
+  const promR = recientes.reduce((s, v) => s + Number(v.total), 0) / recientes.length;
+  const promA = antiguas.reduce((s, v) => s + Number(v.total), 0) / antiguas.length;
+  const cambio = promA > 0 ? ((promR - promA) / promA) * 100 : 0;
 
-  const cambio = ((promedioReciente - promedioAntiguo) / promedioAntiguo) * 100;
-
-  let tendencia, descripcion;
-  if (cambio > 20) {
-    tendencia = "creciente";
-    descripcion = `Consumo creciente (+${cambio.toFixed(0)}%)`;
-  } else if (cambio < -20) {
-    tendencia = "decreciente";
-    descripcion = `Consumo decreciente (${cambio.toFixed(0)}%)`;
-  } else {
-    tendencia = "estable";
-    descripcion = "Consumo estable";
-  }
-
-  return {
-    tendencia,
-    cambio,
-    descripcion,
-    promedioReciente,
-    promedioAntiguo,
-  };
+  if (cambio > 20) return { tendencia: "creciente", cambio, descripcion: `Growing (+${cambio.toFixed(0)}%)`, promedioReciente: promR, promedioAntiguo: promA };
+  if (cambio < -20) return { tendencia: "decreciente", cambio, descripcion: `Declining (${cambio.toFixed(0)}%)`, promedioReciente: promR, promedioAntiguo: promA };
+  return { tendencia: "estable", cambio, descripcion: "Stable", promedioReciente: promR, promedioAntiguo: promA };
 }
 
-/**
- * Analiza frecuencia de compra - MEJORADA
- */
-function analyzeFrequency(ventasDetalles) {
-  if (ventasDetalles.length === 0) {
-    return {
-      frecuencia: "nueva",
-      diasEntreFechas: null,
-      descripcion: "Cliente nuevo - sin compras",
-    };
-  }
+function analyzeFrequency(ventas) {
+  if (ventas.length === 0) return { frecuencia: "nueva", diasEntreFechas: null, descripcion: "New client" };
 
-  const fechas = ventasDetalles.map((v) => new Date(v.fecha)).sort((a, b) => a - b);
-  let sumaIntervalos = 0;
+  const fechas = ventas.map((v) => new Date(v.fecha)).sort((a, b) => a - b);
+  if (fechas.length < 2) return { frecuencia: "nueva", diasEntreFechas: null, descripcion: "Single purchase" };
 
-  for (let i = 1; i < fechas.length; i++) {
-    const dias = (fechas[i] - fechas[i - 1]) / (1000 * 60 * 60 * 24);
-    sumaIntervalos += dias;
-  }
+  let sum = 0;
+  for (let i = 1; i < fechas.length; i++) sum += (fechas[i] - fechas[i - 1]) / 86400000;
+  const dias = Math.round(sum / (fechas.length - 1));
 
-  const diasEntreFechas = Math.round(sumaIntervalos / (fechas.length - 1));
-
-  let frecuencia, descripcion;
-  if (diasEntreFechas <= 7) {
-    frecuencia = "muy_alta";
-    descripcion = "Compra semanal - cliente muy activo";
-  } else if (diasEntreFechas <= 15) {
-    frecuencia = "alta";
-    descripcion = "Compra quincenal - cliente activo";
-  } else if (diasEntreFechas <= 30) {
-    frecuencia = "normal";
-    descripcion = "Compra mensual - cliente regular";
-  } else if (diasEntreFechas <= 60) {
-    frecuencia = "baja";
-    descripcion = "Compra bimestral - cliente ocasional";
-  } else {
-    frecuencia = "muy_baja";
-    descripcion = "Compra trimestral - cliente esporádico";
-  }
-
-  return {
-    frecuencia,
-    diasEntreFechas,
-    descripcion,
-  };
+  if (dias <= 7) return { frecuencia: "muy_alta", diasEntreFechas: dias, descripcion: "Weekly buyer" };
+  if (dias <= 15) return { frecuencia: "alta", diasEntreFechas: dias, descripcion: "Biweekly buyer" };
+  if (dias <= 30) return { frecuencia: "normal", diasEntreFechas: dias, descripcion: "Monthly buyer" };
+  if (dias <= 60) return { frecuencia: "baja", diasEntreFechas: dias, descripcion: "Occasional buyer" };
+  return { frecuencia: "muy_baja", diasEntreFechas: dias, descripcion: "Sporadic buyer" };
 }
 
-/**
- * Calcula días de inactividad CON MÚLTIPLES FUENTES
- */
-function calcularDiasInactivo(lastSaleDate, perfil, historialVentas) {
-  const hoy = new Date();
-  let ultimaVenta = null;
-  
-  if (lastSaleDate) {
-    ultimaVenta = new Date(lastSaleDate);
+function analyzeDebtAging(deudasVencidas) {
+  if (!deudasVencidas?.length) return { totalVencido: 0, diasMaxVencido: 0, promedioVencido: 0, deudasCriticas: 0, montoCritico: 0 };
+
+  const hoy = Date.now();
+  let totalVencido = 0, diasMax = 0, diasAcum = 0, criticas = 0, montoCrit = 0;
+
+  for (const d of deudasVencidas) {
+    const dias = Math.floor((hoy - new Date(d.fecha_vencimiento).getTime()) / 86400000);
+    const monto = Number(d.monto_pendiente || 0);
+    if (dias > 0) {
+      totalVencido += monto;
+      diasAcum += dias;
+      if (dias > diasMax) diasMax = dias;
+      if (dias > 30 || monto > 200) { criticas++; montoCrit += monto; }
+    }
   }
-  
-  if (!ultimaVenta && perfil?.ultima_venta) {
-    ultimaVenta = new Date(perfil.ultima_venta);
-  }
-  
-  if (!ultimaVenta && historialVentas.length > 0) {
-    ultimaVenta = new Date(historialVentas[0].fecha);
-  }
-  
-  if (!ultimaVenta || isNaN(ultimaVenta.getTime())) {
-    return 0;
-  }
-  
-  const dias = Math.floor((hoy - ultimaVenta) / (1000 * 60 * 60 * 24));
-  return Math.max(0, dias);
+
+  return { totalVencido, diasMaxVencido: diasMax, promedioVencido: deudasVencidas.length ? diasAcum / deudasVencidas.length : 0, deudasCriticas: criticas, montoCritico: montoCrit };
 }
 
+function calcDiasInactivo(lastSaleDate, ventas) {
+  const fecha = lastSaleDate ? new Date(lastSaleDate) : ventas.length ? new Date(ventas[0].fecha) : null;
+  if (!fecha || isNaN(fecha)) return 0;
+  return Math.max(0, Math.floor((Date.now() - fecha.getTime()) / 86400000));
+}
+
+
+// ========================= MOTOR DE SCORING =========================
+
 /**
- * MOTOR PRINCIPAL - ENFOCADO EN COMPORTAMIENTO DE PAGO MEJORADO
+ * Evalúa crédito — AHORA INCLUYE ACUERDOS DE PAGO
  */
 export function evaluateCredit({
   saldo = 0,
@@ -556,280 +285,259 @@ export function evaluateCredit({
   perfil = null,
   deudas = [],
   deudasVencidas = [],
+  // 🆕 NUEVOS PARÁMETROS
+  acuerdosResumen = null,
+  reglasCredito = null,
 }) {
-  // ==================== SCORE BASE ALTO PARA BUENOS PAGADORES ====================
-  let score = 65; // Base alta
+  let score = 65;
   const disponible = Math.max(0, limite - saldo);
   const disponibleDespuesVenta = Math.max(0, disponible - montoVenta);
   const ratio = limite > 0 ? saldo / limite : 0;
 
-  // ==================== ANÁLISIS ====================
+  // Análisis
   const patronPago = analyzePaymentPattern(historialPagos, diasRetraso, deudasVencidas);
   const tendenciaConsumo = analyzeConsumptionTrend(historialVentas);
   const frecuencia = analyzeFrequency(historialVentas);
   const analisisDeudas = analyzeDebtAging(deudasVencidas);
+  const promedioVentas = historialVentas.length > 0
+    ? historialVentas.reduce((s, v) => s + Number(v.total), 0) / historialVentas.length
+    : 0;
+  const diasInactivo = calcDiasInactivo(lastSaleDate, historialVentas);
 
-  const promedioVentas =
-    historialVentas.length > 0
-      ? historialVentas.reduce((s, v) => s + Number(v.total), 0) / historialVentas.length
-      : 0;
+  // ==================== SCORING ====================
 
-  const diasInactivo = calcularDiasInactivo(lastSaleDate, perfil, historialVentas);
+  // Días de retraso (40%)
+  if (diasRetraso === 0 && analisisDeudas.totalVencido === 0) score += 30;
+  else if (diasRetraso <= 5) score += 15;
+  else if (diasRetraso <= 10) score += 5;
+  else if (diasRetraso <= 30) score -= 20;
+  else if (diasRetraso <= 60) score -= 40;
+  else score -= 65;
 
-  // ==================== SCORING - ENFOQUE EN PAGO MEJORADO ====================
+  // Comportamiento de pago (45%)
+  score += (patronPago.puntualidad / 100) * 25;
+  score += (patronPago.consistencia / 100) * 15;
+  score += (patronPago.fiabilidad / 100) * 5;
 
-  // 1. DÍAS DE RETRASO (40% del score) - MÁS PESO
-  if (diasRetraso === 0 && analisisDeudas.totalVencido === 0) {
-    score += 30; // GRAN BONUS por estar al día
-  } else if (diasRetraso <= 5 && analisisDeudas.diasMaxVencido <= 5) {
-    score += 15; // Retraso leve tolerado
-  } else if (diasRetraso <= 10 && analisisDeudas.diasMaxVencido <= 10) {
-    score += 5; // Retraso moderado
-  } else if (diasRetraso <= 30 || analisisDeudas.diasMaxVencido <= 30) {
-    score -= 20; // Serio
-  } else if (diasRetraso <= 60 || analisisDeudas.diasMaxVencido <= 60) {
-    score -= 40; // Muy serio
-  } else {
-    score -= 65; // Crítico
+  // Uso de crédito (10%)
+  if (ratio >= 1.5) score -= 80;
+  else if (ratio >= 1.2) score -= 50;
+  else if (ratio >= 1.0) score -= 20;
+  else if (ratio >= 0.9) score -= 5;
+
+  // Frecuencia (5%)
+  const frecPuntos = { muy_alta: 5, alta: 4, normal: 3, baja: 0, muy_baja: -3, nueva: 3 };
+  score += frecPuntos[frecuencia.frecuencia] || 0;
+
+  // 🆕 PENALIZACIÓN POR ACUERDOS ROTOS
+  if (acuerdosResumen) {
+    const rotos = acuerdosResumen.acuerdos_rotos || 0;
+    if (rotos >= 2) score -= 30;
+    else if (rotos === 1) score -= 15;
+
+    const cuotasVencidas = acuerdosResumen.cuotas_vencidas_total || 0;
+    if (cuotasVencidas > 2) score -= 20;
+    else if (cuotasVencidas > 0) score -= 10;
   }
 
-  // 2. COMPORTAMIENTO DE PAGO (45% del score) - MÁXIMO PESO
-  // Puntualidad vale 25 puntos
-  const puntosPuntualidad = (patronPago.puntualidad / 100) * 25;
-  score += puntosPuntualidad;
-  
-  // Consistencia vale 15 puntos
-  const puntosConsistencia = (patronPago.consistencia / 100) * 15;
-  score += puntosConsistencia;
-
-  // Fiabilidad combinada 5 puntos
-  const puntosFiabilidad = (patronPago.fiabilidad / 100) * 5;
-  score += puntosFiabilidad;
-
-  // 3. USO DE CRÉDITO (10% del score) - MENOS PESO
-  // Solo penaliza si hay sobregiro o uso extremo
-  if (ratio < 0.9) {
-    score += 0; // Cualquier uso < 90% es aceptable
-  } else if (ratio < 1.0) {
-    score -= 5; // 90-100% precaución leve
-  } else if (ratio < 1.2) {
-    score -= 20; // Sobregiro moderado
-  } else if (ratio < 1.5) {
-    score -= 50; // Sobregiro crítico
-  } else {
-    score -= 80; // Sobregiro extremo
-  }
-
-  // 4. FRECUENCIA (5%)
-  const puntosFrec = {
-    muy_alta: 5,
-    alta: 4,
-    normal: 3,
-    baja: 0,
-    muy_baja: -3,
-    nueva: 3, // Neutral para nuevos
-  };
-  score += puntosFrec[frecuencia.frecuencia] || 0;
-
-  // Normalizar
   score = Math.max(0, Math.min(100, Math.round(score)));
 
-  // ==================== REGLA DE ORO ====================
-  // Sin atrasos + uso < 90% = AUTOMÁTICAMENTE VERDE
+  // Regla de oro
   if (diasRetraso === 0 && analisisDeudas.totalVencido === 0 && ratio < 0.9) {
-    score = Math.max(score, 80); // Mínimo 80 puntos
+    score = Math.max(score, 80);
   }
 
-  // ==================== UMBRALES ====================
+  // Nivel
   let nivel, emoji, accion;
-  
-  if (score >= 80) {
-    nivel = "bajo";
-    emoji = "🟢";
-    accion = "aprobar";
-  } else if (score >= 60) {
-    nivel = "medio";
-    emoji = "🟡";
-    accion = diasRetraso > 20 || analisisDeudas.diasMaxVencido > 30 || ratio > 0.95 ? "pago_parcial" : "aprobar_con_cuidado";
-  } else if (score >= 40) {
-    nivel = "alto";
-    emoji = "🟠";
-    accion = "pago_parcial";
-  } else {
-    nivel = "critico";
-    emoji = "🔴";
-    accion = "rechazar";
-  }
+  if (score >= 80) { nivel = "bajo"; emoji = "🟢"; accion = "aprobar"; }
+  else if (score >= 60) { nivel = "medio"; emoji = "🟡"; accion = "aprobar_con_cuidado"; }
+  else if (score >= 40) { nivel = "alto"; emoji = "🟠"; accion = "pago_parcial"; }
+  else { nivel = "critico"; emoji = "🔴"; accion = "rechazar"; }
 
-  // Override para sobregiro extremo
-  if (ratio >= 1.5) {
-    nivel = "critico";
-    emoji = "🔴";
-    accion = "rechazar";
+  // Overrides
+  if (ratio >= 1.5 || analisisDeudas.diasMaxVencido > 60) {
+    nivel = "critico"; emoji = "🔴"; accion = "rechazar";
     score = Math.min(score, 25);
   }
 
-  // Override para deudas muy vencidas
-  if (analisisDeudas.diasMaxVencido > 60) {
-    nivel = "critico";
-    emoji = "🔴";
-    accion = "rechazar";
-    score = Math.min(score, 30);
+  // 🆕 Override por crédito congelado
+  if (reglasCredito?.nivel === "congelado") {
+    nivel = "critico"; emoji = "🔴"; accion = "rechazar";
+    score = Math.min(score, 10);
   }
 
-  // ==================== LÍMITE SEGURO MEJORADO ====================
+  // Límite seguro
   let limiteSeguro = disponible * 0.7;
+  if (patronPago.patron === "puntual" && diasRetraso === 0) limiteSeguro = disponible * 0.9;
+  else if (patronPago.patron === "problematico" || diasRetraso > 30) limiteSeguro = disponible * 0.3;
 
-  if (patronPago.patron === "puntual" && diasRetraso === 0 && analisisDeudas.totalVencido === 0) {
-    limiteSeguro = disponible * 0.9; // Generoso con buenos pagadores
-  } else if (patronPago.patron === "problematico" || diasRetraso > 30 || analisisDeudas.diasMaxVencido > 30) {
-    limiteSeguro = disponible * 0.3; // Restrictivo con malos pagadores
-  } else if (analisisDeudas.deudasCriticas > 0) {
-    limiteSeguro = disponible * 0.5; // Precaución con deudas críticas
+  // 🆕 Ajustar límite seguro por penalizaciones de acuerdos
+  if (reglasCredito) {
+    limiteSeguro = Math.min(limiteSeguro, reglasCredito.disponibleEfectivo);
   }
 
   limiteSeguro = Math.max(0, Math.round(limiteSeguro));
 
-  // ==================== RECOMENDACIONES MEJORADAS ====================
+  // 🆕 Monto máximo recomendado para venta
+  const montoMaximoRecomendadoVenta = Math.min(
+    limiteSeguro,
+    reglasCredito?.disponibleEfectivo ?? limiteSeguro
+  );
+
+  // Recomendaciones
   const recomendaciones = [];
 
-  // Deudas
+  // 🆕 Recomendaciones de acuerdos
+  if (acuerdosResumen) {
+    if (acuerdosResumen.acuerdos_rotos >= 2) {
+      recomendaciones.push("🔒 CREDIT FROZEN — 2+ broken agreements. Cash only until all debt is paid.");
+    } else if (acuerdosResumen.acuerdos_rotos === 1) {
+      recomendaciones.push("⚠️ 1 broken agreement — credit limit reduced 25%");
+    }
+
+    if (acuerdosResumen.cuotas_vencidas_total > 0) {
+      recomendaciones.push(`🚨 ${acuerdosResumen.cuotas_vencidas_total} overdue installment(s) — collect payment first`);
+    }
+
+    if (acuerdosResumen.proxima_cuota_fecha) {
+      const fecha = new Date(acuerdosResumen.proxima_cuota_fecha).toLocaleDateString("en-US");
+      recomendaciones.push(`📅 Next installment: $${Number(acuerdosResumen.proxima_cuota_monto || 0).toFixed(2)} due ${fecha}`);
+    }
+  }
+
+  // 🆕 Recomendaciones de reglas
+  if (reglasCredito) {
+    for (const adv of reglasCredito.advertencias || []) {
+      if (!recomendaciones.includes(adv)) recomendaciones.push(adv);
+    }
+
+    if (reglasCredito.pagoMinimoTotal > 0) {
+      recomendaciones.push(`💰 Minimum payment required: $${reglasCredito.pagoMinimoTotal.toFixed(2)}`);
+    }
+  }
+
+  // Recomendaciones genéricas
   if (analisisDeudas.totalVencido > 0) {
-    const diasMaxVencido = analisisDeudas.diasMaxVencido;
-    const montoVencido = analisisDeudas.totalVencido;
-    
-    recomendaciones.push(`🚨 DEUDA VENCIDA: ${diasMaxVencido} días - $${montoVencido.toFixed(2)}`);
-    
-    if (diasMaxVencido > 60) {
-      recomendaciones.push("🔴 Gestión de cobro urgente requerida");
-      recomendaciones.push("⚠️ No aprobar nuevas ventas hasta regularizar");
-    } else if (diasMaxVencido > 30) {
-      recomendaciones.push("🟠 Gestión de cobro prioritaria");
-      recomendaciones.push("⚠️ Aprobar con pago inicial obligatorio");
-    } else {
-      recomendaciones.push("🟡 Recordatorio de pago pendiente");
-    }
+    recomendaciones.push(`🚨 Overdue debt: $${analisisDeudas.totalVencido.toFixed(2)} (${analisisDeudas.diasMaxVencido} days)`);
   }
 
-  if (analisisDeudas.deudasCriticas > 0) {
-    recomendaciones.push(`⚠️ ${analisisDeudas.deudasCriticas} deudas críticas detectadas`);
-    recomendaciones.push(`💰 Monto crítico: $${analisisDeudas.montoCritico.toFixed(2)}`);
+  if (nivel === "bajo" && diasRetraso === 0) {
+    recomendaciones.push("✅ Reliable client — approve sale");
   }
 
-  // Sobregiro
-  if (ratio >= 1.0) {
-    const porcentajeSobregiro = ((ratio - 1) * 100).toFixed(0);
-    recomendaciones.push(`🚨 SOBREGIRO: ${porcentajeSobregiro}% sobre límite`);
-    recomendaciones.push("💰 Requiere pago inmediato");
-    recomendaciones.push("⚠️ No aprobar nuevas ventas hasta regularizar");
-  }
-
-  // Comportamiento de pago
-  if (nivel === "bajo") {
-    if (diasRetraso === 0 && analisisDeudas.totalVencido === 0) {
-      recomendaciones.push("✅ Cliente confiable - aprobar venta");
-    }
-    if (patronPago.patron === "puntual") {
-      recomendaciones.push("⭐ Excelente historial de pago");
-    }
-    if (ratio < 0.5) {
-      recomendaciones.push("📊 Uso moderado de crédito");
-    }
-  }
-
-  if (nivel === "medio") {
-    if (diasRetraso > 0 || analisisDeudas.totalVencido > 0) {
-      recomendaciones.push(`⏰ Atrasos detectados - gestionar`);
-    }
-    if (ratio > 0.8) {
-      recomendaciones.push(`📈 Alto uso de crédito (${(ratio * 100).toFixed(0)}%)`);
-    }
-  }
-
-  if (nivel === "alto" || nivel === "critico") {
-    if (diasRetraso > 15 || analisisDeudas.diasMaxVencido > 15) {
-      recomendaciones.push(`🚨 Atrasos significativos - gestión urgente`);
-    }
-    if (patronPago.patron === "problematico") {
-      recomendaciones.push("📉 Patrón de pago problemático");
-    }
-    recomendaciones.push("💰 Solicitar pago antes de aprobar");
-    recomendaciones.push("⚠️ Considerar suspender crédito");
-  }
-
-  // Frecuencia de compra
   if (frecuencia.frecuencia === "muy_baja" && diasInactivo > 60) {
-    recomendaciones.push(`😴 Cliente inactivo (${diasInactivo} días) - campaña de reactivación`);
+    recomendaciones.push(`😴 Inactive ${diasInactivo} days — consider reactivation`);
   }
 
   if (tendenciaConsumo.tendencia === "creciente" && patronPago.patron !== "problematico") {
-    recomendaciones.push("📈 Consumo creciente - buen cliente");
+    recomendaciones.push("📈 Growing consumption — good client");
   }
 
-  if (tendenciaConsumo.tendencia === "decreciente" && patronPago.patron === "puntual") {
-    recomendaciones.push("📉 Consumo decreciente - investigar causas");
-  }
-
-  // ==================== RESULTADO FINAL ====================
   return {
-    score,
-    nivel,
-    emoji,
-    accion,
+    score, nivel, emoji, accion,
     disponible: disponibleDespuesVenta,
     limiteSeguro,
-    ratio,
-    promedioVentas,
-    diasInactivo,
-    patronPago,
-    tendenciaConsumo,
-    frecuencia,
-    analisisDeudas,
+    montoMaximoRecomendadoVenta,
+    ratio, promedioVentas, diasInactivo,
+    diasRetraso,
+    montoVenta,
+    patronPago, tendenciaConsumo, frecuencia, analisisDeudas,
     recomendaciones,
+    // 🆕 Datos de acuerdos
+    acuerdosResumen,
+    reglasCredito,
   };
 }
 
+
+// ========================= RUN CREDIT AGENT (PRINCIPAL) =========================
+
 /**
- * Ejecuta análisis completo
+ * Ejecuta análisis completo incluyendo acuerdos de pago
+ * @param {string} clienteId
+ * @param {number} montoVenta - Total de la venta actual
+ * @param {number} [montoPagadoAhora] - Lo que va a pagar ahora
+ * @returns {Promise<Object>}
  */
-export async function runCreditAgent(clienteId, montoVenta = 0) {
+export async function runCreditAgent(clienteId, montoVenta = 0, montoPagadoAhora = 0) {
   if (!clienteId) {
     return { error: "Cliente requerido" };
   }
 
   try {
+    // 1) Historial
     const historial = await getClientHistory(clienteId);
-    const perfil = await getCreditProfile(clienteId);
 
-    if (!perfil) {
-      return {
-        error: "No se encontró perfil de crédito",
-        score: 75, // Alto para nuevos sin problemas
-        nivel: "bajo",
-        emoji: "🟢",
-        accion: "aprobar",
-        disponible: 0,
-        limiteSeguro: 0,
-        ratio: 0,
-        diasInactivo: 0,
-        recomendaciones: ["Cliente nuevo - establecer historial"],
-      };
+    // 2) Perfil CxC (desde la vista)
+    let saldo = 0, limite = 0, diasRetraso = 0;
+    try {
+      const { data: det } = await supabase
+        .from("v_cxc_cliente_detalle")
+        .select("saldo, limite_politica, credito_disponible")
+        .eq("cliente_id", clienteId)
+        .maybeSingle();
+
+      if (det) {
+        saldo = Number(det.saldo ?? 0);
+        limite = Number(det.limite_politica ?? 0);
+      }
+
+      // Límite manual?
+      const { data: cli } = await supabase
+        .from("clientes")
+        .select("limite_manual")
+        .eq("id", clienteId)
+        .maybeSingle();
+
+      if (cli?.limite_manual != null) {
+        limite = Number(cli.limite_manual);
+      }
+    } catch { /* use defaults */ }
+
+    // 3) 🆕 Acuerdos de pago (si el sistema está disponible)
+    let acuerdosResumen = null;
+    let diasDeuda = 0;
+    let reglasCredito = null;
+
+    const agreementAvailable = await isAgreementSystemAvailable();
+
+    if (agreementAvailable) {
+      // Actualizar vencidas primero
+      await actualizarVencidas(clienteId);
+
+      acuerdosResumen = await getAcuerdosResumen(clienteId);
+      diasDeuda = await getDiasDeudaMasVieja(clienteId);
+
+      // Evaluar reglas de crédito
+      reglasCredito = evaluarReglasCredito({
+        montoVenta,
+        saldoActual: saldo,
+        limiteBase: limite,
+        diasDeuda,
+        acuerdos: acuerdosResumen,
+        montoPagadoAhora,
+        historial: {
+          totalVentas: historial.totalVentas,
+          totalPagos: historial.totalPagos,
+          numVentas: historial.ventas,
+          numPagos: historial.pagos,
+        },
+      });
     }
 
-    const limite = Number(String(perfil.limite).replace(/[^0-9.-]+/g, "")) || 0;
-    const saldo = Number(String(perfil.saldo).replace(/[^0-9.-]+/g, "")) || 0;
-
+    // 4) Scoring
     const resultado = evaluateCredit({
       saldo,
       limite,
-      diasRetraso: perfil.dias_retraso || 0,
+      diasRetraso,
       montoVenta,
-      historialVentas: historial.ventasDetalles || [],
-      historialPagos: historial.pagosDetalles || [],
-      lastSaleDate: historial.lastSaleDate || null,
-      perfil: perfil,
-      deudas: historial.deudas || [],
-      deudasVencidas: historial.deudasVencidas || [],
+      historialVentas: historial.ventasDetalles,
+      historialPagos: historial.pagosDetalles,
+      lastSaleDate: historial.lastSaleDate,
+      deudas: historial.deudas,
+      deudasVencidas: historial.deudasVencidas,
+      acuerdosResumen,
+      reglasCredito,
     });
 
     return resultado;
@@ -837,11 +545,8 @@ export async function runCreditAgent(clienteId, montoVenta = 0) {
     console.error("Error en runCreditAgent:", err);
     return {
       error: err.message,
-      score: 65,
-      nivel: "medio",
-      emoji: "🟡",
-      accion: "aprobar_con_cuidado",
-      recomendaciones: ["Error al evaluar - revisar manualmente"],
+      score: 65, nivel: "medio", emoji: "🟡", accion: "aprobar_con_cuidado",
+      recomendaciones: ["Error evaluating — review manually"],
     };
   }
 }
