@@ -294,7 +294,7 @@ function descargarPDFFactura(factura) {
   doc.line(labelX, finalY, 560, finalY);
   finalY += 10;
 
-  // TOTAL
+   // TOTAL
   doc.setFontSize(12);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(azul);
@@ -302,7 +302,7 @@ function descargarPDFFactura(factura) {
   doc.text(`$${totalFactura.toFixed(2)}`, valueX, finalY, { align: 'right' });
 
   // Balance (Saldo Pendiente)
-  finalY += rowHeight;
+  finalY += 30; // <--- CORRECCIÓN AQUÍ: Aumentado de 20 a 30
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(balance > 0 ? "#D97706" : "#059669"); 
@@ -311,7 +311,8 @@ function descargarPDFFactura(factura) {
   doc.text(`$${balance.toFixed(2)}`, valueX, finalY, { align: 'right' });
 
   // Estado de pago texto abajo
-  finalY += 25;
+  finalY += 25; // Esto sube o baja el estado de pago, está bien así
+  //
   doc.setTextColor(negro);
   doc.setFontSize(10);
   doc.text(`Status: ${pagadoTexto}`, 36, finalY);

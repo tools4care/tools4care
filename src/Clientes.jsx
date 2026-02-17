@@ -2223,12 +2223,83 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [applyCardFee, setApplyCardFee] = useState(false);
   const [cardFeePercentage, setCardFeePercentage] = useState(3);
 
+  // 🆕 CUOTAS PENDIENTES para indicador de cobertura
+  const [cuotasPendientes, setCuotasPendientes] = useState([]);
+
+
   useEffect(() => {
     (async () => {
       const info = await safeGetCxc(cliente.id);
       if (info && setResumen) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
     })();
   }, [cliente.id, setResumen]);
+
+  // 🆕 Cargar cuotas pendientes al abrir
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("cuotas_acuerdo")
+          .select(`
+            id, numero_cuota, monto, monto_pagado, estado, fecha_vencimiento, acuerdo_id,
+            acuerdos_pago!inner ( id, estado, cliente_id, fecha_acuerdo, monto_total )
+          `)
+          .eq("acuerdos_pago.cliente_id", cliente.id)
+          .eq("acuerdos_pago.estado", "activo")
+          .in("estado", ["pendiente", "vencida", "parcial"])
+          .order("fecha_vencimiento", { ascending: true });
+
+        if (alive && data) {
+          const conSaldo = data
+            .filter(c => Math.round((c.monto - c.monto_pagado) * 100) / 100 > 0)
+            .sort((a, b) => {
+              const fa = a.acuerdos_pago?.fecha_acuerdo || "";
+              const fb = b.acuerdos_pago?.fecha_acuerdo || "";
+              if (fa !== fb) return fa.localeCompare(fb);
+              return (a.numero_cuota || 0) - (b.numero_cuota || 0);
+            });
+          setCuotasPendientes(conSaldo);
+        }
+      } catch (err) {
+        console.warn("Error cargando cuotas:", err);
+      }
+    })();
+    return () => { alive = false; };
+  }, [cliente.id]);
+
+  // 🆕 Cálculo en tiempo real: qué cuotas cubre el monto
+  const coberturaCuotas = useMemo(() => {
+    const pago = Math.round((Number(monto) || 0) * 100) / 100;
+    if (pago <= 0 || cuotasPendientes.length === 0) {
+      return { cuotas: [], sobrante: 0, totalPendiente: 0 };
+    }
+
+    let restante = pago;
+    const resultado = [];
+    let totalPendiente = 0;
+
+    for (const cuota of cuotasPendientes) {
+      const pendiente = Math.round((cuota.monto - cuota.monto_pagado) * 100) / 100;
+      totalPendiente += pendiente;
+
+      if (restante <= 0) {
+        resultado.push({ ...cuota, pendiente, aplicado: 0, quedaPendiente: pendiente, status: "sin_cubrir" });
+        continue;
+      }
+
+      const aplicar = Math.min(restante, pendiente);
+      const quedaPendiente = Math.round((pendiente - aplicar) * 100) / 100;
+      restante = Math.round((restante - aplicar) * 100) / 100;
+
+      resultado.push({
+        ...cuota, pendiente, aplicado: aplicar, quedaPendiente,
+        status: quedaPendiente <= 0 ? "pagada" : "parcial",
+      });
+    }
+
+    return { cuotas: resultado, sobrante: Math.max(0, restante), totalPendiente: Math.round(totalPendiente * 100) / 100 };
+  }, [monto, cuotasPendientes]);
 
   const comprasPorMes = {};
   let totalLifetime = 0;
@@ -2588,6 +2659,153 @@ try {
                   />
                 </div>
 
+              
+{/* 🆕 INDICADOR DE COBERTURA DE ACUERDOS */}
+{cuotasPendientes.length > 0 && (
+  <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-4">
+    <div className="flex items-center justify-between mb-3">
+      <h5 className="font-bold text-indigo-900 flex items-center gap-2 text-sm">
+        📋 Payment Agreements
+        <span className="bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full text-xs font-bold">
+          {cuotasPendientes.length} pending
+        </span>
+      </h5>
+      <span className="text-sm font-bold text-indigo-700">
+        Total: ${coberturaCuotas.totalPendiente.toFixed(2)}
+      </span>
+    </div>
+
+    {/* Lista de cuotas */}
+    <div className="space-y-2">
+      {coberturaCuotas.cuotas.map((c, i) => {
+        const vencida = c.estado === "vencida";
+        const fechaStr = c.fecha_vencimiento
+          ? new Date(c.fecha_vencimiento).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+          : "—";
+
+        return (
+          <div
+            key={c.id}
+            className={`flex items-center gap-3 p-2.5 rounded-lg border-2 transition-all ${
+              c.status === "pagada"
+                ? "bg-green-50 border-green-300"
+                : c.status === "parcial"
+                ? "bg-yellow-50 border-yellow-300"
+                : "bg-white border-gray-200 opacity-60"
+            }`}
+          >
+            {/* Icono */}
+            <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${
+              c.status === "pagada" ? "bg-green-500"
+                : c.status === "parcial" ? "bg-yellow-500"
+                : "bg-gray-300"
+            }`}>
+              {c.status === "pagada" ? "✓" : c.status === "parcial" ? "½" : (i + 1)}
+            </div>
+
+            {/* Info */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-bold text-gray-900">
+                  #{c.numero_cuota}
+                </span>
+                {vencida && (
+                  <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded font-bold">
+                    OVERDUE
+                  </span>
+                )}
+                <span className="text-xs text-gray-500">{fechaStr}</span>
+              </div>
+
+              {/* Barra progreso */}
+              {c.status !== "sin_cubrir" && (
+                <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      c.status === "pagada" ? "bg-green-500" : "bg-yellow-500"
+                    }`}
+                    style={{ width: `${Math.min(100, (c.aplicado / c.pendiente) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Monto */}
+            <div className="text-right shrink-0">
+              {c.status === "pagada" ? (
+                <span className="text-sm font-bold text-green-700">${c.pendiente.toFixed(2)} ✅</span>
+              ) : c.status === "parcial" ? (
+                <div>
+                  <span className="text-sm font-bold text-yellow-700">${c.aplicado.toFixed(2)}</span>
+                  <span className="text-xs text-gray-500"> / ${c.pendiente.toFixed(2)}</span>
+                </div>
+              ) : (
+                <span className="text-sm text-gray-400">${c.pendiente.toFixed(2)}</span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+
+    {/* Resumen + sugerencia */}
+    {Number(monto) > 0 && (
+      <div className={`mt-3 p-3 rounded-lg border-2 ${
+        coberturaCuotas.cuotas.every(c => c.status === "pagada")
+          ? "bg-green-100 border-green-400 text-green-900"
+          : coberturaCuotas.cuotas.some(c => c.status !== "sin_cubrir")
+          ? "bg-yellow-100 border-yellow-400 text-yellow-900"
+          : "bg-gray-100 border-gray-300 text-gray-700"
+      }`}>
+        <p className="text-sm font-bold">
+          {(() => {
+            const pagadas = coberturaCuotas.cuotas.filter(c => c.status === "pagada").length;
+            const parciales = coberturaCuotas.cuotas.filter(c => c.status === "parcial").length;
+            const total = cuotasPendientes.length;
+            const montoNum = Number(monto) || 0;
+
+            if (montoNum >= coberturaCuotas.totalPendiente) {
+              return `🎉 Covers ALL ${total} installments! Agreement fully paid.`;
+            }
+            if (pagadas > 0 && parciales > 0) {
+              const parcialC = coberturaCuotas.cuotas.find(c => c.status === "parcial");
+              return `✅ Covers ${pagadas} installment${pagadas > 1 ? "s" : ""} + partial on #${parcialC?.numero_cuota}`;
+            }
+            if (pagadas > 0) {
+              return `✅ Covers ${pagadas} of ${total} installment${total > 1 ? "s" : ""} fully.`;
+            }
+            if (parciales > 0) {
+              const parcialC = coberturaCuotas.cuotas.find(c => c.status === "parcial");
+              return `⚠️ Partial on #${parcialC?.numero_cuota} — $${parcialC?.quedaPendiente.toFixed(2)} still needed`;
+            }
+            return "";
+          })()}
+        </p>
+
+        {/* Botón sugerencia: completar siguiente cuota */}
+        {(() => {
+          const parcial = coberturaCuotas.cuotas.find(c => c.status === "parcial");
+          const sinCubrir = coberturaCuotas.cuotas.find(c => c.status === "sin_cubrir");
+          const siguiente = parcial || sinCubrir;
+          if (!siguiente) return null;
+
+          const faltante = parcial ? parcial.quedaPendiente : siguiente.pendiente;
+          const sugerido = Math.round(((Number(monto) || 0) + faltante) * 100) / 100;
+
+          return (
+            <button
+              type="button"
+              onClick={() => setMonto(String(sugerido))}
+              className="mt-2 text-xs underline font-semibold hover:opacity-80"
+            >
+              💡 Add ${faltante.toFixed(2)} to complete next → ${sugerido.toFixed(2)}
+            </button>
+          );
+        })()}
+      </div>
+    )}
+  </div>
+)}
                 <div>
                   <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Method</label>
                   <div className="flex gap-2">
