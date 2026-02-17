@@ -1,4 +1,3 @@
-// src/Facturas.jsx
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import jsPDF from "jspdf";
@@ -171,6 +170,7 @@ function descargarPDFFactura(factura) {
   const telCliente = formatPhone(factura.cliente_telefono);
   const emailCliente = factura.cliente_email || "-";
 
+  // --- HEADER ---
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
   doc.setTextColor(azul);
@@ -186,6 +186,7 @@ function descargarPDFFactura(factura) {
   doc.setDrawColor(azul);
   doc.line(36, 86, 560, 86);
 
+  // --- INFO FACTURA ---
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
   doc.setTextColor(azul);
@@ -205,54 +206,125 @@ function descargarPDFFactura(factura) {
   doc.text(`Phone: ${telCliente}`, 36, 190);
   doc.text(`Email: ${emailCliente}`, 36, 205);
 
+  // --- TABLA DE PRODUCTOS (Incluyendo CÓDIGO) ---
   doc.setTextColor(azul);
   doc.setFont("helvetica", "bold");
   doc.text("Product/Service Details", 36, 230);
 
-  const body =
-    factura.detalle_ventas && factura.detalle_ventas.length > 0
-      ? factura.detalle_ventas.map((d) => {
-          const nombre = d.productos?.nombre || d.producto_nombre || d.producto_id || "-";
-          const qty = Number(d.cantidad || 1);
-          const unit = Number(
-            d.precio_unitario != null ? d.precio_unitario : d.precio_unit != null ? d.precio_unit : 0
-          );
-          const sub = unit * qty;
-          return [nombre, qty, "$" + unit.toFixed(2), "$" + sub.toFixed(2)];
-        })
-      : [["-", "-", "-", "-"]];
+  let subtotalAcumulado = 0;
+
+  // Generar filas
+  let items = [];
+  
+  if (factura.detalle_ventas && factura.detalle_ventas.length > 0) {
+    items = factura.detalle_ventas.map((d) => {
+      const codigo = d.productos?.codigo || "N/A";
+      const nombre = d.productos?.nombre || d.producto_nombre || d.producto_id || "-";
+      const qty = Number(d.cantidad || 1);
+      const unit = Number(
+        d.precio_unitario != null ? d.precio_unitario : d.precio_unit != null ? d.precio_unit : 0
+      );
+      const sub = unit * qty;
+      subtotalAcumulado += sub;
+      return [codigo, nombre, qty, "$" + unit.toFixed(2), "$" + sub.toFixed(2)];
+    });
+  } else {
+    items = [["-", "No data loaded", "-", "-", "-"]];
+  }
+
+  // Lógica de Totales y Balance
+  const totalFactura = Number(factura.total || subtotalAcumulado);
+  
+  let balance = 0;
+  let pagadoTexto = "Unpaid";
+  
+  if (factura.estado_pago === 'pagado') {
+    balance = 0;
+    pagadoTexto = "Paid";
+  } else if (factura.estado_pago === 'parcial') {
+    balance = totalFactura; 
+    pagadoTexto = "Partial";
+  } else {
+    balance = totalFactura;
+  }
+
+  const taxRate = 0; // Ajustar si aplica impuesto
+  const taxAmount = subtotalAcumulado * taxRate;
 
   autoTable(doc, {
     startY: 240,
-    head: [["Product", "Quantity", "Unit Price", "Subtotal"]],
-    body,
+    head: [["Code", "Product", "Qty", "Unit Price", "Subtotal"]],
+    body: items,
     theme: "grid",
     headStyles: { fillColor: azul, textColor: "#fff", fontStyle: "bold" },
     styles: { fontSize: 10, lineColor: gris, textColor: "#333" },
+    columnStyles: {
+      0: { cellWidth: 50 }, 
+      1: { cellWidth: 'auto' }, 
+      2: { cellWidth: 40, halign: 'center' }, 
+      3: { cellWidth: 60, halign: 'right' }, 
+      4: { cellWidth: 60, halign: 'right' }, 
+    },
     margin: { left: 36, right: 36 },
   });
 
-  let totalY = doc.lastAutoTable.finalY + 25;
-  doc.setFontSize(11);
-  doc.setTextColor(azul);
-  doc.text("Total:", 400, totalY);
-  doc.setTextColor(negro);
-  doc.text("$" + Number(factura.total || 0).toFixed(2), 470, totalY);
-  doc.setFontSize(10);
-  doc.setTextColor("#444");
-  doc.text(
-    `Status: ${factura.estado_pago === "pagado" ? "Paid" : "Pending"}`,
-    36,
-    totalY + 25
-  );
+  // --- RESUMEN FINANCIERO ---
+  let finalY = doc.lastAutoTable.finalY + 20;
+  const labelX = 420;
+  const valueX = 500;
+  const rowHeight = 20;
 
-  let yPie = totalY + 55;
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor("#555");
+  
+  // Subtotal
+  doc.text("Subtotal:", labelX, finalY);
+  doc.text(`$${subtotalAcumulado.toFixed(2)}`, valueX, finalY, { align: 'right' });
+  
+  // Tax
+  finalY += rowHeight;
+  doc.text(`Tax (${(taxRate*100).toFixed(0)}%):`, labelX, finalY);
+  doc.text(`$${taxAmount.toFixed(2)}`, valueX, finalY, { align: 'right' });
+
+  // Separador
+  finalY += 5;
+  doc.setDrawColor("#ccc");
+  doc.setLineWidth(0.5);
+  doc.line(labelX, finalY, 560, finalY);
+  finalY += 10;
+
+  // TOTAL
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(azul);
+  doc.text("Total:", labelX, finalY);
+  doc.text(`$${totalFactura.toFixed(2)}`, valueX, finalY, { align: 'right' });
+
+  // Balance (Saldo Pendiente)
+  finalY += rowHeight;
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(balance > 0 ? "#D97706" : "#059669"); 
+  const balanceText = balance > 0 ? `Balance Due:` : `Status: Paid`;
+  doc.text(balanceText, labelX, finalY);
+  doc.text(`$${balance.toFixed(2)}`, valueX, finalY, { align: 'right' });
+
+  // Estado de pago texto abajo
+  finalY += 25;
+  doc.setTextColor(negro);
+  doc.setFontSize(10);
+  doc.text(`Status: ${pagadoTexto}`, 36, finalY);
+
+  // --- PIE DE PÁGINA ---
+  let yPie = finalY + 40;
   doc.setDrawColor(gris);
   doc.line(36, yPie, 560, yPie);
   doc.setFontSize(8);
   doc.setTextColor("#666");
   doc.text(`Generated by TOOLS4CARE | ${new Date().toLocaleString("en-US")}`, 36, yPie + 15);
-  doc.text("Valid document for US tax purposes. Consult your accountant.", 36, yPie + 30);
+  doc.text("Thank you for your business. Payment is due within 30 days.", 36, yPie + 30);
+  
   doc.save(`Invoice_${factura.numero_factura || factura.id}.pdf`);
 }
 
@@ -264,6 +336,10 @@ export default function Facturas() {
   const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [facturaSeleccionada, setFacturaSeleccionada] = useState(null);
+
+  // Estado para selección múltiple
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [isSelectAll, setIsSelectAll] = useState(false);
 
   // Pagination
   const [pagina, setPagina] = useState(1);
@@ -294,6 +370,12 @@ export default function Facturas() {
     cargarEstadisticas();
     // eslint-disable-next-line
   }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda, periodoStats]);
+
+  // Resetear selección cuando cambian los filtros o pagina
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setIsSelectAll(false);
+  }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda]);
 
   async function cargarEstadisticas() {
     let query = supabase.from("facturas_ext").select("total, estado_pago");
@@ -398,6 +480,63 @@ export default function Facturas() {
     cargarDetalle();
   }, [facturaSeleccionada]);
 
+  // Funciones de Selección
+  const toggleSelection = (id) => {
+    const newSelection = new Set(selectedIds);
+    if (newSelection.has(id)) {
+      newSelection.delete(id);
+    } else {
+      newSelection.add(id);
+    }
+    setSelectedIds(newSelection);
+    setIsSelectAll(newSelection.size === facturas.length && facturas.length > 0);
+  };
+
+  const toggleSelectAll = () => {
+    if (isSelectAll) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(facturas.map(f => f.id)));
+    }
+    setIsSelectAll(!isSelectAll);
+  };
+
+  // Función de Descarga Masiva
+  const handleBulkDownload = async () => {
+    const selectedInvoices = facturas.filter(f => selectedIds.has(f.id));
+    if (selectedInvoices.length === 0) return;
+
+    setLoading(true); 
+    
+    // Procesar una por una para evitar congelar el navegador
+    for (const factura of selectedInvoices) {
+      // Asegurar que tenga detalle antes de imprimir
+      let facturaProcesada = factura;
+      if (!facturaProcesada.detalle_ventas) {
+        const ventaId = facturaProcesada.id;
+        let rows = [];
+        try {
+          const { data } = await supabase
+            .from("detalle_ventas")
+            .select("producto_id,cantidad,precio_unitario, productos(nombre,codigo)")
+            .eq("venta_id", ventaId);
+          rows = data || [];
+        } catch {}
+        if (!rows.length) {
+          try { rows = await fetchDetalleFromVenta(ventaId); } catch {}
+        }
+        facturaProcesada = { ...facturaProcesada, detalle_ventas: normalizeDetalleRows(rows) };
+      }
+      
+      descargarPDFFactura(facturaProcesada);
+      
+      // Pequeña pausa para que el navegador gestione el diálogo de descarga
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    setLoading(false);
+  };
+
   const totalPaginas = Math.ceil(totalVentas / porPagina) || 1;
 
   function limpiarFiltros() {
@@ -415,7 +554,7 @@ export default function Facturas() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6 pb-24">
       <div className="w-full max-w-[1600px] mx-auto space-y-6">
         
         {/* Header Mejorado */}
@@ -576,8 +715,9 @@ export default function Facturas() {
           </div>
         </div>
 
-        {/* Tabla / Cards */}
-        <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
+        
+                {/* Tabla / Cards */}
+        <div className="bg-white rounded-3xl shadow-xl">
           <div className="p-6 border-b border-gray-100">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-800">Invoice List</h2>
@@ -585,6 +725,40 @@ export default function Facturas() {
                 Showing <span className="font-semibold text-gray-800">{facturas.length}</span> of <span className="font-semibold text-gray-800">{totalVentas}</span>
               </div>
             </div>
+                      {/* BARRA DE ACCIONES (Ahora es un banner estático sobre la tabla) */}
+          {selectedIds.size > 0 && (
+            <div className="mx-6 mt-4 mb-4 bg-gray-900 text-white rounded-xl shadow-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-600 p-2 rounded-full shrink-0">
+                  <IconDownload />
+                </div>
+                <div>
+                  <div className="text-xs text-gray-300">Selected</div>
+                  <div className="font-bold text-lg">{selectedIds.size} Invoices</div>
+                </div>
+              </div>
+              
+              <div className="h-8 w-px bg-gray-700 hidden sm:block"></div>
+
+              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                <button 
+                  onClick={handleBulkDownload}
+                  disabled={loading}
+                  className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-xl font-semibold transition-colors disabled:opacity-50 flex-1 sm:flex-none"
+                >
+                  <IconDownload />
+                  <span className="hidden sm:inline">Download All</span>
+                  <span className="sm:hidden">Download</span>
+                </button>
+                <button 
+                  onClick={() => { setSelectedIds(new Set()); setIsSelectAll(false); }}
+                  className="text-gray-400 hover:text-white font-semibold px-3"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           </div>
 
           {loading ? (
@@ -605,6 +779,11 @@ export default function Facturas() {
                 <table className="min-w-full">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="p-4 w-12 text-center">
+                         <label className="cursor-pointer relative flex items-center justify-center">
+                            <input type="checkbox" className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={isSelectAll} onChange={toggleSelectAll} />
+                         </label>
+                      </th>
                       <th className="p-4 text-left">
                         <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
                           <IconInvoice />
@@ -642,9 +821,17 @@ export default function Facturas() {
                     {facturas.map((f) => (
                       <tr
                         key={f.id}
-                        className="hover:bg-blue-50 cursor-pointer transition-all group"
-                        onClick={() => setFacturaSeleccionada(f)}
+                        className={`hover:bg-blue-50 cursor-pointer transition-all group ${selectedIds.has(f.id) ? 'bg-blue-50' : ''}`}
+                        onClick={(e) => {
+                             // Evitar conflicto con click en checkbox
+                            if (e.target.type !== 'checkbox') setFacturaSeleccionada(f);
+                        }}
                       >
+                        <td className="p-4 text-center" onClick={e => e.stopPropagation()}>
+                            <label className="cursor-pointer relative flex items-center justify-center">
+                                <input type="checkbox" className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={selectedIds.has(f.id)} onChange={() => toggleSelection(f.id)} />
+                            </label>
+                        </td>
                         <td className="p-4">
                           <div className="font-mono text-sm font-semibold text-blue-600 group-hover:text-blue-700">
                             {f.numero_factura || f.id?.slice(0, 8)}
@@ -704,34 +891,31 @@ export default function Facturas() {
                 {facturas.map((f) => (
                   <div
                     key={f.id}
-                    className="bg-gradient-to-br from-white to-blue-50 rounded-2xl p-4 border-2 border-blue-100 hover:border-blue-300 hover:shadow-lg cursor-pointer transition-all"
+                    className={`bg-gradient-to-br from-white to-blue-50 rounded-2xl p-4 border-2 ${selectedIds.has(f.id) ? 'border-blue-500 bg-blue-50' : 'border-blue-100'} hover:border-blue-300 hover:shadow-lg cursor-pointer transition-all relative`}
                     onClick={() => setFacturaSeleccionada(f)}
                   >
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex-1">
-                        <div className="font-mono text-sm font-bold text-blue-600 mb-1">
-                          #{f.numero_factura || f.id?.slice(0, 8)}
-                        </div>
-                        <div className="font-semibold text-gray-900 mb-1">{f.cliente_nombre_c || "-"}</div>
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <IconCalendar />
-                          {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : "-"}
-                        </div>
+                    {/* Checkbox Móvil */}
+                    <div 
+                        className="absolute top-4 right-4"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <label className="cursor-pointer relative flex items-center justify-center">
+                            <input type="checkbox" className="w-6 h-6 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={selectedIds.has(f.id)} onChange={() => toggleSelection(f.id)} />
+                        </label>
+                    </div>
+
+                    <div className="flex-1 pr-8">
+                      <div className="font-mono text-sm font-bold text-blue-600 mb-1">
+                        #{f.numero_factura || f.id?.slice(0, 8)}
                       </div>
-                      <span
-                        className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold ${
-                          f.estado_pago === "pagado"
-                            ? "bg-green-500 text-white"
-                            : f.estado_pago === "parcial"
-                            ? "bg-blue-500 text-white"
-                            : "bg-amber-500 text-white"
-                        }`}
-                      >
-                        {f.estado_pago === "pagado" ? <IconCheck /> : <IconClock />}
-                      </span>
+                      <div className="font-semibold text-gray-900 mb-1">{f.cliente_nombre_c || "-"}</div>
+                      <div className="flex items-center gap-2 text-xs text-gray-500">
+                        <IconCalendar />
+                        {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : "-"}
+                      </div>
                     </div>
                     
-                    <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl p-3">
+                    <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl p-3 mt-3">
                       <div className="flex items-center gap-2">
                         <IconDollar />
                         <span className="font-semibold">Total</span>
@@ -779,166 +963,169 @@ export default function Facturas() {
             </div>
           </div>
         )}
+      </div>
 
-        {/* Modal Detalle Mejorado */}
-        {facturaSeleccionada && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <IconInvoice />
-                  <h3 className="font-bold text-xl">Invoice Details</h3>
+
+
+      {/* Modal Detalle Mejorado */}
+      {facturaSeleccionada && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <IconInvoice />
+                <h3 className="font-bold text-xl">Invoice Details</h3>
+              </div>
+              <button
+                className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
+                onClick={() => setFacturaSeleccionada(null)}
+              >
+                ✖
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Info Principal en Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
+                  <div className="text-xs text-blue-600 font-semibold uppercase mb-1">Invoice Number</div>
+                  <div className="font-mono text-lg font-bold text-gray-800">{facturaSeleccionada.numero_factura || facturaSeleccionada.id?.slice(0, 12)}</div>
                 </div>
-                <button
-                  className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
-                  onClick={() => setFacturaSeleccionada(null)}
-                >
-                  ✖
-                </button>
+                <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-200">
+                  <div className="text-xs text-purple-600 font-semibold uppercase mb-1">Date</div>
+                  <div className="font-semibold text-gray-800">
+                    {facturaSeleccionada.fecha ? new Date(facturaSeleccionada.fecha).toLocaleDateString("en-US", {
+                      day: '2-digit',
+                      month: 'long',
+                      year: 'numeric'
+                    }) : "-"}
+                  </div>
+                </div>
               </div>
 
-              <div className="p-6 space-y-4 overflow-y-auto flex-1">
-                {/* Info Principal en Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
-                    <div className="text-xs text-blue-600 font-semibold uppercase mb-1">Invoice Number</div>
-                    <div className="font-mono text-lg font-bold text-gray-800">{facturaSeleccionada.numero_factura || facturaSeleccionada.id?.slice(0, 12)}</div>
-                  </div>
-                  <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-200">
-                    <div className="text-xs text-purple-600 font-semibold uppercase mb-1">Date</div>
-                    <div className="font-semibold text-gray-800">
-                      {facturaSeleccionada.fecha ? new Date(facturaSeleccionada.fecha).toLocaleDateString("en-US", {
-                        day: '2-digit',
-                        month: 'long',
-                        year: 'numeric'
-                      }) : "-"}
+              {/* Cliente */}
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5 border border-green-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <IconUser />
+                  <h4 className="font-bold text-gray-800">Client Information</h4>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div><span className="font-semibold">Name:</span> {facturaSeleccionada.cliente_nombre_c || "-"}</div>
+                  <div><span className="font-semibold">Address:</span> {formatAddress(facturaSeleccionada.cliente_direccion)}</div>
+                  <div><span className="font-semibold">Phone:</span> {formatPhone(facturaSeleccionada.cliente_telefono)}</div>
+                  <div><span className="font-semibold">Email:</span> {facturaSeleccionada.cliente_email || "-"}</div>
+                </div>
+              </div>
+
+              {/* Total y Estado */}
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <IconDollar />
+                      <div className="text-sm font-semibold opacity-90">Invoice Total</div>
+                    </div>
+                    <div className="text-5xl font-bold">
+                      ${Number(facturaSeleccionada.total || 0).toFixed(2)}
                     </div>
                   </div>
-                </div>
-
-                {/* Cliente */}
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5 border border-green-200">
-                  <div className="flex items-center gap-2 mb-3">
-                    <IconUser />
-                    <h4 className="font-bold text-gray-800">Client Information</h4>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div><span className="font-semibold">Name:</span> {facturaSeleccionada.cliente_nombre_c || "-"}</div>
-                    <div><span className="font-semibold">Address:</span> {formatAddress(facturaSeleccionada.cliente_direccion)}</div>
-                    <div><span className="font-semibold">Phone:</span> {formatPhone(facturaSeleccionada.cliente_telefono)}</div>
-                    <div><span className="font-semibold">Email:</span> {facturaSeleccionada.cliente_email || "-"}</div>
-                  </div>
-                </div>
-
-                {/* Total y Estado */}
-                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <IconDollar />
-                        <div className="text-sm font-semibold opacity-90">Invoice Total</div>
-                      </div>
-                      <div className="text-5xl font-bold">
-                        ${Number(facturaSeleccionada.total || 0).toFixed(2)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold opacity-90 mb-2">Payment Status</div>
-                      <span
-                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-base font-bold ${
-                          facturaSeleccionada.estado_pago === "pagado"
-                            ? "bg-green-500"
-                            : facturaSeleccionada.estado_pago === "parcial"
-                            ? "bg-blue-400"
-                            : "bg-amber-500"
-                        }`}
-                      >
-                        {facturaSeleccionada.estado_pago === "pagado" ? (
-                          <>
-                            <IconCheck />
-                            Paid
-                          </>
-                        ) : facturaSeleccionada.estado_pago === "parcial" ? (
-                          "◐ Partial"
-                        ) : (
-                          <>
-                            <IconClock />
-                            Pending
-                          </>
-                        )}
-                      </span>
-                      {facturaSeleccionada.nombre_van && (
-                        <div className="mt-3 flex items-center gap-2 opacity-90">
-                          <IconTruck />
-                          <span className="text-sm">{facturaSeleccionada.nombre_van}</span>
-                        </div>
+                  <div>
+                    <div className="text-sm font-semibold opacity-90 mb-2">Payment Status</div>
+                    <span
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-base font-bold ${
+                        facturaSeleccionada.estado_pago === "pagado"
+                          ? "bg-green-500"
+                          : facturaSeleccionada.estado_pago === "parcial"
+                          ? "bg-blue-400"
+                          : "bg-amber-500"
+                      }`}
+                    >
+                      {facturaSeleccionada.estado_pago === "pagado" ? (
+                        <>
+                          <IconCheck />
+                          Paid
+                        </>
+                      ) : facturaSeleccionada.estado_pago === "parcial" ? (
+                        "◐ Partial"
+                      ) : (
+                        <>
+                          <IconClock />
+                          Pending
+                        </>
                       )}
-                    </div>
+                    </span>
+                    {facturaSeleccionada.nombre_van && (
+                      <div className="mt-3 flex items-center gap-2 opacity-90">
+                        <IconTruck />
+                        <span className="text-sm">{facturaSeleccionada.nombre_van}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
+              </div>
 
-                {/* Productos */}
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex items-center gap-2 mb-4">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                    </svg>
-                    <h4 className="font-bold text-gray-800">Products</h4>
-                  </div>
-                  {!facturaSeleccionada.detalle_ventas ? (
-                    <div className="text-blue-600 text-sm py-4">Loading products...</div>
-                  ) : (facturaSeleccionada.detalle_ventas || []).length === 0 ? (
-                    <div className="text-gray-400 text-sm py-4">No products</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {(facturaSeleccionada.detalle_ventas || []).map((item, idx) => {
-                        const unit = Number(item.precio_unitario != null ? item.precio_unitario : item.precio_unit || 0);
-                        const subtotal = unit * Number(item.cantidad || 1);
-                        return (
-                          <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <div className="font-semibold text-gray-900">
-                                  {item.productos?.nombre || item.producto_nombre || item.producto_id || "-"}
-                                </div>
-                                <div className="text-xs text-gray-500 mt-1">
-                                  Quantity: <span className="font-semibold">{item.cantidad || 1}</span> × ${unit.toFixed(2)}
-                                </div>
+              {/* Productos */}
+              <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                  <h4 className="font-bold text-gray-800">Products</h4>
+                </div>
+                {!facturaSeleccionada.detalle_ventas ? (
+                  <div className="text-blue-600 text-sm py-4">Loading products...</div>
+                ) : (facturaSeleccionada.detalle_ventas || []).length === 0 ? (
+                  <div className="text-gray-400 text-sm py-4">No products</div>
+                ) : (
+                  <div className="space-y-2">
+                    {(facturaSeleccionada.detalle_ventas || []).map((item, idx) => {
+                      const unit = Number(item.precio_unitario != null ? item.precio_unitario : item.precio_unit || 0);
+                      const subtotal = unit * Number(item.cantidad || 1);
+                      return (
+                        <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                              <div className="font-semibold text-gray-900">
+                                {item.productos?.nombre || item.producto_nombre || item.producto_id || "-"}
                               </div>
-                              <div className="text-right">
-                                <div className="text-xs text-gray-500">Subtotal</div>
-                                <div className="font-bold text-lg text-gray-900">${subtotal.toFixed(2)}</div>
+                              <div className="text-xs text-gray-500 mt-1">
+                                Code: {item.productos?.codigo || 'N/A'} <br/>
+                                Quantity: <span className="font-semibold">{item.cantidad || 1}</span> × ${unit.toFixed(2)}
                               </div>
                             </div>
+                            <div className="text-right">
+                              <div className="text-xs text-gray-500">Subtotal</div>
+                              <div className="font-bold text-lg text-gray-900">${subtotal.toFixed(2)}</div>
+                            </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Footer con botones */}
-              <div className="p-6 pt-0 space-y-3 border-t">
-                <button
-                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => descargarPDFFactura(facturaSeleccionada)}
-                  disabled={!facturaSeleccionada.detalle_ventas}
-                >
-                  <IconDownload />
-                  Download PDF
-                </button>
-                <button
-                  className="w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-semibold py-3 px-4 rounded-xl transition-all"
-                  onClick={() => setFacturaSeleccionada(null)}
-                >
-                  Close
-                </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Footer con botones */}
+            <div className="p-6 pt-0 space-y-3 border-t">
+              <button
+                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => descargarPDFFactura(facturaSeleccionada)}
+                disabled={!facturaSeleccionada.detalle_ventas}
+              >
+                <IconDownload />
+                Download PDF
+              </button>
+              <button
+                className="w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-semibold py-3 px-4 rounded-xl transition-all"
+                onClick={() => setFacturaSeleccionada(null)}
+              >
+                Close
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
