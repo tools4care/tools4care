@@ -21,11 +21,12 @@ export default function PaymentAgreementsPanel({ clienteId, clienteName, onRefre
     if (!clienteId) return;
     setLoading(true);
     try {
-      const { data: acData } = await supabase
-        .from("acuerdos_pago")
-        .select("*")
-        .eq("cliente_id", clienteId)
-        .order("fecha_acuerdo", { ascending: true });
+     const { data: acData } = await supabase
+  .from("acuerdos_pago")
+  .select("*")
+  .eq("cliente_id", clienteId)
+  .neq("estado", "cancelado")  // ✅ Excluir cancelados
+  .order("fecha_acuerdo", { ascending: true });
 
       const ids = (acData || []).map((a) => a.id);
       let cuData = [];
