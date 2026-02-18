@@ -3004,7 +3004,17 @@ if (selectedClient?.id) {
         await requestAndSendNotifications({ client: selectedClient, payload });
       }
 
-      // ✅ Limpiar venta pendiente si existía
+           // ✅ Limpiar venta pendiente de la NUBE si existía
+      if (currentCloudPendingId) {
+        try {
+          await completePendingSale(currentCloudPendingId, ventaId);
+          console.log(`✅ Venta pendiente cloud ${currentCloudPendingId} → completada`);
+        } catch (e) {
+          console.warn('⚠️ Error completando pending sale en cloud:', e.message);
+        }
+      }
+
+      // ✅ Limpiar venta pendiente de localStorage (legacy)
       if (currentPendingId) {
         const updated = removePendingFromLSById(currentPendingId);
         setPendingSales(updated);
