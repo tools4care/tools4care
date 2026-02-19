@@ -2268,20 +2268,23 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
     return () => { alive = false; };
   }, [cliente.id]);
 
-  // 🆕 Cálculo en tiempo real: qué cuotas cubre el monto
-  const coberturaCuotas = useMemo(() => {
+const coberturaCuotas = useMemo(() => {
     const pago = Math.round((Number(monto) || 0) * 100) / 100;
+
+    // Siempre calcular el total pendiente real
+    const totalPendiente = cuotasPendientes.reduce(
+      (s, c) => s + Math.round((c.monto - c.monto_pagado) * 100) / 100, 0
+    );
+
     if (pago <= 0 || cuotasPendientes.length === 0) {
-      return { cuotas: [], sobrante: 0, totalPendiente: 0 };
+      return { cuotas: [], sobrante: 0, totalPendiente };
     }
 
-    let restante = pago;
+let restante = pago;
     const resultado = [];
-    let totalPendiente = 0;
 
     for (const cuota of cuotasPendientes) {
       const pendiente = Math.round((cuota.monto - cuota.monto_pagado) * 100) / 100;
-      totalPendiente += pendiente;
 
       if (restante <= 0) {
         resultado.push({ ...cuota, pendiente, aplicado: 0, quedaPendiente: pendiente, status: "sin_cubrir" });
@@ -2675,56 +2678,61 @@ try {
       </span>
     </div>
 
-    {/* Lista de cuotas */}
+{/* Lista de cuotas — SIEMPRE VISIBLE */}
     <div className="space-y-2">
-      {coberturaCuotas.cuotas.map((c, i) => {
-        const vencida = c.estado === "vencida";
-        const fechaStr = c.fecha_vencimiento
-          ? new Date(c.fecha_vencimiento).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      {cuotasPendientes.map((cuota, i) => {
+        // Buscar cobertura solo si hay monto ingresado
+        const cobertura = Number(monto) > 0
+          ? coberturaCuotas.cuotas.find(c => c.id === cuota.id)
+          : null;
+
+        const pendiente = Math.round((cuota.monto - cuota.monto_pagado) * 100) / 100;
+        const vencida = cuota.estado === "vencida";
+        const fechaStr = cuota.fecha_vencimiento
+          ? new Date(cuota.fecha_vencimiento).toLocaleDateString("en-US", { month: "short", day: "numeric" })
           : "—";
+        const status = cobertura?.status || "neutral";
 
         return (
           <div
-            key={c.id}
+            key={cuota.id}
             className={`flex items-center gap-3 p-2.5 rounded-lg border-2 transition-all ${
-              c.status === "pagada"
+              status === "pagada"
                 ? "bg-green-50 border-green-300"
-                : c.status === "parcial"
+                : status === "parcial"
                 ? "bg-yellow-50 border-yellow-300"
-                : "bg-white border-gray-200 opacity-60"
+                : vencida
+                ? "bg-red-50 border-red-200"
+                : "bg-white border-gray-200"
             }`}
           >
             {/* Icono */}
             <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${
-              c.status === "pagada" ? "bg-green-500"
-                : c.status === "parcial" ? "bg-yellow-500"
-                : "bg-gray-300"
+              status === "pagada" ? "bg-green-500"
+                : status === "parcial" ? "bg-yellow-500"
+                : vencida ? "bg-red-400"
+                : "bg-indigo-400"
             }`}>
-              {c.status === "pagada" ? "✓" : c.status === "parcial" ? "½" : (i + 1)}
+              {status === "pagada" ? "✓" : status === "parcial" ? "½" : (i + 1)}
             </div>
 
             {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-bold text-gray-900">
-                  #{c.numero_cuota}
-                </span>
+                <span className="text-sm font-bold text-gray-900">#{cuota.numero_cuota}</span>
                 {vencida && (
-                  <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded font-bold">
-                    OVERDUE
-                  </span>
+                  <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded font-bold">OVERDUE</span>
                 )}
                 <span className="text-xs text-gray-500">{fechaStr}</span>
               </div>
-
-              {/* Barra progreso */}
-              {c.status !== "sin_cubrir" && (
+              {/* Barra progreso — solo si hay cobertura calculada */}
+              {cobertura && status !== "sin_cubrir" && (
                 <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-300 ${
-                      c.status === "pagada" ? "bg-green-500" : "bg-yellow-500"
+                      status === "pagada" ? "bg-green-500" : "bg-yellow-500"
                     }`}
-                    style={{ width: `${Math.min(100, (c.aplicado / c.pendiente) * 100)}%` }}
+                    style={{ width: `${Math.min(100, (cobertura.aplicado / pendiente) * 100)}%` }}
                   />
                 </div>
               )}
@@ -2732,21 +2740,30 @@ try {
 
             {/* Monto */}
             <div className="text-right shrink-0">
-              {c.status === "pagada" ? (
-                <span className="text-sm font-bold text-green-700">${c.pendiente.toFixed(2)} ✅</span>
-              ) : c.status === "parcial" ? (
+              {status === "pagada" ? (
+                <span className="text-sm font-bold text-green-700">${pendiente.toFixed(2)} ✅</span>
+              ) : status === "parcial" ? (
                 <div>
-                  <span className="text-sm font-bold text-yellow-700">${c.aplicado.toFixed(2)}</span>
-                  <span className="text-xs text-gray-500"> / ${c.pendiente.toFixed(2)}</span>
+                  <span className="text-sm font-bold text-yellow-700">${cobertura.aplicado.toFixed(2)}</span>
+                  <span className="text-xs text-gray-500"> / ${pendiente.toFixed(2)}</span>
                 </div>
               ) : (
-                <span className="text-sm text-gray-400">${c.pendiente.toFixed(2)}</span>
+                <span className={`text-sm font-semibold ${vencida ? "text-red-600" : "text-gray-700"}`}>
+                  ${pendiente.toFixed(2)}
+                </span>
               )}
             </div>
           </div>
         );
       })}
     </div>
+
+    {/* Hint cuando no hay monto ingresado */}
+    {Number(monto) === 0 && (
+      <div className="mt-3 text-center text-xs text-indigo-500 font-semibold py-2 border-t border-indigo-100">
+        💡 Enter an amount above to see payment coverage
+      </div>
+    )}
 
     {/* Resumen + sugerencia */}
     {Number(monto) > 0 && (
