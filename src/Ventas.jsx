@@ -18,7 +18,7 @@ import AgreementModal from "./components/AgreementModal";
 import PaymentAgreementsPanel from "./components/PaymentAgreementsPanel";
 import CreditRiskPanel from "./components/CreditRiskPanel";
 
-
+import ClientPaymentView from "./components/ClientPaymentView";
 
 
 // 🆕 MODO OFFLINE - Agregar estas 3 líneas
@@ -42,6 +42,16 @@ const PAYMENT_METHODS = [
 
 const STORAGE_KEY = "pending_sales";
 const SECRET_CODE = "#ajuste2025";
+
+// ============ CRÉDITO ROTATIVO — PAGO MÍNIMO ============
+const PAGO_MINIMO_PCT   = 0.20;   // 20% del balance anterior
+const PAGO_MINIMO_FIJO  = 30.00;  // o $30, lo que sea MAYOR
+const PAGO_MINIMO_SKIP_SI_BALANCE_MENOR_A = 10; // si debe menos de $10, no exigir mínimo
+
+function calcularPagoMinimo(balanceAnterior) {
+  if (!balanceAnterior || balanceAnterior < PAGO_MINIMO_SKIP_SI_BALANCE_MENOR_A) return 0;
+  return Number(Math.max(balanceAnterior * PAGO_MINIMO_PCT, PAGO_MINIMO_FIJO).toFixed(2));
+}
 
 const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4CareMovil";
 const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
@@ -540,8 +550,9 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
 
     if (agreementSystemReady) {
       await actualizarVencidas(clienteId);
-      acuerdos = await getAcuerdosResumen(clienteId);
-      setAcuerdosResumen(acuerdos);
+     acuerdos = await getAcuerdosResumen(clienteId);
+console.log('🔍 acuerdosResumen:', JSON.stringify(acuerdos, null, 2));
+setAcuerdosResumen(acuerdos);
 
       const diasDeuda = await getDiasDeudaMasVieja(clienteId);
       const montoPagando = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
@@ -1732,9 +1743,15 @@ useEffect(() => {
   const oldDebt = balanceBefore;
   const totalAPagar = oldDebt + saleTotal;
 
-  const paidForSale = Math.min(paid, saleTotal);
-  const paidToOldDebt = Math.min(oldDebt, Math.max(0, paid - paidForSale));
-  const paidApplied = paidForSale + paidToOldDebt;
+// ✅ FIFO: primero se paga la deuda vieja, luego la venta nueva
+const paidToOldDebt   = Math.min(paid, oldDebt);
+const paidForSale     = Math.min(saleTotal, Math.max(0, paid - paidToOldDebt));
+const paidApplied     = paidToOldDebt + paidForSale;
+
+// ✅ Pago mínimo requerido esta visita
+const pagoMinimo        = calcularPagoMinimo(oldDebt);
+const cubrioMinimo      = pagoMinimo === 0 || paid >= pagoMinimo;
+const faltaParaMinimo   = Math.max(0, pagoMinimo - paid);
 
   const change = Math.max(0, paid - totalAPagar);
   const mostrarAdvertencia = paid > totalAPagar;
@@ -2556,16 +2573,22 @@ async function handleDeletePendingSale(id) {
      // Si hay crédito y el modal de acuerdo no se ha confirmado aún, mostrarlo
     const amountToCreditCheck = saleTotal - payments.reduce((s, p) => s + Number(p.monto || 0), 0);
     
-    if (amountToCreditCheck > 0.01 && agreementSystemReady && !pendingAgreementData) {
-      setPendingAgreementData({
-        montoCredito: Number(amountToCreditCheck.toFixed(2)),
-        saldoActual: creditProfile?.saldo || 0,
-        clientName: selectedClient?.nombre || '',
-        waiting: true,
-      });
-      setSaving(false);
-      return; // No continuar — el modal llamará a saveSale de nuevo
-    }
+   // Solo mostrar modal de acuerdo si:
+// 1. Hay crédito significativo (> $20)
+// 2. El sistema está disponible
+// 3. No se ha respondido ya
+const esCreditoSignificativo = amountToCreditCheck > 20;
+
+if (esCreditoSignificativo && agreementSystemReady && !pendingAgreementData) {
+  setPendingAgreementData({
+    montoCredito: Number(amountToCreditCheck.toFixed(2)),
+    saldoActual: creditProfile?.saldo || 0,
+    clientName: selectedClient?.nombre || '',
+    waiting: true,
+  });
+  setSaving(false);
+  return;
+}
    
 
      // 🆕 Generar transaction_id único para esta transacción física
@@ -2675,14 +2698,26 @@ if (selectedClient?.id) {
         if (!ok) return;
       }
 
-      const existingCreditNow = Math.max(0, -balanceBefore);
-      const oldDebtNow = Math.max(0, balanceBefore);
-      const saleAfterCreditNow = Math.max(0, saleTotal - existingCreditNow);
-      const totalAPagarNow = oldDebtNow + saleAfterCreditNow;
+      // ✅ FIFO dentro de saveSale
+const oldDebtNow         = Math.max(0, balanceBefore);
+const payOldDebtNow      = Math.min(paid, oldDebtNow);          // viejo primero
+const paidForSaleNow     = Math.min(saleTotal, Math.max(0, paid - payOldDebtNow)); // luego nuevo
+const totalAPagarNow     = oldDebtNow + saleTotal;
+const changeNow          = Math.max(0, paid - totalAPagarNow);
 
-      const paidForSaleNow = Math.min(paid, saleAfterCreditNow);
-      const payOldDebtNow = Math.min(oldDebtNow, Math.max(0, paid - paidForSaleNow));
-      const changeNow = Math.max(0, paid - totalAPagarNow);
+// ✅ Validar pago mínimo antes de guardar
+const pagoMinimoReq = calcularPagoMinimo(oldDebtNow);
+if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
+  const ok = window.confirm(
+    `⚠️ Pago Mínimo Requerido\n\n` +
+    `Balance anterior: ${fmt(oldDebtNow)}\n` +
+    `Pago mínimo (20%): ${fmt(pagoMinimoReq)}\n` +
+    `Cliente paga hoy: ${fmt(paid)}\n` +
+    `Faltan: ${fmt(pagoMinimoReq - paid)}\n\n` +
+    `¿Autorizar excepción y continuar?`
+  );
+  if (!ok) { setSaving(false); return; }
+}
 
       const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
 
@@ -2947,7 +2982,7 @@ if (selectedClient?.id) {
         availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
       };
 // 🆕 CREAR ACUERDO DE PAGO si hay crédito
-      if (pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady) {
+     if (pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady && !pendingAgreementData?.skipped) {
         try {
           // Usar el plan que el vendedor seleccionó en el modal
           const cuotasSeleccionadas = pendingAgreementData?.plan?.num_cuotas || null;
@@ -4292,6 +4327,67 @@ function renderStepPayment() {
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
+{/* ===== RESUMEN FIFO ===== */}
+{(oldDebt > 0 || amountToCredit > 0) && (
+  <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
+    <div className="text-xs font-bold text-gray-500 uppercase mb-3">
+      💡 Cómo se aplica el pago
+    </div>
+    <div className="space-y-2">
+      {oldDebt > 0 && (
+        <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <div className="text-sm text-red-700">
+            <span className="font-bold">1️⃣ Deuda anterior</span>
+            <span className="text-xs ml-2">({fmt(oldDebt)})</span>
+          </div>
+          <div className="font-bold text-red-800">{fmt(paidToOldDebt)} aplicado</div>
+        </div>
+      )}
+      <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+        <div className="text-sm text-blue-700">
+          <span className="font-bold">{oldDebt > 0 ? '2️⃣' : '1️⃣'} Venta de hoy</span>
+          <span className="text-xs ml-2">({fmt(saleTotal)})</span>
+        </div>
+        <div className="font-bold text-blue-800">{fmt(paidForSale)} aplicado</div>
+      </div>
+      <div className="flex items-center justify-between bg-gray-50 border-2 border-gray-300 rounded-lg px-3 py-2">
+        <div className="text-sm font-bold text-gray-700">📊 Queda a crédito (A/R)</div>
+        <div className={`font-bold text-lg ${amountToCredit > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+          {fmt(amountToCredit)}
+        </div>
+      </div>
+      {change > 0 && (
+        <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+          <div className="text-sm text-green-700 font-bold">💵 Cambio a devolver</div>
+          <div className="font-bold text-green-800">{fmt(change)}</div>
+        </div>
+      )}
+    </div>
+  </div>
+)}
+
+{/* ===== ALERTA PAGO MÍNIMO ===== */}
+{oldDebt > 0 && pagoMinimo > 0 && (
+  <div className={`rounded-xl border-2 p-4 ${cubrioMinimo ? 'bg-green-50 border-green-300' : 'bg-amber-50 border-amber-400'}`}>
+    <div className="flex items-center justify-between">
+      <div>
+        <div className={`font-bold ${cubrioMinimo ? 'text-green-800' : 'text-amber-800'}`}>
+          {cubrioMinimo ? '✅ Pago mínimo cubierto' : '⚠️ Pago mínimo no cubierto'}
+        </div>
+        <div className="text-sm text-gray-600 mt-1">
+          Balance anterior: <b>{fmt(oldDebt)}</b> · Mínimo (20%): <b>{fmt(pagoMinimo)}</b>
+        </div>
+      </div>
+      {!cubrioMinimo && (
+        <div className="text-right">
+          <div className="text-xs text-amber-700">Faltan</div>
+          <div className="text-xl font-bold text-amber-800">{fmt(faltaParaMinimo)}</div>
+        </div>
+      )}
+    </div>
+  </div>
+)}
+
 
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-center">
@@ -4538,10 +4634,15 @@ function renderStepPayment() {
 
       {/* Payment Agreements - Acuerdos de pago del cliente */}
 {selectedClient?.id && (
-  <PaymentAgreementsPanel
+  <ClientPaymentView 
+    compact
     clienteId={selectedClient.id}
-    clienteName={selectedClient?.nombre}
-    onRefresh={() => runCreditAgent(selectedClient.id, saleTotal)}
+    clienteName={`${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim()}
+    balanceActual={balanceBefore}
+    ventaHoy={saleTotal}
+    montoAPagar={paid}
+    pagoMinimo={pagoMinimo}
+    acuerdosData={acuerdosResumen}
   />
 )}
 
@@ -4650,17 +4751,18 @@ function renderStepPayment() {
               setPendingAgreementData(null);
               setSaving(false);
             }}
-            onConfirm={(result) => {
-              setPendingAgreementData({
-                ...pendingAgreementData,
-                waiting: false,
-                plan: result.plan,
-                numCuotas: result.numCuotas,
-                isException: result.isException,
-                exceptionNote: result.exceptionNote,
-              });
-              setTimeout(() => saveSale(), 100);
-            }}
+         onConfirm={(result) => {
+  setPendingAgreementData({
+    ...pendingAgreementData,
+    waiting: false,
+    plan: result.plan,
+    numCuotas: result.numCuotas,
+    isException: result.isException,
+    exceptionNote: result.exceptionNote,
+    skipped: result.skipped || false, // 🆕
+  });
+  setTimeout(() => saveSale(), 100);
+}}
             montoCredito={pendingAgreementData?.montoCredito || 0}
             clientName={pendingAgreementData?.clientName || ''}
             saldoActual={pendingAgreementData?.saldoActual || 0}

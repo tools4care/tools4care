@@ -199,6 +199,18 @@ export default function AgreementModal({
             Cancel
           </button>
           <button
+  onClick={() => onConfirm({ 
+    plan: null, 
+    numCuotas: null, 
+    isException: false, 
+    exceptionNote: null,
+    skipped: true
+  })}
+  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-lg font-semibold transition-colors"
+>
+  ⏭️ Sin acuerdo
+</button>
+          <button
             onClick={handleConfirm}
             disabled={!canConfirm}
             className={`flex-1 py-3 rounded-xl font-bold text-white transition-all ${
