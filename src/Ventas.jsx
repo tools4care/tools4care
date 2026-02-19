@@ -2719,7 +2719,7 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
   if (!ok) { setSaving(false); return; }
 }
 
-      const pendingFromThisSale = Math.max(0, saleAfterCreditNow - paidForSaleNow);
+      const pendingFromThisSale = Math.max(0, saleTotal - paidForSaleNow);
 
       const estadoPago =
         pendingFromThisSale === 0 ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente";
