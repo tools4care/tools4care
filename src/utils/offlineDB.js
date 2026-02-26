@@ -8,6 +8,14 @@ localforage.config({
   description: 'Almacenamiento offline para ventas'
 });
 
+// Tiempo máximo de cache antes de refrescar (en ms)
+const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
+
+function cacheEsValido(timestamp) {
+  if (!timestamp) return false;
+  return (Date.now() - new Date(timestamp).getTime()) < CACHE_TTL_MS;
+}
+
 // ==================== VENTAS PENDIENTES ====================
 
 export async function guardarVentaOffline(venta) {
@@ -79,6 +87,7 @@ export async function guardarClientesCache(clientes) {
       data: clientes,
       timestamp: new Date().toISOString()
     });
+    console.log(`✅ ${clientes.length} clientes guardados en cache`);
   } catch (error) {
     console.error('Error guardando clientes en cache:', error);
   }
@@ -93,6 +102,25 @@ export async function obtenerClientesCache() {
     return [];
   }
 }
+
+export async function clientesCacheEsValido() {
+  try {
+    const cache = await localforage.getItem('cache_clientes');
+    return cache?.timestamp ? cacheEsValido(cache.timestamp) : false;
+  } catch {
+    return false;
+  }
+}
+
+export async function obtenerFechaCacheClientes() {
+  try {
+    const cache = await localforage.getItem('cache_clientes');
+    return cache?.timestamp || null;
+  } catch {
+    return null;
+  }
+}
+
 // ==================== CACHE DE INVENTARIO (para ventas offline) ====================
 
 export async function guardarInventarioVan(vanId, productos) {
@@ -102,7 +130,7 @@ export async function guardarInventarioVan(vanId, productos) {
       timestamp: new Date().toISOString(),
       vanId
     });
-    console.log(`✅ Inventario de van ${vanId} guardado en caché`);
+    console.log(`✅ Inventario de van ${vanId} guardado en caché (${productos.length} productos)`);
   } catch (error) {
     console.error('Error guardando inventario de van:', error);
   }
@@ -143,6 +171,67 @@ export async function obtenerTopProductos(vanId) {
     return [];
   }
 }
+
+// ==================== BACKUP LOCAL DE BD ====================
+
+/**
+ * Guarda un snapshot de los datos críticos localmente
+ * Se llama 2 veces al día (al iniciar sesión y a las 8pm)
+ */
+export async function guardarBackupLocal(datos) {
+  try {
+    const backup = {
+      timestamp: new Date().toISOString(),
+      version: '1.0',
+      clientes: datos.clientes || [],
+      inventario: datos.inventario || [],
+      ventas_recientes: datos.ventas_recientes || [],
+    };
+    await localforage.setItem('backup_local', backup);
+
+    // Guardar también historial de últimos 3 backups
+    const historial = await localforage.getItem('backup_historial') || [];
+    historial.unshift({ timestamp: backup.timestamp, registros: {
+      clientes: backup.clientes.length,
+      inventario: backup.inventario.length,
+      ventas: backup.ventas_recientes.length,
+    }});
+    // Solo guardar los últimos 3
+    await localforage.setItem('backup_historial', historial.slice(0, 3));
+
+    console.log(`✅ Backup local guardado: ${backup.clientes.length} clientes, ${backup.inventario.length} productos`);
+    return true;
+  } catch (error) {
+    console.error('Error guardando backup local:', error);
+    return false;
+  }
+}
+
+export async function obtenerBackupLocal() {
+  try {
+    return await localforage.getItem('backup_local') || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function obtenerHistorialBackups() {
+  try {
+    return await localforage.getItem('backup_historial') || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function obtenerFechaUltimoBackup() {
+  try {
+    const backup = await localforage.getItem('backup_local');
+    return backup?.timestamp || null;
+  } catch {
+    return null;
+  }
+}
+
 // ==================== LIMPIEZA ====================
 
 export async function limpiarDatosOffline() {
