@@ -21,15 +21,18 @@ import CreditRiskPanel from "./components/CreditRiskPanel";
 import ClientPaymentView from "./components/ClientPaymentView";
 
 
-// 🆕 MODO OFFLINE - Agregar estas 3 líneas
+// MODO OFFLINE
 import { useOffline } from "./hooks/useOffline";
 import { useSync } from "./hooks/useSync";
-import { 
+import { useDataSync } from "./hooks/useDataSync";
+import { NetworkIndicator } from "./components/NetworkIndicator";
+import {
   guardarVentaOffline,
   guardarInventarioVan,
   obtenerInventarioVan,
   guardarTopProductos,
-  obtenerTopProductos
+  obtenerTopProductos,
+  obtenerClientesCache,
 } from "./utils/offlineDB";
 
 /* ========================= Config & Constantes ========================= */
@@ -589,9 +592,24 @@ setAcuerdosResumen(acuerdos);
   }
 }
 
- // 🆕 HOOKS MODO OFFLINE - Agregar estas 2 líneas
+  // HOOKS MODO OFFLINE
   const { isOffline } = useOffline();
-  const { sincronizar, ventasPendientes } = useSync();
+  const { sincronizar, ventasPendientes: ventasPendientesLocal } = useSync();
+
+  // Sync automático 2x día + backup local
+  const {
+    syncing: syncingData,
+    lastSync,
+    ventasPendientes: ventasPendientesSync,
+    syncError,
+    sincronizarAhora,
+  } = useDataSync({
+    vanId: van?.id,
+    usuarioId: usuario?.id,
+    enabled: true,
+  });
+
+  const ventasPendientes = ventasPendientesSync || ventasPendientesLocal;
 // 🆕 PENDING SALES EN LA NUBE (reemplaza localStorage)  // <--- AGREGA //
   const {
     pendingSales: cloudPendingSales,
@@ -871,6 +889,30 @@ useEffect(() => {
 
       if (clientCache.has(term)) {
         setClients(clientCache.get(term));
+        return;
+      }
+
+      // ✅ OFFLINE: buscar en cache local si no hay conexión
+      if (isOffline) {
+        try {
+          const cachedClientes = await obtenerClientesCache();
+          if (cachedClientes.length > 0) {
+            const termLower = term.toLowerCase();
+            const resultados = cachedClientes.filter(c =>
+              (c.nombre || '').toLowerCase().includes(termLower) ||
+              (c.negocio || '').toLowerCase().includes(termLower) ||
+              (c.telefono || '').toLowerCase().includes(termLower)
+            ).slice(0, 20);
+            setClients(resultados);
+            console.log(`📵 Búsqueda offline: ${resultados.length} clientes encontrados`);
+          } else {
+            setClients([]);
+            console.warn('📵 No hay cache de clientes disponible');
+          }
+        } catch (e) {
+          console.error('Error buscando en cache offline:', e);
+          setClients([]);
+        }
         return;
       }
 
@@ -4716,32 +4758,14 @@ function renderStepPayment() {
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-4xl mx-auto">
         
-        {/* 🆕 BANNER DE VENTAS PENDIENTES */}
-        {ventasPendientes > 0 && (
-          <div className="mb-4 bg-orange-50 border-2 border-orange-300 rounded-xl p-4 shadow-md">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="text-2xl">📵</div>
-                <div>
-                  <div className="font-bold text-orange-900">
-                    {ventasPendientes} venta{ventasPendientes !== 1 ? 's' : ''} pendiente{ventasPendientes !== 1 ? 's' : ''} de sincronización
-                  </div>
-                  <div className="text-sm text-orange-700">
-                    Se sincronizarán automáticamente cuando vuelva la conexión
-                  </div>
-                </div>
-              </div>
-              {!isOffline && (
-                <button
-                  onClick={sincronizar}
-                  className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg font-semibold transition-colors"
-                >
-                  🔄 Sincronizar ahora
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Indicador de red y sync — flota en esquina inferior derecha */}
+        <NetworkIndicator
+          syncing={syncingData}
+          ventasPendientes={ventasPendientes}
+          lastSync={lastSync}
+          syncError={syncError}
+          onSyncNow={sincronizarAhora}
+        />
 
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
           {modalPendingSales && renderPendingSalesModal()}
