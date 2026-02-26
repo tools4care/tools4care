@@ -1352,15 +1352,26 @@ useEffect(() => {
     // 🆕 Si está offline, intentar cargar desde caché
     if (isOffline) {
       console.log('📵 Offline: Cargando productos desde caché...');
+      // Cargar inventario completo de la van (para búsquedas offline)
+      const cachedInventory = await obtenerInventarioVan(van.id);
+      if (cachedInventory.length > 0) {
+        setAllProducts(cachedInventory);
+        setProductsLoaded(true);
+        setTopProducts(cachedInventory.slice(0, 50)); // mostrar primeros 50 como "top"
+        console.log(`✅ ${cachedInventory.length} productos cargados desde caché (inventario completo)`);
+        return;
+      }
+      // Fallback a top productos si no hay inventario completo
       const cachedProducts = await obtenerTopProductos(van.id);
       if (cachedProducts.length > 0) {
         setTopProducts(cachedProducts);
-        console.log(`✅ ${cachedProducts.length} productos cargados desde caché`);
-        return;
-      } else {
-        setProductError("📵 Sin conexión y no hay productos en caché. Conecta internet para cargar productos.");
+        setAllProducts(cachedProducts);
+        setProductsLoaded(true);
+        console.log(`✅ ${cachedProducts.length} top productos cargados desde caché`);
         return;
       }
+      setProductError("📵 Sin conexión y no hay productos en caché. Conecta internet para cargar productos.");
+      return;
     }
 
     try {
@@ -1593,16 +1604,39 @@ useEffect(() => {
  useEffect(() => {
   const filter = productSearch.trim().toLowerCase();
   const searchActive = filter.length > 0;
-  
+
   if (!searchActive) {
     setProducts(topProducts.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0));
     setNoProductFound("");
     return;
   }
 
+  // ── MODO OFFLINE: buscar solo en caché (allProducts ya cargado) ──
+  if (isOffline) {
+    const source = allProducts.length > 0 ? allProducts : topProducts;
+    const filterVariants = [filter];
+    const withoutZeros = filter.replace(/^0+/, '');
+    if (withoutZeros && withoutZeros !== filter) filterVariants.push(withoutZeros);
+    if (!filter.startsWith('0')) filterVariants.push('0' + filter);
+
+    const results = source.filter(r => {
+      const p = r.productos || r;
+      const nombre = (p.nombre || r.nombre || "").toLowerCase();
+      const codigo = (p.codigo || r.codigo || "").toLowerCase();
+      const marca  = (p.marca  || r.marca  || "").toLowerCase();
+      return filterVariants.some(v =>
+        nombre.includes(v) || codigo.includes(v) || marca.includes(v)
+      );
+    }).filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0);
+
+    setProducts(results);
+    setNoProductFound(results.length === 0 ? filter : "");
+    return;
+  }
+
   async function searchInDatabase() {
     if (!van?.id) return;
-    
+
     setSearchingInDB(true);
     try {
       // Generar variantes del código para búsqueda flexible
@@ -1723,7 +1757,7 @@ useEffect(() => {
 }, 200);
 
   return () => clearTimeout(timer);
-}, [productSearch, van?.id, topProducts]);
+}, [productSearch, van?.id, topProducts, isOffline, allProducts]);
 
   /* ---------- Totales & crédito ---------- */
   const cartSafe = Array.isArray(cart) ? cart : [];
