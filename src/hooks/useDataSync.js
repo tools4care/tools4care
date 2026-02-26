@@ -12,8 +12,8 @@ import {
   obtenerFechaUltimoBackup,
   obtenerHistorialBackups,
 } from '../utils/offlineDB';
-import { sincronizarVentasPendientes } from '../utils/syncManager';
-import { obtenerVentasPendientes } from '../utils/offlineDB';
+import { sincronizarVentasPendientes, sincronizarPagosPendientes } from '../utils/syncManager';
+import { obtenerVentasPendientes, obtenerPagosPendientes } from '../utils/offlineDB';
 
 // Hora del segundo sync diario (20 = 8pm)
 const SYNC_HORA_TARDE = 20;
@@ -42,10 +42,13 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
   const timerRef = useRef(null);
   const syncingRef = useRef(false);
 
-  // ── Contar ventas pendientes offline ──────────────────────────
+  // ── Contar ventas + pagos pendientes offline ───────────────────
   const contarPendientes = useCallback(async () => {
-    const ventas = await obtenerVentasPendientes();
-    setVentasPend(ventas.length);
+    const [ventas, pagos] = await Promise.all([
+      obtenerVentasPendientes(),
+      obtenerPagosPendientes(),
+    ]);
+    setVentasPend(ventas.length + pagos.length);
   }, []);
 
   // ── Sincronización completa ───────────────────────────────────
@@ -60,10 +63,16 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
     try {
       console.log('🔄 [DataSync] Iniciando sincronización completa...');
 
-      // 1. Subir ventas pendientes offline primero
-      const resultSync = await sincronizarVentasPendientes();
-      if (resultSync.sincronizadas > 0) {
-        console.log(`✅ [DataSync] ${resultSync.sincronizadas} venta(s) offline subidas`);
+      // 1. Subir ventas y pagos pendientes offline primero
+      const [resultVentas, resultPagos] = await Promise.all([
+        sincronizarVentasPendientes(),
+        sincronizarPagosPendientes(),
+      ]);
+      if (resultVentas.sincronizadas > 0) {
+        console.log(`✅ [DataSync] ${resultVentas.sincronizadas} venta(s) offline subidas`);
+      }
+      if (resultPagos.sincronizados > 0) {
+        console.log(`✅ [DataSync] ${resultPagos.sincronizados} pago(s) offline subidos`);
       }
 
       // 2. Descargar todos los clientes (sin límite)

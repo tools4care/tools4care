@@ -232,6 +232,53 @@ export async function obtenerFechaUltimoBackup() {
   }
 }
 
+// ==================== PAGOS PENDIENTES OFFLINE ====================
+
+/**
+ * Guarda un pago en la cola offline cuando no hay conexión.
+ * Se sincronizará automáticamente cuando vuelva la conexión.
+ */
+export async function guardarPagoOffline(pago) {
+  try {
+    const pagosPendientes = await obtenerPagosPendientes();
+    const nuevoPago = {
+      ...pago,
+      _offline_id: Date.now(),
+      _offline_timestamp: new Date().toISOString(),
+      _sincronizada: false,
+    };
+    pagosPendientes.push(nuevoPago);
+    await localforage.setItem('pagos_pendientes', pagosPendientes);
+    console.log(`💾 Pago offline guardado: $${pago.monto} para cliente ${pago.cliente_id}`);
+    return nuevoPago;
+  } catch (error) {
+    console.error('Error guardando pago offline:', error);
+    throw error;
+  }
+}
+
+export async function obtenerPagosPendientes() {
+  try {
+    const pagos = await localforage.getItem('pagos_pendientes');
+    return pagos || [];
+  } catch (error) {
+    console.error('Error obteniendo pagos pendientes:', error);
+    return [];
+  }
+}
+
+export async function marcarPagoSincronizado(offlineId) {
+  try {
+    const pagos = await obtenerPagosPendientes();
+    const pagosActualizados = pagos.filter(p => p._offline_id !== offlineId);
+    await localforage.setItem('pagos_pendientes', pagosActualizados);
+    return true;
+  } catch (error) {
+    console.error('Error marcando pago sincronizado:', error);
+    return false;
+  }
+}
+
 // ==================== LIMPIEZA ====================
 
 export async function limpiarDatosOffline() {

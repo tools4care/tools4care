@@ -1,6 +1,6 @@
 // src/utils/syncManager.js
 import { supabase } from '../supabaseClient';
-import { obtenerVentasPendientes, marcarVentaSincronizada } from './offlineDB';
+import { obtenerVentasPendientes, marcarVentaSincronizada, obtenerPagosPendientes, marcarPagoSincronizado } from './offlineDB';
 
 /**
  * Sincroniza todas las ventas pendientes con Supabase
@@ -127,5 +127,66 @@ export async function sincronizarVentasPendientes() {
       error: error.message,
       message: 'Error al sincronizar ventas'
     };
+  }
+}
+
+/**
+ * Sincroniza todos los pagos pendientes offline con Supabase
+ * Se llama automáticamente cuando vuelve la conexión
+ */
+export async function sincronizarPagosPendientes() {
+  console.log('🔄 Iniciando sincronización de pagos pendientes...');
+
+  try {
+    const pagosPendientes = await obtenerPagosPendientes();
+
+    if (pagosPendientes.length === 0) {
+      console.log('✅ No hay pagos pendientes para sincronizar');
+      return { success: true, sincronizados: 0, errores: 0 };
+    }
+
+    console.log(`💳 Sincronizando ${pagosPendientes.length} pago(s) offline...`);
+
+    let sincronizados = 0;
+    let errores = 0;
+
+    for (const pago of pagosPendientes) {
+      try {
+        // Intentar via RPC cxc_registrar_pago primero
+        const { error: rpcError } = await supabase.rpc('cxc_registrar_pago', {
+          p_cliente_id: pago.cliente_id,
+          p_monto: pago.monto,
+          p_metodo: pago.metodo_pago,
+          p_van_id: pago.van_id,
+          p_fecha: pago.fecha_pago,
+        });
+
+        if (rpcError) {
+          // Fallback: insertar directamente en tabla pagos
+          const { error: insError } = await supabase.from('pagos').insert([{
+            cliente_id: pago.cliente_id,
+            monto: pago.monto,
+            metodo_pago: pago.metodo_pago,
+            fecha_pago: pago.fecha_pago,
+          }]);
+          if (insError) throw insError;
+        }
+
+        await marcarPagoSincronizado(pago._offline_id);
+        sincronizados++;
+        console.log(`✅ Pago offline ${pago._offline_id} sincronizado: $${pago.monto} (${pago._cliente_nombre || pago.cliente_id})`);
+
+      } catch (error) {
+        errores++;
+        console.error(`❌ Error sincronizando pago ${pago._offline_id}:`, error);
+      }
+    }
+
+    console.log(`✅ Pagos sync: ${sincronizados} exitosos, ${errores} errores`);
+    return { success: errores === 0, sincronizados, errores };
+
+  } catch (error) {
+    console.error('❌ Error en sincronización de pagos:', error);
+    return { success: false, sincronizados: 0, errores: 1, error: error.message };
   }
 }

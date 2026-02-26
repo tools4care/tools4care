@@ -5,15 +5,20 @@ import { useVan } from "./hooks/VanContext";
 import AgregarStockModal from "./AgregarStockModal";
 import ModalTraspasoStock from "./ModalTraspasoStock";
 import { BarcodeScanner } from "./BarcodeScanner";
+import { useOffline } from "./hooks/useOffline";
+import { guardarInventarioVan, obtenerInventarioVan } from "./utils/offlineDB";
 
 const PAGE_SIZE = 100;
 
 export default function Inventory() {
   const { van } = useVan();
+  const { isOnline } = useOffline();
 
   const [locations, setLocations] = useState([
     { key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" },
   ]);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [offlineCacheDate, setOfflineCacheDate] = useState(null);
   const [selected, setSelected] = useState({
     key: "warehouse",
     id: null,
@@ -93,6 +98,38 @@ export default function Inventory() {
     (async () => {
       if (!selected) return;
 
+      // ── MODO OFFLINE: cargar desde caché ──────────────────────
+      if (!isOnline) {
+        if (selected.tipo === "van" && selected.id) {
+          const cached = await obtenerInventarioVan(selected.id);
+          if (cached.length > 0) {
+            // El caché usa formato { producto_id, cantidad, productos: {...} }
+            // Normalizar al formato que usa Inventario
+            const rows = cached.map(c => ({
+              id: c.producto_id,
+              producto_id: c.producto_id,
+              cantidad: Number(c.cantidad || 0),
+              productos: c.productos || null,
+            }));
+            setInventory(rows);
+            setHasMore(false);
+            setIsOfflineMode(true);
+            // Leer fecha del caché
+            const cacheEntry = await import('localforage').then(lf =>
+              lf.default.getItem(`inventario_van_${selected.id}`)
+            ).catch(() => null);
+            if (cacheEntry?.timestamp) setOfflineCacheDate(cacheEntry.timestamp);
+            return;
+          }
+        }
+        setIsOfflineMode(true);
+        setError("Sin conexión. No hay inventario en caché para esta ubicación.");
+        setHasMore(false);
+        return;
+      }
+
+      setIsOfflineMode(false);
+
       try {
         setError("");
 
@@ -162,12 +199,24 @@ export default function Inventory() {
         setInventory((prev) => (offset === 0 ? rows : [...prev, ...rows]));
         const loaded = offset + rows.length;
         setHasMore(typeof count === "number" ? loaded < count : rows.length === PAGE_SIZE);
+
+        // ── Guardar en caché cuando cargamos la primera página de una van ──
+        if (selected.tipo === "van" && selected.id && offset === 0 && rows.length > 0) {
+          const allRows = rows.map(r => ({
+            producto_id: r.producto_id,
+            cantidad: r.cantidad,
+            productos: r.productos,
+          }));
+          // Usamos setTimeout para no bloquear el render
+          setTimeout(() => guardarInventarioVan(selected.id, allRows), 0);
+        }
+
       } catch (e) {
         setError(e?.message || String(e));
         setHasMore(false);
       }
     })();
-  }, [selected.id, selected.tipo, offset, refresh, search]);
+  }, [selected.id, selected.tipo, offset, refresh, search, isOnline]);
 
   // ======================== Realtime ========================
   useEffect(() => {
@@ -304,7 +353,8 @@ export default function Inventory() {
       return;
     }
 
-    // 3️⃣ Si NO encuentra en memoria, buscar en DB con debounce
+    // 3️⃣ Si NO encuentra en memoria, buscar en DB con debounce (solo si hay conexión)
+    if (!isOnline) return; // Sin conexión, solo búsqueda en memoria
     searchTimerRef.current = setTimeout(() => {
       searchInDatabase(searchTerm);
     }, 400);
@@ -403,14 +453,18 @@ export default function Inventory() {
 
             <div className="flex items-center gap-2">
               <button
-                className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
                 onClick={() => setModalOpen(true)}
+                disabled={!isOnline}
+                title={!isOnline ? "Connect to internet to add stock" : ""}
               >
                 ➕ Add Stock
               </button>
               <button
-                className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
                 onClick={() => setModalTransferOpen(true)}
+                disabled={!isOnline}
+                title={!isOnline ? "Connect to internet to transfer stock" : ""}
               >
                 🔁 Transfer
               </button>
@@ -429,6 +483,22 @@ export default function Inventory() {
             )}
           </div>
         </div>
+
+        {/* Offline Banner */}
+        {isOfflineMode && (
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 text-amber-800 px-4 py-3 mb-4 rounded-xl flex items-center gap-3">
+            <span className="text-2xl">📵</span>
+            <div>
+              <b>Offline Mode</b> — showing cached inventory
+              {offlineCacheDate && (
+                <span className="ml-2 text-xs text-amber-600">
+                  (saved {new Date(offlineCacheDate).toLocaleString('es', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })})
+                </span>
+              )}
+              <div className="text-xs mt-0.5 text-amber-700">Changes made offline will NOT be saved. Connect to sync.</div>
+            </div>
+          </div>
+        )}
 
         {/* Error */}
         {error && (
