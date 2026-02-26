@@ -1035,6 +1035,7 @@ export default function CuentasPorCobrar() {
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [globalSaldo, setGlobalSaldo] = useState(0);
 
   const [scoreFilter, setScoreFilter] = useState("ALL");
   const scoreRanges = {
@@ -1146,6 +1147,18 @@ export default function CuentasPorCobrar() {
           } else {
             setRows(result.data || []);
             setTotal(result.count || 0);
+
+            // ✅ FIX: Calcular total global (todos los clientes, no solo la página)
+            const { data: allSaldos } = await supabase
+              .from("v_cxc_cliente_detalle_ext")
+              .select("saldo")
+              .gt("saldo", 0);
+            if (!ignore) {
+              const total = (allSaldos || []).reduce(
+                (s, r) => s + Number(r.saldo || 0), 0
+              );
+              setGlobalSaldo(total);
+            }
           }
         }
       } catch (e) {
@@ -1165,13 +1178,13 @@ export default function CuentasPorCobrar() {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const metrics = useMemo(() => {
-    const saldoTotal = rows.reduce((s, r) => s + Number(r.saldo || 0), 0);
+    const saldoTotal = globalSaldo; // ✅ FIX: total global, no solo la página actual
     const avgScore =
       rows.length > 0
         ? Math.round(rows.reduce((s, r) => s + Number(r.score_base || 0), 0) / rows.length)
         : 0;
     return { saldoTotal, avgScore, clientes: total };
-  }, [rows, total]);
+  }, [rows, total, globalSaldo]);
 
   const openSimuladorGlobal = () => {
     setSimInit({
