@@ -19,6 +19,8 @@ import {
 } from "recharts";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
+import { useDataSync } from "./hooks/useDataSync";
+import SyncStatusWidget from "./components/SyncStatusWidget";
 
 /* ---------- Helpers ---------- */
 function fmtMoney(n) {
@@ -1166,6 +1168,11 @@ export default function Dashboard() {
   const { usuario } = useUsuario();
   const { van } = useVan();
 
+  const { syncing, lastSync, historialBackups, ventasPendientes, syncError, sincronizarAhora } = useDataSync({
+    vanId: van?.id,
+    usuarioId: usuario?.id,
+  });
+
   const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -2130,13 +2137,25 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
+        {/* Backup & Sync Status */}
+        <SyncStatusWidget
+          syncing={syncing}
+          lastSync={lastSync}
+          historialBackups={historialBackups}
+          ventasPendientes={ventasPendientes}
+          syncError={syncError}
+          onSyncNow={sincronizarAhora}
+          vanId={van?.id}
+        />
+
       </div>
 
       {/* Modals */}
       <LowStockModal open={showAllLow} items={stockVan} onClose={() => setShowAllLow(false)} />
-      <RecentSalesModal 
-        open={showRecentSales} 
-        ventas={ventas} 
+      <RecentSalesModal
+        open={showRecentSales}
+        ventas={ventas}
         onClose={() => setShowRecentSales(false)}
         getNombreCliente={getNombreCliente}
         onSelectVenta={abrirDetalleVenta}

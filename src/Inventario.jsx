@@ -47,13 +47,48 @@ export default function Inventory() {
   // ======================== Cargar ubicaciones ========================
   useEffect(() => {
     (async () => {
+      const warehouse = {
+        key: "warehouse",
+        id: null,
+        nombre: "Central Warehouse",
+        tipo: "warehouse",
+      };
+
+      // Offline: construir lista desde el van del contexto (ya persiste en localStorage)
+      if (!isOnline) {
+        if (van?.id) {
+          const vanLoc = {
+            key: `van_${van.id}`,
+            id: van.id,
+            nombre: van.nombre || van.nombre_van || `Van ${van.id}`,
+            tipo: "van",
+          };
+          setLocations([vanLoc]);
+          setSelected(vanLoc);
+        } else {
+          setLocations([warehouse]);
+          setSelected(warehouse);
+        }
+        return;
+      }
+
       const { data: vansData, error: vErr } = await supabase
         .from("vans")
         .select("id, nombre_van")
         .order("id", { ascending: true });
 
       if (vErr) {
-        setError(vErr.message);
+        // Si falla online, usar van del contexto como fallback
+        if (van?.id) {
+          const vanLoc = {
+            key: `van_${van.id}`,
+            id: van.id,
+            nombre: van.nombre || van.nombre_van || `Van ${van.id}`,
+            tipo: "van",
+          };
+          setLocations([vanLoc]);
+          setSelected(vanLoc);
+        }
         return;
       }
 
@@ -64,13 +99,6 @@ export default function Inventory() {
         tipo: "van",
       }));
 
-      const warehouse = {
-        key: "warehouse",
-        id: null,
-        nombre: "Central Warehouse",
-        tipo: "warehouse",
-      };
-
       setLocations([warehouse, ...vansLocations]);
 
       if (van?.id) {
@@ -80,7 +108,7 @@ export default function Inventory() {
         setSelected(warehouse);
       }
     })();
-  }, [van?.id]);
+  }, [van?.id, isOnline]);
 
   // Reset de paginación
   useEffect(() => {
@@ -395,17 +423,14 @@ export default function Inventory() {
       <div className="w-full max-w-5xl mx-auto">
         {/* Header */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center gap-2 min-w-0 truncate">
               📦 VAN Inventory
             </h1>
-            <div className="text-sm text-gray-500">
+            <div className="text-sm text-gray-500 shrink-0">
               {filteredInventory.length} items
-              {isSearchingDB && <span className="ml-2 text-blue-600">🔍 Searching...</span>}
+              {isSearchingDB && <span className="ml-2 text-blue-600">🔍</span>}
             </div>
-          </div>
-          <div className="mt-3 text-xs text-gray-600">
-            Manage inventory by location with a clear and consistent interface.
           </div>
         </div>
 
@@ -472,13 +497,13 @@ export default function Inventory() {
           </div>
 
           {/* Current location pill */}
-          <div className="mt-3 flex items-center justify-between">
-            <span className="inline-flex items-center gap-2 text-xs bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1 rounded-full">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-2 text-xs bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1 rounded-full min-w-0 max-w-full truncate">
               📍 {selected?.nombre} · <b className="font-mono">{selected?.tipo}</b>
             </span>
             {dbSearchResults !== null && (
-              <span className="text-xs text-green-600 font-semibold">
-                🔍 Extended search active (all products)
+              <span className="text-xs text-green-600 font-semibold whitespace-nowrap">
+                🔍 Extended search active
               </span>
             )}
           </div>

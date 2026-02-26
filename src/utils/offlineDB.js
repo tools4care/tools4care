@@ -279,6 +279,82 @@ export async function marcarPagoSincronizado(offlineId) {
   }
 }
 
+// ==================== EXPORT CSV ====================
+
+/**
+ * Descarga los clientes cacheados como CSV
+ */
+export async function exportarClientesCSV() {
+  const clientes = await obtenerClientesCache();
+  if (!clientes.length) throw new Error('No hay clientes en caché para exportar');
+
+  const headers = ['ID', 'Nombre', 'Negocio', 'Teléfono', 'Email', 'Dirección', 'Balance'];
+  const rows = clientes.map(c => [
+    c.id ?? '',
+    `"${(c.nombre ?? '').replace(/"/g, '""')}"`,
+    `"${(c.negocio ?? '').replace(/"/g, '""')}"`,
+    c.telefono ?? '',
+    c.email ?? '',
+    `"${(c.direccion ?? '').replace(/"/g, '""')}"`,
+    Number(c.balance ?? 0).toFixed(2),
+  ]);
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `clientes_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Descarga el inventario cacheado de una van como CSV
+ */
+export async function exportarInventarioCSV(vanId) {
+  const inventario = await obtenerInventarioVan(vanId);
+  if (!inventario.length) throw new Error('No hay inventario en caché para exportar');
+
+  const headers = ['Código', 'Nombre', 'Marca', 'Cantidad', 'Precio'];
+  const rows = inventario.map(i => {
+    const p = i.productos || {};
+    return [
+      p.codigo ?? '',
+      `"${(p.nombre ?? '').replace(/"/g, '""')}"`,
+      `"${(p.marca ?? '').replace(/"/g, '""')}"`,
+      i.cantidad ?? 0,
+      Number(p.precio ?? 0).toFixed(2),
+    ];
+  });
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `inventario_van${vanId}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Descarga el backup completo como JSON
+ */
+export async function exportarBackupJSON() {
+  const backup = await obtenerBackupLocal();
+  if (!backup) throw new Error('No hay backup local disponible');
+
+  const json = JSON.stringify(backup, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `backup_tools4care_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ==================== LIMPIEZA ====================
 
 export async function limpiarDatosOffline() {
