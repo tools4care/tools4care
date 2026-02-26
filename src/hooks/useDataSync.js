@@ -51,7 +51,7 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
   // ── Sincronización completa ───────────────────────────────────
   const sincronizarTodo = useCallback(async ({ silencioso = false } = {}) => {
     if (!enabled || syncingRef.current || !navigator.onLine) return;
-    if (!vanId) return;
+    if (!vanId || !usuarioId) return; // necesita usuario y van para sincronizar
 
     syncingRef.current = true;
     if (!silencioso) setSyncing(true);
@@ -140,7 +140,7 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
 
   // ── Al montar: sync inicial + programar sync a las 8pm ───────
   useEffect(() => {
-    if (!enabled || !vanId) return;
+    if (!enabled || !vanId || !usuarioId) return;
 
     // Sync inmediato al iniciar (silencioso si ya hay cache reciente)
     const ultimoSync = localStorage.getItem('ultimo_sync_completo');
@@ -182,7 +182,7 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
       clearInterval(timerRef.current);
       window.removeEventListener('online', handleOnline);
     };
-  }, [vanId, enabled, sincronizarTodo, contarPendientes]);
+  }, [vanId, usuarioId, enabled, sincronizarTodo, contarPendientes]);
 
   // Cargar fecha del último backup al montar
   useEffect(() => {
