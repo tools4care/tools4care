@@ -6,6 +6,7 @@ import { useOffline } from "../hooks/useOffline";
 import {
   exportarClientesCSV,
   exportarInventarioCSV,
+  exportarDeudasCSV,
   exportarBackupJSON,
 } from "../utils/offlineDB";
 
@@ -52,6 +53,7 @@ export default function SyncStatusWidget({
     try {
       if (tipo === "clientes") await exportarClientesCSV();
       else if (tipo === "inventario") await exportarInventarioCSV(vanId);
+      else if (tipo === "deudas") await exportarDeudasCSV();
       else if (tipo === "backup") await exportarBackupJSON();
     } catch (e) {
       setExportError(e.message || "Error al exportar");
@@ -180,12 +182,22 @@ export default function SyncStatusWidget({
           </button>
         )}
 
+        {/* Export deudas CSV */}
+        <button
+          onClick={() => handleExport("deudas")}
+          disabled={!!exportando}
+          className="flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-red-100 transition-all disabled:opacity-50"
+          title="Exportar clientes con deuda pendiente"
+        >
+          {exportando === "deudas" ? "⏳" : "💳"} Deudas CSV
+        </button>
+
         {/* Export backup JSON */}
         <button
           onClick={() => handleExport("backup")}
           disabled={!!exportando}
           className="flex items-center gap-1.5 bg-purple-50 border border-purple-200 text-purple-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-purple-100 transition-all disabled:opacity-50"
-          title="Descargar backup completo como JSON"
+          title="Descargar backup completo como JSON (clientes + inventario + ventas + deudas)"
         >
           {exportando === "backup" ? "⏳" : "💾"} Backup JSON
         </button>

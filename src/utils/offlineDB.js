@@ -121,6 +121,31 @@ export async function obtenerFechaCacheClientes() {
   }
 }
 
+// ==================== CACHE DE DEUDAS (ventas pendientes/parciales) ====================
+
+export async function guardarDeudaCache(ventasConDeuda) {
+  try {
+    await localforage.setItem('cache_deudas', {
+      data: ventasConDeuda,
+      timestamp: new Date().toISOString(),
+      total: ventasConDeuda.length,
+    });
+    console.log(`✅ ${ventasConDeuda.length} ventas con deuda guardadas en caché`);
+  } catch (error) {
+    console.error('Error guardando deudas en cache:', error);
+  }
+}
+
+export async function obtenerDeudaCache() {
+  try {
+    const cache = await localforage.getItem('cache_deudas');
+    return cache?.data || [];
+  } catch (error) {
+    console.error('Error obteniendo deudas de cache:', error);
+    return [];
+  }
+}
+
 // ==================== CACHE DE INVENTARIO (para ventas offline) ====================
 
 export async function guardarInventarioVan(vanId, productos) {
@@ -339,7 +364,36 @@ export async function exportarInventarioCSV(vanId) {
 }
 
 /**
+ * Exporta las deudas pendientes de clientes como CSV
+ */
+export async function exportarDeudasCSV() {
+  // Usar clientes con balance para obtener deuda total por cliente
+  const clientes = await obtenerClientesCache();
+  const conDeuda = clientes.filter(c => Number(c.balance || 0) > 0);
+  if (!conDeuda.length) throw new Error('No hay clientes con deuda en caché');
+
+  const headers = ['ID', 'Nombre', 'Negocio', 'Teléfono', 'Balance (Deuda)'];
+  const rows = conDeuda.map(c => [
+    c.id ?? '',
+    `"${(c.nombre ?? '').replace(/"/g, '""')}"`,
+    `"${(c.negocio ?? '').replace(/"/g, '""')}"`,
+    c.telefono ?? '',
+    Number(c.balance ?? 0).toFixed(2),
+  ]);
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `deudas_clientes_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
  * Descarga el backup completo como JSON
+ * Incluye: clientes, inventario, ventas recientes, ventas con deuda
  */
 export async function exportarBackupJSON() {
   const backup = await obtenerBackupLocal();
