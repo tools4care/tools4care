@@ -2412,6 +2412,8 @@ if (rpcResult.requiere_reembolso_efectivo) {
         van_id: van.id,
         usuario_id: usuario.id,
         total: totalRefund,
+        total_venta: totalRefund,   // ✅ FIX: necesario para vistas de saldo
+        total_pagado: totalRefund,  // ✅ FIX: necesario para vistas de saldo
         tipo: 'devolucion',
         venta_origen_id: selectedInvoice.id,
         motivo_devolucion: returnReason || "Devolución en tienda",
