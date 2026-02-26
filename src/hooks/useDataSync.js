@@ -77,24 +77,33 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
       await guardarClientesCache(clientes || []);
 
       // 3. Descargar inventario de la van
+      // ✅ Mismo select y formato que usa Ventas.jsx para que sea compatible
       const { data: inventario, error: eInv } = await supabase
         .from('stock_van')
-        .select('producto_id, cantidad, productos(id, nombre, precio, codigo_barras, categoria)')
+        .select('producto_id, cantidad, productos:productos!inner(id, nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price)')
         .eq('van_id', vanId)
         .gt('cantidad', 0);
 
       if (!eInv && inventario) {
+        // Mismo formato que genera Ventas.jsx al guardar en cache
         const productosFormateados = inventario
           .filter(i => i.productos)
           .map(i => ({
-            producto_id: i.productos.id,
-            nombre: i.productos.nombre,
-            precio: i.productos.precio,
-            codigo_barras: i.productos.codigo_barras,
-            categoria: i.productos.categoria,
-            cantidad: i.cantidad,
+            producto_id: i.producto_id,
+            cantidad: Number(i.cantidad) || 0,
+            productos: {
+              id: i.productos.id,
+              nombre: i.productos.nombre ?? '',
+              precio: Number(i.productos.precio) || 0,
+              codigo: i.productos.codigo ?? null,
+              marca: i.productos.marca ?? '',
+              descuento_pct: i.productos.descuento_pct ?? null,
+              bulk_min_qty: i.productos.bulk_min_qty ?? null,
+              bulk_unit_price: i.productos.bulk_unit_price ?? null,
+            },
           }));
         await guardarInventarioVan(vanId, productosFormateados);
+        // Top productos también en el mismo formato
         await guardarTopProductos(vanId, productosFormateados.slice(0, 50));
       }
 
