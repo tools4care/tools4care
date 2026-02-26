@@ -16,6 +16,9 @@ import {
 /* === CxC centralizado === */
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 
+/* === Offline === */
+import { guardarPagoOffline, obtenerClientesCache, guardarClientesCache } from "./utils/offlineDB";
+
 /* === Leer desde la vista === */
 const CLIENTS_VIEW = "clientes_balance_v2";
 
@@ -677,6 +680,32 @@ const fetchPage = async (opts = {}) => {
   const { p = page, ps = pageSize, q = debounced } = opts;
   setIsLoading(true);
   setMensaje("");
+
+  // ── MODO OFFLINE: usar caché local ────────────────────────
+  if (!navigator.onLine) {
+    const cached = await obtenerClientesCache();
+    if (cached.length > 0) {
+      let resultados = cached;
+      if (q) {
+        const term = q.toLowerCase();
+        resultados = cached.filter(c =>
+          (c.nombre || "").toLowerCase().includes(term) ||
+          (c.negocio || "").toLowerCase().includes(term) ||
+          (c.telefono || "").toLowerCase().includes(term) ||
+          (c.email || "").toLowerCase().includes(term) ||
+          (c.direccion || "").toLowerCase().includes(term)
+        );
+      }
+      const from = (p - 1) * ps;
+      setClientes(resultados.slice(from, from + ps));
+      setTotalRows(resultados.length);
+    } else {
+      setMensaje("📵 Offline — no cached clients found.");
+    }
+    setIsLoading(false);
+    return;
+  }
+
   const from = (p - 1) * ps;
   const to = from + ps - 1;
 
@@ -721,10 +750,16 @@ const fetchPage = async (opts = {}) => {
     setIsLoading(false);
     return;
   }
-  
+
   setClientes(data || []);
   setTotalRows(count || 0);
   setIsLoading(false);
+
+  // ── Guardar en caché (solo primera página sin búsqueda) ──
+  if (!q && p === 1 && data?.length > 0) {
+    // Guardamos también en background para no bloquear
+    setTimeout(() => guardarClientesCache(data), 0);
+  }
 };
 
   useEffect(() => {
@@ -2525,6 +2560,24 @@ let restante = pago;
 
       const pagoAplicado = round2(Math.min(montoIngresado, saldoActualUI));
       const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+
+      // ── MODO OFFLINE: guardar en cola local ───────────────────
+      if (!navigator.onLine) {
+        await guardarPagoOffline({
+          cliente_id: cliente.id,
+          van_id: van.id,
+          monto: pagoAplicado,
+          metodo_pago: metodo,
+          fecha_pago: new Date().toISOString(),
+          _cliente_nombre: cliente?.nombre || "",
+        });
+        const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
+        setSaldoBase(saldoDespues);
+        setMonto("");
+        setMensaje(`💾 Payment of $${pagoAplicado.toFixed(2)} saved locally — will sync when connected.`);
+        setTimeout(() => { if (typeof onClose === "function") onClose(); }, 2000);
+        return;
+      }
 
       let rpcOk = false;
       try {
