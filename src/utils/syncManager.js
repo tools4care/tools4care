@@ -31,17 +31,30 @@ export async function sincronizarVentasPendientes() {
     // Sincronizar cada venta
     for (const venta of ventasPendientes) {
       try {
-        // Insertar venta en Supabase
+        // ── Insertar venta con todos los campos que usa el insert online ──
         const { data: ventaData, error: ventaError } = await supabase
           .from('ventas')
           .insert({
             cliente_id: venta.cliente_id,
             van_id: venta.van_id,
             usuario_id: venta.usuario_id,
-            total: venta.total,
+            // Totales — usar total_venta como columna principal
+            total_venta: venta.total_venta ?? venta.total ?? 0,
+            total: venta.total ?? venta.total_venta ?? 0,
+            total_pagado: venta.total_pagado ?? 0,
+            // Estado y método de pago
             estado_pago: venta.estado_pago || 'pendiente',
-            notas: venta.notas,
-            fecha_venta: venta.fecha_venta || new Date().toISOString(),
+            metodo_pago: venta.metodo_pago || null,
+            // Desglose por forma de pago
+            pago_efectivo: venta.pago_efectivo ?? 0,
+            pago_tarjeta: venta.pago_tarjeta ?? 0,
+            pago_transferencia: venta.pago_transferencia ?? 0,
+            pago_otro: venta.pago_otro ?? 0,
+            // JSON de pago (si existe)
+            pago: venta.pago ?? null,
+            notas: venta.notas || null,
+            // Usar created_at original de la transacción offline
+            created_at: venta.created_at || venta._offline_timestamp || new Date().toISOString(),
           })
           .select()
           .single();
@@ -50,7 +63,7 @@ export async function sincronizarVentasPendientes() {
 
         const ventaId = ventaData.id;
 
-        // Insertar items de la venta
+        // ── Insertar items de la venta ──
         if (venta.items && venta.items.length > 0) {
           const { error: itemsError } = await supabase
             .from('detalle_ventas')
@@ -59,43 +72,73 @@ export async function sincronizarVentasPendientes() {
                 venta_id: ventaId,
                 producto_id: item.producto_id,
                 cantidad: item.cantidad,
-                precio_unitario: item.precio_unitario || 0,
-                descuento: 0,
+                precio_unitario: item.precio_unit ?? item.precio_unitario ?? 0,
+                descuento: item.descuento_pct ?? 0,
               }))
             );
 
-          if (itemsError) throw itemsError;
-        }
-
-        // Actualizar stock en Supabase
-        for (const item of venta.items || []) {
-          const { data: stockData } = await supabase
-            .from('stock_van')
-            .select('cantidad')
-            .eq('van_id', venta.van_id)
-            .eq('producto_id', item.producto_id)
-            .single();
-
-          if (stockData) {
-            await supabase
-              .from('stock_van')
-              .update({ cantidad: stockData.cantidad - item.cantidad })
-              .eq('van_id', venta.van_id)
-              .eq('producto_id', item.producto_id);
+          if (itemsError) {
+            console.warn(`⚠️ Error insertando detalle de venta ${venta._offline_id}:`, itemsError);
+            // No lanzar error — la venta principal ya se insertó
           }
         }
 
-        // Eliminar de IndexedDB después de sincronizar exitosamente
+        // ── Actualizar stock en Supabase ──
+        for (const item of venta.items || []) {
+          try {
+            const { data: stockData } = await supabase
+              .from('stock_van')
+              .select('cantidad')
+              .eq('van_id', venta.van_id)
+              .eq('producto_id', item.producto_id)
+              .single();
+
+            if (stockData) {
+              const nuevaCantidad = Math.max(0, stockData.cantidad - item.cantidad);
+              await supabase
+                .from('stock_van')
+                .update({ cantidad: nuevaCantidad })
+                .eq('van_id', venta.van_id)
+                .eq('producto_id', item.producto_id);
+            }
+          } catch (stockErr) {
+            console.warn(`⚠️ Error actualizando stock producto ${item.producto_id}:`, stockErr);
+          }
+        }
+
+        // ── Si había pagos en la venta, insertarlos también ──
+        if (venta.payments && venta.payments.length > 0 && venta.total_pagado > 0) {
+          for (const pago of venta.payments) {
+            if (!Number(pago.monto)) continue;
+            try {
+              const { error: rpcError } = await supabase.rpc('cxc_registrar_pago', {
+                p_cliente_id: venta.cliente_id,
+                p_monto: Number(pago.monto),
+                p_metodo: pago.forma || 'efectivo',
+                p_van_id: venta.van_id,
+                p_fecha: venta.created_at || new Date().toISOString(),
+              });
+              if (rpcError) {
+                console.warn(`⚠️ RPC pago falló, insertando directo:`, rpcError.message);
+                await supabase.from('pagos').insert([{
+                  cliente_id: venta.cliente_id,
+                  monto: Number(pago.monto),
+                  metodo_pago: pago.forma || 'efectivo',
+                  fecha_pago: venta.created_at || new Date().toISOString(),
+                }]);
+              }
+            } catch (pagoErr) {
+              console.warn(`⚠️ Error insertando pago de venta offline:`, pagoErr);
+            }
+          }
+        }
+
+        // ── Marcar como sincronizada ──
         await marcarVentaSincronizada(venta._offline_id);
 
         sincronizadas++;
-        resultados.push({
-          id: venta._offline_id,
-          success: true,
-          ventaId
-        });
-
-        console.log(`✅ Venta ${venta._offline_id} sincronizada exitosamente`);
+        resultados.push({ id: venta._offline_id, success: true, ventaId });
+        console.log(`✅ Venta ${venta._offline_id} sincronizada → ID ${ventaId} | ${venta.estado_pago} | $${venta.total_venta ?? venta.total}`);
 
       } catch (error) {
         errores++;
