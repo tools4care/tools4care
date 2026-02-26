@@ -69,7 +69,7 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
       // 2. Descargar todos los clientes (sin límite)
       const { data: clientes, error: eClientes } = await supabase
         .from('clientes_balance')
-        .select('id,nombre,apellido,negocio,telefono,email,direccion,balance')
+        .select('id,nombre,negocio,telefono,email,direccion,balance')
         .order('nombre', { ascending: true })
         .limit(2000);
 
