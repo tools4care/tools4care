@@ -24,6 +24,8 @@ import Checkout from "./storefront/Checkout";
 import OnlineDiscounts from "./online/Discounts";
 
 import { NetworkIndicator } from "./components/NetworkIndicator";
+import { SyncProvider, useSyncGlobal } from "./hooks/SyncContext";
+import { SyncToast } from "./components/SyncToast";
 
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
@@ -192,11 +194,18 @@ function PrivateRouteWithVan({ children }) {
   return children;
 }
 
-function LayoutPrivado() {
+function LayoutInterior() {
+  const { syncing, ventasPendientes, syncError, lastSync, sincronizarAhora } = useSyncGlobal();
   return (
     <div className="min-h-screen bg-gray-50 flex lg:flex-row flex-col">
-      <NetworkIndicator />
-      
+      <NetworkIndicator
+        syncing={syncing}
+        ventasPendientes={ventasPendientes}
+        syncError={syncError}
+        lastSync={lastSync}
+        onSyncNow={sincronizarAhora}
+      />
+      <SyncToast />
       <div className="hidden lg:block">
         <Sidebar />
       </div>
@@ -205,6 +214,14 @@ function LayoutPrivado() {
       </main>
       <BottomNav />
     </div>
+  );
+}
+
+function LayoutPrivado() {
+  return (
+    <SyncProvider>
+      <LayoutInterior />
+    </SyncProvider>
   );
 }
 

@@ -19,7 +19,7 @@ import {
 } from "recharts";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
-import { useDataSync } from "./hooks/useDataSync";
+import { useSyncGlobal } from "./hooks/SyncContext";
 import SyncStatusWidget from "./components/SyncStatusWidget";
 
 /* ---------- Helpers ---------- */
@@ -1168,10 +1168,7 @@ export default function Dashboard() {
   const { usuario } = useUsuario();
   const { van } = useVan();
 
-  const { syncing, lastSync, historialBackups, ventasPendientes, syncError, sincronizarAhora } = useDataSync({
-    vanId: van?.id,
-    usuarioId: usuario?.id,
-  });
+  const { syncing, lastSync, historialBackups, ventasPendientes, syncError, sincronizarAhora } = useSyncGlobal();
 
   const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(true);
