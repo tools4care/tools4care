@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
+import { useSyncGlobal } from "./hooks/SyncContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
@@ -772,6 +773,19 @@ const fetchPage = async (opts = {}) => {
   }, [page]);
 
   useEffect(() => { cargarTotales(); }, []);
+
+  // ── Auto-refresh cuando el sync completa con ventas/pagos offline ──
+  const { onSyncComplete } = useSyncGlobal();
+  useEffect(() => {
+    const unsub = onSyncComplete(({ ventasSubidas, pagosSubidos }) => {
+      if (ventasSubidas > 0 || pagosSubidos > 0) {
+        console.log('🔄 [Clientes] Sync completó — refrescando lista y saldos...');
+        fetchPage({ p: 1, ps: pageSize, q: debounced });
+        cargarTotales();
+      }
+    });
+    return unsub;
+  }, [onSyncComplete, pageSize, debounced]);
 
   useEffect(() => {
     if (location.pathname.endsWith("/clientes/nuevo")) {

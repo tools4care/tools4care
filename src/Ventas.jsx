@@ -24,7 +24,7 @@ import ClientPaymentView from "./components/ClientPaymentView";
 // MODO OFFLINE
 import { useOffline } from "./hooks/useOffline";
 import { useSync } from "./hooks/useSync";
-import { useDataSync } from "./hooks/useDataSync";
+import { useSyncGlobal } from "./hooks/SyncContext";
 import { NetworkIndicator } from "./components/NetworkIndicator";
 import {
   guardarVentaOffline,
@@ -596,18 +596,14 @@ setAcuerdosResumen(acuerdos);
   const { isOffline } = useOffline();
   const { sincronizar, ventasPendientes: ventasPendientesLocal } = useSync();
 
-  // Sync automático 2x día + backup local
+  // Usar el sync global (ya activo en LayoutPrivado — no crear instancia duplicada)
   const {
     syncing: syncingData,
     lastSync,
     ventasPendientes: ventasPendientesSync,
     syncError,
     sincronizarAhora,
-  } = useDataSync({
-    vanId: van?.id,
-    usuarioId: usuario?.id,
-    enabled: true,
-  });
+  } = useSyncGlobal();
 
   const ventasPendientes = ventasPendientesSync || ventasPendientesLocal;
 // 🆕 PENDING SALES EN LA NUBE (reemplaza localStorage)  // <--- AGREGA //

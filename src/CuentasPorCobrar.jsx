@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState, lazy, Suspense } from "react";
+import React, { useEffect, useMemo, useState, lazy, Suspense, useCallback } from "react";
+import { useSyncGlobal } from "./hooks/SyncContext";
 import { supabase } from "./supabaseClient";
 import dayjs from "dayjs";
 import {
@@ -1048,6 +1049,19 @@ export default function CuentasPorCobrar() {
 
   const [adminMode, setAdminMode] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+
+  // ── Auto-refresh cuando el sync completa con ventas/pagos offline ──
+  const { onSyncComplete } = useSyncGlobal();
+  useEffect(() => {
+    const unsub = onSyncComplete(({ ventasSubidas, pagosSubidos }) => {
+      if (ventasSubidas > 0 || pagosSubidos > 0) {
+        console.log('🔄 [CxC] Sync completó — refrescando saldos automáticamente...');
+        setReloadTick(t => t + 1);
+      }
+    });
+    return unsub;
+  }, [onSyncComplete]);
+
   const [edit, setEdit] = useState({
     open: false,
     id: null,
