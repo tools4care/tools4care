@@ -9,6 +9,7 @@ import {
   guardarInventarioVan,
   guardarTopProductos,
   guardarBackupLocal,
+  guardarDeudaCache,
   obtenerFechaUltimoBackup,
   obtenerHistorialBackups,
 } from '../utils/offlineDB';
@@ -116,23 +117,39 @@ export function useDataSync({ vanId, usuarioId, enabled = true } = {}) {
         await guardarTopProductos(vanId, productosFormateados.slice(0, 50));
       }
 
-      // 4. Descargar ventas recientes (últimos 30 días) para backup
-      const hace30dias = new Date();
-      hace30dias.setDate(hace30dias.getDate() - 30);
+      // 4a. Ventas recientes (últimos 60 días) para historial
+      const hace60dias = new Date();
+      hace60dias.setDate(hace60dias.getDate() - 60);
 
       const { data: ventasRecientes } = await supabase
         .from('ventas')
-        .select('id,fecha,total_venta,total_pagado,estado_pago,cliente_id')
-        .gte('fecha', hace30dias.toISOString())
+        .select('id,created_at,total_venta,total,total_pagado,estado_pago,cliente_id,metodo_pago,notas')
+        .gte('created_at', hace60dias.toISOString())
         .eq('van_id', vanId)
-        .order('fecha', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(500);
 
-      // 5. Guardar backup local completo
+      // 4b. Ventas con deuda pendiente (sin límite de fecha) — crítico para CxC
+      const { data: ventasConDeuda } = await supabase
+        .from('ventas')
+        .select('id,created_at,total_venta,total,total_pagado,estado_pago,cliente_id,metodo_pago,notas')
+        .eq('van_id', vanId)
+        .in('estado_pago', ['pendiente', 'parcial'])
+        .order('created_at', { ascending: false })
+        .limit(1000);
+
+      // 4c. Guardar deudas en cache separado para fácil acceso offline
+      const todasVentasDeuda = ventasConDeuda || [];
+      await guardarDeudaCache(todasVentasDeuda);
+
+      // 5. Guardar backup local completo (incluye clientes con balance + ventas con deuda)
       await guardarBackupLocal({
-        clientes: clientes || [],
+        clientes: clientes || [],          // tiene campo "balance" = deuda actual
         inventario: inventario || [],
         ventas_recientes: ventasRecientes || [],
+        ventas_con_deuda: todasVentasDeuda, // ventas parciales/pendientes
+        backup_version: '2.0',
+        van_id: vanId,
       });
 
       // 6. Actualizar estado

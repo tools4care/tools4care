@@ -2717,22 +2717,64 @@ if (selectedClient?.id) {
       // ============== MODO OFFLINE ==============
       if (isOffline) {
         try {
-          // Preparar venta para guardar localmente
+          // Calcular pagos y estado igual que en modo online
+          const paid_offline = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+          const oldDebt_offline = Math.max(0, balanceBefore);
+          const payOldDebt_offline = Math.min(paid_offline, oldDebt_offline);
+          const paidForSale_offline = Math.min(saleTotal, Math.max(0, paid_offline - payOldDebt_offline));
+          const pendingFromSale_offline = Math.max(0, saleTotal - paidForSale_offline);
+          const estadoPago_offline = pendingFromSale_offline === 0 ? "pagado" : paidForSale_offline > 0 ? "parcial" : "pendiente";
+
+          const nonZeroPays_offline = payments.filter((p) => Number(p.monto) > 0);
+          const payMap_offline = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+          for (const p of nonZeroPays_offline) {
+            if (payMap_offline[p.forma] !== undefined) payMap_offline[p.forma] += Number(p.monto || 0);
+          }
+          const metodoPrincipal_offline = nonZeroPays_offline.length === 1 ? (nonZeroPays_offline[0].forma || "mix") : "mix";
+
+          // Preparar venta para guardar localmente — mismos campos que el insert online
           const ventaOffline = {
+            // Identificación
             cliente_id: selectedClient?.id ?? null,
             van_id: van.id,
             usuario_id: usuario.id,
+            // Totales (todos los campos que usa Supabase)
+            total_venta: Number(saleTotal.toFixed(2)),
             total: Number(saleTotal.toFixed(2)),
-            estado_pago: "pendiente",
-            notas: `${notes || ""} [VENTA OFFLINE - Pendiente de sincronización]`.trim(),
-            items: cartSafe.map((p) => ({
-              producto_id: p.producto_id,
-              nombre: p.nombre,
-              cantidad: p.cantidad,
-              precio_unitario: p.precio_unitario,
-            })),
+            total_pagado: Number(paidForSale_offline.toFixed(2)),
+            // Estado y método
+            estado_pago: estadoPago_offline,
+            metodo_pago: metodoPrincipal_offline,
+            // Desglose por forma de pago
+            pago_efectivo: Number((payMap_offline.efectivo || 0).toFixed(2)),
+            pago_tarjeta: Number((payMap_offline.tarjeta || 0).toFixed(2)),
+            pago_transferencia: Number((payMap_offline.transferencia || 0).toFixed(2)),
+            pago_otro: Number((payMap_offline.otro || 0).toFixed(2)),
+            // JSON de pago completo
+            pago: {
+              metodos: nonZeroPays_offline,
+              map: payMap_offline,
+              total_ingresado: Number(paid_offline.toFixed(2)),
+              aplicado_venta: Number(paidForSale_offline.toFixed(2)),
+              aplicado_deuda: Number(payOldDebt_offline.toFixed(2)),
+            },
+            notas: `${notes || ""} [OFFLINE]`.trim(),
+            // Items con campos de descuento compatibles con detalle_ventas
+            items: cartSafe.map((p) => {
+              const meta = p._pricing || { base: p.precio_unitario, pct: 0 };
+              return {
+                producto_id: p.producto_id,
+                nombre: p.nombre,
+                cantidad: Number(p.cantidad),
+                precio_unitario: Number(meta.base || p.precio_unitario || 0),
+                precio_unit: Number(meta.base || p.precio_unitario || 0),
+                descuento_pct: Number(meta.pct || 0),
+              };
+            }),
+            // Pagos originales para referencia
             payments: payments.filter((p) => Number(p.monto) > 0),
-            fecha_venta: new Date().toISOString(),
+            // Fecha real de la transacción (sin campo fecha_venta — no existe en BD)
+            created_at: new Date().toISOString(),
           };
 
           await guardarVentaOffline(ventaOffline);
