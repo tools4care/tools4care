@@ -1164,23 +1164,31 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
 }
 
 /* ---------- Tarjeta de Métrica Mejorada ---------- */
-function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo, valuePrefix = "", subtitle = null }) {
+function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo, valuePrefix = "", subtitle = null, onClick = null }) {
   const isPositive = trend > 0;
   const isNeutral = trend === 0;
 
   return (
-    <div className={`bg-gradient-to-br ${gradientFrom} ${gradientTo} rounded-2xl shadow-lg hover:shadow-xl transition-all p-5 text-white relative overflow-hidden`}>
+    <div
+      className={`bg-gradient-to-br ${gradientFrom} ${gradientTo} rounded-2xl shadow-lg hover:shadow-xl transition-all p-5 text-white relative overflow-hidden ${onClick ? 'cursor-pointer hover:scale-[1.03] active:scale-[0.98]' : ''}`}
+      onClick={onClick}
+    >
       <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4">
         <div className="scale-[2]">{icon}</div>
       </div>
       <div className="relative z-10">
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-semibold opacity-90">{title}</div>
-          {icon}
+          <div className="flex items-center gap-1.5">
+            {onClick && (
+              <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-semibold opacity-80">tap</span>
+            )}
+            {icon}
+          </div>
         </div>
         <div className="flex items-baseline gap-2">
           <div className="text-4xl font-bold">
-            {valuePrefix}{typeof value === 'number' ? value.toLocaleString('es-MX', { maximumFractionDigits: value >= 1000 ? 0 : 1 }) : value}{unit}
+            {valuePrefix}{typeof value === 'number' ? value.toLocaleString('en-US', { maximumFractionDigits: value >= 1000 ? 0 : 1 }) : value}{unit}
           </div>
         </div>
         {trend !== null && trend !== undefined && (
@@ -1192,6 +1200,408 @@ function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo,
         {subtitle && !trend && (
           <div className="mt-2 text-xs font-medium opacity-80">{subtitle}</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- KPI Detail Modal ---------- */
+function KpiDetailModal({ type, ventas, ventasSerie, metricas, rangeDays, historialBackups, onClose }) {
+  if (!type) return null;
+
+  // --- Shared derived data ---
+  const totalRevenue  = metricas.totalVentas;
+  const totalOrders   = metricas.totalOrdenes;
+  const avgTicketVal  = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+
+  // Revenue per day with cumulative
+  let cumulative = 0;
+  const serieWithCumul = ventasSerie.map(d => {
+    cumulative += d.total;
+    return { ...d, cumulative };
+  });
+
+  // Best / worst selling day
+  const daysWithSales = ventasSerie.filter(d => d.total > 0);
+  const bestDay  = daysWithSales.length ? daysWithSales.reduce((b, d) => d.total > b.total ? d : b, daysWithSales[0]) : null;
+  const worstDay = daysWithSales.length ? daysWithSales.reduce((b, d) => d.total < b.total ? d : b, daysWithSales[0]) : null;
+  const zeroDays = ventasSerie.filter(d => d.total === 0).length;
+
+  // Half-period comparison
+  const mitad = Math.floor(rangeDays / 2);
+  const fechaMitad = dayjs().subtract(mitad, "day");
+  const primera = ventas.filter(v => dayjs(v.fecha).isBefore(fechaMitad));
+  const segunda  = ventas.filter(v => !dayjs(v.fecha).isBefore(fechaMitad));
+  const totalPrimera = primera.reduce((s, v) => s + Number(v.total || 0), 0);
+  const totalSegunda = segunda.reduce((s, v) => s + Number(v.total || 0), 0);
+
+  // Weekly breakdown (group by week)
+  const weekMap = new Map();
+  ventasSerie.forEach(d => {
+    const wk = dayjs(d.fecha).startOf("isoWeek").format("MM/DD");
+    const e = weekMap.get(wk) || { week: wk, revenue: 0, orders: 0 };
+    weekMap.set(wk, { week: wk, revenue: e.revenue + d.total, orders: e.orders + d.orders });
+  });
+  const weekData = [...weekMap.values()].slice(-4); // last 4 weeks
+
+  // Debt breakdown from backup
+  const backupResumen = historialBackups?.[0]?.resumen;
+  const topDeudores   = backupResumen?.top_deudores || [];
+
+  const configs = {
+    "daily-avg": {
+      title: "Daily Average",
+      icon: "📊",
+      color: "from-blue-600 to-cyan-500",
+    },
+    growth: {
+      title: "Growth Analysis",
+      icon: "📈",
+      color: metricas.crecimiento >= 0 ? "from-green-600 to-emerald-500" : "from-red-600 to-orange-500",
+    },
+    debt: {
+      title: "Total Debt",
+      icon: "💳",
+      color: metricas.totalDeuda > 0 ? "from-orange-600 to-red-500" : "from-green-600 to-emerald-500",
+    },
+    clients: {
+      title: "Active Clients",
+      icon: "👥",
+      color: "from-purple-600 to-pink-500",
+    },
+  };
+  const cfg = configs[type];
+
+  const StatBubble = ({ label, value, sub }) => (
+    <div className="bg-white/15 backdrop-blur-sm rounded-2xl p-4 text-center">
+      <div className="text-xl sm:text-2xl font-bold leading-tight">{value}</div>
+      <div className="text-[11px] font-semibold opacity-90 mt-0.5 leading-tight">{label}</div>
+      {sub && <div className="text-[10px] opacity-70 mt-0.5">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/65 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[92dvh]">
+
+        {/* Gradient header */}
+        <div className={`bg-gradient-to-r ${cfg.color} text-white px-6 py-5 rounded-t-3xl sm:rounded-t-3xl shrink-0`}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">{cfg.icon}</span>
+              <div>
+                <h3 className="font-bold text-xl leading-tight">{cfg.title}</h3>
+                <p className="text-xs opacity-80">Last {rangeDays} days</p>
+              </div>
+            </div>
+            <button
+              className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors text-lg font-bold"
+              onClick={onClose}
+            >✕</button>
+          </div>
+
+          {/* KPI bubbles */}
+          {type === "daily-avg" && (
+            <div className="grid grid-cols-3 gap-3">
+              <StatBubble label="Daily Average" value={fmtMoney(metricas.promedioDiario)} />
+              <StatBubble label="Best Day" value={bestDay ? fmtMoney(bestDay.total) : "—"} sub={bestDay ? dayjs(bestDay.fecha).format("MMM D") : ""} />
+              <StatBubble label="Zero-sale Days" value={zeroDays} sub={`of ${rangeDays}`} />
+            </div>
+          )}
+          {type === "growth" && (
+            <div className="grid grid-cols-3 gap-3">
+              <StatBubble label="Growth" value={(metricas.crecimiento >= 0 ? "+" : "") + metricas.crecimiento.toFixed(1) + "%"} />
+              <StatBubble label="First Half" value={fmtMoney(totalPrimera)} sub={`${primera.length} orders`} />
+              <StatBubble label="Second Half" value={fmtMoney(totalSegunda)} sub={`${segunda.length} orders`} />
+            </div>
+          )}
+          {type === "debt" && (
+            <div className="grid grid-cols-3 gap-3">
+              <StatBubble label="Total Debt" value={fmtMoney(metricas.totalDeuda)} />
+              <StatBubble label="Clients w/ Debt" value={metricas.clientesConDeuda} />
+              <StatBubble label="Avg Debt/Client" value={metricas.clientesConDeuda > 0 ? fmtMoney(metricas.totalDeuda / metricas.clientesConDeuda) : "—"} />
+            </div>
+          )}
+          {type === "clients" && (
+            <div className="grid grid-cols-3 gap-3">
+              <StatBubble label="Active Clients" value={metricas.clientesUnicos} sub={`in ${rangeDays}d`} />
+              <StatBubble label="Avg per Client" value={metricas.clientesUnicos > 0 ? fmtMoney(totalRevenue / metricas.clientesUnicos) : "—"} />
+              <StatBubble label="Avg Orders" value={metricas.clientesUnicos > 0 ? (totalOrders / metricas.clientesUnicos).toFixed(1) : "—"} sub="per client" />
+            </div>
+          )}
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+          {/* DAILY AVERAGE content */}
+          {type === "daily-avg" && <>
+            <div className="bg-gray-50 rounded-2xl p-4">
+              <h4 className="font-bold text-gray-700 mb-3 text-sm">📅 Daily Revenue</h4>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={ventasSerie} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
+                    <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <ReferenceLine y={metricas.promedioDiario} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: 'avg', position: 'insideTopRight', fill: '#f59e0b', fontSize: 10 }} />
+                    <Bar dataKey="total" radius={[4, 4, 0, 0]}>
+                      {ventasSerie.map((d, i) => (
+                        <Cell key={i} fill={d.total >= metricas.promedioDiario ? '#3b82f6' : '#bfdbfe'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">🔵 Above average &nbsp; 🔹 Below average &nbsp; — avg line in amber</p>
+            </div>
+
+            <div className="bg-gray-50 rounded-2xl p-4">
+              <h4 className="font-bold text-gray-700 mb-3 text-sm">📈 Cumulative Revenue</h4>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={serieWithCumul} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gCumul" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#06b6d4" stopOpacity={0.5} />
+                        <stop offset="100%" stopColor="#06b6d4" stopOpacity={0.03} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Cumulative"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Area type="monotone" dataKey="cumulative" stroke="#06b6d4" strokeWidth={2.5} fill="url(#gCumul)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {bestDay && worstDay && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-green-50 rounded-2xl p-4 border border-green-200">
+                  <div className="text-xs text-green-600 font-bold uppercase mb-1">🏆 Best Day</div>
+                  <div className="font-bold text-gray-900">{dayjs(bestDay.fecha).format("ddd, MMM D")}</div>
+                  <div className="text-2xl font-bold text-green-700">{fmtMoney(bestDay.total)}</div>
+                  <div className="text-xs text-gray-500">{bestDay.orders} orders</div>
+                </div>
+                <div className="bg-red-50 rounded-2xl p-4 border border-red-200">
+                  <div className="text-xs text-red-600 font-bold uppercase mb-1">📉 Lowest Day</div>
+                  <div className="font-bold text-gray-900">{dayjs(worstDay.fecha).format("ddd, MMM D")}</div>
+                  <div className="text-2xl font-bold text-red-600">{fmtMoney(worstDay.total)}</div>
+                  <div className="text-xs text-gray-500">{worstDay.orders} orders</div>
+                </div>
+              </div>
+            )}
+          </>}
+
+          {/* GROWTH content */}
+          {type === "growth" && <>
+            <div className="bg-gray-50 rounded-2xl p-4">
+              <h4 className="font-bold text-gray-700 mb-3 text-sm">📊 Period Comparison</h4>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={[
+                      { name: `First ${mitad}d`, revenue: totalPrimera, orders: primera.length },
+                      { name: `Last ${mitad}d`,  revenue: totalSegunda, orders: segunda.length },
+                    ]}
+                    margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
+                    <Tooltip formatter={(v, n) => [n === "revenue" ? fmtMoney(v) : v + " orders", n === "revenue" ? "Revenue" : "Orders"]} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Bar dataKey="revenue" fill={metricas.crecimiento >= 0 ? '#10b981' : '#ef4444'} radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-2xl p-4">
+              <h4 className="font-bold text-gray-700 mb-3 text-sm">📅 Weekly Revenue</h4>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={weekData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                    <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Bar dataKey="revenue" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className={`rounded-2xl p-5 text-white bg-gradient-to-r ${metricas.crecimiento >= 0 ? 'from-green-500 to-emerald-600' : 'from-red-500 to-orange-600'}`}>
+              <div className="text-4xl font-bold mb-1">{metricas.crecimiento >= 0 ? "+" : ""}{metricas.crecimiento.toFixed(1)}%</div>
+              <div className="text-sm opacity-90 font-medium">
+                {metricas.crecimiento >= 0
+                  ? `Revenue increased by ${fmtMoney(Math.abs(totalSegunda - totalPrimera))} in the second half`
+                  : `Revenue decreased by ${fmtMoney(Math.abs(totalSegunda - totalPrimera))} in the second half`}
+              </div>
+            </div>
+          </>}
+
+          {/* DEBT content */}
+          {type === "debt" && <>
+            {metricas.totalDeuda === 0 ? (
+              <div className="text-center py-10">
+                <div className="text-6xl mb-3">🎉</div>
+                <div className="font-bold text-gray-700 text-xl">No outstanding debt!</div>
+                <div className="text-gray-500 text-sm mt-1">All clients are up to date with payments</div>
+              </div>
+            ) : (
+              <>
+                {topDeudores.length > 0 && (
+                  <div className="bg-gray-50 rounded-2xl p-4">
+                    <h4 className="font-bold text-gray-700 mb-3 text-sm">🔴 Top Debtors</h4>
+                    <div className="space-y-3">
+                      {topDeudores.map((d, i) => {
+                        const pct = metricas.totalDeuda > 0 ? (d.deuda / metricas.totalDeuda) * 100 : 0;
+                        return (
+                          <div key={i}>
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-2">
+                                <span className="w-5 h-5 bg-orange-100 text-orange-700 rounded-full text-[10px] font-bold flex items-center justify-center">{i+1}</span>
+                                <span className="text-sm font-semibold text-gray-800 truncate max-w-[140px]">{d.nombre}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-sm font-bold text-red-600">{fmtMoney(d.deuda)}</span>
+                                <span className="text-xs text-gray-400 ml-1">{pct.toFixed(0)}%</span>
+                              </div>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                              <div className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-orange-50 rounded-2xl p-4 border border-orange-200">
+                    <div className="text-xs text-orange-600 font-bold uppercase mb-1">Total Owed</div>
+                    <div className="text-2xl font-bold text-orange-700">{fmtMoney(metricas.totalDeuda)}</div>
+                  </div>
+                  <div className="bg-red-50 rounded-2xl p-4 border border-red-200">
+                    <div className="text-xs text-red-600 font-bold uppercase mb-1">Clients w/ Debt</div>
+                    <div className="text-2xl font-bold text-red-700">{metricas.clientesConDeuda}</div>
+                  </div>
+                </div>
+
+                {topDeudores.length > 0 && (
+                  <div className="bg-gray-50 rounded-2xl p-4">
+                    <h4 className="font-bold text-gray-700 mb-3 text-sm">📊 Debt Distribution</h4>
+                    <div className="h-40">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={topDeudores.slice(0, 5)} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} layout="vertical">
+                          <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v.toFixed(0)}`} />
+                          <YAxis type="category" dataKey="nombre" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} width={80} />
+                          <Tooltip formatter={(v) => [fmtMoney(v), "Debt"]} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                          <Bar dataKey="deuda" fill="#f97316" radius={[0, 6, 6, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </>}
+
+          {/* CLIENTS content */}
+          {type === "clients" && <>
+            <div className="bg-gray-50 rounded-2xl p-4">
+              <h4 className="font-bold text-gray-700 mb-3 text-sm">📅 Daily Active Clients</h4>
+              <div className="h-44">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={ventasSerie.map(d => {
+                      const clientsThisDay = new Set(
+                        ventas
+                          .filter(v => dayjs(v.fecha).format("YYYY-MM-DD") === d.fecha && v.cliente_id)
+                          .map(v => v.cliente_id)
+                      ).size;
+                      return { ...d, clients: clientsThisDay };
+                    })}
+                    margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
+                    <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
+                    <Tooltip formatter={(v) => [v, "Clients"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Bar dataKey="clients" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {(() => {
+              // Top clients by revenue
+              const clientMap = new Map();
+              ventas.forEach(v => {
+                if (!v.cliente_id) return;
+                const e = clientMap.get(v.cliente_id) || { total: 0, count: 0 };
+                clientMap.set(v.cliente_id, { total: e.total + Number(v.total || 0), count: e.count + 1 });
+              });
+              const topClients = [...clientMap.entries()]
+                .map(([id, e]) => ({ id, nombre: id, total: e.total, count: e.count }))
+                .sort((a, b) => b.total - a.total)
+                .slice(0, 5);
+
+              if (!topClients.length) return null;
+              const maxRev = topClients[0]?.total || 1;
+              return (
+                <div className="bg-gray-50 rounded-2xl p-4">
+                  <h4 className="font-bold text-gray-700 mb-3 text-sm">🥇 Top Clients by Revenue</h4>
+                  <div className="space-y-3">
+                    {topClients.map((c, i) => (
+                      <div key={c.id}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 bg-purple-100 text-purple-700 rounded-full text-[10px] font-bold flex items-center justify-center">{i+1}</span>
+                            <span className="text-sm font-semibold text-gray-800 font-mono text-xs">{String(c.id).slice(0, 12)}…</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-sm font-bold text-purple-700">{fmtMoney(c.total)}</span>
+                            <span className="text-xs text-gray-400 ml-1">{c.count} orders</span>
+                          </div>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                          <div className="h-full bg-gradient-to-r from-purple-400 to-pink-500 rounded-full" style={{ width: `${(c.total/maxRev)*100}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-purple-50 rounded-2xl p-4 border border-purple-200">
+                <div className="text-xs text-purple-600 font-bold uppercase mb-1">Revenue / Client</div>
+                <div className="text-2xl font-bold text-purple-700">
+                  {metricas.clientesUnicos > 0 ? fmtMoney(totalRevenue / metricas.clientesUnicos) : "—"}
+                </div>
+              </div>
+              <div className="bg-pink-50 rounded-2xl p-4 border border-pink-200">
+                <div className="text-xs text-pink-600 font-bold uppercase mb-1">Orders / Client</div>
+                <div className="text-2xl font-bold text-pink-700">
+                  {metricas.clientesUnicos > 0 ? (totalOrders / metricas.clientesUnicos).toFixed(1) : "—"}
+                </div>
+              </div>
+            </div>
+          </>}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t shrink-0">
+          <button
+            className="w-full bg-gradient-to-r from-gray-700 to-gray-900 hover:from-gray-800 hover:to-black text-white font-semibold py-3 rounded-2xl transition-all"
+            onClick={onClose}
+          >Close</button>
+        </div>
       </div>
     </div>
   );
@@ -1603,6 +2013,7 @@ export default function Dashboard() {
 
   const [showRecentSales, setShowRecentSales] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(null); // 'sales' | 'orders' | 'ticket' | null
+  const [showKpiModal, setShowKpiModal] = useState(null); // 'daily-avg' | 'growth' | 'debt' | 'clients' | null
 
   const [mostrarTodas, setMostrarTodas] = useState(false);
   const ventasMostrar = mostrarTodas ? ventas : ventas.slice(0, 8);
@@ -2230,6 +2641,7 @@ export default function Dashboard() {
             icon={<IconDollar />}
             gradientFrom="from-blue-500"
             gradientTo="to-cyan-500"
+            onClick={() => setShowKpiModal("daily-avg")}
           />
           <MetricCard
             title="Growth"
@@ -2239,6 +2651,7 @@ export default function Dashboard() {
             icon={<IconTrending up={metricas.crecimiento > 0} />}
             gradientFrom={metricas.crecimiento >= 0 ? "from-green-500" : "from-red-500"}
             gradientTo={metricas.crecimiento >= 0 ? "to-emerald-500" : "to-orange-500"}
+            onClick={() => setShowKpiModal("growth")}
           />
           <MetricCard
             title="Total Debt"
@@ -2250,6 +2663,7 @@ export default function Dashboard() {
             icon={<IconUsers />}
             gradientFrom={metricas.totalDeuda > 0 ? "from-orange-500" : "from-green-500"}
             gradientTo={metricas.totalDeuda > 0 ? "to-red-500" : "to-emerald-500"}
+            onClick={() => setShowKpiModal("debt")}
           />
           <MetricCard
             title="Active Clients"
@@ -2260,6 +2674,7 @@ export default function Dashboard() {
             icon={<IconAlert />}
             gradientFrom="from-purple-500"
             gradientTo="to-pink-500"
+            onClick={() => setShowKpiModal("clients")}
           />
         </div>
 
@@ -2330,167 +2745,211 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Gráfica Principal Mejorada */}
-        <div className="bg-white rounded-3xl shadow-xl p-6">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-800 mb-1">Sales Performance</h2>
-              <p className="text-sm text-gray-500">Revenue trends and daily orders</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <div className="flex items-center gap-1.5">
-                <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                <span className="text-gray-600 font-medium text-xs">Revenue</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-3 h-3 rounded-full bg-indigo-800"></div>
-                <span className="text-gray-600 font-medium text-xs">7-day Avg</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
-                <span className="text-gray-600 font-medium text-xs">Orders</span>
-              </div>
-            </div>
-          </div>
-          <div className="h-80 sm:h-96 bg-gradient-to-b from-slate-50/60 to-white rounded-2xl p-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="gradRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%"   stopColor="#3b82f6" stopOpacity={0.55}/>
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.03}/>
-                  </linearGradient>
-                  <linearGradient id="gradOrders" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%"   stopColor="#10b981" stopOpacity={0.35}/>
-                    <stop offset="100%" stopColor="#10b981" stopOpacity={0.02}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
-                <XAxis
-                  dataKey="fecha"
-                  tickFormatter={shortDate}
-                  minTickGap={28}
-                  tick={{ fontSize: 11, fill: '#94a3b8', fontWeight: 500 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  yAxisId="revenue"
-                  orientation="left"
-                  tick={{ fontSize: 11, fill: '#94a3b8', fontWeight: 500 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`}
-                  width={48}
-                />
-                <YAxis
-                  yAxisId="orders"
-                  orientation="right"
-                  tick={{ fontSize: 11, fill: '#94a3b8', fontWeight: 500 }}
-                  axisLine={false}
-                  tickLine={false}
-                  width={30}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'rgba(255,255,255,0.97)',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '14px',
-                    boxShadow: '0 20px 60px rgba(0,0,0,0.12)',
-                    padding: '12px 16px',
-                  }}
-                  labelStyle={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 6 }}
-                  itemStyle={{ fontSize: 13, fontWeight: 600 }}
-                  formatter={(value, name) => {
-                    if (name === "total")  return [fmtMoney(value), "💰 Revenue"];
-                    if (name === "ma7")    return [fmtMoney(value), "📊 7-day avg"];
-                    if (name === "orders") return [value + " orders", "🛒 Orders"];
-                    return value;
-                  }}
-                  labelFormatter={(l) => dayjs(l).format("dddd, MMM D")}
-                />
-                {/* Reference line for average revenue */}
-                {metricas.promedioDiario > 0 && (
-                  <ReferenceLine
-                    yAxisId="revenue"
-                    y={metricas.promedioDiario}
-                    stroke="#f59e0b"
-                    strokeDasharray="4 4"
-                    strokeWidth={1.5}
-                    label={{ value: 'avg', position: 'insideTopRight', fill: '#f59e0b', fontSize: 10 }}
-                  />
-                )}
-                <Area
-                  yAxisId="revenue"
-                  type="monotone"
-                  dataKey="total"
-                  stroke="#3b82f6"
-                  strokeWidth={2.5}
-                  fill="url(#gradRevenue)"
-                  dot={false}
-                  activeDot={{ r: 5, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }}
-                  isAnimationActive={true}
-                  animationDuration={800}
-                />
-                <Line
-                  yAxisId="revenue"
-                  type="monotone"
-                  dataKey="ma7"
-                  stroke="#312e81"
-                  strokeWidth={2}
-                  dot={false}
-                  strokeDasharray="5 3"
-                  isAnimationActive={true}
-                  animationDuration={1000}
-                />
-                <Line
-                  yAxisId="orders"
-                  type="monotone"
-                  dataKey="orders"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 5, fill: '#10b981', stroke: '#fff', strokeWidth: 2 }}
-                  isAnimationActive={true}
-                  animationDuration={900}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
+        {/* Sales Performance — Dark glassmorphism card */}
+        {(() => {
+          const mejorDia     = ventasSerie.length ? ventasSerie.reduce((b, d) => d.total > b.total ? d : b, ventasSerie[0]) : null;
+          const sinVentasIdx = [...ventasSerie].reverse().findIndex(d => d.orders > 0);
+          const diasSinVenta = sinVentasIdx === 0 ? 0 : sinVentasIdx === -1 ? ventasSerie.length : sinVentasIdx;
+          const totalRevenue = metricas.totalVentas;
+          const totalOrders  = metricas.totalOrdenes;
+          return (
+            <div className="relative rounded-3xl overflow-hidden shadow-2xl"
+              style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
 
-          {/* Insights rápidos del período */}
-          {ventasSerie.length > 0 && (() => {
-            const mejorDia = ventasSerie.reduce((best, d) => d.total > best.total ? d : best, ventasSerie[0]);
-            const sinVentas = [...ventasSerie].reverse().findIndex(d => d.orders > 0);
-            const diasSinVenta = sinVentas === 0 ? 0 : sinVentas === -1 ? ventasSerie.length : sinVentas;
-            return (
-              <div className="mt-4 flex flex-wrap gap-3">
-                {diasSinVenta > 1 && (
-                  <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 text-sm">
-                    <span>⚠️</span>
-                    <span className="text-orange-700 font-semibold">{diasSinVenta} days without recorded sales</span>
-                  </div>
-                )}
-                {mejorDia.total > 0 && (
-                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-2 text-sm">
-                    <span>🏆</span>
-                    <span className="text-green-700 font-semibold">
-                      Best day: {dayjs(mejorDia.fecha).format("MMM DD")} — {fmtMoney(mejorDia.total)} ({mejorDia.orders} orders)
-                    </span>
-                  </div>
-                )}
-                {metricas.crecimiento !== 0 && (
-                  <div className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm border ${metricas.crecimiento > 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
-                    <span>{metricas.crecimiento > 0 ? '📈' : '📉'}</span>
-                    <span className={`font-semibold ${metricas.crecimiento > 0 ? 'text-blue-700' : 'text-red-700'}`}>
-                      {metricas.crecimiento > 0 ? '+' : ''}{metricas.crecimiento.toFixed(1)}% vs first half of period
-                    </span>
-                  </div>
-                )}
+              {/* Decorative blobs */}
+              <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full opacity-20"
+                  style={{ background: 'radial-gradient(circle, #6366f1, transparent)' }} />
+                <div className="absolute -bottom-24 -right-24 w-72 h-72 rounded-full opacity-15"
+                  style={{ background: 'radial-gradient(circle, #06b6d4, transparent)' }} />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-32 opacity-10"
+                  style={{ background: 'radial-gradient(ellipse, #a78bfa, transparent)' }} />
               </div>
-            );
-          })()}
-        </div>
+
+              {/* Header */}
+              <div className="relative z-10 px-6 pt-6 pb-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-start gap-4">
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-widest text-indigo-400 mb-1">Performance</div>
+                    <h2 className="text-2xl font-bold text-white">Sales Performance</h2>
+                    <p className="text-slate-400 text-sm mt-0.5">Last {rangeDays} days · revenue & orders</p>
+                  </div>
+
+                  {/* Quick stats pills */}
+                  <div className="flex flex-wrap gap-2">
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 text-center min-w-[80px]">
+                      <div className="text-lg font-bold text-white">{fmtMoney(totalRevenue)}</div>
+                      <div className="text-[10px] text-slate-400 font-semibold uppercase">Revenue</div>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 text-center min-w-[60px]">
+                      <div className="text-lg font-bold text-emerald-400">{totalOrders}</div>
+                      <div className="text-[10px] text-slate-400 font-semibold uppercase">Orders</div>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 text-center min-w-[80px]">
+                      <div className={`text-lg font-bold ${metricas.crecimiento >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {metricas.crecimiento >= 0 ? '+' : ''}{metricas.crecimiento.toFixed(1)}%
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-semibold uppercase">Growth</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Legend */}
+                <div className="flex flex-wrap items-center gap-4 mt-4">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-8 h-0.5 bg-gradient-to-r from-violet-400 to-cyan-400 rounded-full"></div>
+                    <span className="text-slate-300 text-xs font-medium">Revenue</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-8 h-0.5 border-t-2 border-dashed border-amber-400 rounded-full"></div>
+                    <span className="text-slate-300 text-xs font-medium">7-day Avg</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-emerald-500/70"></div>
+                    <span className="text-slate-300 text-xs font-medium">Orders</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chart */}
+              <div className="relative z-10 px-2 pb-2 h-80 sm:h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gDarkRev" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%"   stopColor="#818cf8" stopOpacity={0.6} />
+                        <stop offset="60%"  stopColor="#06b6d4" stopOpacity={0.25} />
+                        <stop offset="100%" stopColor="#06b6d4" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="strokeGrad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%"   stopColor="#818cf8" />
+                        <stop offset="100%" stopColor="#06b6d4" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="0" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                    <XAxis
+                      dataKey="fecha"
+                      tickFormatter={shortDate}
+                      minTickGap={28}
+                      tick={{ fontSize: 11, fill: '#64748b', fontWeight: 500 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      yAxisId="revenue"
+                      orientation="left"
+                      tick={{ fontSize: 11, fill: '#64748b', fontWeight: 500 }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`}
+                      width={48}
+                    />
+                    <YAxis
+                      yAxisId="orders"
+                      orientation="right"
+                      tick={{ fontSize: 11, fill: '#64748b', fontWeight: 500 }}
+                      axisLine={false}
+                      tickLine={false}
+                      allowDecimals={false}
+                      width={28}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: 'rgba(15,23,42,0.92)',
+                        border: '1px solid rgba(99,102,241,0.4)',
+                        borderRadius: '14px',
+                        boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+                        padding: '12px 16px',
+                        backdropFilter: 'blur(12px)',
+                      }}
+                      labelStyle={{ fontSize: 12, color: '#94a3b8', fontWeight: 700, marginBottom: 6 }}
+                      itemStyle={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}
+                      cursor={{ stroke: 'rgba(139,92,246,0.3)', strokeWidth: 1 }}
+                      formatter={(value, name) => {
+                        if (name === "total")  return [fmtMoney(value), "💰 Revenue"];
+                        if (name === "ma7")    return [fmtMoney(value), "📊 7-day avg"];
+                        if (name === "orders") return [value + " orders", "🛒 Orders"];
+                        return value;
+                      }}
+                      labelFormatter={(l) => dayjs(l).format("dddd, MMM D")}
+                    />
+                    {metricas.promedioDiario > 0 && (
+                      <ReferenceLine
+                        yAxisId="revenue"
+                        y={metricas.promedioDiario}
+                        stroke="#fbbf24"
+                        strokeDasharray="5 3"
+                        strokeWidth={1.5}
+                        label={{ value: 'avg', position: 'insideTopRight', fill: '#fbbf24', fontSize: 10 }}
+                      />
+                    )}
+                    {/* Revenue area — violet→cyan gradient */}
+                    <Area
+                      yAxisId="revenue"
+                      type="monotone"
+                      dataKey="total"
+                      stroke="#818cf8"
+                      strokeWidth={3}
+                      fill="url(#gDarkRev)"
+                      dot={false}
+                      activeDot={{ r: 6, fill: '#818cf8', stroke: '#fff', strokeWidth: 2 }}
+                      isAnimationActive={true}
+                      animationDuration={900}
+                    />
+                    {/* 7-day moving avg */}
+                    <Line
+                      yAxisId="revenue"
+                      type="monotone"
+                      dataKey="ma7"
+                      stroke="#fbbf24"
+                      strokeWidth={1.5}
+                      dot={false}
+                      strokeDasharray="6 3"
+                      isAnimationActive={true}
+                      animationDuration={1100}
+                    />
+                    {/* Orders bars */}
+                    <Bar
+                      yAxisId="orders"
+                      dataKey="orders"
+                      fill="rgba(16,185,129,0.55)"
+                      radius={[3, 3, 0, 0]}
+                      maxBarSize={18}
+                      isAnimationActive={true}
+                      animationDuration={800}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Insight pills at bottom */}
+              <div className="relative z-10 px-6 pb-5">
+                <div className="flex flex-wrap gap-2">
+                  {mejorDia && mejorDia.total > 0 && (
+                    <div className="bg-white/10 backdrop-blur-sm border border-white/10 rounded-xl px-3 py-1.5 flex items-center gap-2">
+                      <span>🏆</span>
+                      <span className="text-white text-xs font-semibold">Best: {dayjs(mejorDia.fecha).format("MMM D")} — {fmtMoney(mejorDia.total)}</span>
+                    </div>
+                  )}
+                  {diasSinVenta > 1 && (
+                    <div className="bg-amber-500/20 border border-amber-500/30 rounded-xl px-3 py-1.5 flex items-center gap-2">
+                      <span>⚠️</span>
+                      <span className="text-amber-300 text-xs font-semibold">{diasSinVenta} days no sales</span>
+                    </div>
+                  )}
+                  {metricas.crecimiento !== 0 && (
+                    <div className={`rounded-xl px-3 py-1.5 flex items-center gap-2 border ${metricas.crecimiento > 0 ? 'bg-green-500/15 border-green-500/30' : 'bg-red-500/15 border-red-500/30'}`}>
+                      <span>{metricas.crecimiento > 0 ? '📈' : '📉'}</span>
+                      <span className={`text-xs font-semibold ${metricas.crecimiento > 0 ? 'text-green-300' : 'text-red-300'}`}>
+                        {metricas.crecimiento > 0 ? '+' : ''}{metricas.crecimiento.toFixed(1)}% vs first half
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Sección de Productos y Alertas */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -2773,6 +3232,15 @@ export default function Dashboard() {
       </div>
 
       {/* Modals */}
+      <KpiDetailModal
+        type={showKpiModal}
+        ventas={ventas}
+        ventasSerie={ventasSerie}
+        metricas={metricas}
+        rangeDays={rangeDays}
+        historialBackups={historialBackups}
+        onClose={() => setShowKpiModal(null)}
+      />
       <SalesDetailModal
         type={showDetailModal}
         ventas={ventas}
