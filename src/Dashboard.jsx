@@ -1206,7 +1206,7 @@ function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo,
 }
 
 /* ---------- KPI Detail Modal ---------- */
-function KpiDetailModal({ type, ventas, ventasSerie, metricas, rangeDays, historialBackups, onClose }) {
+function KpiDetailModal({ type, ventas, ventasSerie, metricas, rangeDays, historialBackups, onClose, getNombreCliente }) {
   if (!type) return null;
 
   // --- Shared derived data ---
@@ -1546,7 +1546,7 @@ function KpiDetailModal({ type, ventas, ventasSerie, metricas, rangeDays, histor
                 clientMap.set(v.cliente_id, { total: e.total + Number(v.total || 0), count: e.count + 1 });
               });
               const topClients = [...clientMap.entries()]
-                .map(([id, e]) => ({ id, nombre: id, total: e.total, count: e.count }))
+                .map(([id, e]) => ({ id, nombre: getNombreCliente ? getNombreCliente(id) : id, total: e.total, count: e.count }))
                 .sort((a, b) => b.total - a.total)
                 .slice(0, 5);
 
@@ -1561,7 +1561,7 @@ function KpiDetailModal({ type, ventas, ventasSerie, metricas, rangeDays, histor
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
                             <span className="w-5 h-5 bg-purple-100 text-purple-700 rounded-full text-[10px] font-bold flex items-center justify-center">{i+1}</span>
-                            <span className="text-sm font-semibold text-gray-800 font-mono text-xs">{String(c.id).slice(0, 12)}…</span>
+                            <span className="text-sm font-semibold text-gray-800 truncate max-w-[150px]">{c.nombre}</span>
                           </div>
                           <div className="text-right">
                             <span className="text-sm font-bold text-purple-700">{fmtMoney(c.total)}</span>
@@ -3240,6 +3240,7 @@ export default function Dashboard() {
         rangeDays={rangeDays}
         historialBackups={historialBackups}
         onClose={() => setShowKpiModal(null)}
+        getNombreCliente={getNombreCliente}
       />
       <SalesDetailModal
         type={showDetailModal}
