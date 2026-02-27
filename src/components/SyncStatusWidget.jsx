@@ -1,14 +1,7 @@
 // src/components/SyncStatusWidget.jsx
 // Tarjeta de estado de sincronización y backup automático para el Dashboard
 
-import { useState } from "react";
 import { useOffline } from "../hooks/useOffline";
-import {
-  exportarClientesCSV,
-  exportarInventarioCSV,
-  exportarDeudasCSV,
-  exportarBackupJSON,
-} from "../utils/offlineDB";
 
 function fmtFecha(ts) {
   if (!ts) return "Nunca";
@@ -41,38 +34,20 @@ export default function SyncStatusWidget({
   ventasPendientes = 0,
   syncError = null,
   onSyncNow = null,
-  vanId = null,
   onOpenBackupManager = null,
   backupCount = 0,
 }) {
   const { isOnline } = useOffline();
-  const [exportando, setExportando] = useState(null);
-  const [exportError, setExportError] = useState("");
-
-  async function handleExport(tipo) {
-    setExportando(tipo);
-    setExportError("");
-    try {
-      if (tipo === "clientes") await exportarClientesCSV();
-      else if (tipo === "inventario") await exportarInventarioCSV(vanId);
-      else if (tipo === "deudas") await exportarDeudasCSV();
-      else if (tipo === "backup") await exportarBackupJSON();
-    } catch (e) {
-      setExportError(e.message || "Error al exportar");
-    } finally {
-      setExportando(null);
-    }
-  }
 
   const estadoSync = syncError
-    ? { color: "red", icon: "❌", texto: "Error de sincronización" }
+    ? { color: "red",    icon: "❌", texto: "Error de sincronización" }
     : syncing
-    ? { color: "blue", icon: "🔄", texto: "Sincronizando..." }
+    ? { color: "blue",   icon: "🔄", texto: "Sincronizando..." }
     : !isOnline
-    ? { color: "amber", icon: "📵", texto: "Sin conexión" }
+    ? { color: "amber",  icon: "📵", texto: "Sin conexión" }
     : ventasPendientes > 0
     ? { color: "orange", icon: "⏳", texto: `${ventasPendientes} pendiente${ventasPendientes !== 1 ? "s" : ""}` }
-    : { color: "green", icon: "✅", texto: "Datos sincronizados" };
+    : { color: "green",  icon: "✅", texto: "Datos sincronizados" };
 
   const colorMap = {
     red:    { bg: "bg-red-50",    border: "border-red-200",    text: "text-red-700",    badge: "bg-red-100 text-red-700" },
@@ -89,9 +64,8 @@ export default function SyncStatusWidget({
       <div className="flex items-center justify-between mb-5">
         <div>
           <h2 className="text-xl font-bold text-gray-800">Backup Automático</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Sincroniza 2× al día · Al iniciar y a las 8 PM</p>
+          <p className="text-sm text-gray-500 mt-0.5">Guarda hasta 7 copias · Sync 2× al día</p>
         </div>
-        {/* Estado badge */}
         <span className={`inline-flex items-center gap-1.5 text-sm font-semibold px-3 py-1.5 rounded-full ${c.badge}`}>
           <span>{estadoSync.icon}</span>
           {estadoSync.texto}
@@ -129,21 +103,19 @@ export default function SyncStatusWidget({
         </div>
       </div>
 
-      {/* Historial de backups */}
+      {/* Historial de backups (últimos 3) */}
       {historialBackups.length > 0 && (
         <div className="mb-5">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              Últimos backups ({historialBackups.length})
-            </p>
-          </div>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Últimos backups ({historialBackups.length} de 7)
+          </p>
           <div className="space-y-1.5">
             {historialBackups.slice(0, 3).map((b, i) => (
               <div key={b.backup_id || i} className="flex items-center justify-between text-sm bg-gray-50 rounded-xl px-3 py-2">
-                <div>
+                <div className="flex items-center gap-2">
                   <span className="text-gray-600">{fmtFecha(b.timestamp)}</span>
                   {b.created_by === 'manual' && (
-                    <span className="ml-2 text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">manual</span>
+                    <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">manual</span>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-xs text-gray-400">
@@ -151,12 +123,14 @@ export default function SyncStatusWidget({
                     <>
                       <span>{b.resumen.total_clientes ?? 0} clientes</span>
                       <span>{b.resumen.total_inventario_items ?? 0} prod</span>
-                      <span className="text-red-400 font-medium">${Number(b.resumen.total_deuda || 0).toFixed(0)} deuda</span>
+                      <span className="text-red-400 font-medium">
+                        ${Number(b.resumen.total_deuda || 0).toFixed(0)} deuda
+                      </span>
                     </>
                   ) : (
                     <>
                       <span>{b.registros?.clientes ?? 0} clientes</span>
-                      <span>{b.registros?.inventario ?? 0} productos</span>
+                      <span>{b.registros?.inventario ?? 0} prod</span>
                     </>
                   )}
                 </div>
@@ -180,66 +154,16 @@ export default function SyncStatusWidget({
           </button>
         )}
 
-        {/* Export clientes CSV */}
-        <button
-          onClick={() => handleExport("clientes")}
-          disabled={!!exportando}
-          className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-emerald-100 transition-all disabled:opacity-50"
-          title="Exportar lista de clientes desde caché local"
-        >
-          {exportando === "clientes" ? "⏳" : "📋"} Clientes CSV
-        </button>
-
-        {/* Export inventario CSV */}
-        {vanId && (
-          <button
-            onClick={() => handleExport("inventario")}
-            disabled={!!exportando}
-            className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-blue-100 transition-all disabled:opacity-50"
-            title="Exportar inventario van desde caché local"
-          >
-            {exportando === "inventario" ? "⏳" : "📦"} Inventario CSV
-          </button>
-        )}
-
-        {/* Export deudas CSV */}
-        <button
-          onClick={() => handleExport("deudas")}
-          disabled={!!exportando}
-          className="flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-red-100 transition-all disabled:opacity-50"
-          title="Exportar clientes con deuda pendiente"
-        >
-          {exportando === "deudas" ? "⏳" : "💳"} Deudas CSV
-        </button>
-
-        {/* Export backup JSON */}
-        <button
-          onClick={() => handleExport("backup")}
-          disabled={!!exportando}
-          className="flex items-center gap-1.5 bg-purple-50 border border-purple-200 text-purple-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-purple-100 transition-all disabled:opacity-50"
-          title="Descargar backup completo como JSON (clientes + inventario + ventas + deudas)"
-        >
-          {exportando === "backup" ? "⏳" : "💾"} Backup JSON
-        </button>
-
         {/* Gestionar backups */}
         {onOpenBackupManager && (
           <button
             onClick={onOpenBackupManager}
             className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-100 transition-all"
-            title="Ver, descargar y restaurar backups guardados"
           >
             🗂️ Gestionar backups{backupCount > 0 ? ` (${backupCount})` : ''}
           </button>
         )}
       </div>
-
-      {/* Error de export */}
-      {exportError && (
-        <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          ⚠️ {exportError}
-        </p>
-      )}
     </div>
   );
 }
