@@ -854,9 +854,9 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[90dvh]">
-        <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 flex items-center justify-between rounded-t-3xl sm:rounded-t-2xl shrink-0">
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl flex flex-col" style={{ maxHeight: 'min(85dvh, 680px)' }}>
+        <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 flex items-center justify-between rounded-t-2xl shrink-0">
           <div className="flex items-center gap-3">
             <IconMap />
             <h3 className="font-bold text-lg">Add Barbershop</h3>
@@ -1139,7 +1139,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
           )}
 
         </div>{/* end scrollable body */}
-          <div className="p-4 border-t bg-white shrink-0 rounded-b-3xl sm:rounded-b-2xl">
+          <div className="p-4 border-t bg-white shrink-0 rounded-b-2xl">
             <div className="flex gap-3">
               <button
                 type="button"
