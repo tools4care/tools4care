@@ -11,13 +11,13 @@ import {
   guardarClientesCache,
   guardarInventarioVan,
   guardarTopProductos,
-  guardarBackupLocal,
   guardarDeudaCache,
   obtenerFechaUltimoBackup,
   obtenerVentasPendientes,
   obtenerPagosPendientes,
 } from '../utils/offlineDB';
 import { sincronizarVentasPendientes, sincronizarPagosPendientes } from '../utils/syncManager';
+import { guardarBackupAutomatico, obtenerBackupsGuardados, limpiarBackupsAntiguos } from '../utils/backupManager';
 
 const SyncContext = createContext(null);
 
@@ -28,6 +28,7 @@ export function useSyncGlobal() {
     lastSync: null,
     ventasPendientes: 0,
     syncError: null,
+    historialBackups: [],
     sincronizarAhora: () => {},
     onSyncComplete: () => () => {},
   };
@@ -40,10 +41,11 @@ export function SyncProvider({ children }) {
   const vanId = van?.id;
   const usuarioId = usuario?.id;
 
-  const [syncing, setSyncing]           = useState(false);
-  const [lastSync, setLastSync]         = useState(() => localStorage.getItem('ultimo_sync_completo'));
+  const [syncing, setSyncing]             = useState(false);
+  const [lastSync, setLastSync]           = useState(() => localStorage.getItem('ultimo_sync_completo'));
   const [ventasPendientes, setVentasPend] = useState(0);
-  const [syncError, setSyncError]       = useState(null);
+  const [syncError, setSyncError]         = useState(null);
+  const [backupsMeta, setBackupsMeta]     = useState([]);
 
   // Lista de callbacks a llamar cuando el sync completa exitosamente
   const listenersRef = useRef([]);
@@ -153,15 +155,27 @@ export function SyncProvider({ children }) {
 
       await guardarDeudaCache(ventasConDeuda || []);
 
-      // 5. Backup local completo
-      await guardarBackupLocal({
-        clientes: clientes || [],
-        inventario: inventario || [],
-        ventas_recientes: ventasRecientes || [],
-        ventas_con_deuda: ventasConDeuda || [],
-        backup_version: '2.0',
-        van_id: vanId,
+      // 5. Backup automático v3.0 (incluye pendientes offline para referencia)
+      const [ventasPend, pagosPend] = await Promise.all([
+        obtenerVentasPendientes(),
+        obtenerPagosPendientes(),
+      ]);
+      await guardarBackupAutomatico({
+        van_id:                    vanId,
+        van_nombre:                van?.nombre || van?.nombre_van || `Van ${vanId}`,
+        usuario_id:                usuarioId,
+        created_by:                'auto',
+        clientes:                  clientes || [],
+        inventario:                inventario || [],
+        ventas_recientes:          ventasRecientes || [],
+        ventas_con_deuda:          ventasConDeuda || [],
+        ventas_pendientes_offline: ventasPend,
+        pagos_pendientes_offline:  pagosPend,
       });
+      // Limpiar backups antiguos y actualizar lista en contexto
+      await limpiarBackupsAntiguos();
+      const metaList = await obtenerBackupsGuardados();
+      setBackupsMeta(metaList);
 
       // 6. Actualizar estado
       const ahora = new Date().toISOString();
@@ -228,10 +242,11 @@ export function SyncProvider({ children }) {
     };
   }, [vanId, usuarioId, sincronizarTodo, contarPendientes]);
 
-  // Cargar pendientes al montar
+  // Cargar pendientes y backups al montar
   useEffect(() => {
     obtenerFechaUltimoBackup().then(f => { if (f) setLastSync(f); });
     contarPendientes();
+    obtenerBackupsGuardados().then(setBackupsMeta);
   }, [contarPendientes]);
 
   const value = {
@@ -239,6 +254,7 @@ export function SyncProvider({ children }) {
     lastSync,
     ventasPendientes,
     syncError,
+    historialBackups: backupsMeta,  // ← lista de backups automáticos (metadata)
     sincronizarAhora: () => sincronizarTodo({ silencioso: false }),
     onSyncComplete,   // ← las vistas usan esto para auto-refresh
   };
