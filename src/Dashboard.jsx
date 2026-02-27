@@ -157,13 +157,69 @@ function LowStockModal({ open, items, onClose }) {
   const [q, setQ] = useState("");
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return items;
-    return items.filter(
-      (i) =>
-        String(i.codigo).toLowerCase().includes(s) ||
-        String(i.nombre).toLowerCase().includes(s)
-    );
+    const base = s
+      ? items.filter(i =>
+          String(i.codigo).toLowerCase().includes(s) ||
+          String(i.nombre).toLowerCase().includes(s)
+        )
+      : items;
+    return base;
   }, [q, items]);
+
+  const criticos = filtered.filter(p => p.urgencia === "critico");
+  const bajos    = filtered.filter(p => p.urgencia === "bajo");
+  const vigilar  = filtered.filter(p => p.urgencia === "watch");
+
+  const StockRow = ({ p }) => {
+    const diasLabel = p.cantidad === 0
+      ? "AGOTADO"
+      : p.diasRestantes >= 999
+      ? `${p.cantidad} u.`
+      : `~${p.diasRestantes}d`;
+    const urgColor = p.urgencia === "critico"
+      ? { border: "border-red-500",    badge: "bg-red-500 text-white",    bg: "from-red-50 to-red-50" }
+      : p.urgencia === "bajo"
+      ? { border: "border-orange-400", badge: "bg-orange-100 text-orange-700", bg: "from-orange-50 to-orange-50" }
+      : { border: "border-yellow-400", badge: "bg-yellow-100 text-yellow-700", bg: "from-yellow-50 to-yellow-50" };
+    const ultimaLabel = p.ultimaVenta
+      ? `Últ. venta hace ${dayjs().diff(dayjs(p.ultimaVenta), "day")}d`
+      : null;
+    return (
+      <li className={`bg-gradient-to-r ${urgColor.bg} rounded-xl p-3.5 border-l-4 ${urgColor.border}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-gray-900 truncate">{p.nombre}</div>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+              {p.codigo && <span className="text-xs text-gray-400 font-mono">{p.codigo}</span>}
+              {p.vendido30d > 0 && <span className="text-xs text-gray-500">{p.vendido30d} u./30d · {p.velocidad}/día</span>}
+              {ultimaLabel && <span className="text-xs text-gray-400">{ultimaLabel}</span>}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="text-right">
+              <div className="text-xs text-gray-400">Stock</div>
+              <div className="text-2xl font-bold text-gray-800">{p.cantidad}</div>
+            </div>
+            <span className={`text-xs font-bold px-2 py-1 rounded-lg ${urgColor.badge}`}>
+              {diasLabel}
+            </span>
+          </div>
+        </div>
+      </li>
+    );
+  };
+
+  const Grupo = ({ titulo, color, items: grupo }) => {
+    if (!grupo.length) return null;
+    return (
+      <div className="mb-4">
+        <div className={`text-xs font-bold uppercase tracking-wider mb-2 ${color}`}>{titulo} ({grupo.length})</div>
+        <ul className="space-y-2">
+          {grupo.map((p, i) => <StockRow key={`${p.codigo}-${i}`} p={p} />)}
+        </ul>
+      </div>
+    );
+  };
 
   if (!open) return null;
   return (
@@ -172,7 +228,10 @@ function LowStockModal({ open, items, onClose }) {
         <div className="px-5 py-4 bg-gradient-to-r from-red-600 to-orange-600 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <IconAlert />
-            <h3 className="font-bold text-lg">Low Stock Alert</h3>
+            <div>
+              <h3 className="font-bold text-lg">Productos Agotándose</h3>
+              <p className="text-xs opacity-80">Vendidos en últimos 60 días · {items.length} productos</p>
+            </div>
           </div>
           <button
             className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
@@ -183,43 +242,29 @@ function LowStockModal({ open, items, onClose }) {
         </div>
         <div className="p-4 flex-1 overflow-hidden flex flex-col">
           <input
-            className="w-full border-2 border-gray-200 focus:border-red-500 rounded-lg px-4 py-2.5 mb-3 transition-colors"
-            placeholder="Search by code or name..."
+            className="w-full border-2 border-gray-200 focus:border-red-500 rounded-xl px-4 py-2.5 mb-4 transition-colors"
+            placeholder="Buscar por código o nombre..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <div className="flex-1 overflow-y-auto">
             {filtered.length === 0 ? (
-              <div className="text-gray-500 text-sm text-center py-8">No results found.</div>
+              <div className="text-gray-500 text-sm text-center py-8">Sin resultados.</div>
             ) : (
-              <ul className="space-y-2">
-                {filtered.map((p, idx) => (
-                  <li key={`${p.codigo}-${idx}`} className="bg-gradient-to-r from-red-50 to-orange-50 rounded-lg p-4 border-l-4 border-red-500 hover:shadow-md transition-shadow">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900">{p.nombre}</div>
-                        <div className="text-xs text-gray-500 font-mono mt-1">{p.codigo}</div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <div className="text-xs text-gray-500">Stock</div>
-                          <div className="text-2xl font-bold text-red-600">{p.cantidad}</div>
-                        </div>
-                        <IconAlert className="text-red-600" />
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <Grupo titulo="🔴 Crítico — menos de 7 días" color="text-red-600"    items={criticos} />
+                <Grupo titulo="🟠 Stock bajo — menos de 14 días" color="text-orange-600" items={bajos}    />
+                <Grupo titulo="🟡 Vigilar — menos de 30 días" color="text-yellow-600" items={vigilar}  />
+              </>
             )}
           </div>
         </div>
         <div className="p-4 border-t">
           <button
-            className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white font-semibold py-3 px-4 rounded-lg transition-all"
+            className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white font-semibold py-3 px-4 rounded-xl transition-all"
             onClick={onClose}
           >
-            Close
+            Cerrar
           </button>
         </div>
       </div>
@@ -1104,10 +1149,10 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
 }
 
 /* ---------- Tarjeta de Métrica Mejorada ---------- */
-function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo, valuePrefix = "" }) {
+function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo, valuePrefix = "", subtitle = null }) {
   const isPositive = trend > 0;
   const isNeutral = trend === 0;
-  
+
   return (
     <div className={`bg-gradient-to-br ${gradientFrom} ${gradientTo} rounded-2xl shadow-lg hover:shadow-xl transition-all p-5 text-white relative overflow-hidden`}>
       <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4">
@@ -1120,18 +1165,17 @@ function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo,
         </div>
         <div className="flex items-baseline gap-2">
           <div className="text-4xl font-bold">
-            {valuePrefix}{typeof value === 'number' ? value.toFixed(value >= 100 ? 0 : 1) : value}{unit}
+            {valuePrefix}{typeof value === 'number' ? value.toLocaleString('es-MX', { maximumFractionDigits: value >= 1000 ? 0 : 1 }) : value}{unit}
           </div>
         </div>
         {trend !== null && trend !== undefined && (
-          <div className={`mt-3 flex items-center gap-1.5 text-sm font-semibold ${
-            isNeutral ? 'opacity-70' : ''
-          }`}>
+          <div className={`mt-2 flex items-center gap-1.5 text-sm font-semibold ${isNeutral ? 'opacity-70' : ''}`}>
             <IconTrending up={isPositive} />
-            <span>
-              {isPositive ? '+' : ''}{trend.toFixed(1)}% vs previous
-            </span>
+            <span>{isPositive ? '+' : ''}{trend.toFixed(1)}% vs previous</span>
           </div>
+        )}
+        {subtitle && !trend && (
+          <div className="mt-2 text-xs font-medium opacity-80">{subtitle}</div>
         )}
       </div>
     </div>
@@ -1177,6 +1221,7 @@ export default function Dashboard() {
   const [rangeDays, setRangeDays] = useState(14);
   const [ventasSerie, setVentasSerie] = useState([]);
   const [productosTop, setProductosTop] = useState([]);
+  const [topMode, setTopMode] = useState("units"); // 'units' | 'revenue'
   const [stockVan, setStockVan] = useState([]);
 
   const [showAllLow, setShowAllLow] = useState(false);
@@ -1290,15 +1335,19 @@ export default function Dashboard() {
     if (ids.length > 0) {
       const { data: det2 } = await supabase
         .from("detalle_ventas")
-        .select("producto_id,cantidad")
+        .select("producto_id,cantidad,precio_unitario,subtotal")
         .in("venta_id", ids);
       det = det2 || [];
     }
 
-    const qtyMap = new Map();
+    const qtyMap     = new Map();
+    const revenueMap = new Map();
     (det || []).forEach((r) => {
       const pid = r.producto_id;
-      qtyMap.set(pid, (qtyMap.get(pid) || 0) + Number(r.cantidad || 0));
+      const qty = Number(r.cantidad || 0);
+      const rev = Number(r.subtotal || 0) || qty * Number(r.precio_unitario || 0);
+      qtyMap.set(pid, (qtyMap.get(pid) || 0) + qty);
+      revenueMap.set(pid, (revenueMap.get(pid) || 0) + rev);
     });
 
     let top = [];
@@ -1313,6 +1362,7 @@ export default function Dashboard() {
         .map(([producto_id, cantidad]) => ({
           producto_id,
           cantidad,
+          revenue: revenueMap.get(producto_id) || 0,
           nombre: nameMap.get(producto_id) || producto_id,
         }))
         .sort((a, b) => b.cantidad - a.cantidad)
@@ -1324,81 +1374,86 @@ export default function Dashboard() {
 
   async function cargarStockVan(van_id) {
     try {
+      // 1. Productos con stock bajo (< 10 unidades)
       const { data: stockBajo, error: errorStock } = await supabase
         .from("stock_van")
-        .select(`
-          cantidad, 
-          producto_id, 
-          productos(nombre, codigo)
-        `)
+        .select("cantidad, producto_id, productos(nombre, codigo, precio)")
         .eq("van_id", van_id)
-        .lt("cantidad", 5)
+        .lt("cantidad", 10)
         .order("cantidad", { ascending: true });
 
       if (errorStock) console.error("❌ Error stock:", errorStock);
+      if (!stockBajo?.length) { setStockVan([]); return; }
 
-      if (!stockBajo || stockBajo.length === 0) {
-        setStockVan([]);
-        return;
-      }
+      // 2. Solo ventas de los últimos 60 días (filtro de productos "activos")
+      const hace60d = dayjs().subtract(60, "day").toISOString();
+      const hace30d = dayjs().subtract(30, "day").toISOString();
 
-      const { data: ventasVan, error: errorVentas } = await supabase
+      const { data: ventasRecientes } = await supabase
         .from("ventas")
         .select("id")
-        .eq("van_id", van_id);
+        .eq("van_id", van_id)
+        .gte("created_at", hace60d);
 
-      if (errorVentas) console.error("❌ Error ventas:", errorVentas);
+      if (!ventasRecientes?.length) { setStockVan([]); return; }
 
-      if (!ventasVan || ventasVan.length === 0) {
-        setStockVan([]);
-        return;
-      }
+      const ids = ventasRecientes.map(v => v.id);
 
-      const ventasIds = ventasVan.map(v => v.id);
-
-      const { data: detalleVentas, error: errorDetalle } = await supabase
+      // 3. detalle_ventas con fecha para calcular velocidad y última venta
+      const { data: detalles } = await supabase
         .from("detalle_ventas")
-        .select("producto_id")
-        .in("venta_id", ventasIds);
+        .select("producto_id, cantidad, created_at")
+        .in("venta_id", ids);
 
-      if (errorDetalle) console.error("❌ Error detalle:", errorDetalle);
+      // 4. Calcular velocidad (últimos 30d) y última venta (últimos 60d) por producto
+      const vendido30dMap  = new Map();
+      const ultimaVentaMap = new Map();
 
-      let productosVendidos = new Set();
-      
-      if (!detalleVentas || detalleVentas.length === 0) {
-        const { data: ventasConProductos } = await supabase
-          .from("ventas")
-          .select("productos")
-          .eq("van_id", van_id)
-          .not("productos", "is", null);
-
-        if (ventasConProductos && ventasConProductos.length > 0) {
-          ventasConProductos.forEach(v => {
-            if (Array.isArray(v.productos)) {
-              v.productos.forEach(p => {
-                if (p.producto_id || p.producto || p.id) {
-                  productosVendidos.add(p.producto_id || p.producto || p.id);
-                }
-              });
-            }
-          });
+      (detalles || []).forEach(d => {
+        const pid = d.producto_id;
+        // Velocidad: solo contar unidades de los últimos 30 días
+        if (d.created_at >= hace30d) {
+          vendido30dMap.set(pid, (vendido30dMap.get(pid) || 0) + Number(d.cantidad || 0));
         }
-      } else {
-        productosVendidos = new Set(detalleVentas.map(d => d.producto_id));
-      }
+        // Última venta: máximo timestamp de los últimos 60d
+        const actual = ultimaVentaMap.get(pid);
+        if (!actual || d.created_at > actual) ultimaVentaMap.set(pid, d.created_at);
+      });
+
+      // 5. Filtrar solo productos vendidos en 60d y calcular urgencia
+      const productosVendidos = new Set((detalles || []).map(d => d.producto_id));
 
       const stockFiltrado = stockBajo
         .filter(item => productosVendidos.has(item.producto_id))
-        .map((item) => ({
-          nombre: item.productos?.nombre || item.producto_id,
-          codigo: item.productos?.codigo || item.producto_id,
-          cantidad: item.cantidad,
-        }));
+        .map(item => {
+          const v30 = vendido30dMap.get(item.producto_id) || 0;
+          const velocidad = Number((v30 / 30).toFixed(2)); // unidades/día
+          const diasRestantes = velocidad > 0
+            ? Math.floor(item.cantidad / velocidad)
+            : 999; // no se sabe cuándo se agota si no hubo ventas en 30d
+          const urgencia = item.cantidad === 0 || diasRestantes < 7
+            ? "critico"
+            : diasRestantes < 14
+            ? "bajo"
+            : "watch";
+          return {
+            nombre:        item.productos?.nombre || item.producto_id,
+            codigo:        item.productos?.codigo || "",
+            precio:        Number(item.productos?.precio || 0),
+            cantidad:      item.cantidad,
+            vendido30d:    v30,
+            velocidad,
+            diasRestantes,
+            ultimaVenta:   ultimaVentaMap.get(item.producto_id) || null,
+            urgencia,
+          };
+        })
+        .sort((a, b) => a.diasRestantes - b.diasRestantes); // más urgentes primero
 
       setStockVan(stockFiltrado);
-      
+
     } catch (error) {
-      console.error("💥 Error general en cargarStockVan:", error);
+      console.error("💥 Error cargarStockVan:", error);
       setStockVan([]);
     }
   }
@@ -1541,7 +1596,7 @@ export default function Dashboard() {
     const totalVentas = ventas.reduce((sum, v) => sum + Number(v.total || 0), 0);
     const diasConVentas = new Set(ventas.map(v => dayjs(v.fecha).format("YYYY-MM-DD"))).size;
     const promedioDiario = diasConVentas > 0 ? totalVentas / diasConVentas : 0;
-    
+
     const mitad = Math.floor(rangeDays / 2);
     const fechaMitad = dayjs().subtract(mitad, "day");
     const ventasPrimera = ventas.filter(v => dayjs(v.fecha).isBefore(fechaMitad));
@@ -1549,17 +1604,24 @@ export default function Dashboard() {
     const totalPrimera = ventasPrimera.reduce((sum, v) => sum + Number(v.total || 0), 0);
     const totalSegunda = ventasSegunda.reduce((sum, v) => sum + Number(v.total || 0), 0);
     const crecimiento = totalPrimera > 0 ? ((totalSegunda - totalPrimera) / totalPrimera * 100) : 0;
-    
+
     const clientesUnicos = new Set(ventas.map(v => v.cliente_id).filter(Boolean)).size;
-    const conversion = clientesUnicos > 0 ? (ventas.length / clientesUnicos) : 0;
-    
-    const productosAgotados = stockVan.filter(p => p.cantidad === 0).length;
-    
+
+    // Deuda total y clientes con deuda desde el backup/cache más reciente
+    const backupResumen = historialBackups?.[0]?.resumen;
+    const totalDeuda = backupResumen?.total_deuda || 0;
+    const clientesConDeuda = backupResumen?.clientes_con_deuda || 0;
+
+    // Productos urgentes (crítico = 0 stock o se agotan en < 7 días)
+    const productosUrgentes = stockVan.filter(p => p.urgencia === "critico").length;
+
     setMetricas({
       promedioDiario,
       crecimiento,
-      conversion,
-      productosAgotados,
+      clientesUnicos,
+      totalDeuda,
+      clientesConDeuda,
+      productosUrgentes,
       totalVentas,
       totalOrdenes: ventas.length,
     });
@@ -1804,22 +1866,25 @@ export default function Dashboard() {
             gradientTo={metricas.crecimiento >= 0 ? "to-emerald-500" : "to-orange-500"}
           />
           <MetricCard
-            title="Conversion Rate"
-            value={metricas.conversion}
-            unit="x"
+            title="Deuda Total"
+            value={metricas.totalDeuda}
+            unit=""
+            valuePrefix="$"
             trend={null}
+            subtitle={metricas.clientesConDeuda > 0 ? `${metricas.clientesConDeuda} clientes` : "Sin deuda"}
             icon={<IconUsers />}
-            gradientFrom="from-purple-500"
-            gradientTo="to-pink-500"
+            gradientFrom={metricas.totalDeuda > 0 ? "from-orange-500" : "from-green-500"}
+            gradientTo={metricas.totalDeuda > 0 ? "to-red-500" : "to-emerald-500"}
           />
           <MetricCard
-            title="Out of Stock"
-            value={metricas.productosAgotados}
+            title="Clientes Activos"
+            value={metricas.clientesUnicos}
             unit=""
             trend={null}
+            subtitle={`en ${rangeDays} días`}
             icon={<IconAlert />}
-            gradientFrom="from-orange-500"
-            gradientTo="to-red-500"
+            gradientFrom="from-purple-500"
+            gradientTo="to-pink-500"
           />
         </div>
 
@@ -1933,6 +1998,39 @@ export default function Dashboard() {
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+
+          {/* Insights rápidos del período */}
+          {ventasSerie.length > 0 && (() => {
+            const mejorDia = ventasSerie.reduce((best, d) => d.total > best.total ? d : best, ventasSerie[0]);
+            const sinVentas = [...ventasSerie].reverse().findIndex(d => d.orders > 0);
+            const diasSinVenta = sinVentas === 0 ? 0 : sinVentas === -1 ? ventasSerie.length : sinVentas;
+            return (
+              <div className="mt-4 flex flex-wrap gap-3">
+                {diasSinVenta > 1 && (
+                  <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 text-sm">
+                    <span>⚠️</span>
+                    <span className="text-orange-700 font-semibold">{diasSinVenta} días sin ventas registradas</span>
+                  </div>
+                )}
+                {mejorDia.total > 0 && (
+                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-2 text-sm">
+                    <span>🏆</span>
+                    <span className="text-green-700 font-semibold">
+                      Mejor día: {dayjs(mejorDia.fecha).format("DD MMM")} — {fmtMoney(mejorDia.total)} ({mejorDia.orders} pedidos)
+                    </span>
+                  </div>
+                )}
+                {metricas.crecimiento !== 0 && (
+                  <div className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm border ${metricas.crecimiento > 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
+                    <span>{metricas.crecimiento > 0 ? '📈' : '📉'}</span>
+                    <span className={`font-semibold ${metricas.crecimiento > 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                      {metricas.crecimiento > 0 ? '+' : ''}{metricas.crecimiento.toFixed(1)}% vs primera mitad del período
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Sección de Productos y Alertas */}
@@ -1940,21 +2038,38 @@ export default function Dashboard() {
           
           {/* Top 10 Productos */}
           <div className="xl:col-span-2 bg-white rounded-3xl shadow-xl p-6">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
               <div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-1">Top 10 Products</h2>
-                <p className="text-sm text-gray-500">Last 30 days</p>
+                <h2 className="text-2xl font-bold text-gray-800 mb-1">Top 10 Productos</h2>
+                <p className="text-sm text-gray-500">Últimos 30 días</p>
               </div>
-              <div className="bg-green-100 p-3 rounded-xl">
-                <IconPackage />
+              <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+                <button
+                  onClick={() => setTopMode("units")}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-all ${topMode === "units" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  📦 Unidades
+                </button>
+                <button
+                  onClick={() => setTopMode("revenue")}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-all ${topMode === "revenue" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  💰 Revenue
+                </button>
               </div>
             </div>
             {productosTop.length === 0 ? (
-              <div className="text-gray-400 text-center py-12">No product data available</div>
+              <div className="text-gray-400 text-center py-12">Sin datos de productos</div>
             ) : (
               <div className="space-y-3">
-                {productosTop.map((p, idx) => {
-                  const percentage = (p.cantidad / maxProducto) * 100;
+                {[...productosTop]
+                  .sort((a, b) => topMode === "revenue" ? b.revenue - a.revenue : b.cantidad - a.cantidad)
+                  .map((p, idx) => {
+                  const maxVal = topMode === "revenue"
+                    ? Math.max(...productosTop.map(x => x.revenue))
+                    : Math.max(...productosTop.map(x => x.cantidad));
+                  const val = topMode === "revenue" ? p.revenue : p.cantidad;
+                  const percentage = maxVal > 0 ? (val / maxVal) * 100 : 0;
                   const colors = [
                     'from-yellow-400 to-orange-500',
                     'from-gray-400 to-gray-500',
@@ -1968,24 +2083,30 @@ export default function Dashboard() {
                     'from-teal-500 to-green-500',
                   ];
                   return (
-                    <div key={idx} className="group hover:scale-[1.02] transition-transform">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3 flex-1">
-                          <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${colors[idx]} text-white font-bold flex items-center justify-center text-sm shadow-md`}>
+                    <div key={idx} className="group hover:scale-[1.01] transition-transform">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${colors[idx]} text-white font-bold flex items-center justify-center text-sm shadow-md shrink-0`}>
                             #{idx + 1}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="font-semibold text-gray-900 truncate">{p.nombre}</div>
-                            <div className="text-xs text-gray-500">Units sold</div>
+                            <div className="text-xs text-gray-400">
+                              {topMode === "revenue"
+                                ? `${p.cantidad} unidades`
+                                : p.revenue > 0 ? fmtMoney(p.revenue) : ""}
+                            </div>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-gray-900">{p.cantidad}</div>
+                        <div className="text-right shrink-0 ml-2">
+                          <div className="text-xl font-bold text-gray-900">
+                            {topMode === "revenue" ? fmtMoney(p.revenue) : p.cantidad}
+                          </div>
                         </div>
                       </div>
-                      <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
-                        <div 
-                          className={`h-full bg-gradient-to-r ${colors[idx]} transition-all duration-500 rounded-full shadow-inner`}
+                      <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className={`h-full bg-gradient-to-r ${colors[idx]} transition-all duration-500 rounded-full`}
                           style={{ width: `${percentage}%` }}
                         />
                       </div>
@@ -1996,18 +2117,18 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Alerta de Stock Bajo */}
+          {/* Alerta de Stock Bajo — Agotándose */}
           <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-3xl shadow-xl p-6 border-2 border-red-200">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-2xl font-bold text-red-900 mb-1">Stock Alert</h2>
-                <p className="text-sm text-red-600">Low inventory items</p>
+                <h2 className="text-2xl font-bold text-red-900 mb-0.5">Agotándose</h2>
+                <p className="text-sm text-red-600">Vendidos en 60 días · Ordenados por urgencia</p>
               </div>
-              <div className="bg-red-500 text-white p-3 rounded-xl animate-pulse">
+              <div className={`text-white p-3 rounded-xl ${stockVan.some(p => p.urgencia === 'critico') ? 'bg-red-500 animate-pulse' : 'bg-orange-400'}`}>
                 <IconAlert />
               </div>
             </div>
-            
+
             {stockVan.length === 0 ? (
               <div className="text-center py-8">
                 <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -2015,41 +2136,71 @@ export default function Dashboard() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <div className="font-semibold text-gray-700">All good!</div>
-                <div className="text-sm text-gray-500">No low stock items</div>
+                <div className="font-semibold text-gray-700">¡Todo bien!</div>
+                <div className="text-sm text-gray-500">Nada se agota pronto</div>
               </div>
             ) : (
               <>
                 <div className="space-y-3 mb-4">
-                  {lowPreview.map((p, idx) => (
-                    <div key={idx} className="bg-white rounded-xl p-4 border-l-4 border-red-500 hover:shadow-lg transition-shadow">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1 min-w-0 mr-3">
-                          <div className="font-bold text-gray-900 truncate">{p.nombre}</div>
-                          <div className="text-xs text-gray-500 font-mono">{p.codigo}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="text-right">
-                            <div className="text-xs text-gray-500">Stock</div>
-                            <div className="text-3xl font-bold text-red-600">{p.cantidad}</div>
-                          </div>
-                          {p.cantidad === 0 && (
-                            <div className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded">
-                              OUT
+                  {lowPreview.map((p, idx) => {
+                    const urgColor = p.urgencia === 'critico'
+                      ? { border: 'border-red-500',   badge: 'bg-red-500',    bar: 'bg-red-500',    text: 'text-red-600'   }
+                      : p.urgencia === 'bajo'
+                      ? { border: 'border-orange-400', badge: 'bg-orange-400', bar: 'bg-orange-400', text: 'text-orange-600' }
+                      : { border: 'border-yellow-400', badge: 'bg-yellow-400', bar: 'bg-yellow-400', text: 'text-yellow-600' };
+                    const barWidth = p.diasRestantes >= 999 ? 90
+                      : Math.min(100, Math.max(4, (p.diasRestantes / 30) * 100));
+                    const diasLabel = p.cantidad === 0
+                      ? 'AGOTADO'
+                      : p.diasRestantes >= 999
+                      ? `${p.cantidad} u.`
+                      : `~${p.diasRestantes}d restantes`;
+                    const ultimaLabel = p.ultimaVenta
+                      ? `Últ. venta hace ${dayjs().diff(dayjs(p.ultimaVenta), 'day')}d`
+                      : null;
+                    return (
+                      <div key={idx} className={`bg-white rounded-xl p-3.5 border-l-4 ${urgColor.border} hover:shadow-md transition-shadow`}>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-bold text-gray-900 truncate text-sm">{p.nombre}</div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {p.codigo && <span className="text-xs text-gray-400 font-mono">{p.codigo}</span>}
+                              {ultimaLabel && <span className="text-xs text-gray-400">{ultimaLabel}</span>}
                             </div>
-                          )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="text-right">
+                              <div className="text-xs text-gray-400">Stock</div>
+                              <div className={`text-2xl font-bold ${urgColor.text}`}>{p.cantidad}</div>
+                            </div>
+                            <div className={`${urgColor.badge} text-white text-xs font-bold px-2 py-1 rounded-lg whitespace-nowrap`}>
+                              {diasLabel}
+                            </div>
+                          </div>
                         </div>
+                        {/* Barra de días restantes */}
+                        <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                          <div
+                            className={`h-full ${urgColor.bar} rounded-full transition-all`}
+                            style={{ width: `${barWidth}%` }}
+                          />
+                        </div>
+                        {p.vendido30d > 0 && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            {p.vendido30d} unidades vendidas en 30 días · {p.velocidad}/día
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-                
+
                 {stockVan.length > LOW_STOCK_PREVIEW && (
                   <button
                     onClick={() => setShowAllLow(true)}
                     className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg"
                   >
-                    View All ({stockVan.length})
+                    Ver todos ({stockVan.length})
                   </button>
                 )}
               </>
