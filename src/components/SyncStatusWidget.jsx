@@ -42,6 +42,8 @@ export default function SyncStatusWidget({
   syncError = null,
   onSyncNow = null,
   vanId = null,
+  onOpenBackupManager = null,
+  backupCount = 0,
 }) {
   const { isOnline } = useOffline();
   const [exportando, setExportando] = useState(null);
@@ -130,15 +132,33 @@ export default function SyncStatusWidget({
       {/* Historial de backups */}
       {historialBackups.length > 0 && (
         <div className="mb-5">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Historial</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Últimos backups ({historialBackups.length})
+            </p>
+          </div>
           <div className="space-y-1.5">
             {historialBackups.slice(0, 3).map((b, i) => (
-              <div key={i} className="flex items-center justify-between text-sm bg-gray-50 rounded-xl px-3 py-2">
-                <span className="text-gray-600">{fmtFecha(b.timestamp)}</span>
+              <div key={b.backup_id || i} className="flex items-center justify-between text-sm bg-gray-50 rounded-xl px-3 py-2">
+                <div>
+                  <span className="text-gray-600">{fmtFecha(b.timestamp)}</span>
+                  {b.created_by === 'manual' && (
+                    <span className="ml-2 text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">manual</span>
+                  )}
+                </div>
                 <div className="flex items-center gap-3 text-xs text-gray-400">
-                  <span>{b.registros?.clientes ?? 0} clientes</span>
-                  <span>{b.registros?.inventario ?? 0} productos</span>
-                  <span>{b.registros?.ventas ?? 0} ventas</span>
+                  {b.resumen ? (
+                    <>
+                      <span>{b.resumen.total_clientes ?? 0} clientes</span>
+                      <span>{b.resumen.total_inventario_items ?? 0} prod</span>
+                      <span className="text-red-400 font-medium">${Number(b.resumen.total_deuda || 0).toFixed(0)} deuda</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{b.registros?.clientes ?? 0} clientes</span>
+                      <span>{b.registros?.inventario ?? 0} productos</span>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -201,6 +221,17 @@ export default function SyncStatusWidget({
         >
           {exportando === "backup" ? "⏳" : "💾"} Backup JSON
         </button>
+
+        {/* Gestionar backups */}
+        {onOpenBackupManager && (
+          <button
+            onClick={onOpenBackupManager}
+            className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-100 transition-all"
+            title="Ver, descargar y restaurar backups guardados"
+          >
+            🗂️ Gestionar backups{backupCount > 0 ? ` (${backupCount})` : ''}
+          </button>
+        )}
       </div>
 
       {/* Error de export */}

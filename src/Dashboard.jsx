@@ -21,6 +21,7 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import SyncStatusWidget from "./components/SyncStatusWidget";
+import BackupManagerModal from "./components/BackupManagerModal";
 
 /* ---------- Helpers ---------- */
 function fmtMoney(n) {
@@ -1179,6 +1180,7 @@ export default function Dashboard() {
   const [stockVan, setStockVan] = useState([]);
 
   const [showAllLow, setShowAllLow] = useState(false);
+  const [showBackupModal, setShowBackupModal] = useState(false);
   const LOW_STOCK_PREVIEW = 3;
 
   const [showRecentSales, setShowRecentSales] = useState(false);
@@ -2144,6 +2146,8 @@ export default function Dashboard() {
           syncError={syncError}
           onSyncNow={sincronizarAhora}
           vanId={van?.id}
+          onOpenBackupManager={() => setShowBackupModal(true)}
+          backupCount={historialBackups?.length || 0}
         />
 
       </div>
@@ -2170,6 +2174,13 @@ export default function Dashboard() {
         vanId={van?.id}
         fechaSeleccionada={fechaRutaSeleccionada}
         onRefresh={() => cargarRutasBarberias(van.id, fechaRutaSeleccionada)}
+      />
+      <BackupManagerModal
+        open={showBackupModal}
+        onClose={() => setShowBackupModal(false)}
+        vanId={van?.id}
+        vanNombre={van?.nombre || van?.nombre_van || `Van ${van?.id}`}
+        usuarioId={usuario?.id}
       />
     </div>
   );
