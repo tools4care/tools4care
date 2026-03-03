@@ -14,6 +14,7 @@ import {
   CreditCard,
   UserCircle2,
   DollarSign,
+  BarChart2,
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -34,6 +35,7 @@ export default function Sidebar() {
     { to: "/cierres", icon: <Repeat size={ICON_SIZE} className="text-cyan-600" />, text: "Van Closeout" },
     { to: "/cxc", icon: <CreditCard size={ICON_SIZE} className="text-orange-400" />, text: "Accounts Receivable" },
     { to: "/suplidores", icon: <UserCircle2 size={ICON_SIZE} className="text-indigo-400" />, text: "Suppliers" },
+    { to: "/reportes", icon: <BarChart2 size={ICON_SIZE} className="text-rose-400" />, text: "Reports" },
   ];
 
   // 💰 Menú solo para admins

@@ -14,6 +14,7 @@ import {
   FileText,
   CreditCard,
   RefreshCcw,
+  BarChart2,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -97,6 +98,9 @@ export default function BottomNav() {
               {/* ✅ NUEVO: acceso a Suplidores */}
               <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-blue-50 text-left" onClick={() => handleNav("/suplidores")}>
                 <UserCircle2 size={18} color="#4f46e5" /> Suppliers
+              </button>
+              <button className="w-full flex items-center gap-2 py-2 px-3 rounded hover:bg-rose-50 text-left" onClick={() => handleNav("/reportes")}>
+                <BarChart2 size={18} color="#e11d48" /> Reports
               </button>
 
               {/* Igual a OnlineSidebar: solo navegar a /van */}
