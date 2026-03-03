@@ -7,9 +7,10 @@ import { useUsuario } from "./UsuarioContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { 
-  DollarSign, FileText, Download, RefreshCw, CheckCircle, AlertCircle, 
-  Calculator, Calendar, TrendingUp, AlertTriangle, X, Plus, Minus, Send, MoreHorizontal, CreditCard
+import {
+  DollarSign, FileText, Download, RefreshCw, CheckCircle, AlertCircle,
+  Calculator, Calendar, TrendingUp, AlertTriangle, X, Plus, Minus, Send, MoreHorizontal, CreditCard,
+  Search, History, Eye, Printer, ChevronLeft, ChevronRight
 } from "lucide-react";
 
 /* ========================= Constants ========================= */
@@ -210,12 +211,498 @@ const getPaymentMethodLabel = (method) => {
   return PAYMENT_METHODS[method]?.label || method;
 };
 
+/* ========================= Historial / Búsqueda de Cierres ========================= */
+
+// Preview modal: shows closure details for a date range (read-only)
+function CierrePreviewModal({ van, usuario, previewData, onClose }) {
+  const { ventas = [], pagos = [], fechas = [], resumen = {} } = previewData || {};
+
+  const byMethod = useMemo(() => {
+    const map = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+    ventas.forEach((v) => {
+      const m = (v.metodo_pago || "otro").toLowerCase();
+      const key = Object.keys(map).find((k) => m.includes(k)) || "otro";
+      map[key] += Number(v.total_pagado || v.total_venta || 0);
+    });
+    pagos.forEach((p) => {
+      const m = (p.metodo || "otro").toLowerCase();
+      const key = Object.keys(map).find((k) => m.includes(k)) || "otro";
+      map[key] += Number(p.monto || 0);
+    });
+    return map;
+  }, [ventas, pagos]);
+
+  const grandTotal = Object.values(byMethod).reduce((a, b) => a + b, 0);
+
+  const handlePrint = () => {
+    const content = document.getElementById("cierre-preview-content");
+    if (!content) return;
+    const win = window.open("", "_blank");
+    win.document.write(`
+      <html><head><title>Closure Report</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; color: #222; }
+        h1 { font-size: 18px; color: #1d4ed8; margin-bottom: 4px; }
+        h2 { font-size: 14px; color: #374151; margin: 12px 0 6px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+        th { background: #1d4ed8; color: white; padding: 6px 8px; text-align: left; font-size: 11px; }
+        td { padding: 5px 8px; border-bottom: 1px solid #f3f4f6; }
+        tr:nth-child(even) td { background: #f9fafb; }
+        .summary-row { background: #eff6ff !important; font-weight: bold; }
+        .total-row { background: #dbeafe !important; font-weight: bold; font-size: 13px; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: bold; }
+        .badge-green { background: #d1fae5; color: #065f46; }
+        .badge-amber { background: #fef3c7; color: #92400e; }
+        .badge-red { background: #fee2e2; color: #991b1b; }
+        .meta { color: #6b7280; font-size: 11px; margin-bottom: 16px; }
+        .method-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 16px; }
+        .method-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; text-align: center; }
+        .method-card p:first-child { font-size: 10px; color: #6b7280; margin: 0 0 4px; }
+        .method-card p:last-child { font-size: 16px; font-weight: bold; margin: 0; }
+        @media print { body { margin: 10px; } }
+      </style></head><body>
+      ${content.innerHTML}
+      <script>window.print(); window.close();</script>
+      </body></html>
+    `);
+    win.document.close();
+  };
+
+  const handlePDF = () => {
+    const doc = new jsPDF();
+    doc.setFillColor(25, 118, 210);
+    doc.rect(0, 0, 210, 28, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.text("Tools4Care - Closure Report", 14, 18);
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(10);
+    const dateRange = fechas.length ? `${formatUS(fechas[0])} - ${formatUS(fechas[fechas.length - 1])}` : "—";
+    doc.text(`Period: ${dateRange} | VAN: ${van?.nombre_van || van?.nombre || "—"}`, 14, 36);
+    doc.text(`User: ${usuario?.nombre || usuario?.email || "—"} | Generated: ${new Date().toLocaleString()}`, 14, 43);
+
+    // Payment methods summary
+    doc.setFontSize(12);
+    doc.text("Payment Summary", 14, 54);
+    autoTable(doc, {
+      startY: 58,
+      head: [["Method", "Amount"]],
+      body: [
+        ["💵 Cash", fmtCurrency(byMethod.efectivo)],
+        ["💳 Card", fmtCurrency(byMethod.tarjeta)],
+        ["🏦 Transfer", fmtCurrency(byMethod.transferencia)],
+        ["💰 Other", fmtCurrency(byMethod.otro)],
+        ["TOTAL", fmtCurrency(grandTotal)],
+      ],
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [25, 118, 210], textColor: 255, fontStyle: "bold" },
+      bodyStyles: {},
+      rowStyles: { 4: { fontStyle: "bold", fillColor: [219, 234, 254] } },
+    });
+
+    // Sales table
+    doc.setFontSize(12);
+    doc.text("Sales Detail", 14, doc.lastAutoTable.finalY + 12);
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 16,
+      head: [["Time", "Client", "Seller", "Method", "Total", "Paid", "Status"]],
+      body: ventas.map((v) => [
+        new Date(v.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }),
+        v.clientes?.nombre || "—",
+        v.usuarios?.nombre || "—",
+        v.metodo_pago || "—",
+        fmtCurrency(v.total_venta),
+        fmtCurrency(v.total_pagado),
+        v.estado_pago || "—",
+      ]),
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [75, 85, 99], textColor: 255 },
+    });
+
+    // Payments table
+    if (pagos.length > 0) {
+      doc.setFontSize(12);
+      doc.text("Direct Payments", 14, doc.lastAutoTable.finalY + 12);
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 16,
+        head: [["Time", "Client", "Method", "Amount"]],
+        body: pagos.map((p) => [
+          new Date(p.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }),
+          p.clientes?.nombre || "—",
+          p.metodo || "—",
+          fmtCurrency(p.monto),
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [75, 85, 99], textColor: 255 },
+      });
+    }
+
+    doc.save(`Closure_${van?.nombre_van || "VAN"}_${fechas[0] || "report"}.pdf`);
+  };
+
+  if (!previewData) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl">
+          <div>
+            <h2 className="text-white text-lg font-bold flex items-center gap-2">
+              <FileText size={20} /> Closure Preview
+            </h2>
+            <p className="text-blue-100 text-xs mt-0.5">
+              {fechas.length ? `${formatUS(fechas[0])} – ${formatUS(fechas[fechas.length - 1])}` : "—"}
+              &nbsp;·&nbsp; {ventas.length} sales &nbsp;·&nbsp; {pagos.length} payments
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={handlePDF} className="bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 transition-colors">
+              <Download size={15} /> PDF
+            </button>
+            <button onClick={handlePrint} className="bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 transition-colors">
+              <Printer size={15} /> Print
+            </button>
+            <button onClick={onClose} className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-colors">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* Modal Body - scrollable */}
+        <div className="flex-1 overflow-y-auto p-6" id="cierre-preview-content">
+          {/* Meta */}
+          <div className="meta mb-4">
+            <p className="text-sm text-gray-600">
+              <strong>VAN:</strong> {van?.nombre_van || van?.nombre || "—"} &nbsp;·&nbsp;
+              <strong>User:</strong> {usuario?.nombre || usuario?.email || "—"} &nbsp;·&nbsp;
+              <strong>Generated:</strong> {new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}
+            </p>
+          </div>
+
+          {/* Payment Summary Cards */}
+          <h2 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+            <DollarSign size={16} /> Payment Summary
+          </h2>
+          <div className="method-grid grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            {[
+              { label: "💵 Cash", key: "efectivo", color: "bg-green-50 border-green-200 text-green-800" },
+              { label: "💳 Card", key: "tarjeta", color: "bg-blue-50 border-blue-200 text-blue-800" },
+              { label: "🏦 Transfer", key: "transferencia", color: "bg-purple-50 border-purple-200 text-purple-800" },
+              { label: "💰 Other", key: "otro", color: "bg-amber-50 border-amber-200 text-amber-800" },
+            ].map(({ label, key, color }) => (
+              <div key={key} className={`method-card border rounded-xl p-3 text-center ${color}`}>
+                <p className="text-xs font-medium opacity-70 mb-1">{label}</p>
+                <p className="text-lg font-bold">{fmtCurrency(byMethod[key])}</p>
+              </div>
+            ))}
+          </div>
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 mb-6 text-white text-center">
+            <p className="text-sm opacity-80">Grand Total</p>
+            <p className="text-3xl font-bold">{fmtCurrency(grandTotal)}</p>
+          </div>
+
+          {/* Sales Table */}
+          <h2 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+            <ShoppingCartIcon size={16} /> Sales ({ventas.length})
+          </h2>
+          <div className="overflow-x-auto rounded-xl border border-gray-200 mb-6">
+            <table className="min-w-full text-sm divide-y divide-gray-100">
+              <thead className="bg-gray-700 text-white">
+                <tr>
+                  {["Time", "Client", "Seller", "Method", "Total", "Paid", "Status"].map((h) => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {ventas.length === 0 ? (
+                  <tr><td colSpan={7} className="text-center py-8 text-gray-400">No sales found</td></tr>
+                ) : ventas.map((v) => (
+                  <tr key={v.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 whitespace-nowrap text-gray-600 text-xs">
+                      {new Date(v.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })}
+                    </td>
+                    <td className="px-3 py-2 font-medium text-gray-900">{v.clientes?.nombre || "—"}</td>
+                    <td className="px-3 py-2 text-gray-600">{v.usuarios?.nombre || "—"}</td>
+                    <td className="px-3 py-2">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{v.metodo_pago || "—"}</span>
+                    </td>
+                    <td className="px-3 py-2 font-semibold text-gray-900">{fmtCurrency(v.total_venta)}</td>
+                    <td className="px-3 py-2 text-green-700 font-medium">{fmtCurrency(v.total_pagado)}</td>
+                    <td className="px-3 py-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        v.estado_pago === "pagado" ? "bg-green-100 text-green-800" :
+                        v.estado_pago === "credito" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+                      }`}>{v.estado_pago || "—"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Direct Payments Table */}
+          {pagos.length > 0 && (
+            <>
+              <h2 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+                <CreditCard size={16} /> Direct Payments ({pagos.length})
+              </h2>
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="min-w-full text-sm divide-y divide-gray-100">
+                  <thead className="bg-gray-700 text-white">
+                    <tr>
+                      {["Time", "Client", "Method", "Amount"].map((h) => (
+                        <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {pagos.map((p) => (
+                      <tr key={p.id} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 text-gray-600 text-xs">
+                          {new Date(p.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="px-3 py-2 font-medium text-gray-900">{p.clientes?.nombre || "—"}</td>
+                        <td className="px-3 py-2">
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">{p.metodo || "—"}</span>
+                        </td>
+                        <td className="px-3 py-2 font-bold text-purple-700">{fmtCurrency(p.monto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small local icon alias to avoid import collision
+const ShoppingCartIcon = ({ size }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+    <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+  </svg>
+);
+
+/* ========================= Historial Tab Content ========================= */
+function HistorialCierres({ van, usuario }) {
+  const [from, setFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  });
+  const [to, setTo] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }));
+  const [clientFilter, setClientFilter] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState(null);
+  const [cierres, setCierres] = useState([]);
+  const [searched, setSearched] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+
+  const searchCierres = async () => {
+    if (!van?.id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error: err } = await supabase
+        .from("cierres_dia")
+        .select("*")
+        .eq("van_id", van.id)
+        .gte("fecha", from)
+        .lte("fecha", to)
+        .order("fecha", { ascending: false });
+      if (err) throw err;
+      setCierres(data || []);
+      setSearched(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generatePreview = async (fechas) => {
+    if (!van?.id || !fechas.length) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      // Build date range
+      const sorted = [...fechas].sort();
+      const firstDate = sorted[0];
+      const lastDate = sorted[sorted.length - 1];
+      const { start } = easternDayBounds(firstDate);
+      const { end } = easternDayBounds(lastDate);
+
+      // Fetch ventas
+      const { data: ventas, error: vErr } = await supabase
+        .from("ventas")
+        .select(`
+          id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
+          cliente_id, clientes:cliente_id(nombre),
+          usuario_id, usuarios:usuario_id(nombre)
+        `)
+        .eq("van_id", van.id)
+        .gte("created_at", start)
+        .lte("created_at", end)
+        .order("created_at", { ascending: false });
+      if (vErr) throw vErr;
+
+      // Fetch pagos (direct payments)
+      const { data: pagos, error: pErr } = await supabase
+        .from("pagos")
+        .select(`id, monto, metodo, created_at, cliente_id, clientes:cliente_id(nombre)`)
+        .eq("van_id", van.id)
+        .gte("created_at", start)
+        .lte("created_at", end)
+        .order("created_at", { ascending: false });
+      if (pErr) throw pErr;
+
+      // Filter by client if set
+      let filteredVentas = ventas || [];
+      let filteredPagos = pagos || [];
+      if (clientFilter.trim()) {
+        const q = clientFilter.toLowerCase();
+        filteredVentas = filteredVentas.filter((v) => (v.clientes?.nombre || "").toLowerCase().includes(q));
+        filteredPagos = filteredPagos.filter((p) => (p.clientes?.nombre || "").toLowerCase().includes(q));
+      }
+
+      setPreviewData({ ventas: filteredVentas, pagos: filteredPagos, fechas, resumen: {} });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleGenerateCustom = () => generatePreview([from, to]);
+  const handleViewCierre = (cierre) => generatePreview([cierre.fecha]);
+
+  return (
+    <div>
+      {/* Search filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-5 shadow-sm">
+        <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+          <Search size={16} /> Search Closures
+        </h3>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="flex-1 min-w-40">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Client filter (optional)</label>
+            <input type="text" value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}
+              placeholder="Filter by client name..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <button onClick={searchCierres} disabled={loading}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50 transition-colors">
+            {loading ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+            Search
+          </button>
+          <button onClick={handleGenerateCustom} disabled={generating}
+            className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50 transition-colors">
+            {generating ? <RefreshCw size={14} className="animate-spin" /> : <Eye size={14} />}
+            Generate & Preview
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          "Search" finds recorded closures · "Generate & Preview" shows a live report for any date range without saving
+        </p>
+      </div>
+
+      {error && <div className="text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm">{error}</div>}
+
+      {/* Results */}
+      {searched && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="font-semibold text-gray-700 flex items-center gap-2">
+              <History size={16} /> Recorded Closures ({cierres.length})
+            </h3>
+          </div>
+          {cierres.length === 0 ? (
+            <div className="text-center py-12">
+              <History size={32} className="mx-auto text-gray-300 mb-2" />
+              <p className="text-gray-500 font-medium">No closures found for this period</p>
+              <p className="text-gray-400 text-sm mt-1">Use "Generate & Preview" to create an on-demand report</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm divide-y divide-gray-100">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {["Date", "Cash", "Card", "Transfer", "Other", "Total", "Actions"].map((h) => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {cierres.map((c) => {
+                    const total = Number(c.total_efectivo || c.cash || 0)
+                      + Number(c.total_tarjeta || c.card || 0)
+                      + Number(c.total_transferencia || c.transfer || 0)
+                      + Number(c.total_otro || c.other || 0);
+                    return (
+                      <tr key={c.id} className="hover:bg-blue-50">
+                        <td className="px-4 py-3 font-medium text-gray-900">{formatUS(c.fecha)}</td>
+                        <td className="px-4 py-3 text-green-700 font-medium">{fmtCurrency(c.total_efectivo || c.cash)}</td>
+                        <td className="px-4 py-3 text-blue-700 font-medium">{fmtCurrency(c.total_tarjeta || c.card)}</td>
+                        <td className="px-4 py-3 text-purple-700 font-medium">{fmtCurrency(c.total_transferencia || c.transfer)}</td>
+                        <td className="px-4 py-3 text-amber-700 font-medium">{fmtCurrency(c.total_otro || c.other)}</td>
+                        <td className="px-4 py-3 font-bold text-gray-900">{fmtCurrency(total)}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => handleViewCierre(c)}
+                            disabled={generating}
+                            className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                          >
+                            <Eye size={12} /> View
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Preview Modal */}
+      {previewData && (
+        <CierrePreviewModal
+          van={van} usuario={usuario}
+          previewData={previewData}
+          onClose={() => setPreviewData(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 /* ========================= Main Component ========================= */
 export default function PreCierreVan() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
   
+  // Tab state
+  const [activeTab, setActiveTab] = useState("pending");
+
   // Estados principales
   const [invoices, setInvoices] = useState({});
   const [selected, setSelected] = useState([]);
@@ -549,36 +1036,70 @@ export default function PreCierreVan() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-6xl mx-auto">
-        
+
         {/* Header */}
-        <div className="mb-6 sm:mb-8">
+        <div className="mb-4 sm:mb-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 sm:gap-4">
             <div>
               <h1 className="text-xl sm:text-2xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Pre-Closure Register
+                Van Closeout
               </h1>
-              <p className="text-gray-600 mt-1 sm:mt-2 text-xs sm:text-sm md:text-base">
-                Select dates to process pre-closure
+              <p className="text-gray-600 mt-1 text-xs sm:text-sm">
+                {activeTab === "pending" ? "Select dates to process pre-closure" : "Search and view past closures"}
               </p>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={() => navigate("/")}
-                className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm text-sm sm:text-base"
+                className="bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-3 sm:px-4 py-2 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm text-sm"
               >
                 ← Back
               </button>
-              <button
-                onClick={handleGenerarPDF}
-                disabled={!selected.length}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download size={18} />
-                <span>Generate PDF</span>
-              </button>
+              {activeTab === "pending" && (
+                <button
+                  onClick={handleGenerarPDF}
+                  disabled={!selected.length}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download size={16} />
+                  <span>PDF</span>
+                </button>
+              )}
             </div>
           </div>
+
+          {/* Tab Bar */}
+          <div className="flex gap-2 mt-4 bg-white rounded-xl border border-gray-200 p-1.5 shadow-sm w-fit">
+            <button
+              onClick={() => setActiveTab("pending")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                activeTab === "pending"
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md"
+                  : "text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <Calendar size={15} /> Pending Closures
+            </button>
+            <button
+              onClick={() => setActiveTab("history")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                activeTab === "history"
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md"
+                  : "text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <History size={15} /> Search / History
+            </button>
+          </div>
         </div>
+
+        {/* History Tab */}
+        {activeTab === "history" && (
+          <HistorialCierres van={van} usuario={usuario} />
+        )}
+
+        {/* Pending Tab Content starts below */}
+        {activeTab === "pending" && (<>
 
         {/* Messages */}
         {mensaje && (
@@ -884,6 +1405,7 @@ export default function PreCierreVan() {
             </div>
           </div>
         </div>
+        </>)}
       </div>
     </div>
   );
