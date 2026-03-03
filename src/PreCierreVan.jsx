@@ -288,10 +288,10 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       startY: 58,
       head: [["Method", "Amount"]],
       body: [
-        ["💵 Cash", fmtCurrency(byMethod.efectivo)],
-        ["💳 Card", fmtCurrency(byMethod.tarjeta)],
-        ["🏦 Transfer", fmtCurrency(byMethod.transferencia)],
-        ["💰 Other", fmtCurrency(byMethod.otro)],
+        ["Cash", fmtCurrency(byMethod.efectivo)],
+        ["Card", fmtCurrency(byMethod.tarjeta)],
+        ["Transfer", fmtCurrency(byMethod.transferencia)],
+        ["Other", fmtCurrency(byMethod.otro)],
         ["TOTAL", fmtCurrency(grandTotal)],
       ],
       styles: { fontSize: 10 },
@@ -539,22 +539,42 @@ function HistorialCierres({ van, usuario }) {
       const { start } = easternDayBounds(firstDate);
       const { end } = easternDayBounds(lastDate);
 
-      // Fetch ventas
-      const { data: ventas, error: vErr } = await supabase
-        .from("ventas")
-        .select(`
-          id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
-          cliente_id, clientes:cliente_id(nombre),
-          usuario_id, usuarios:usuario_id(nombre)
-        `)
-        .eq("van_id", van.id)
-        .gte("created_at", start)
-        .lte("created_at", end)
-        .order("created_at", { ascending: false });
-      if (vErr) throw vErr;
+      // Fetch ventas — try with usuario join first, fall back without if FK not set up
+      let ventas = [];
+      {
+        const { data: v1, error: vErr1 } = await supabase
+          .from("ventas")
+          .select(`
+            id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
+            cliente_id, clientes:cliente_id(nombre),
+            usuario_id, usuarios:usuario_id(nombre)
+          `)
+          .eq("van_id", van.id)
+          .gte("created_at", start)
+          .lte("created_at", end)
+          .order("created_at", { ascending: false });
+        if (!vErr1) {
+          ventas = v1 || [];
+        } else {
+          // Fallback: without usuarios join (some schemas don't have this FK in PostgREST)
+          const { data: v2, error: vErr2 } = await supabase
+            .from("ventas")
+            .select(`
+              id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
+              cliente_id, clientes:cliente_id(nombre)
+            `)
+            .eq("van_id", van.id)
+            .gte("created_at", start)
+            .lte("created_at", end)
+            .order("created_at", { ascending: false });
+          if (vErr2) throw vErr2;
+          ventas = v2 || [];
+        }
+      }
 
       // Fetch pagos (direct payments) — metodo column name varies by schema
       let pagosRows = [];
+      let pagosProbeOk = false;
       for (const col of ["metodo_pago", "metodo", "forma_pago"]) {
         const sel = `id, monto, ${col}, created_at, cliente_id, clientes:cliente_id(nombre)`;
         const { data: p, error: pErr } = await supabase
@@ -565,13 +585,14 @@ function HistorialCierres({ van, usuario }) {
           .lte("created_at", end)
           .order("created_at", { ascending: false });
         if (!pErr) {
-          pagosRows = (p || []).map(r => ({ ...r, metodo: r[col] || r.metodo || r.metodo_pago || "—" }));
+          pagosRows = (p || []).map(r => ({ ...r, metodo: r[col] || "—" }));
+          pagosProbeOk = true;
           break;
         }
-        // if column doesn't exist (400), try next
+        // if column doesn't exist (400 error), try next candidate
       }
-      // If all column probes failed, fetch without metodo
-      if (pagosRows.length === 0) {
+      // If all column probes failed, fetch without metodo column
+      if (!pagosProbeOk) {
         const { data: p } = await supabase
           .from("pagos")
           .select("id, monto, created_at, cliente_id, clientes:cliente_id(nombre)")

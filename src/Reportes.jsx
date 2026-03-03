@@ -133,7 +133,9 @@ function VentasReport({ van, usuario }) {
     setLoading(true); setError(null);
     try {
       const { start, end } = dateRangeBounds(from, to);
-      const { data: rows, error: err } = await supabase
+      // Try with usuarios join first; fall back without if FK not configured in PostgREST
+      let rows = [];
+      const { data: r1, error: e1 } = await supabase
         .from("ventas")
         .select(`
           id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
@@ -144,8 +146,23 @@ function VentasReport({ van, usuario }) {
         .gte("created_at", start)
         .lte("created_at", end)
         .order("created_at", { ascending: false });
-      if (err) throw err;
-      setData(rows || []);
+      if (!e1) {
+        rows = r1 || [];
+      } else {
+        const { data: r2, error: e2 } = await supabase
+          .from("ventas")
+          .select(`
+            id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
+            cliente_id, clientes:cliente_id(nombre)
+          `)
+          .eq("van_id", van.id)
+          .gte("created_at", start)
+          .lte("created_at", end)
+          .order("created_at", { ascending: false });
+        if (e2) throw e2;
+        rows = r2 || [];
+      }
+      setData(rows);
       setSearched(true);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
