@@ -553,15 +553,35 @@ function HistorialCierres({ van, usuario }) {
         .order("created_at", { ascending: false });
       if (vErr) throw vErr;
 
-      // Fetch pagos (direct payments)
-      const { data: pagos, error: pErr } = await supabase
-        .from("pagos")
-        .select(`id, monto, metodo, created_at, cliente_id, clientes:cliente_id(nombre)`)
-        .eq("van_id", van.id)
-        .gte("created_at", start)
-        .lte("created_at", end)
-        .order("created_at", { ascending: false });
-      if (pErr) throw pErr;
+      // Fetch pagos (direct payments) — metodo column name varies by schema
+      let pagosRows = [];
+      for (const col of ["metodo_pago", "metodo", "forma_pago"]) {
+        const sel = `id, monto, ${col}, created_at, cliente_id, clientes:cliente_id(nombre)`;
+        const { data: p, error: pErr } = await supabase
+          .from("pagos")
+          .select(sel)
+          .eq("van_id", van.id)
+          .gte("created_at", start)
+          .lte("created_at", end)
+          .order("created_at", { ascending: false });
+        if (!pErr) {
+          pagosRows = (p || []).map(r => ({ ...r, metodo: r[col] || r.metodo || r.metodo_pago || "—" }));
+          break;
+        }
+        // if column doesn't exist (400), try next
+      }
+      // If all column probes failed, fetch without metodo
+      if (pagosRows.length === 0) {
+        const { data: p } = await supabase
+          .from("pagos")
+          .select("id, monto, created_at, cliente_id, clientes:cliente_id(nombre)")
+          .eq("van_id", van.id)
+          .gte("created_at", start)
+          .lte("created_at", end)
+          .order("created_at", { ascending: false });
+        pagosRows = (p || []).map(r => ({ ...r, metodo: "Payment" }));
+      }
+      const pagos = pagosRows;
 
       // Filter by client if set
       let filteredVentas = ventas || [];
