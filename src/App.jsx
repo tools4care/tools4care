@@ -45,6 +45,9 @@ import Suplidores from "./Suplidores";
 // 💰 Comisiones (NUEVO)
 import ComisionesPage from './pages/ComisionesPage';
 
+// 📊 Reportes (NUEVO)
+import Reportes from './Reportes';
+
 // Componente de carga profesional
 const LoadingScreen = () => {
   return (
@@ -314,6 +317,9 @@ export default function App() {
             
             {/* 💰 COMISIONES (NUEVO) */}
             <Route path="comisiones" element={<ComisionesPage />} />
+
+            {/* 📊 REPORTES (NUEVO) */}
+            <Route path="reportes" element={<Reportes />} />
 
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
