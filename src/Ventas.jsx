@@ -629,6 +629,8 @@ setAcuerdosResumen(acuerdos);
   const [clientLoading, setClientLoading] = useState(false);
   const [clients, setClients] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
+  const [focusedClientIdx, setFocusedClientIdx] = useState(-1); // keyboard nav
+  const clientListRef = useRef(null);                            // scroll target
 
   const [productSearch, setProductSearch] = useState("");
   const [showScanner, setShowScanner] = useState(false);
@@ -735,9 +737,20 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 250);
+    const t = setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 150);
     return () => clearTimeout(t);
   }, [clientSearch]);
+
+  /* ---------- Reset keyboard focus when search query changes ---------- */
+  useEffect(() => { setFocusedClientIdx(-1); }, [debouncedClientSearch]);
+
+  /* ---------- Scroll focused client item into view ---------- */
+  useEffect(() => {
+    if (focusedClientIdx >= 0 && clientListRef.current) {
+      const el = clientListRef.current.querySelector(`[data-client-idx="${focusedClientIdx}"]`);
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [focusedClientIdx]);
 
 
   /* ---------- CARGAR CLIENTES RECIENTES ---------- */
@@ -4011,12 +4024,37 @@ function renderStepClient() {
     setClientSearch(value);
   }}
           onKeyDown={(e) => {
+            // Secret migration mode code
             if (e.key === "Enter" && clientSearch.trim() === SECRET_CODE) {
               setMigrationMode((v) => !v);
               setClientSearch("");
               alert(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
+              return;
             }
-            if (e.key === "Enter" && clientsSafe.length > 0) setSelectedClient(clientsSafe[0]);
+            // ↓ Move focus down the list
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setFocusedClientIdx(prev => Math.min(prev + 1, clientsSafe.length - 1));
+            // ↑ Move focus up the list (−1 = no focus / back to input)
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setFocusedClientIdx(prev => Math.max(prev - 1, -1));
+            // Enter → select focused item, or first item if none focused
+            } else if (e.key === "Enter" && clientsSafe.length > 0) {
+              const idx = focusedClientIdx >= 0 ? focusedClientIdx : 0;
+              const c = clientsSafe[idx];
+              if (c) {
+                window.pendingSaleId = null;
+                setCart([]);
+                setPayments([{ forma: "efectivo", monto: 0 }]);
+                setSelectedClient(c);
+                runCreditAgent(c.id);
+              }
+            // Esc → clear search and reset focus
+            } else if (e.key === "Escape") {
+              setClientSearch("");
+              setFocusedClientIdx(-1);
+            }
           }}
           autoFocus
         />
@@ -4028,116 +4066,162 @@ function renderStepClient() {
       </div>
 
       {debouncedClientSearch.length > 0 && (
-        <div className="flex items-center gap-2 text-xs text-gray-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-          <span>🔍 Searching in:</span>
-          <div className="flex flex-wrap gap-1">
-            {['Name', 'Phone', 'Email', 'Address', 'Business'].map(field => (
-              <span key={field} className="bg-white px-2 py-0.5 rounded border border-blue-200">
-                {field}
-              </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-blue-700">
+            <span className="font-semibold">🔍</span>
+            {['Name','Phone','Email','Address','Business'].map(f => (
+              <span key={f} className="bg-white px-2 py-0.5 rounded border border-blue-200 text-blue-700">{f}</span>
             ))}
+          </div>
+          <div className="hidden sm:flex items-center gap-2 text-blue-600 shrink-0">
+            <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↑↓</kbd>
+            <span>Navigate</span>
+            <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↵</kbd>
+            <span>Select</span>
+            <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">Esc</kbd>
+            <span>Clear</span>
           </div>
         </div>
       )}
 
-      <div className="max-h-64 overflow-auto space-y-2 bg-gray-50 rounded-lg p-2 border border-gray-200">
-        {clientsSafe.length === 0 && debouncedClientSearch.length < 3 && (
-          <div className="text-gray-400 text-center py-8">
-            ✍️ Type at least <b>3</b> letters to search
+      <div
+        ref={clientListRef}
+        className="max-h-72 lg:max-h-[480px] overflow-auto space-y-1.5 bg-gray-50 rounded-xl p-2 border border-gray-200"
+      >
+        {/* ── EMPTY STATE: no search typed yet ── */}
+        {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
+          <div className="py-2 space-y-3">
+            {/* Keyboard shortcuts card */}
+            <div className="bg-white rounded-xl border border-blue-100 p-3 shadow-sm">
+              <p className="text-[11px] font-bold text-blue-700 mb-2 flex items-center gap-1.5">
+                ⌨️ Keyboard shortcuts
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {[
+                  { keys: "↑  ↓", desc: "Navigate list" },
+                  { keys: "↵ Enter", desc: "Select client" },
+                  { keys: "Esc", desc: "Clear search" },
+                  { keys: "2+ chars", desc: "Auto-search" },
+                ].map(({ keys, desc }) => (
+                  <div key={desc} className="flex items-center gap-1.5 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5">
+                    <kbd className="bg-white border border-blue-300 text-blue-700 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap">{keys}</kbd>
+                    <span className="text-[11px] text-gray-600 leading-tight">{desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Search fields card */}
+            <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm">
+              <p className="text-[11px] font-bold text-gray-600 mb-2">🔍 Search by any field</p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { label: "👤 Name", hint: "e.g. Maria" },
+                  { label: "📞 Phone", hint: "e.g. 555-1234" },
+                  { label: "🏢 Business", hint: "e.g. Panaderia" },
+                  { label: "📧 Email", hint: "e.g. @gmail" },
+                  { label: "📍 Address", hint: "e.g. Main St" },
+                ].map(({ label, hint }) => (
+                  <div key={label} className="bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-left min-w-[100px]">
+                    <div className="text-[11px] font-semibold text-gray-700">{label}</div>
+                    <div className="text-[10px] text-gray-400 font-mono mt-0.5">{hint}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Prompt */}
+            <p className="text-center text-xs text-gray-400 py-1 flex items-center justify-center gap-1.5">
+              ✍️ <span>Start typing to search your clients</span>
+            </p>
           </div>
         )}
 
-        {clientsSafe.length === 0 &&
-          debouncedClientSearch.length >= 3 &&
-          !clientLoading && (
-            <div className="text-gray-400 text-center py-8">🔍 No results found</div>
-          )}
+        {/* ── NO RESULTS ── */}
+        {clientsSafe.length === 0 && debouncedClientSearch.length >= 2 && !clientLoading && (
+          <div className="text-center py-10">
+            <p className="text-3xl mb-2">🔍</p>
+            <p className="text-gray-500 font-medium text-sm">No clients found</p>
+            <p className="text-gray-400 text-xs mt-1">Try a different name, phone or business</p>
+          </div>
+        )}
 
-        {clientsSafe.map((c) => {
+        {/* ── CLIENT RESULTS with keyboard focus ── */}
+        {clientsSafe.map((c, i) => {
           const balance = getClientBalance(c);
           const hasDebt = balance > 0;
-          
+          const isFocused = i === focusedClientIdx;
+
           return (
             <div
               key={c.id}
-              className="bg-white p-3 sm:p-4 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-200 border-2 border-transparent transition-all duration-200 shadow-sm"
+              data-client-idx={i}
+              className={`bg-white p-3 rounded-xl cursor-pointer border-2 transition-all duration-150 shadow-sm ${
+                isFocused
+                  ? "border-blue-500 bg-blue-50 shadow-md ring-2 ring-blue-200"
+                  : "border-transparent hover:border-blue-200 hover:bg-blue-50"
+              }`}
               onClick={() => {
                 window.pendingSaleId = null;
                 setCart([]);
                 setPayments([{ forma: "efectivo", monto: 0 }]);
                 setSelectedClient(c);
                 runCreditAgent(c.id);
-
               }}
+              onMouseEnter={() => setFocusedClientIdx(i)}
             >
-              <div className="space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 flex items-center gap-2 flex-wrap">
-                      <span className="truncate">
-                        👤 {c.nombre} {c.apellido || ""}
-                      </span>
-                      {c.negocio && (
-                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full whitespace-nowrap">
-                          🏢 {c.negocio}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {hasDebt && (
-                    <div className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-semibold whitespace-nowrap">
-                      💰 {fmt(balance)}
-                    </div>
+              {/* Row 1 — Name + debt badge */}
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  {/* Focus indicator */}
+                  {isFocused && (
+                    <span className="text-blue-500 text-xs font-bold shrink-0">▶</span>
+                  )}
+                  <span className="font-bold text-gray-900 text-sm truncate">
+                    {c.nombre} {c.apellido || ""}
+                  </span>
+                  {c.negocio && (
+                    <span className="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0 hidden sm:inline">
+                      🏢 {c.negocio}
+                    </span>
                   )}
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded px-2 py-1.5">
-                    <span className="text-green-600">📞</span>
-                    <span className="font-mono font-semibold text-gray-900 truncate">
-                      {c.telefono || "—"}
-                    </span>
-                  </div>
-
-                  {c.email && (
-                    <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded px-2 py-1.5">
-                      <span className="text-blue-600">📧</span>
-                      <span className="font-mono text-xs text-gray-700 truncate">
-                        {c.email}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {c.direccion && (
-                  <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
-                    <span className="text-amber-600 text-sm mt-0.5">📍</span>
-                    <span className="text-sm text-gray-700 leading-tight">
-                      {renderAddress(c.direccion)}
-                    </span>
-                  </div>
-                )}
-
-                {(clientHistory?.ventas > 0 || balance !== 0) && (
-
-                  <div className="flex items-center justify-between pt-1 border-t border-gray-200">
-                    <div className="flex items-center gap-3 text-xs text-gray-600">
-                      <span>💳 #{getCreditNumber(c)}</span>
-                      {clientHistory?.ventas > 0 && (
-                        <span className="bg-gray-100 px-2 py-0.5 rounded">
-                          🛒 {clientHistory.ventas}
-                        </span>
-                      )}
-                    </div>
-                    {balance > 0 && (
-                      <span className="text-xs text-red-600 font-semibold">
-                        Due: {fmt(balance)}
-                      </span>
-                    )}
-                  </div>
+                {hasDebt && (
+                  <span className="bg-red-100 text-red-700 text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap shrink-0">
+                    ⚠ {fmt(balance)}
+                  </span>
                 )}
               </div>
+
+              {/* Row 2 — Contact chips */}
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                <span className="flex items-center gap-1 bg-green-50 border border-green-200 text-green-800 rounded px-2 py-0.5 font-mono font-semibold">
+                  📞 {c.telefono || "—"}
+                </span>
+                {c.email && (
+                  <span className="flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-700 rounded px-2 py-0.5 font-mono truncate max-w-[160px]">
+                    📧 {c.email}
+                  </span>
+                )}
+                {c.negocio && (
+                  <span className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded px-2 py-0.5 sm:hidden">
+                    🏢 {c.negocio}
+                  </span>
+                )}
+                {c.direccion && (
+                  <span className="flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-700 rounded px-2 py-0.5 truncate max-w-[200px]">
+                    📍 {renderAddress(c.direccion)}
+                  </span>
+                )}
+              </div>
+
+              {/* Row 3 — Balance / credit line (only when meaningful) */}
+              {(balance > 0) && (
+                <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-100 text-[10px] text-gray-500">
+                  <span className="text-red-600 font-semibold">Balance due: {fmt(balance)}</span>
+                  <span className="text-gray-400">#{getCreditNumber(c)}</span>
+                </div>
+              )}
             </div>
           );
         })}
