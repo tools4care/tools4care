@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 const API_TARGET = process.env.VITE_DEV_API || 'http://127.0.0.1:8000'
 
 export default defineConfig({
-  base: './',                 // assets relativos: útil para servir estático en FastAPI o subrutas
+  base: '/',                  // absolute paths — required for Vercel SPA routing (relative ./ breaks deep URLs)
   plugins: [react()],
   server: {
     port: 5173,
