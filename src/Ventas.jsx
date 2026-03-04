@@ -629,8 +629,10 @@ setAcuerdosResumen(acuerdos);
   const [clientLoading, setClientLoading] = useState(false);
   const [clients, setClients] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
-  const [focusedClientIdx, setFocusedClientIdx] = useState(-1); // keyboard nav
-  const clientListRef = useRef(null);                            // scroll target
+  const [focusedClientIdx, setFocusedClientIdx] = useState(-1);  // keyboard nav – client list
+  const clientListRef = useRef(null);                            // scroll target – client list
+  const [focusedProductIdx, setFocusedProductIdx] = useState(-1); // keyboard nav – product list
+  const productListRef = useRef(null);                             // scroll target – product list
 
   const [productSearch, setProductSearch] = useState("");
   const [showScanner, setShowScanner] = useState(false);
@@ -753,6 +755,17 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
       el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [focusedClientIdx]);
+
+  /* ---------- Reset product keyboard focus when product search changes ---------- */
+  useEffect(() => { setFocusedProductIdx(-1); }, [productSearch]);
+
+  /* ---------- Scroll focused product item into view ---------- */
+  useEffect(() => {
+    if (focusedProductIdx >= 0 && productListRef.current) {
+      const el = productListRef.current.querySelector(`[data-product-idx="${focusedProductIdx}"]`);
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [focusedProductIdx]);
 
 
   /* ---------- CARGAR CLIENTES RECIENTES ---------- */
@@ -4223,16 +4236,16 @@ function renderStepProducts() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Productos</h2>
+      <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
 
-      {/* ── CARRITO (arriba) ─────────────────────────── */}
+      {/* ── CART (top) ───────────────────────────────── */}
       {cartSafe.length > 0 && (
         <div className="rounded-xl shadow-lg ring-2 ring-emerald-300 bg-white border border-emerald-200 overflow-hidden">
           <div className="bg-gradient-to-r from-emerald-600 to-green-600 px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-white font-bold text-sm">🛒 Carrito</span>
+              <span className="text-white font-bold text-sm">🛒 Cart</span>
               <span className="bg-white/30 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
-                {cartSafe.length} {cartSafe.length === 1 ? "producto" : "productos"}
+                {cartSafe.length} {cartSafe.length === 1 ? "item" : "items"}
               </span>
             </div>
             <div className="text-white font-bold text-xl">{fmt(saleTotal)}</div>
@@ -4253,8 +4266,8 @@ function renderStepProducts() {
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-gray-900 truncate text-sm">{p.nombre}</div>
                     <div className="text-xs text-gray-500 flex items-center gap-1">
-                      {fmt(unitSafe)} c/u
-                      {isBulk && <span className="text-emerald-600 font-semibold">• bulk</span>}
+                      {fmt(unitSafe)} ea.
+                      {isBulk && <span className="text-emerald-600 font-semibold">• bulk price</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -4273,7 +4286,7 @@ function renderStepProducts() {
                     <button
                       className="text-xs text-red-500 hover:text-red-700 transition-colors"
                       onClick={() => handleRemoveProduct(p.producto_id)}
-                    >🗑 Quitar</button>
+                    >🗑 Remove</button>
                   </div>
                 </div>
               );
@@ -4282,21 +4295,26 @@ function renderStepProducts() {
         </div>
       )}
 
-      {/* ── BUSCADOR ─────────────────────────────────── */}
+      {/* ── SEARCH BAR ───────────────────────────────── */}
       <div className="flex gap-2">
         <input
           ref={productSearchRef}
           type="text"
-          placeholder="🔍 Buscar por nombre, código o marca… (↵ agrega el primero)"
+          placeholder="🔍 Search by name, code or brand…   ↓ navigate · ↵ add first · Esc clear"
           className="flex-1 border-2 border-gray-300 rounded-xl p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all text-sm"
           value={productSearch}
           onChange={(e) => setProductSearch(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && products.length > 0) {
+            if (e.key === "ArrowDown") {
               e.preventDefault();
-              handleAddProduct(products[0]);
+              if (products.length > 0) setFocusedProductIdx(0);
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const idx = focusedProductIdx >= 0 ? focusedProductIdx : 0;
+              if (products[idx]) handleAddProduct(products[idx]);
             } else if (e.key === "Escape") {
               setProductSearch("");
+              setFocusedProductIdx(-1);
             }
           }}
         />
@@ -4308,21 +4326,24 @@ function renderStepProducts() {
         </button>
       </div>
 
-      {/* ── NO ENCONTRADO ────────────────────────────── */}
+      {/* ── NOT FOUND ALERT ──────────────────────────── */}
       {noProductFound && (
         <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex items-start justify-between gap-3">
           <span className="text-yellow-800 text-sm">
-            ❌ No se encontró "<b>{noProductFound}</b>" en el inventario de la van
+            ❌ "<b>{noProductFound}</b>" not found in van inventory
           </span>
           <button
             className="bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg px-3 py-1.5 text-sm font-semibold shadow-md hover:shadow-lg transition-all whitespace-nowrap"
             onClick={() => navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)}
-          >✨ Crear</button>
+          >✨ Create</button>
         </div>
       )}
 
-      {/* ── RESULTADOS ───────────────────────────────── */}
-      <div className="max-h-[360px] lg:max-h-[500px] overflow-auto space-y-2 bg-gray-50 rounded-xl p-2 border border-gray-200">
+      {/* ── PRODUCT RESULTS ──────────────────────────── */}
+      <div
+        ref={productListRef}
+        className="max-h-[360px] lg:max-h-[500px] overflow-auto space-y-2 bg-gray-50 rounded-xl p-2 border border-gray-200"
+      >
         {productError && !searchActive && (
           <div className="text-red-700 bg-red-50 border border-red-200 rounded-lg p-3 text-sm">🚫 {productError}</div>
         )}
@@ -4331,34 +4352,35 @@ function renderStepProducts() {
           <div className="text-gray-400 text-center py-12">
             {searchActive ? (
               searchingInDB ? (
-                <><div className="text-2xl mb-2">⏳</div><div className="text-sm">Buscando en inventario…</div></>
+                <><div className="text-2xl mb-2">⏳</div><div className="text-sm">Searching inventory…</div></>
               ) : (
-                <><div className="text-2xl mb-2">🔍</div><div className="text-sm">Sin resultados</div></>
+                <><div className="text-2xl mb-2">🔍</div><div className="text-sm">No results found</div></>
               )
             ) : (
               <>
                 <div className="text-3xl mb-2">📦</div>
-                <div className="text-sm">Busca un producto o escanea un código</div>
-                <div className="text-xs mt-1 text-gray-300">↵ Enter agrega el primer resultado</div>
+                <div className="text-sm">Search for a product or scan a barcode</div>
+                <div className="text-xs mt-2 text-gray-300 hidden sm:block">↓ navigate list · ↵ Enter adds first result · Esc clears</div>
               </>
             )}
           </div>
         )}
 
-        {(products || []).map((p) => {
-          const inCart = cartSafe.find((x) => x.producto_id === p.producto_id);
-          const name   = p.productos?.nombre ?? p.nombre ?? "—";
-          const code   = p.productos?.codigo ?? p.codigo ?? null;
-          const brand  = p.productos?.marca ?? p.marca ?? null;
-          const price  = Number(p.productos?.precio ?? p.precio ?? 0);
-          const stock  = Number(p.cantidad ?? p.stock ?? 0);
-          const size   =
+        {(products || []).map((p, i) => {
+          const inCart    = cartSafe.find((x) => x.producto_id === p.producto_id);
+          const isFocused = i === focusedProductIdx;
+          const name      = p.productos?.nombre ?? p.nombre ?? "—";
+          const code      = p.productos?.codigo ?? p.codigo ?? null;
+          const brand     = p.productos?.marca ?? p.marca ?? null;
+          const price     = Number(p.productos?.precio ?? p.precio ?? 0);
+          const stock     = Number(p.cantidad ?? p.stock ?? 0);
+          const size      =
             p.productos?.tamano ?? p.tamano ??
             p.productos?.talla  ?? p.talla  ??
             p.productos?.presentacion ?? p.presentacion ?? null;
 
           const stockColor =
-            stock === 0 ? "bg-red-100 text-red-700"
+            stock === 0  ? "bg-red-100 text-red-700"
             : stock <= 3 ? "bg-amber-100 text-amber-700"
             : "bg-emerald-100 text-emerald-700";
           const stockDot = stock === 0 ? "🔴" : stock <= 3 ? "🟡" : "🟢";
@@ -4366,8 +4388,20 @@ function renderStepProducts() {
           return (
             <div
               key={p.producto_id ?? p.id}
-              className={`bg-white rounded-xl border-2 transition-all duration-200 shadow-sm overflow-hidden ${
-                inCart ? "border-emerald-300" : "border-gray-200 hover:border-blue-300"
+              data-product-idx={i}
+              onMouseEnter={() => setFocusedProductIdx(i)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") { e.preventDefault(); setFocusedProductIdx(prev => Math.min(prev + 1, products.length - 1)); }
+                else if (e.key === "ArrowUp") { e.preventDefault(); if (i === 0) { productSearchRef.current?.focus(); setFocusedProductIdx(-1); } else setFocusedProductIdx(prev => Math.max(prev - 1, 0)); }
+                else if (e.key === "Enter") { e.preventDefault(); handleAddProduct(p); }
+              }}
+              tabIndex={isFocused ? 0 : -1}
+              className={`bg-white rounded-xl border-2 transition-all duration-150 shadow-sm overflow-hidden outline-none ${
+                isFocused
+                  ? "border-blue-500 ring-2 ring-blue-200"
+                  : inCart
+                  ? "border-emerald-300"
+                  : "border-gray-200 hover:border-blue-200"
               }`}
             >
               <div className="flex items-start gap-3 p-3">
@@ -4382,7 +4416,7 @@ function renderStepProducts() {
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {code && (
-                      <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full border border-gray-200">#{code}</span>
+                      <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full border border-gray-200 font-mono">#{code}</span>
                     )}
                     {brand && (
                       <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full border border-blue-200">{brand}</span>
@@ -4390,12 +4424,12 @@ function renderStepProducts() {
                     {size && (
                       <span className="bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded-full border border-purple-200">{size}</span>
                     )}
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${stockColor}`}>
-                      {stockDot} {stock} en van
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stockColor}`}>
+                      {stockDot} {stock} in stock
                     </span>
                   </div>
                 </div>
-                {/* Precio + acción */}
+                {/* Price + action */}
                 <div className="flex flex-col items-end gap-2 flex-shrink-0">
                   <div className="font-bold text-blue-700 text-base">{fmt(price)}</div>
                   {!inCart ? (
@@ -4408,7 +4442,7 @@ function renderStepProducts() {
                           : "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
                       }`}
                     >
-                      {stock === 0 ? "Sin stock" : "+ Agregar"}
+                      {stock === 0 ? "Out of stock" : "+ Add"}
                     </button>
                   ) : (
                     <div className="flex items-center gap-1.5">
@@ -4434,16 +4468,16 @@ function renderStepProducts() {
                   )}
                 </div>
               </div>
-              {/* Fila en carrito */}
+              {/* In-cart footer row */}
               {inCart && (
                 <div className="bg-emerald-50 border-t border-emerald-100 px-3 py-1.5 flex items-center justify-between">
                   <span className="text-xs text-emerald-700">
-                    En carrito: {inCart.cantidad} × {fmt(price)} = <b>{fmt(inCart.cantidad * price)}</b>
+                    In cart: {inCart.cantidad} × {fmt(price)} = <b>{fmt(inCart.cantidad * price)}</b>
                   </span>
                   <button
                     className="text-xs text-red-500 hover:text-red-700 transition-colors"
                     onClick={() => handleRemoveProduct(p.producto_id)}
-                  >🗑 Quitar</button>
+                  >🗑 Remove</button>
                 </div>
               )}
             </div>
@@ -4451,55 +4485,55 @@ function renderStepProducts() {
         })}
       </div>
 
-      {/* ── NOTAS ────────────────────────────────────── */}
+      {/* ── NOTES ────────────────────────────────────── */}
       <div>
         <textarea
           className="w-full border-2 border-gray-300 rounded-xl p-4 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all resize-none text-sm"
-          placeholder="📝 Notas para la factura..."
+          placeholder="📝 Invoice notes..."
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={3}
         />
       </div>
 
-      {/* ── CRÉDITO ──────────────────────────────────── */}
+      {/* ── CREDIT SUMMARY ───────────────────────────── */}
       {selectedClient && selectedClient.id && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {balanceBefore > 0 && (
-            <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-lg p-4 text-center">
-              <div className="text-xs text-red-600 uppercase font-semibold">Saldo Pendiente</div>
-              <div className="text-xl font-bold text-red-700">{fmt(balanceBefore)}</div>
+            <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 text-center">
+              <div className="text-xs text-red-600 uppercase font-semibold tracking-wide">Outstanding Balance</div>
+              <div className="text-xl font-bold text-red-700 mt-1">{fmt(balanceBefore)}</div>
             </div>
           )}
-          <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border-2 border-orange-200 rounded-lg p-4 text-center">
-            <div className="text-xs text-orange-600 uppercase font-semibold">Irá a Crédito</div>
-            <div className={`text-xl font-bold ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
+          <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-3 text-center">
+            <div className="text-xs text-orange-600 uppercase font-semibold tracking-wide">Goes to A/R</div>
+            <div className={`text-xl font-bold mt-1 ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
               {fmt(amountToCredit)}
             </div>
           </div>
-          <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 text-center">
-            <div className="text-xs text-green-600 uppercase font-semibold">Disponible Después</div>
-            <div className={`text-xl font-bold ${creditAvailableAfter >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+          <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3 text-center">
+            <div className="text-xs text-emerald-600 uppercase font-semibold tracking-wide">Credit Available After</div>
+            <div className={`text-xl font-bold mt-1 ${creditAvailableAfter >= 0 ? "text-emerald-700" : "text-red-700"}`}>
               {fmt(creditAvailableAfter)}
             </div>
           </div>
         </div>
       )}
 
-      {/* ── NAVEGACIÓN ───────────────────────────────── */}
+      {/* ── NAVIGATION ───────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 pt-4">
         <button
           className="bg-gray-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
           onClick={() => setStep(1)}
-        >← Atrás</button>
+        >← Back</button>
         <button
           className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2"
           disabled={cartSafe.length === 0}
           onClick={() => setStep(3)}
-        >Siguiente →</button>
+        >Next → Payment</button>
       </div>
 
-      {/* ── ESCÁNER ──────────────────────────────────── */}
+      {/* ── SCANNER MODAL ────────────────────────────── */}
       {showScanner && (
         <BarcodeScanner
           onScan={handleBarcodeScanned}
@@ -4510,122 +4544,149 @@ function renderStepProducts() {
     </div>
   );
 }
-/* ======================== Paso 3: Pago ======================== */
+/* ======================== Step 3: Payment ======================== */
 function renderStepPayment() {
-  // Render label del método de pago, reemplazando por "Monto a A/R" si está bloqueado
   const getPaymentLabel = (p) => {
-    if (p?.toAR) return "Monto a A/R";
+    if (p?.toAR) return "Amount to A/R";
     const found = PAYMENT_METHODS.find(fp => fp.key === p.forma);
-    return found?.label ?? p.forma ?? "Método";
+    return found?.label ?? p.forma ?? "Method";
   };
 
+  const netOwed = balanceBefore + saleTotal; // prior debt + this sale
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
-{/* ===== RESUMEN FIFO ===== */}
-{(oldDebt > 0 || amountToCredit > 0) && (
-  <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
-    <div className="text-xs font-bold text-gray-500 uppercase mb-3">
-      💡 Cómo se aplica el pago
-    </div>
-    <div className="space-y-2">
+
+      {/* ── SALE SUMMARY (always visible) ────────────── */}
+      <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm overflow-hidden">
+        {/* Header: client */}
+        <div className="bg-gradient-to-r from-slate-700 to-slate-800 px-4 py-3 flex items-center justify-between">
+          <div>
+            <div className="text-white font-bold text-sm">{selectedClient?.nombre || "Walk-in / Quick Sale"}</div>
+            {selectedClient?.id && (
+              <div className="text-slate-300 text-xs font-mono mt-0.5">#{getCreditNumber(selectedClient)}</div>
+            )}
+          </div>
+          <div className="text-right">
+            <div className="text-slate-300 text-xs uppercase tracking-wide">Total Owed</div>
+            <div className="text-white font-extrabold text-xl">{fmt(totalAPagar)}</div>
+          </div>
+        </div>
+
+        {/* Metrics grid */}
+        <div className={`grid gap-0 divide-x divide-gray-100 ${balanceBefore > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
+          {balanceBefore > 0 && (
+            <div className="p-3 text-center bg-red-50">
+              <div className="text-[10px] uppercase text-red-600 font-semibold tracking-wide">Prior Balance</div>
+              <div className="text-lg font-bold text-red-700 mt-0.5">{fmt(balanceBefore)}</div>
+            </div>
+          )}
+          <div className="p-3 text-center bg-blue-50">
+            <div className="text-[10px] uppercase text-blue-600 font-semibold tracking-wide">This Sale</div>
+            <div className="text-lg font-bold text-blue-800 mt-0.5">{fmt(saleTotal)}</div>
+          </div>
+          <div className="p-3 text-center bg-emerald-50">
+            <div className="text-[10px] uppercase text-emerald-600 font-semibold tracking-wide">Paid Now</div>
+            <div className="text-lg font-bold text-emerald-700 mt-0.5">{fmt(paid)}</div>
+          </div>
+          <div className={`p-3 text-center ${amountToCredit > 0 ? "bg-amber-50" : "bg-gray-50"}`}>
+            <div className={`text-[10px] uppercase font-semibold tracking-wide ${amountToCredit > 0 ? "text-amber-600" : "text-gray-500"}`}>Goes to A/R</div>
+            <div className={`text-lg font-bold mt-0.5 ${amountToCredit > 0 ? "text-amber-700" : "text-gray-400"}`}>{fmt(amountToCredit)}</div>
+          </div>
+        </div>
+
+        {/* Change banner */}
+        {change > 0 && (
+          <div className="bg-green-500 px-4 py-2 flex items-center justify-between">
+            <span className="text-white font-semibold text-sm">💵 Change to give back</span>
+            <span className="text-white font-extrabold text-lg">{fmt(change)}</span>
+          </div>
+        )}
+
+        {/* Overpayment warning */}
+        {mostrarAdvertencia && (
+          <div className="bg-orange-50 border-t border-orange-200 px-4 py-2">
+            <div className="text-orange-700 text-sm font-semibold text-center">⚠️ Payment exceeds total owed — please review</div>
+          </div>
+        )}
+      </div>
+
+      {/* ── FIFO BREAKDOWN (only when prior debt exists) ─── */}
       {oldDebt > 0 && (
-        <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <div className="text-sm text-red-700">
-            <span className="font-bold">1️⃣ Deuda anterior</span>
-            <span className="text-xs ml-2">({fmt(oldDebt)})</span>
+        <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
+          <div className="text-xs font-bold text-gray-500 uppercase mb-3 tracking-wide">💡 How this payment is applied</div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              <div className="text-sm text-red-700">
+                <span className="font-bold">1️⃣ Prior balance</span>
+                <span className="text-xs ml-2 text-red-500">({fmt(oldDebt)})</span>
+              </div>
+              <div className="font-bold text-red-800">{fmt(paidToOldDebt)} applied</div>
+            </div>
+            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+              <div className="text-sm text-blue-700">
+                <span className="font-bold">2️⃣ This sale</span>
+                <span className="text-xs ml-2 text-blue-500">({fmt(saleTotal)})</span>
+              </div>
+              <div className="font-bold text-blue-800">{fmt(paidForSale)} applied</div>
+            </div>
+            <div className="flex items-center justify-between bg-gray-50 border-2 border-gray-300 rounded-lg px-3 py-2">
+              <div className="text-sm font-bold text-gray-700">Remaining on A/R</div>
+              <div className={`font-bold text-lg ${amountToCredit > 0 ? "text-amber-700" : "text-emerald-700"}`}>{fmt(amountToCredit)}</div>
+            </div>
           </div>
-          <div className="font-bold text-red-800">{fmt(paidToOldDebt)} aplicado</div>
         </div>
       )}
-      <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-        <div className="text-sm text-blue-700">
-          <span className="font-bold">{oldDebt > 0 ? '2️⃣' : '1️⃣'} Venta de hoy</span>
-          <span className="text-xs ml-2">({fmt(saleTotal)})</span>
-        </div>
-        <div className="font-bold text-blue-800">{fmt(paidForSale)} aplicado</div>
-      </div>
-      <div className="flex items-center justify-between bg-gray-50 border-2 border-gray-300 rounded-lg px-3 py-2">
-        <div className="text-sm font-bold text-gray-700">📊 Queda a crédito (A/R)</div>
-        <div className={`font-bold text-lg ${amountToCredit > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
-          {fmt(amountToCredit)}
-        </div>
-      </div>
-      {change > 0 && (
-        <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-          <div className="text-sm text-green-700 font-bold">💵 Cambio a devolver</div>
-          <div className="font-bold text-green-800">{fmt(change)}</div>
+
+      {/* ── MIN PAYMENT ALERT ─────────────────────────── */}
+      {oldDebt > 0 && pagoMinimo > 0 && (
+        <div className={`rounded-xl border-2 p-4 ${cubrioMinimo ? "bg-green-50 border-green-300" : "bg-amber-50 border-amber-400"}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className={`font-bold ${cubrioMinimo ? "text-green-800" : "text-amber-800"}`}>
+                {cubrioMinimo ? "✅ Minimum payment met" : "⚠️ Minimum payment not met"}
+              </div>
+              <div className="text-sm text-gray-600 mt-1">
+                Prior balance: <b>{fmt(oldDebt)}</b> · Min. required (20%): <b>{fmt(pagoMinimo)}</b>
+              </div>
+            </div>
+            {!cubrioMinimo && (
+              <div className="text-right">
+                <div className="text-xs text-amber-700">Still needed</div>
+                <div className="text-xl font-bold text-amber-800">{fmt(faltaParaMinimo)}</div>
+              </div>
+            )}
+          </div>
         </div>
       )}
-    </div>
-  </div>
-)}
 
-{/* ===== ALERTA PAGO MÍNIMO ===== */}
-{oldDebt > 0 && pagoMinimo > 0 && (
-  <div className={`rounded-xl border-2 p-4 ${cubrioMinimo ? 'bg-green-50 border-green-300' : 'bg-amber-50 border-amber-400'}`}>
-    <div className="flex items-center justify-between">
-      <div>
-        <div className={`font-bold ${cubrioMinimo ? 'text-green-800' : 'text-amber-800'}`}>
-          {cubrioMinimo ? '✅ Pago mínimo cubierto' : '⚠️ Pago mínimo no cubierto'}
-        </div>
-        <div className="text-sm text-gray-600 mt-1">
-          Balance anterior: <b>{fmt(oldDebt)}</b> · Mínimo (20%): <b>{fmt(pagoMinimo)}</b>
-        </div>
-      </div>
-      {!cubrioMinimo && (
-        <div className="text-right">
-          <div className="text-xs text-amber-700">Faltan</div>
-          <div className="text-xl font-bold text-amber-800">{fmt(faltaParaMinimo)}</div>
-        </div>
-      )}
-    </div>
-  </div>
-)}
-
-
-      <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-center">
-          <div className="text-[10px] uppercase text-blue-700 font-semibold tracking-wide">Total</div>
-          <div className="text-2xl font-extrabold text-blue-800">{fmt(saleTotal)}</div>
-        </div>
-        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 text-center">
-          <div className="text-[10px] uppercase text-amber-700 font-semibold tracking-wide">To Credit (A/R)</div>
-          <div className="text-2xl font-extrabold text-amber-700">{fmt(amountToCredit)}</div>
-        </div>
-        <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-3 text-center">
-          <div className="text-[10px] uppercase text-emerald-700 font-semibold tracking-wide">Change</div>
-          <div className="text-2xl font-extrabold text-emerald-700">{fmt(change)}</div>
-        </div>
-      </div>
-
+      {/* ── CREDIT LIMIT WARNING ──────────────────────── */}
       {excesoCredito > 0 && (
-        <div className="bg-rose-50 border-2 border-rose-300 rounded-lg p-3 text-center">
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3 text-center">
           <div className="text-rose-700 font-semibold">❌ Credit Limit Exceeded</div>
-          <div className="text-rose-600 text-sm">
-            Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
+          <div className="text-rose-600 text-sm mt-1">
+            Needed: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
           </div>
         </div>
       )}
 
+      {/* ── PAYMENT METHODS ───────────────────────────── */}
       <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <div className="font-bold text-gray-900">Payment Methods</div>
           <button
-            className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+            className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all duration-200"
             onClick={handleAddPayment}
-          >
-            ➕ Add
-          </button>
+          >➕ Add Method</button>
         </div>
 
         <div className="space-y-3">
           {payments.map((p, i) => (
-            <div className="bg-gray-50 rounded-lg p-3 border" key={i}>
+            <div className="bg-gray-50 rounded-xl p-3 border border-gray-200" key={i}>
               <div className="flex flex-col gap-3">
-                {/* 🔹 PRIMERA FILA: Select/Label y monto */}
+                {/* Row 1: method selector + amount */}
                 <div className="flex items-center gap-2">
-                  {/* Si está en A/R, mostramos un label fijo; si no, el select normal */}
                   {p?.toAR ? (
                     <div className="flex-1 border-2 border-amber-300 bg-amber-50 rounded-lg px-3 py-2 font-semibold text-amber-800">
                       {getPaymentLabel(p)}
@@ -4637,123 +4698,85 @@ function renderStepPayment() {
                       className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
                     >
                       {PAYMENT_METHODS.map((fp) => (
-                        <option key={fp.key} value={fp.key}>
-                          {fp.label}
-                        </option>
+                        <option key={fp.key} value={fp.key}>{fp.label}</option>
                       ))}
                     </select>
                   )}
 
                   <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold">$</span>
-
-                    {/* Input de monto: si está en A/R, se bloquea y muestra amountToCredit */}
+                    <span className="text-lg font-bold text-gray-500">$</span>
                     <input
                       type="text"
-                      value={p?.toAR ? String(Number(amountToCredit).toFixed(2)) : (p.monto === 0 ? '' : p.monto)}
+                      value={p?.toAR ? String(Number(amountToCredit).toFixed(2)) : (p.monto === 0 ? "" : p.monto)}
                       onChange={(e) => {
-                        if (p?.toAR) return; // bloqueado si está en A/R
-                        const val = e.target.value.trim();
-                        handleChangePayment(i, "monto", val || 0);
+                        if (p?.toAR) return;
+                        handleChangePayment(i, "monto", e.target.value.trim() || 0);
                       }}
-                      onFocus={(e) => {
-                        if (p?.toAR) return; // bloqueado si está en A/R
-                        if (p.monto === 0) e.target.value = '';
-                      }}
+                      onFocus={(e) => { if (!p?.toAR && p.monto === 0) e.target.value = ""; }}
                       onBlur={(e) => {
-                        if (p?.toAR) return; // bloqueado si está en A/R
+                        if (p?.toAR) return;
                         const val = e.target.value.trim();
-                        if (val === '' || val === '.' || val === '0') {
-                          handleChangePayment(i, "monto", 0);
-                        } else {
+                        if (!val || val === "." || val === "0") { handleChangePayment(i, "monto", 0); }
+                        else {
                           const num = parseFloat(val);
-                          if (!isNaN(num) && num > 0) {
-                            handleChangePayment(i, "monto", Number(num.toFixed(2)));
-                          } else {
-                            handleChangePayment(i, "monto", 0);
-                          }
+                          handleChangePayment(i, "monto", !isNaN(num) && num > 0 ? Number(num.toFixed(2)) : 0);
                         }
                       }}
                       readOnly={!!p?.toAR}
                       disabled={!!p?.toAR}
-                      className={`w-28 border-2 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none
-                                  ${p?.toAR ? "bg-amber-50 border-amber-300 text-amber-800 cursor-not-allowed" : "border-gray-300"}`}
+                      className={`w-28 border-2 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none ${
+                        p?.toAR ? "bg-amber-50 border-amber-300 text-amber-800 cursor-not-allowed" : "border-gray-300"
+                      }`}
                       placeholder="0.00"
-                      title={p?.toAR ? "Bloqueado: enviado a CxC (A/R)" : ""}
                     />
                   </div>
 
                   {payments.length > 1 && !p?.toAR && (
                     <button
-                      className="bg-red-500 text-white w-10 h-10 rounded-full hover:bg-red-600 transition-colors shadow-md"
+                      className="bg-red-500 text-white w-9 h-9 rounded-full hover:bg-red-600 transition-colors shadow-md flex-shrink-0"
                       onClick={() => handleRemovePayment(i)}
-                      title="Eliminar este método de pago"
-                    >
-                      ✖️
-                    </button>
+                    >✕</button>
                   )}
                 </div>
 
-                {/* Si está en A/R, muestra el balance seleccionado */}
                 {p?.toAR && (
-                  <div className="text-sm text-amber-700 mt-1">
-                    Balance seleccionado → <b>{fmt(amountToCredit)}</b>
+                  <div className="text-sm text-amber-700">
+                    Sent to A/R → <b>{fmt(amountToCredit)}</b>
                   </div>
                 )}
 
-                {/* 🔹 SEGUNDA FILA: Botones de acción */}
+                {/* Row 2: action buttons */}
                 <div className="flex items-center gap-2">
-                  {/* Toggle A/R */}
                   {!p?.toAR ? (
                     <button
                       onClick={() => {
-                        // Bloquear: marcar como A/R y poner monto 0
                         handleChangePayment(i, "monto", 0);
                         setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: true } : x));
                       }}
                       className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
-                      title="Enviar este saldo a Cuentas por Cobrar (A/R)"
-                    >
-                      📋 To A/R
-                    </button>
+                    >📋 Send to A/R</button>
                   ) : (
                     <button
-                      onClick={() => {
-                        // Desbloquear: quitar modo A/R
-                        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x));
-                      }}
+                      onClick={() => setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x))}
                       className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
-                      title="Deshacer: volver a editar el monto"
-                    >
-                      ↩️ Undo A/R
-                    </button>
+                    >↩️ Undo A/R</button>
                   )}
-
-                  {/* Botón QR para tarjeta (solo cuando NO está en A/R y la forma es tarjeta) */}
                   {!p?.toAR && p.forma === "tarjeta" && (
                     <button
                       onClick={() => handleGenerateQR(i)}
                       className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-md transition-colors flex items-center justify-center gap-1"
-                      title="Generar QR para pago con Stripe"
-                    >
-                      📱 QR Pay
-                    </button>
+                    >📱 QR Pay</button>
                   )}
                 </div>
 
-                {/* 🆕 CHECKBOX PARA FEE DE TARJETA */}
+                {/* Card fee toggle */}
                 {p.forma === "tarjeta" && (
                   <div className="pt-2 border-t border-gray-200">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={applyCardFee[i] || false}
-                        onChange={(e) => {
-                          setApplyCardFee(prev => ({
-                            ...prev,
-                            [i]: e.target.checked
-                          }));
-                        }}
+                        onChange={(e) => setApplyCardFee(prev => ({ ...prev, [i]: e.target.checked }))}
                         className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
                       />
                       <span className="text-sm text-gray-700">
@@ -4765,22 +4788,16 @@ function renderStepPayment() {
                         )}
                       </span>
                     </label>
-                    
                     {applyCardFee[i] && (
                       <div className="mt-2 flex items-center gap-2">
                         <label className="text-xs text-gray-600">Fee %:</label>
                         <input
-                          type="number"
-                          min="0"
-                          max="10"
-                          step="0.1"
+                          type="number" min="0" max="10" step="0.1"
                           value={cardFeePercentage}
                           onChange={(e) => setCardFeePercentage(Math.max(0, Math.min(10, Number(e.target.value))))}
                           className="w-16 border rounded px-2 py-1 text-sm"
                         />
-                        <span className="text-xs text-gray-500">
-                          (Fee: {fmt(Number(p.monto) * (cardFeePercentage / 100))})
-                        </span>
+                        <span className="text-xs text-gray-500">(Fee: {fmt(Number(p.monto) * (cardFeePercentage / 100))})</span>
                       </div>
                     )}
                   </div>
@@ -4789,114 +4806,40 @@ function renderStepPayment() {
             </div>
           ))}
         </div>
-
-        <button
-          type="button"
-          className="mt-3 text-sm text-blue-700 underline"
-          onClick={() => setShowPaymentDetails((v) => !v)}
-        >
-          {showPaymentDetails ? "Hide details" : "Show details"}
-        </button>
-
-        {showPaymentDetails && (
-          <div className="mt-3 grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <div className="bg-gray-50 rounded-lg p-3 border">
-              <div className="text-[10px] uppercase text-gray-500 font-semibold">Client</div>
-              <div className="font-semibold text-gray-900 text-sm mt-1">{selectedClient?.nombre || "Quick sale"}</div>
-              <div className="text-xs text-gray-500 mt-1 font-mono">#{getCreditNumber(selectedClient)}</div>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-3 border">
-              <div className="text-[10px] uppercase text-gray-500 font-semibold">Sale Total</div>
-              <div className="text-lg font-bold">{fmt(saleTotal)}</div>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-3 border">
-              <div className="text-[10px] uppercase text-gray-500 font-semibold">Paid</div>
-              <div className="text-lg font-bold">{fmt(paid)}</div>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-3 border">
-              <div className="text-[10px] uppercase text-gray-500 font-semibold">Applied to Old Debt</div>
-              <div className="text-lg font-bold">{fmt(paidToOldDebt)}</div>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-3 border">
-              <div className="text-[10px] uppercase text-gray-500 font-semibold">New Balance</div>
-              <div className={`text-lg font-bold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                {fmt(Math.abs(balanceAfter))}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Payment Agreements - Acuerdos de pago del cliente */}
-{selectedClient?.id && (
-  <ClientPaymentView 
-    compact
-    clienteId={selectedClient.id}
-    clienteName={`${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim()}
-    balanceActual={balanceBefore}
-    ventaHoy={saleTotal}
-    montoAPagar={paid}
-    pagoMinimo={pagoMinimo}
-    acuerdosData={acuerdosResumen}
-  />
-)}
-
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-4">
-        <div className="grid grid-cols-2 gap-4 text-center">
-          <div>
-            <div className="text-xs text-blue-600 uppercase font-semibold">Total to Pay</div>
-            <div className="text-2xl font-bold text-blue-800">{fmt(totalAPagar)}</div>
-          </div>
-          <div>
-            <div className="text-xs text-green-600 uppercase font-semibold">Total Paid</div>
-            <div className="text-2xl font-bold text-green-700">{fmt(paid)}</div>
-          </div>
-        </div>
-
-        {change > 0 && (
-          <div className="mt-4 bg-green-100 border border-green-300 rounded-lg p-3 text-center">
-            <div className="text-sm text-green-700 font-semibold">💰 Change to Give</div>
-            <div className="text-xl font-bold text-green-800">{fmt(change)}</div>
-          </div>
-        )}
-
-        {mostrarAdvertencia && (
-          <div className="mt-4 bg-orange-100 border border-orange-300 rounded-lg p-3 text-center">
-            <div className="text-orange-700 font-semibold">
-              ⚠️ Paid amount exceeds total debt. Please check payments.
-            </div>
-          </div>
-        )}
-      </div>
-
-      {showCreditPanel && amountToCredit > creditAvailable && (
-        <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300 rounded-lg p-4">
-          <div className="text-red-700 font-semibold text-center">❌ Credit Limit Exceeded</div>
-          <div className="text-red-600 text-sm mt-2 text-center">
-            Required: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b>
-          </div>
-        </div>
+      {/* ── PAYMENT AGREEMENTS ───────────────────────── */}
+      {selectedClient?.id && (
+        <ClientPaymentView
+          compact
+          clienteId={selectedClient.id}
+          clienteName={`${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim()}
+          balanceActual={balanceBefore}
+          ventaHoy={saleTotal}
+          montoAPagar={paid}
+          pagoMinimo={pagoMinimo}
+          acuerdosData={acuerdosResumen}
+        />
       )}
 
+      {/* ── NAVIGATION ───────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 pt-2">
         <button
-          className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
+          className="bg-gray-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
           onClick={() => setStep(2)}
           disabled={saving}
-        >
-          ← Back
-        </button>
+        >← Back</button>
         <button
-          className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-4 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
+          className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-8 py-4 rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
           disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
           onClick={saveSale}
         >
-          {saving ? "💾 Saving..." : "💾 Save Sale"}
+          {saving ? "💾 Saving…" : "💾 Save Sale"}
         </button>
       </div>
 
       {paymentError && (
-        <div className="bg-red-100 border border-red-300 rounded-lg p-4 text-red-700 font-semibold text-center">
+        <div className="bg-red-100 border border-red-300 rounded-xl p-4 text-red-700 font-semibold text-center">
           {paymentError}
         </div>
       )}
