@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { BarcodeScanner } from "./BarcodeScanner";
 import QRCode from "qrcode"; // npm install qrcode
 import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
@@ -515,6 +515,7 @@ export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // ====================== AGENTE DE CRÉDITO ======================
   const [clientRisk, setClientRisk] = useState(null);
@@ -746,6 +747,15 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
   // ---- AUTO-FILL PAYMENT
   const [paymentAutoFilled, setPaymentAutoFilled] = useState(false);
+
+  /* ---------- Handle ?new=1 — start a fresh sale ---------- */
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      clearSale();
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
