@@ -37,10 +37,18 @@ import {
 
 /* ========================= Config & Constantes ========================= */
 const PAYMENT_METHODS = [
-  { key: "efectivo", label: "💵 Cash" },
-  { key: "tarjeta", label: "💳 Card" },
+  { key: "efectivo",      label: "💵 Cash" },
+  { key: "tarjeta",       label: "💳 Card" },
   { key: "transferencia", label: "🏦 Transfer" },
-  { key: "otro", label: "💰 Other" },
+  { key: "otro",          label: "💰 Other" },
+];
+
+// Sub-methods shown when Transfer is selected (for cierre breakdown)
+const TRANSFER_SUBS = [
+  { key: "zelle",    label: "Zelle",     color: "bg-purple-600" },
+  { key: "cashapp",  label: "Cash App",  color: "bg-green-600"  },
+  { key: "venmo",    label: "Venmo",     color: "bg-blue-600"   },
+  { key: "applepay", label: "Apple Pay", color: "bg-gray-800"   },
 ];
 
 const STORAGE_KEY = "pending_sales";
@@ -763,11 +771,12 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
   /* ---------- Reset product keyboard focus when product search changes ---------- */
   useEffect(() => { setFocusedProductIdx(-1); }, [productSearch]);
 
-  /* ---------- Scroll focused product item into view ---------- */
+  /* ---------- Scroll + focus the product item so ↑↓ keep working ---------- */
   useEffect(() => {
     if (focusedProductIdx >= 0 && productListRef.current) {
       const el = productListRef.current.querySelector(`[data-product-idx="${focusedProductIdx}"]`);
       el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      el?.focus(); // give it real DOM focus so onKeyDown fires on subsequent arrows
     }
   }, [focusedProductIdx]);
 
@@ -2890,9 +2899,19 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         };
       });
 
+      // Build transfer sub-method breakdown (Zelle, CashApp, Venmo, Apple Pay)
+      const transferSubMap = { zelle: 0, cashapp: 0, venmo: 0, applepay: 0, other: 0 };
+      for (const pm of metodosAplicados) {
+        if (pm.forma === "transferencia") {
+          const sub = pm.subMetodo && transferSubMap[pm.subMetodo] !== undefined ? pm.subMetodo : "other";
+          transferSubMap[sub] = Number((transferSubMap[sub] + Number(pm.monto || 0)).toFixed(2));
+        }
+      }
+
       const pagoJson = {
   metodos: metodosAplicados,
   map: paymentMap,
+  transferencia_detalle: transferSubMap,
   total_ingresado: Number(paid.toFixed(2)),
   aplicado_venta: Number(paidForSaleNow.toFixed(2)),
   aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
@@ -4704,6 +4723,36 @@ function renderStepPayment() {
                 {p?.toAR && (
                   <div className="text-sm text-amber-700">
                     Sent to A/R → <b>{fmt(amountToCredit)}</b>
+                  </div>
+                )}
+
+                {/* Transfer sub-method chips */}
+                {p.forma === "transferencia" && !p?.toAR && (
+                  <div className="pt-1 border-t border-gray-100">
+                    <div className="text-[10px] uppercase text-gray-500 font-semibold mb-1.5 tracking-wide">Via</div>
+                    <div className="flex flex-wrap gap-2">
+                      {TRANSFER_SUBS.map((s) => {
+                        const active = p.subMetodo === s.key;
+                        return (
+                          <button
+                            key={s.key}
+                            onClick={() => handleChangePayment(i, "subMetodo", active ? null : s.key)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 shadow-sm border-2 ${
+                              active
+                                ? `${s.color} text-white border-transparent shadow-md`
+                                : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
+                            }`}
+                          >
+                            {s.label}
+                          </button>
+                        );
+                      })}
+                      {p.subMetodo && (
+                        <span className="text-xs text-gray-400 self-center ml-1">
+                          ✓ {TRANSFER_SUBS.find(s => s.key === p.subMetodo)?.label}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
 

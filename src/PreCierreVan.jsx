@@ -234,6 +234,27 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
 
   const grandTotal = Object.values(byMethod).reduce((a, b) => a + b, 0);
 
+  // Transfer sub-method breakdown (Zelle, CashApp, Venmo, Apple Pay)
+  const transferSubTotals = useMemo(() => {
+    const map = { zelle: 0, cashapp: 0, venmo: 0, applepay: 0, other: 0 };
+    ventas.forEach((v) => {
+      const td = v.pago?.transferencia_detalle;
+      if (!td) return;
+      for (const k of Object.keys(map)) {
+        map[k] = Number((map[k] + Number(td[k] || 0)).toFixed(2));
+      }
+    });
+    return map;
+  }, [ventas]);
+
+  const TRANSFER_SUB_LABELS = {
+    zelle:    { label: "Zelle",     color: "bg-purple-100 text-purple-800 border-purple-200" },
+    cashapp:  { label: "Cash App",  color: "bg-green-100  text-green-800  border-green-200"  },
+    venmo:    { label: "Venmo",     color: "bg-blue-100   text-blue-800   border-blue-200"   },
+    applepay: { label: "Apple Pay", color: "bg-gray-100   text-gray-800   border-gray-300"   },
+    other:    { label: "Other",     color: "bg-amber-100  text-amber-800  border-amber-200"  },
+  };
+
   const handlePrint = () => {
     const content = document.getElementById("cierre-preview-content");
     if (!content) return;
@@ -397,6 +418,31 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
               </div>
             ))}
           </div>
+          {/* Transfer sub-method breakdown */}
+          {byMethod.transferencia > 0 && (
+            <div className="mb-4 bg-purple-50 border border-purple-200 rounded-xl p-3">
+              <p className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-2">
+                🏦 Transfer Breakdown — {fmtCurrency(byMethod.transferencia)} total
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(transferSubTotals)
+                  .filter(([, v]) => v > 0)
+                  .map(([key, val]) => {
+                    const meta = TRANSFER_SUB_LABELS[key] || TRANSFER_SUB_LABELS.other;
+                    return (
+                      <div key={key} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold ${meta.color}`}>
+                        <span>{meta.label}</span>
+                        <span className="font-bold">{fmtCurrency(val)}</span>
+                      </div>
+                    );
+                  })}
+                {Object.values(transferSubTotals).every(v => v === 0) && (
+                  <span className="text-xs text-purple-500 italic">No sub-method recorded (older sales)</span>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 mb-6 text-white text-center">
             <p className="text-sm opacity-80">Grand Total</p>
             <p className="text-3xl font-bold">{fmtCurrency(grandTotal)}</p>
@@ -427,6 +473,17 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                     <td className="px-3 py-2 text-gray-600">{v.usuarios?.nombre || "—"}</td>
                     <td className="px-3 py-2">
                       <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{v.metodo_pago || "—"}</span>
+                      {v.metodo_pago === "transferencia" && (() => {
+                        // Show sub-method chip if any transfer has a sub-method
+                        const metodos = v.pago?.metodos || [];
+                        const subs = metodos.filter(m => m.forma === "transferencia" && m.subMetodo).map(m => m.subMetodo);
+                        const unique = [...new Set(subs)];
+                        return unique.length > 0 ? (
+                          <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            {unique.map(k => TRANSFER_SUB_LABELS[k]?.label || k).join(" / ")}
+                          </span>
+                        ) : null;
+                      })()}
                     </td>
                     <td className="px-3 py-2 font-semibold text-gray-900">{fmtCurrency(v.total_venta)}</td>
                     <td className="px-3 py-2 text-green-700 font-medium">{fmtCurrency(v.total_pagado)}</td>
@@ -545,7 +602,7 @@ function HistorialCierres({ van, usuario }) {
         const { data: v1, error: vErr1 } = await supabase
           .from("ventas")
           .select(`
-            id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
+            id, created_at, total_venta, total_pagado, estado_pago, metodo_pago, pago,
             cliente_id, clientes:cliente_id(nombre),
             usuario_id, usuarios:usuario_id(nombre)
           `)
@@ -560,7 +617,7 @@ function HistorialCierres({ van, usuario }) {
           const { data: v2, error: vErr2 } = await supabase
             .from("ventas")
             .select(`
-              id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
+              id, created_at, total_venta, total_pagado, estado_pago, metodo_pago, pago,
               cliente_id, clientes:cliente_id(nombre)
             `)
             .eq("van_id", van.id)
