@@ -248,11 +248,11 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
   }, [ventas]);
 
   const TRANSFER_SUB_LABELS = {
-    zelle:    { label: "Zelle",     color: "bg-purple-100 text-purple-800 border-purple-200" },
-    cashapp:  { label: "Cash App",  color: "bg-green-100  text-green-800  border-green-200"  },
-    venmo:    { label: "Venmo",     color: "bg-blue-100   text-blue-800   border-blue-200"   },
-    applepay: { label: "Apple Pay", color: "bg-gray-100   text-gray-800   border-gray-300"   },
-    other:    { label: "Other",     color: "bg-amber-100  text-amber-800  border-amber-200"  },
+    zelle:    { label: "Zelle",     icon: "⚡", color: "bg-purple-100 text-purple-800 border-purple-200", dot: "bg-purple-500", bar: "bg-purple-500" },
+    cashapp:  { label: "Cash App",  icon: "💚", color: "bg-green-100  text-green-800  border-green-200",  dot: "bg-green-500",  bar: "bg-green-500"  },
+    venmo:    { label: "Venmo",     icon: "💙", color: "bg-blue-100   text-blue-800   border-blue-200",   dot: "bg-blue-500",   bar: "bg-blue-500"   },
+    applepay: { label: "Apple Pay", icon: "🍎", color: "bg-gray-100   text-gray-800   border-gray-300",   dot: "bg-gray-700",   bar: "bg-gray-700"   },
+    other:    { label: "Other",     icon: "💸", color: "bg-amber-100  text-amber-800  border-amber-200",  dot: "bg-amber-500",  bar: "bg-amber-500"  },
   };
 
   const handlePrint = () => {
@@ -418,30 +418,96 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
               </div>
             ))}
           </div>
-          {/* Transfer sub-method breakdown */}
-          {byMethod.transferencia > 0 && (
-            <div className="mb-4 bg-purple-50 border border-purple-200 rounded-xl p-3">
-              <p className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-2">
-                🏦 Transfer Breakdown — {fmtCurrency(byMethod.transferencia)} total
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(transferSubTotals)
-                  .filter(([, v]) => v > 0)
-                  .map(([key, val]) => {
+          {/* Transfer sub-method breakdown — confirmation card */}
+          {byMethod.transferencia > 0 && (() => {
+            const entries = Object.entries(transferSubTotals).filter(([, v]) => v > 0);
+            const trackedTotal = entries.reduce((s, [, v]) => s + v, 0);
+            const untracked   = Math.max(0, byMethod.transferencia - trackedTotal);
+            return (
+              <div className="mb-6 rounded-2xl overflow-hidden shadow-sm border border-purple-200">
+                {/* ── Card header ── */}
+                <div className="bg-gradient-to-r from-purple-700 to-purple-500 px-4 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+                      <span className="text-xl">🏦</span>
+                    </div>
+                    <div>
+                      <div className="text-white font-bold text-sm leading-tight">Transfer Breakdown</div>
+                      <div className="text-purple-200 text-[11px]">Confirmed received amounts</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-white font-extrabold text-xl leading-tight">{fmtCurrency(byMethod.transferencia)}</div>
+                    <div className="text-purple-200 text-[11px]">Total transfers</div>
+                  </div>
+                </div>
+
+                {/* ── Rows ── */}
+                <div className="bg-white divide-y divide-purple-50">
+                  {entries.length === 0 ? (
+                    <div className="px-4 py-5 text-center">
+                      <div className="text-2xl mb-1">📭</div>
+                      <p className="text-sm text-gray-400 italic">No sub-method recorded</p>
+                      <p className="text-xs text-gray-300 mt-0.5">Older sales may not include this detail</p>
+                    </div>
+                  ) : entries.map(([key, val]) => {
                     const meta = TRANSFER_SUB_LABELS[key] || TRANSFER_SUB_LABELS.other;
+                    const pct  = byMethod.transferencia > 0 ? (val / byMethod.transferencia) * 100 : 0;
                     return (
-                      <div key={key} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold ${meta.color}`}>
-                        <span>{meta.label}</span>
-                        <span className="font-bold">{fmtCurrency(val)}</span>
+                      <div key={key} className="px-4 py-3">
+                        {/* Row top: label + amount */}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base leading-none">{meta.icon}</span>
+                            <span className="text-sm font-semibold text-gray-800">{meta.label}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-gray-400 tabular-nums">{pct.toFixed(1)}%</span>
+                            <span className="font-bold text-gray-900 text-sm tabular-nums w-20 text-right">
+                              {fmtCurrency(val)}
+                            </span>
+                          </div>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${meta.bar}`}
+                            style={{ width: `${Math.min(pct, 100)}%` }}
+                          />
+                        </div>
                       </div>
                     );
                   })}
-                {Object.values(transferSubTotals).every(v => v === 0) && (
-                  <span className="text-xs text-purple-500 italic">No sub-method recorded (older sales)</span>
-                )}
+
+                  {/* Untracked remainder */}
+                  {untracked > 0.01 && (
+                    <div className="px-4 py-3 bg-gray-50 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-gray-300 flex-shrink-0" />
+                        <span className="text-xs text-gray-500">No method specified</span>
+                      </div>
+                      <span className="text-xs font-semibold text-gray-500 tabular-nums">{fmtCurrency(untracked)}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Confirmation footer ── */}
+                <div className="bg-purple-50 border-t border-purple-100 px-4 py-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-purple-700">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    <span className="text-xs font-semibold">
+                      {entries.length > 0
+                        ? `${entries.length} method${entries.length !== 1 ? "s" : ""} confirmed`
+                        : "Amount received — no method detail"}
+                    </span>
+                  </div>
+                  <span className="text-xs font-extrabold text-purple-800 tabular-nums">{fmtCurrency(byMethod.transferencia)}</span>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 mb-6 text-white text-center">
             <p className="text-sm opacity-80">Grand Total</p>
@@ -472,17 +538,32 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                     <td className="px-3 py-2 font-medium text-gray-900">{v.clientes?.nombre || "—"}</td>
                     <td className="px-3 py-2 text-gray-600">{v.usuarios?.nombre || "—"}</td>
                     <td className="px-3 py-2">
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{v.metodo_pago || "—"}</span>
-                      {v.metodo_pago === "transferencia" && (() => {
-                        // Show sub-method chip if any transfer has a sub-method
-                        const metodos = v.pago?.metodos || [];
-                        const subs = metodos.filter(m => m.forma === "transferencia" && m.subMetodo).map(m => m.subMetodo);
-                        const unique = [...new Set(subs)];
-                        return unique.length > 0 ? (
-                          <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                            {unique.map(k => TRANSFER_SUB_LABELS[k]?.label || k).join(" / ")}
-                          </span>
-                        ) : null;
+                      {(() => {
+                        const raw   = (v.metodo_pago || "").toLowerCase();
+                        const meta  = PAYMENT_METHODS[raw];
+                        const label = meta ? `${meta.icon} ${meta.label}` : (v.metodo_pago || "—");
+                        const baseChip = raw === "transferencia"
+                          ? "bg-purple-100 text-purple-800"
+                          : raw === "efectivo"  ? "bg-green-100 text-green-800"
+                          : raw === "tarjeta"   ? "bg-blue-100 text-blue-800"
+                          : "bg-amber-100 text-amber-800";
+                        // Sub-methods for transfer
+                        const metodos   = v.pago?.metodos || [];
+                        const subs      = metodos.filter(m => m.forma === "transferencia" && m.subMetodo).map(m => m.subMetodo);
+                        const uniqSubs  = [...new Set(subs)];
+                        return (
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${baseChip}`}>{label}</span>
+                            {raw === "transferencia" && uniqSubs.map((k) => {
+                              const sm = TRANSFER_SUB_LABELS[k] || TRANSFER_SUB_LABELS.other;
+                              return (
+                                <span key={k} className={`px-2 py-0.5 rounded-full text-xs font-semibold border ${sm.color}`}>
+                                  {sm.icon} {sm.label}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        );
                       })()}
                     </td>
                     <td className="px-3 py-2 font-semibold text-gray-900">{fmtCurrency(v.total_venta)}</td>
