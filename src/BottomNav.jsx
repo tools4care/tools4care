@@ -1,6 +1,6 @@
 // src/BottomNav.jsx
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   Home,
   ShoppingCart,
@@ -16,20 +16,25 @@ import {
   RefreshCcw,
   BarChart2,
   ChevronDown,
+  PlusCircle,
+  ArrowRight,
+  X,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { supabase } from "./supabaseClient";
 
+/* ── Tab definitions ───────────────────────────────── */
 const items = [
-  { to: "/",        label: "Home",      icon: Home,         color: "#2563eb" },
-  { to: "/ventas",  label: "Sales",     icon: ShoppingCart, color: "#059669" },
-  { to: "/productos", label: "Products",icon: Box,          color: "#a21caf" },
-  { to: "/clientes", label: "Customers",icon: Users,        color: "#f59e42" },
-  { to: "/cxc",     label: "Accounts",  icon: CreditCard,   color: "#0ea5e9" },
-  { action: "more", label: "More",      icon: MoreHorizontal, color: "#64748b" },
+  { to: "/",         label: "Home",      icon: Home,          color: "#2563eb", activeColor: "#2563eb", activeBg: "bg-blue-50"    },
+  { to: "/ventas",   label: "Sales",     icon: ShoppingCart,  color: "#059669", activeColor: "#059669", activeBg: "bg-emerald-50" },
+  { to: "/productos",label: "Products",  icon: Box,           color: "#a21caf", activeColor: "#a21caf", activeBg: "bg-purple-50"  },
+  { to: "/clientes", label: "Customers", icon: Users,         color: "#d97706", activeColor: "#d97706", activeBg: "bg-amber-50"   },
+  { to: "/cxc",      label: "Accounts",  icon: CreditCard,    color: "#0ea5e9", activeColor: "#0ea5e9", activeBg: "bg-sky-50"     },
+  { action: "more",  label: "More",      icon: MoreHorizontal,color: "#64748b", activeColor: "#64748b", activeBg: "bg-slate-50"   },
 ];
 
+/* ── More menu grid ────────────────────────────────── */
 const MORE_ITEMS = [
   { path: "/inventario", label: "Inventory",    icon: ClipboardList, iconColor: "#6366f1", bg: "bg-indigo-50",  ring: "ring-indigo-200" },
   { path: "/facturas",   label: "Invoicing",    icon: FileText,      iconColor: "#9333ea", bg: "bg-purple-50",  ring: "ring-purple-200" },
@@ -40,11 +45,16 @@ const MORE_ITEMS = [
 ];
 
 export default function BottomNav() {
-  const [showMore, setShowMore] = useState(false);
-  const { usuario, setUsuario } = useUsuario();
-  const { van } = useVan();
-  const navigate = useNavigate();
+  const [showMore, setShowMore]       = useState(false);
+  const [showSaleSheet, setShowSaleSheet] = useState(false);
+  const { usuario, setUsuario }       = useUsuario();
+  const { van }                       = useVan();
+  const navigate                      = useNavigate();
+  const location                      = useLocation();
 
+  const onVentas = location.pathname === "/ventas";
+
+  /* ── Logout ───────────────────────────────────────── */
   const handleLogout = async () => {
     setShowMore(false);
     await supabase.auth.signOut();
@@ -52,52 +62,178 @@ export default function BottomNav() {
     navigate("/login");
   };
 
+  /* ── More menu nav ────────────────────────────────── */
   const handleNav = (path) => {
     setShowMore(false);
     navigate(path);
+  };
+
+  /* ── Sales tab tap handler ────────────────────────── */
+  const handleSalesTap = () => {
+    if (onVentas) {
+      // Already on sales page — offer New Sale or Continue
+      setShowSaleSheet(true);
+    } else {
+      navigate("/ventas");
+    }
   };
 
   const userInitial = (usuario?.email || usuario?.nombre || "?")[0].toUpperCase();
 
   return (
     <>
-      {/* ── Bottom tab bar ─────────────────────────── */}
+      {/* ── Bottom tab bar ──────────────────────────────── */}
       <nav className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 shadow-lg z-50 flex justify-around items-center h-16 lg:hidden">
-        {items.map(({ to, label, icon: Icon, action, color }) =>
-          action === "more" ? (
-            <button
-              key="more"
-              onClick={() => setShowMore(true)}
-              className={`flex flex-col items-center justify-center px-2 gap-0.5 transition ${
-                showMore ? "text-blue-600" : "text-gray-500 hover:text-blue-600"
-              }`}
-            >
-              <Icon size={22} color={showMore ? "#2563eb" : color} />
-              <span className="text-[10px] font-medium">{label}</span>
-            </button>
-          ) : (
+        {items.map(({ to, label, icon: Icon, action, color, activeColor, activeBg }) => {
+          /* "More" button */
+          if (action === "more") {
+            return (
+              <button
+                key="more"
+                onClick={() => setShowMore(true)}
+                className={`flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors relative ${
+                  showMore ? "text-slate-700" : "text-gray-400 hover:text-slate-600"
+                }`}
+              >
+                {showMore && (
+                  <span className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-slate-500" />
+                )}
+                <div className={`p-1.5 rounded-xl transition-colors ${showMore ? activeBg : ""}`}>
+                  <Icon size={21} color={showMore ? color : "#9ca3af"} />
+                </div>
+                <span className={`text-[10px] font-medium ${showMore ? "text-slate-700" : "text-gray-400"}`}>
+                  {label}
+                </span>
+              </button>
+            );
+          }
+
+          /* "Sales" tab — custom tap handler */
+          if (to === "/ventas") {
+            const isActive = location.pathname === "/ventas";
+            return (
+              <button
+                key={to}
+                onClick={handleSalesTap}
+                className="flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors relative"
+              >
+                {isActive && (
+                  <span className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-emerald-500" />
+                )}
+                <div className={`p-1.5 rounded-xl transition-colors ${isActive ? activeBg : ""}`}>
+                  <Icon size={21} color={isActive ? activeColor : "#9ca3af"} />
+                </div>
+                <span className={`text-[10px] font-medium ${isActive ? "text-emerald-700" : "text-gray-400"}`}>
+                  {label}
+                </span>
+              </button>
+            );
+          }
+
+          /* Regular NavLink tab */
+          return (
             <NavLink
               to={to}
               key={to}
-              className={({ isActive }) =>
-                `flex flex-col items-center justify-center px-2 gap-0.5 transition ${
-                  isActive ? "text-blue-600" : "text-gray-500 hover:text-blue-600"
-                }`
-              }
               end={to === "/"}
+              className="flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors relative"
             >
               {({ isActive }) => (
                 <>
-                  <Icon size={22} color={isActive ? "#2563eb" : color} />
-                  <span className="text-[10px] font-medium">{label}</span>
+                  {isActive && (
+                    <span
+                      className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full"
+                      style={{ backgroundColor: activeColor }}
+                    />
+                  )}
+                  <div className={`p-1.5 rounded-xl transition-colors ${isActive ? activeBg : ""}`}>
+                    <Icon size={21} color={isActive ? activeColor : "#9ca3af"} />
+                  </div>
+                  <span
+                    className="text-[10px] font-medium"
+                    style={{ color: isActive ? activeColor : "#9ca3af" }}
+                  >
+                    {label}
+                  </span>
                 </>
               )}
             </NavLink>
-          )
-        )}
+          );
+        })}
       </nav>
 
-      {/* ── More sheet ─────────────────────────────── */}
+      {/* ── "New Sale?" mini-sheet (shown when already on /ventas) ── */}
+      {showSaleSheet && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center"
+          onClick={() => setShowSaleSheet(false)}
+        >
+          <div
+            className="bg-white w-full sm:w-96 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drag handle */}
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 bg-gray-200 rounded-full" />
+            </div>
+
+            {/* Header */}
+            <div className="px-5 pt-2 pb-4 text-center">
+              <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <ShoppingCart size={26} color="#059669" />
+              </div>
+              <h2 className="font-bold text-gray-900 text-lg">Sales</h2>
+              <p className="text-gray-500 text-sm mt-1">What would you like to do?</p>
+            </div>
+
+            {/* Options */}
+            <div className="px-4 pb-4 space-y-3">
+              {/* New Sale */}
+              <button
+                onClick={() => {
+                  setShowSaleSheet(false);
+                  navigate("/ventas?new=1");
+                }}
+                className="w-full flex items-center gap-4 bg-emerald-600 text-white px-5 py-4 rounded-2xl shadow-lg active:scale-[0.98] transition-all"
+              >
+                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <PlusCircle size={20} color="white" />
+                </div>
+                <div className="text-left flex-1">
+                  <div className="font-bold text-sm">New Sale</div>
+                  <div className="text-emerald-100 text-xs">Start a fresh transaction</div>
+                </div>
+                <ArrowRight size={18} color="white" className="opacity-70" />
+              </button>
+
+              {/* Continue */}
+              <button
+                onClick={() => setShowSaleSheet(false)}
+                className="w-full flex items-center gap-4 bg-gray-100 text-gray-800 px-5 py-4 rounded-2xl active:scale-[0.98] transition-all"
+              >
+                <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center flex-shrink-0">
+                  <ArrowRight size={20} color="#059669" />
+                </div>
+                <div className="text-left flex-1">
+                  <div className="font-bold text-sm">Continue Current Sale</div>
+                  <div className="text-gray-500 text-xs">Go back to the current transaction</div>
+                </div>
+              </button>
+            </div>
+
+            {/* Cancel pill */}
+            <button
+              onClick={() => setShowSaleSheet(false)}
+              className="flex items-center justify-center gap-1.5 w-full py-4 border-t border-gray-100 text-gray-400 text-sm font-medium hover:bg-gray-50 transition-colors"
+            >
+              <X size={15} />
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── More sheet ──────────────────────────────────── */}
       {showMore && (
         <div
           className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center"
@@ -119,7 +255,7 @@ export default function BottomNav() {
 
             {/* Scrollable content */}
             <div className="overflow-y-auto flex-1 px-4 pb-2">
-              {/* 2-col icon grid */}
+              {/* 3-col icon grid */}
               <div className="grid grid-cols-3 gap-3 mb-3">
                 {MORE_ITEMS.map(({ path, label, icon: Icon, iconColor, bg, ring }) => (
                   <button
