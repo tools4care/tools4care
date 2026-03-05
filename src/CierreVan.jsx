@@ -114,27 +114,28 @@ export default function CierreVan() {
   async function loadTransaccionesDelDia(fecha) {
     const { start, end } = easternDayBounds(fecha);
 
-    const { data, error } = await supabase
+    // Probe column name for payment method (varies by schema)
+    for (const col of ["metodo_pago", "metodo", "forma_pago"]) {
+      const { data, error } = await supabase
+        .from("pagos")
+        .select(`id, monto, ${col}, created_at, cliente_id, clientes:cliente_id(nombre)`)
+        .eq("van_id", van.id)
+        .gte("created_at", start)
+        .lte("created_at", end)
+        .order("created_at", { ascending: false });
+      if (!error) {
+        return (data || []).map((r) => ({ ...r, metodo_pago: r[col] || "transferencia" }));
+      }
+    }
+    // Fallback: fetch without method column
+    const { data } = await supabase
       .from("pagos")
-      .select(`
-        id,
-        monto,
-        metodo,
-        created_at,
-        cliente_id,
-        clientes:cliente_id ( nombre )
-      `)
+      .select("id, monto, created_at, cliente_id, clientes:cliente_id(nombre)")
       .eq("van_id", van.id)
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error cargando transacciones:", error);
-      return [];
-    }
-
-    return data;
+    return (data || []).map((r) => ({ ...r, metodo_pago: "transferencia" }));
   }
 
   // Estados principales
@@ -855,12 +856,12 @@ useEffect(() => {
       initialCounts[type.value] = 0;
     });
     setTransferCounts(initialCounts);
-    calculateTransferTotal(initialCounts);
+    setTransferTotal(0);
     setShowTransferBreakdownModal(true);
   };
 
   const updateTransferCount = (type, count) => {
-    const numericCount = parseInt(count) || 0;
+    const numericCount = parseFloat(count) || 0;
     const newCounts = { ...transferCounts, [type]: numericCount };
     setTransferCounts(newCounts);
     calculateTransferTotal(newCounts);
@@ -1024,6 +1025,93 @@ useEffect(() => {
     transferReal,
     otherReal,
   ]);
+
+  /* ========================= Combined Transactions List ========================= */
+  const transaccionesCompletas = useMemo(() => {
+    const TRANSFER_LABEL = { zelle: "Zelle", cashapp: "Cash App", venmo: "Venmo", applepay: "Apple Pay" };
+    const TRANSFER_COLOR = { zelle: "#0066CC", cashapp: "#00C244", venmo: "#3D95CE", applepay: "#000000" };
+
+    // Sales from ventasPorFecha
+    const ventas = Object.values(ventasPorFecha).flat().map((v) => {
+      const metodo = v.metodo_pago || "efectivo";
+      // Find transfer sub-type
+      let subMetodo = null;
+      let subColor = null;
+      if (metodo === "transferencia" || metodo === "mix") {
+        const det = v.pago?.transferencia_detalle;
+        if (det) {
+          // pick the sub-type with the highest amount
+          const max = Object.entries(det)
+            .filter(([k]) => k !== "other")
+            .sort(([, a], [, b]) => b - a)[0];
+          if (max && Number(max[1]) > 0) {
+            subMetodo = TRANSFER_LABEL[max[0]] || null;
+            subColor = TRANSFER_COLOR[max[0]] || null;
+          }
+        } else if (v.pago?.metodos) {
+          const tm = v.pago.metodos.find((m) => m.forma === "transferencia" && m.subMetodo);
+          if (tm) {
+            subMetodo = TRANSFER_LABEL[tm.subMetodo] || tm.subMetodo;
+            subColor = TRANSFER_COLOR[tm.subMetodo] || null;
+          }
+        }
+      }
+      return {
+        id: v.id,
+        created_at: v.created_at,
+        tipo: "sale",
+        cliente: v.clientes?.nombre || "Walk-in",
+        metodo,
+        subMetodo,
+        subColor,
+        monto: Number(v.total_pagado || v.total_venta || 0),
+        estado: v.estado_pago,
+      };
+    });
+
+    // Payments (abonos) from transacciones
+    const pagos = transacciones.map((t) => ({
+      id: "p-" + t.id,
+      created_at: t.created_at,
+      tipo: "payment",
+      cliente: t.clientes?.nombre || "Walk-in",
+      metodo: t.metodo_pago || "efectivo",
+      subMetodo: null,
+      subColor: null,
+      monto: Number(t.monto || 0),
+      estado: null,
+    }));
+
+    return [...ventas, ...pagos].sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    );
+  }, [ventasPorFecha, transacciones]);
+
+  /* ========================= Transfer Sub-type Breakdown from Sales ========================= */
+  const transferDesgloseSistema = useMemo(() => {
+    const result = { zelle: 0, cashapp: 0, venmo: 0, applepay: 0, other: 0 };
+    Object.values(ventasPorFecha).flat().forEach((venta) => {
+      const pago = venta.pago;
+      if (!pago) return;
+      const detalle = pago.transferencia_detalle;
+      if (detalle) {
+        result.zelle += Number(detalle.zelle || 0);
+        result.cashapp += Number(detalle.cashapp || 0);
+        result.venmo += Number(detalle.venmo || 0);
+        result.applepay += Number(detalle.applepay || 0);
+        result.other += Number(detalle.other || 0);
+      } else if (pago.metodos) {
+        pago.metodos.forEach((m) => {
+          if (m.forma === "transferencia") {
+            const sub = m.subMetodo;
+            const key = ["zelle", "cashapp", "venmo", "applepay"].includes(sub) ? sub : "other";
+            result[key] += Number(m.monto || 0);
+          }
+        });
+      }
+    });
+    return result;
+  }, [ventasPorFecha]);
 
   /* ========================= Chart Data ========================= */
   const datosMetodosPago = useMemo(() => {
@@ -1297,6 +1385,35 @@ useEffect(() => {
                     ? fmtCurrency(totales.totalTransferencia)
                     : "$0.00"}
                 </p>
+                {totales.totalTransferencia > 0 && (
+                  <div className="mt-2 space-y-1 border-t border-purple-200 pt-2">
+                    {TRANSFER_TYPES.map((type) => {
+                      const amt = transferDesgloseSistema[type.value] || 0;
+                      if (amt === 0) return null;
+                      return (
+                        <div key={type.value} className="flex items-center justify-between text-xs">
+                          <span className="flex items-center gap-1 text-gray-600">
+                            <span
+                              className="w-2 h-2 rounded-full inline-block flex-shrink-0"
+                              style={{ backgroundColor: type.color }}
+                            />
+                            {type.label}
+                          </span>
+                          <span className="font-semibold text-purple-700">{fmtCurrency(amt)}</span>
+                        </div>
+                      );
+                    })}
+                    {transferDesgloseSistema.other > 0 && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="flex items-center gap-1 text-gray-600">
+                          <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-gray-400" />
+                          Other
+                        </span>
+                        <span className="font-semibold text-purple-700">{fmtCurrency(transferDesgloseSistema.other)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-gray-500 mt-1">
                   ✅ No duplications
                 </p>
@@ -1589,52 +1706,87 @@ useEffect(() => {
 
 {/* Recent Transactions List */}
 <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6">
-  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-    <FileText size={20} />
-    Recent Transactions
-  </h3>
-
-  <div className="space-y-2 h-64 overflow-y-auto">
-    {transacciones.slice(0, 10).map((t) => (
-      <div
-        key={t.id}
-        className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-      >
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">
-            {t.clientes?.nombre || "N/A"}
-          </p>
-          <div className="flex items-center gap-2 mt-1">
-            <span
-              className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
-                t.metodo === "efectivo"
-                  ? "bg-green-100 text-green-800"
-                  : t.metodo === "tarjeta"
-                  ? "bg-blue-100 text-blue-800"
-                  : t.metodo === "transferencia"
-                  ? "bg-purple-100 text-purple-800"
-                  : "bg-amber-100 text-amber-800"
-              }`}
-            >
-              {getPaymentMethodLabel(t.metodo)}
-            </span>
-            <span className="text-xs text-gray-500">
-              {new Date(t.created_at).toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </span>
-          </div>
-        </div>
-
-        <div className="ml-2">
-          <p className="text-sm font-bold text-gray-900">
-            {fmtCurrency(t.monto)}
-          </p>
-        </div>
-      </div>
-    ))}
+  <div className="flex items-center justify-between mb-4">
+    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+      <FileText size={20} />
+      Recent Transactions
+    </h3>
+    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+      {transaccionesCompletas.length} total
+    </span>
   </div>
+
+  {transaccionesCompletas.length === 0 ? (
+    <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+      <FileText size={36} className="mb-2 opacity-30" />
+      <p className="text-sm">No transactions for selected dates</p>
+    </div>
+  ) : (
+    <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+      {transaccionesCompletas.map((t) => {
+        const isTransfer = t.metodo === "transferencia" || t.metodo === "mix";
+        const methodColor =
+          t.metodo === "efectivo" ? "bg-green-100 text-green-800"
+          : t.metodo === "tarjeta" ? "bg-blue-100 text-blue-800"
+          : isTransfer ? "bg-purple-100 text-purple-800"
+          : "bg-amber-100 text-amber-800";
+        const methodLabel =
+          t.metodo === "efectivo" ? "Cash"
+          : t.metodo === "tarjeta" ? "Card"
+          : t.metodo === "mix" ? "Mix"
+          : isTransfer ? "Transfer"
+          : t.metodo || "Other";
+        return (
+          <div
+            key={t.id}
+            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  {t.cliente}
+                </p>
+                <span className={`px-1.5 py-0.5 text-xs font-semibold rounded-full flex-shrink-0 ${
+                  t.tipo === "sale" ? "bg-sky-100 text-sky-700" : "bg-orange-100 text-orange-700"
+                }`}>
+                  {t.tipo === "sale" ? "Sale" : "Payment"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${methodColor}`}>
+                  {methodLabel}
+                </span>
+                {isTransfer && t.subMetodo && (
+                  <span
+                    className="px-2 py-0.5 text-xs font-semibold rounded-full text-white"
+                    style={{ backgroundColor: t.subColor || "#9C27B0" }}
+                  >
+                    {t.subMetodo}
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">
+                  {new Date(t.created_at).toLocaleDateString("en-US", {
+                    month: "short", day: "numeric",
+                  })}{" "}
+                  {new Date(t.created_at).toLocaleTimeString("en-US", {
+                    hour: "2-digit", minute: "2-digit",
+                  })}
+                </span>
+              </div>
+            </div>
+            <div className="ml-3 flex-shrink-0 text-right">
+              <p className="text-sm font-bold text-gray-900">
+                {fmtCurrency(t.monto)}
+              </p>
+              {t.estado && t.estado !== "pagado" && (
+                <p className="text-xs text-amber-600 font-medium capitalize">{t.estado}</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  )}
 </div>
           </div>
         )}
@@ -1980,103 +2132,131 @@ useEffect(() => {
       {/* Transfer breakdown modal */}
       {showTransferBreakdownModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="p-4 border-b border-gray-200 flex justify-between items-center">
               <h3 className="text-lg font-bold text-gray-800">
-                Quick Transfer Count
+                Transfer Breakdown
               </h3>
               <button
-                onClick={() =>
-                  setShowTransferBreakdownModal(false)
-                }
+                onClick={() => setShowTransferBreakdownModal(false)}
                 className="text-gray-500 hover:text-gray-700"
               >
                 <X size={24} />
               </button>
             </div>
             <div className="p-4 overflow-y-auto flex-grow">
-              <div className="mb-4">
-                <div className="flex justify-between items-center mb-4">
-                  <p className="text-gray-700">
-                    Enter the count for each transfer type:
-                  </p>
-                  <div className="text-xl font-bold text-purple-700">
-                    Total: {fmtCurrency(transferTotal)}
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {TRANSFER_TYPES.map((type) => (
-                    <div
-                      key={type.value}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-4 h-4 rounded-full"
-                          style={{ backgroundColor: type.color }}
-                        ></div>
-                        <span className="font-medium text-gray-700">
+              {/* System breakdown from sales */}
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
+                <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-2">
+                  From Sales (System)
+                </p>
+                <div className="space-y-1">
+                  {TRANSFER_TYPES.map((type) => {
+                    const sysAmt = transferDesgloseSistema[type.value] || 0;
+                    return (
+                      <div key={type.value} className="flex items-center justify-between text-sm">
+                        <span className="flex items-center gap-2 text-gray-600">
+                          <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: type.color }} />
                           {type.label}
                         </span>
+                        <span className={`font-semibold ${sysAmt > 0 ? "text-purple-700" : "text-gray-400"}`}>
+                          {fmtCurrency(sysAmt)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {transferDesgloseSistema.other > 0 && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-2 text-gray-600">
+                        <span className="w-3 h-3 rounded-full inline-block bg-gray-400" />
+                        Other
+                      </span>
+                      <span className="font-semibold text-purple-700">{fmtCurrency(transferDesgloseSistema.other)}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-purple-200 pt-1 mt-1 flex justify-between text-sm font-bold text-purple-800">
+                    <span>Total Expected</span>
+                    <span>{fmtCurrency(totales.totalTransferencia)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Manual "What I Have" per type */}
+              <p className="text-sm font-semibold text-gray-700 mb-3">
+                What I Have (enter dollar amounts):
+              </p>
+              <div className="space-y-3">
+                {TRANSFER_TYPES.map((type) => {
+                  const sysAmt = transferDesgloseSistema[type.value] || 0;
+                  const myAmt = Number(transferCounts[type.value] || 0);
+                  const diff = myAmt - sysAmt;
+                  return (
+                    <div key={type.value} className="p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: type.color }} />
+                          <span className="font-medium text-gray-700">{type.label}</span>
+                        </div>
+                        {sysAmt > 0 && (
+                          <span className="text-xs text-gray-500">
+                            Expected: {fmtCurrency(sysAmt)}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() =>
-                            subtractTransferCount(type.value)
-                          }
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors"
+                          onClick={() => subtractTransferCount(type.value)}
+                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors flex-shrink-0"
                         >
                           <Minus size={16} />
                         </button>
-                        <input
-                          type="text"
-                          value={String(
-                            transferCounts[type.value] || 0
-                          ).padStart(1, "0")}
-                          onChange={(e) =>
-                            updateTransferCount(
-                              type.value,
-                              e.target.value
-                            )
-                          }
-                          className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
-                        />
+                        <div className="relative flex-1">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={transferCounts[type.value] || 0}
+                            onChange={(e) => updateTransferCount(type.value, e.target.value)}
+                            className="w-full pl-7 pr-3 py-1.5 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                          />
+                        </div>
                         <button
-                          onClick={() =>
-                            addTransferCount(type.value)
-                          }
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
+                          onClick={() => addTransferCount(type.value)}
+                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors flex-shrink-0"
                         >
                           <Plus size={16} />
                         </button>
                       </div>
-                      <div className="font-medium text-gray-900">
-                        {fmtCurrency(
-                          (transferCounts[type.value] || 0) *
-                            1
-                        )}
-                      </div>
+                      {myAmt > 0 && sysAmt > 0 && diff !== 0 && (
+                        <p className={`text-xs mt-1 ${diff > 0 ? "text-green-600" : "text-red-500"}`}>
+                          {diff > 0 ? "+" : ""}{fmtCurrency(diff)} vs expected
+                        </p>
+                      )}
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
             </div>
-            <div className="p-4 border-t border-gray-200 flex justify-between">
-              <button
-                onClick={() =>
-                  setShowTransferBreakdownModal(false)
-                }
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={applyTransferBreakdown}
-                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-              >
-                <CheckCircle size={18} />
-                Apply to Transfer
-              </button>
+            <div className="p-4 border-t border-gray-200 flex justify-between items-center">
+              <div className="text-lg font-bold text-purple-700">
+                Total: {fmtCurrency(transferTotal)}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowTransferBreakdownModal(false)}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyTransferBreakdown}
+                  className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                >
+                  <CheckCircle size={18} />
+                  Apply to Transfer
+                </button>
+              </div>
             </div>
           </div>
         </div>

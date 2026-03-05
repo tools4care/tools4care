@@ -654,6 +654,8 @@ setAcuerdosResumen(acuerdos);
   const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState("");
   const [noProductFound, setNoProductFound] = useState("");
+  const [discountTarget, setDiscountTarget] = useState(null); // producto_id with open discount input
+  const [discountInputVal, setDiscountInputVal] = useState("");
 
   const [payments, setPayments] = useState([{ forma: "efectivo", monto: 0 }]);
   const [paymentError, setPaymentError] = useState("");
@@ -2248,6 +2250,20 @@ function clearSale() {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
   }
 
+  function handleSetDescuento(producto_id, pct) {
+    const pctNum = Math.max(0, Math.min(100, Number(pct) || 0));
+    setCart((cart) =>
+      cart.map((item) => {
+        if (item.producto_id !== producto_id) return item;
+        const base = Number(item._pricing?.base || item.precio_unitario) || 0;
+        const newPrice = pctNum > 0 ? Number((base * (1 - pctNum / 100)).toFixed(2)) : base;
+        return { ...item, precio_unitario: newPrice, _manualDescuento: pctNum };
+      })
+    );
+    setDiscountTarget(null);
+    setDiscountInputVal("");
+  }
+
   // ✅ FIX: handleChangePayment con redondeo a 2 decimales
 // ✅ NUEVA VERSIÓN - Reemplazar la función completa
 function handleChangePayment(index, field, value) {
@@ -2928,7 +2944,9 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         let descuento_pct = 0;
 
         const hasBulk = meta.bulkMin != null && meta.bulkPrice != null && qty >= Number(meta.bulkMin);
-        if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
+        if (p._manualDescuento > 0) {
+          descuento_pct = Number(p._manualDescuento);
+        } else if (hasBulk && base > 0 && Number(meta.bulkPrice) > 0) {
           descuento_pct = Math.max(0, (1 - Number(meta.bulkPrice) / base) * 100);
         } else if (Number(meta.pct) > 0) {
           descuento_pct = Number(meta.pct);
@@ -4289,15 +4307,68 @@ function renderStepProducts() {
                       p.cantidad
                     );
               const isBulk =
-                p._pricing?.bulkMin && p._pricing?.bulkPrice && p.cantidad >= p._pricing.bulkMin;
+                p._pricing?.bulkMin && p._pricing?.bulkPrice && p.cantidad >= p._pricing.bulkMin && !p._manualDescuento;
+              const basePrice = Number(p._pricing?.base || unitSafe);
+              const hasDiscount = p._manualDescuento > 0;
+              const isDiscountOpen = discountTarget === p.producto_id;
               return (
                 <div key={p.producto_id} className="flex items-center gap-3 px-4 py-3">
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-gray-900 truncate text-sm">{p.nombre}</div>
-                    <div className="text-xs text-gray-500 flex items-center gap-1">
-                      {fmt(unitSafe)} ea.
-                      {isBulk && <span className="text-emerald-600 font-semibold">• bulk price</span>}
+                    <div className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
+                      {hasDiscount ? (
+                        <>
+                          <span className="line-through text-gray-400">{fmt(basePrice)}</span>
+                          <span className="text-emerald-600 font-semibold">{fmt(unitSafe)} ea.</span>
+                          <span className="bg-emerald-100 text-emerald-700 font-bold px-1 rounded">
+                            {p._manualDescuento}% off
+                          </span>
+                          <button
+                            className="text-gray-400 hover:text-red-500 transition-colors ml-0.5"
+                            title="Remove discount"
+                            onClick={() => handleSetDescuento(p.producto_id, 0)}
+                          >✕</button>
+                        </>
+                      ) : (
+                        <>
+                          <span>{fmt(unitSafe)} ea.</span>
+                          {isBulk && <span className="text-emerald-600 font-semibold">• bulk</span>}
+                          <button
+                            className="text-gray-300 hover:text-blue-500 transition-colors text-[10px] border border-gray-200 hover:border-blue-400 rounded px-1 py-0.5 leading-none"
+                            title="Apply discount"
+                            onClick={() => { setDiscountTarget(p.producto_id); setDiscountInputVal(""); }}
+                          >% off</button>
+                        </>
+                      )}
                     </div>
+                    {isDiscountOpen && (
+                      <div className="flex items-center gap-1 mt-1.5">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          autoFocus
+                          value={discountInputVal}
+                          onChange={(e) => setDiscountInputVal(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSetDescuento(p.producto_id, discountInputVal);
+                            if (e.key === "Escape") { setDiscountTarget(null); setDiscountInputVal(""); }
+                          }}
+                          placeholder="0"
+                          className="w-14 border border-blue-400 rounded-lg px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-300"
+                        />
+                        <span className="text-xs text-gray-500">%</span>
+                        <button
+                          className="bg-blue-500 text-white text-xs rounded-lg px-2 py-1 hover:bg-blue-600 active:scale-95 transition-all"
+                          onClick={() => handleSetDescuento(p.producto_id, discountInputVal)}
+                        >✓</button>
+                        <button
+                          className="text-gray-400 hover:text-gray-600 text-xs px-1"
+                          onClick={() => { setDiscountTarget(null); setDiscountInputVal(""); }}
+                        >✕</button>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
