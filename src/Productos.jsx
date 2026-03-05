@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
@@ -282,189 +282,193 @@ const SIZES_COMUNES = [
   "SAMPLE", "TRAVEL SIZE", "PROFESSIONAL SIZE", "GALLON", "QUART", "PINT"
 ];
 
-function PestañaVentas({ productoId, nombre }) {
-  const [ventasMes, setVentasMes] = useState([]);
-  const [meses, setMeses] = useState([]);
+function PestañaVentas({ productoId }) {
+  const [allRows, setAllRows] = useState([]);
   const [mesSeleccionado, setMesSeleccionado] = useState("");
-  const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [porDia, setPorDia] = useState([]);
 
-  const yyyymm = (d) => (d ? (typeof d === "string" ? d : new Date(d).toISOString()).slice(0, 7) : "");
+  const fmtMes = (ym) => {
+    if (!ym) return "";
+    const [y, m] = ym.split("-");
+    return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  };
+  const fmtDate = (d) => {
+    if (!d) return "—";
+    const dt = new Date(d);
+    return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+  const fmtCur = (n) => `$${Number(n || 0).toFixed(2)}`;
 
   useEffect(() => {
     if (!productoId) return;
     (async () => {
       setLoading(true);
-      const { data: det, error: errDet } = await supabase.from("detalle_ventas").select("venta_id,cantidad").eq("producto_id", productoId);
+      setAllRows([]);
+      setMesSeleccionado("");
 
-      if (errDet || !det || det.length === 0) {
-        setVentasMes([]); setMeses([]); setMesSeleccionado(""); setFacturas([]); setPorDia([]); setLoading(false); return;
-      }
+      const { data: det } = await supabase
+        .from("detalle_ventas")
+        .select("venta_id, cantidad, precio_unitario, subtotal")
+        .eq("producto_id", productoId);
 
-      const ventaIds = Array.from(new Set(det.map((d) => d.venta_id).filter(Boolean)));
-      const { data: ventasRows } = await supabase.from("ventas").select("id,fecha,cliente_id").in("id", ventaIds);
+      if (!det || det.length === 0) { setLoading(false); return; }
 
-      const mapVenta = new Map((ventasRows || []).map((v) => [v.id, v]));
-      const enriquecido = det
-        .map((d) => {
-          const v = mapVenta.get(d.venta_id);
-          if (!v) return null;
-          return { venta_id: d.venta_id, cantidad: d.cantidad || 0, fecha: v.fecha, cliente_id: v.cliente_id };
-        })
-        .filter(Boolean);
+      const ventaIds = [...new Set(det.map((d) => d.venta_id).filter(Boolean))];
+      const { data: ventas } = await supabase
+        .from("ventas")
+        .select("id, created_at, fecha, cliente_id, clientes:cliente_id(nombre)")
+        .in("id", ventaIds);
 
-      const agg = {};
-      for (const r of enriquecido) {
-        const key = yyyymm(r.fecha);
-        if (!key) continue;
-        agg[key] = (agg[key] || 0) + Number(r.cantidad || 0);
-      }
-      const lista = Object.keys(agg).sort((a, b) => b.localeCompare(a)).map((m) => ({ mes: m, cantidad: agg[m] }));
-      setVentasMes(lista);
-      setMeses(lista.map((x) => x.mes));
-      setMesSeleccionado(lista[0]?.mes || "");
+      const mapV = new Map((ventas || []).map((v) => [v.id, v]));
 
-      if (lista[0]) await cargarFacturasMes(enriquecido, lista[0].mes);
-      else setFacturas([]);
+      const rows = det.map((d) => {
+        const v = mapV.get(d.venta_id);
+        if (!v) return null;
+        const fecha = v.fecha || v.created_at || "";
+        const qty = Number(d.cantidad || 0);
+        const unitPrice = Number(d.precio_unitario || 0);
+        const total = Number(d.subtotal || qty * unitPrice || 0);
+        return {
+          venta_id: d.venta_id,
+          qty,
+          unitPrice,
+          total,
+          fecha,
+          mes: fecha.slice(0, 7),
+          cliente: v.clientes?.nombre || "Walk-in",
+        };
+      }).filter(Boolean).sort((a, b) => b.fecha.localeCompare(a.fecha));
 
-      const byDay = {};
-      (ventasRows || []).forEach((v) => {
-        const d = (v.fecha || "").slice(0, 10);
-        const cant = (det || []).filter((x) => x.venta_id === v.id).reduce((t, x) => t + Number(x.cantidad || 0), 0);
-        byDay[d] = (byDay[d] || 0) + cant;
-      });
-      const rows = Object.entries(byDay).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 30).map(([dia, qty]) => ({ dia, qty }));
-      setPorDia(rows);
-
+      setAllRows(rows);
+      setMesSeleccionado(rows[0]?.mes || "");
       setLoading(false);
     })();
   }, [productoId]);
 
-  async function cargarFacturasMes(detallesEnriquecidos, mes) {
-    const filtrado = (detallesEnriquecidos || []).filter((d) => yyyymm(d.fecha) === mes);
-    const idsClientes = Array.from(new Set(filtrado.map((f) => f.cliente_id).filter(Boolean)));
-    const nombres = {};
-    if (idsClientes.length > 0) {
-      const { data: clientesData } = await supabase.from("clientes").select("id,nombre").in("id", idsClientes);
-      (clientesData || []).forEach((c) => (nombres[c.id] = c.nombre));
-    }
-    const lista = filtrado.map((f) => ({ venta_id: f.venta_id, cantidad: f.cantidad, fecha: f.fecha, cliente: nombres[f.cliente_id] || f.cliente_id || "" }));
-    setFacturas(lista);
+  const porMes = useMemo(() => {
+    const agg = {};
+    allRows.forEach((r) => {
+      if (!agg[r.mes]) agg[r.mes] = { mes: r.mes, qty: 0, revenue: 0 };
+      agg[r.mes].qty += r.qty;
+      agg[r.mes].revenue += r.total;
+    });
+    return Object.values(agg).sort((a, b) => b.mes.localeCompare(a.mes));
+  }, [allRows]);
+
+  const filasMes = useMemo(
+    () => allRows.filter((r) => r.mes === mesSeleccionado),
+    [allRows, mesSeleccionado]
+  );
+
+  const totalUnits = allRows.reduce((s, r) => s + r.qty, 0);
+  const totalRevenue = allRows.reduce((s, r) => s + r.total, 0);
+  const mesQty = filasMes.reduce((s, r) => s + r.qty, 0);
+  const mesRevenue = filasMes.reduce((s, r) => s + r.total, 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
   }
 
-  useEffect(() => {
-    if (!productoId || !mesSeleccionado) return;
-    (async () => {
-      setLoading(true);
-      const { data: det } = await supabase.from("detalle_ventas").select("venta_id,cantidad").eq("producto_id", productoId);
-      const ventaIds = Array.from(new Set((det || []).map((d) => d.venta_id).filter(Boolean)));
-      const { data: ventasRows } = await supabase.from("ventas").select("id,fecha,cliente_id").in("id", ventaIds);
-
-      const mapVenta = new Map((ventasRows || []).map((v) => [v.id, v]));
-      const enriquecido = (det || [])
-        .map((d) => {
-          const v = mapVenta.get(d.venta_id);
-          if (!v) return null;
-          return { venta_id: d.venta_id, cantidad: d.cantidad || 0, fecha: v.fecha, cliente_id: v.cliente_id };
-        })
-        .filter(Boolean);
-
-      await cargarFacturasMes(enriquecido, mesSeleccionado);
-      setLoading(false);
-    })();
-  }, [mesSeleccionado, productoId]);
+  if (allRows.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+        <div className="text-4xl mb-2">📦</div>
+        <p className="text-sm font-medium">No sales recorded yet</p>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <h3 className="font-bold text-blue-900 mb-4 text-sm sm:text-base">Sales for "{nombre}"</h3>
+    <div className="space-y-4">
 
-      <div className="border-2 border-dashed border-blue-200 rounded-lg p-3 min-h-[160px] flex items-center justify-center">
-        {ventasMes.length === 0 ? (
-          <div className="text-blue-600 text-sm">No sales yet.</div>
-        ) : (
-          <div className="w-full h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={ventasMes}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="mes" fontSize={12} />
-                <YAxis fontSize={12} />
-                <Tooltip formatter={(v) => `${v} units`} />
-                <Bar dataKey="cantidad" fill="#1976D2" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
+      {/* All-time stats */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-blue-50 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-blue-500 font-bold uppercase tracking-wide">Total Units Sold</p>
+          <p className="text-2xl font-bold text-blue-800">{totalUnits}</p>
+        </div>
+        <div className="bg-emerald-50 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wide">Total Revenue</p>
+          <p className="text-xl font-bold text-emerald-800">{fmtCur(totalRevenue)}</p>
+        </div>
       </div>
 
-      <div className="my-4">
-        <label className="font-bold text-sm sm:text-base">Select month:</label>
-        <select className="border rounded p-2 ml-2 w-full sm:w-auto" value={mesSeleccionado} onChange={(e) => setMesSeleccionado(e.target.value)}>
-          {meses.map((m) => (
-            <option key={m} value={m}>
-              {m}
+      {/* Chart */}
+      <div className="h-[160px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={[...porMes].reverse()} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis
+              dataKey="mes"
+              fontSize={10}
+              tickFormatter={(v) => {
+                const [, m] = v.split("-");
+                return new Date(2000, Number(m) - 1).toLocaleString("en-US", { month: "short" });
+              }}
+            />
+            <YAxis fontSize={10} />
+            <Tooltip
+              formatter={(v, name) => [name === "qty" ? `${v} units` : fmtCur(v), name === "qty" ? "Units" : "Revenue"]}
+              labelFormatter={fmtMes}
+            />
+            <Bar dataKey="qty" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Month selector */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-500 font-semibold whitespace-nowrap">Month:</span>
+        <select
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+          value={mesSeleccionado}
+          onChange={(e) => setMesSeleccionado(e.target.value)}
+        >
+          {porMes.map((m) => (
+            <option key={m.mes} value={m.mes}>
+              {fmtMes(m.mes)} — {m.qty} units · {fmtCur(m.revenue)}
             </option>
           ))}
         </select>
       </div>
 
-      <div className="border rounded-lg">
-        <div className="px-3 py-2 font-bold bg-gray-50 border-b text-sm sm:text-base">Invoices for {mesSeleccionado}</div>
-        {loading ? (
-          <div className="p-3 text-blue-600">Loading...</div>
-        ) : facturas.length === 0 ? (
-          <div className="p-3 text-gray-500">No invoices for this month.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs sm:text-sm">
-              <thead>
-                <tr className="bg-blue-100">
-                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Invoice ID</th>
-                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Date</th>
-                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Client</th>
-                  <th className="border px-2 py-1 sm:px-3 sm:py-2">Quantity</th>
-                </tr>
-              </thead>
-              <tbody>
-                {facturas.map((f) => (
-                  <tr key={f.venta_id + "-" + (f.fecha || "")} className="border-b">
-                    <td className="border px-2 py-1 sm:px-3 sm:py-2 font-mono">{f.venta_id}</td>
-                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{(f.fecha || "").slice(0, 10)}</td>
-                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{f.cliente}</td>
-                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{f.cantidad}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      {/* Month summary bar */}
+      <div className="flex gap-2">
+        <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+          <span className="text-xs text-gray-500">Units</span>
+          <span className="text-sm font-bold text-gray-800">{mesQty}</span>
+        </div>
+        <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+          <span className="text-xs text-gray-500">Revenue</span>
+          <span className="text-sm font-bold text-emerald-700">{fmtCur(mesRevenue)}</span>
+        </div>
       </div>
 
-      <div className="mt-4 border rounded-lg">
-        <div className="px-3 py-2 font-bold bg-gray-50 border-b text-sm sm:text-base">Daily sales (last 30 days)</div>
-        {porDia.length === 0 ? (
-          <div className="p-3 text-gray-500">No daily sales.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs sm:text-sm">
-              <thead>
-                <tr className="bg-gray-100">
-                  <th className="border px-2 py-1 sm:px-3 sm:py-2 text-left">Date</th>
-                  <th className="border px-2 py-1 sm:px-3 sm:py-2 text-right">Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {porDia.map((r) => (
-                  <tr key={r.dia} className="border-b">
-                    <td className="border px-2 py-1 sm:px-3 sm:py-2">{r.dia}</td>
-                    <td className="border px-2 py-1 sm:px-3 sm:py-2 text-right">{r.qty}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Sales rows for selected month */}
+      <div className="space-y-1.5">
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+          {fmtMes(mesSeleccionado)} · {filasMes.length} sale{filasMes.length !== 1 ? "s" : ""}
+        </p>
+        {filasMes.map((f, i) => (
+          <div key={f.venta_id + i} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2.5">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-800 truncate">{f.cliente}</p>
+              <p className="text-xs text-gray-400">{fmtDate(f.fecha)}</p>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <p className="text-sm font-bold text-gray-900">{fmtCur(f.total)}</p>
+              <p className="text-xs text-gray-400">
+                {f.qty} × {fmtCur(f.unitPrice)}
+              </p>
+            </div>
           </div>
-        )}
+        ))}
       </div>
+
     </div>
   );
 }
@@ -1239,247 +1243,339 @@ export default function Productos() {
 
       {/* MODAL */}
       {modalAbierto && productoActual && (
-        <div className="fixed inset-0 bg-black/40 flex justify-center items-end sm:items-center z-50 p-0 sm:p-6">
-          <div className="bg-white w-full h-[100vh] sm:h-auto sm:max-h-[90vh] sm:rounded-xl shadow-xl max-w-2xl relative p-4 sm:p-8 overflow-y-auto">
-            <button 
-              type="button" 
-              className="absolute top-3 right-3 text-2xl text-gray-400 hover:text-black" 
-              onClick={cerrarModal} 
-              title="Close"
-              style={{ zIndex: 100 }}
-            >
-              ×
-            </button>
+        <div className="fixed inset-0 bg-black/50 flex justify-center items-end sm:items-center z-50 p-0 sm:p-4">
+          <div className="bg-white w-full h-[100dvh] sm:h-auto sm:max-h-[92vh] sm:rounded-2xl shadow-2xl max-w-lg flex flex-col overflow-hidden">
 
-            {/* KPIs */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 mb-3">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 sm:p-3 text-center">
-                <div className="text-xs sm:text-sm text-blue-700 uppercase font-semibold">On Hand</div>
-                <div className="text-lg sm:text-xl font-bold text-blue-900">{stockResumen.unidades}</div>
-              </div>
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 sm:p-3 text-center">
-                <div className="text-xs sm:text-sm text-emerald-700 uppercase font-semibold">On Hand $</div>
-                <div className="text-lg sm:text-xl font-bold text-emerald-900">${Number(stockResumen.valor || 0).toFixed(2)}</div>
-              </div>
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 sm:p-3 text-center">
-                <div className="text-xs sm:text-sm text-gray-600 uppercase font-semibold">Last Sold</div>
-                <div className="text-sm sm:text-base font-bold text-gray-800">{ultimaVenta ? new Date(ultimaVenta).toLocaleDateString() : "—"}</div>
-              </div>
-            </div>
-
-            <div className="flex mb-4 border-b mt-6 sm:mt-2 items-center">
-              <button
-                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "editar" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
-                onClick={() => setTabActivo("editar")}
-              >
-                Edit product
-              </button>
-              <button
-                className={`px-4 sm:px-6 py-2 font-bold ${tabActivo === "ventas" ? "border-b-2 border-blue-700 text-blue-700" : "text-gray-500"}`}
-                onClick={() => setTabActivo("ventas")}
-              >
-                Sales
-              </button>
-
-              {!editMode && productoActual?.id && tabActivo === "editar" && (
-                <button className="ml-auto bg-blue-600 text-white rounded px-3 py-1.5 sm:px-4 text-sm sm:text-base" onClick={() => setEditMode(true)}>
-                  Edit
+            {/* ── Sticky Header ── */}
+            <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 sm:px-5 pt-4 pb-0 z-20">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex-1 min-w-0 pr-3">
+                  {productoActual.id ? (
+                    <>
+                      <h2 className="text-base font-bold text-gray-900 leading-tight truncate">
+                        {productoActual.nombre || "Product"}
+                      </h2>
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        {productoActual.codigo && (
+                          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-mono tracking-wide">
+                            {productoActual.codigo}
+                          </span>
+                        )}
+                        {productoActual.marca && (
+                          <span className="text-xs text-gray-400 font-medium">{productoActual.marca}</span>
+                        )}
+                        {productoActual.size && (
+                          <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-medium">{productoActual.size}</span>
+                        )}
+                        {productoActual.categoria && (
+                          <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded">{productoActual.categoria}</span>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <h2 className="text-base font-bold text-gray-900">New Product</h2>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors text-lg leading-none"
+                  onClick={cerrarModal}
+                >
+                  ×
                 </button>
-              )}
-            </div>
+              </div>
 
-            {tabActivo === "editar" ? (
-              <form onSubmit={guardarProducto}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3">
-                  <div>
-                    <label className="font-bold text-sm sm:text-base">Code/UPC*</label>
-                    <input
-                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
-                      value={productoActual.codigo ?? ""}
-                      onChange={(e) => setProductoActual({ ...productoActual, codigo: toUpper(e.target.value) })}
-                      required
-                      autoFocus
-                      disabled={disabled}
-                    />
+              {/* KPIs — only for existing products */}
+              {productoActual.id && (
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  <div className="bg-blue-50 rounded-xl p-2.5 text-center">
+                    <div className="text-[10px] text-blue-500 font-bold uppercase tracking-wide">On Hand</div>
+                    <div className="text-xl font-bold text-blue-800 leading-tight">{stockResumen.unidades}</div>
+                    <div className="text-[10px] text-blue-400">units</div>
                   </div>
-                  <div>
-                    <label className="font-bold text-sm sm:text-base">Name*</label>
-                    <input
-                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
-                      value={productoActual.nombre ?? ""}
-                      onChange={(e) => setProductoActual({ ...productoActual, nombre: toUpper(e.target.value) })}
-                      required
-                      disabled={disabled}
-                    />
+                  <div className="bg-emerald-50 rounded-xl p-2.5 text-center">
+                    <div className="text-[10px] text-emerald-500 font-bold uppercase tracking-wide">Stock Value</div>
+                    <div className="text-base font-bold text-emerald-800 leading-tight">${Number(stockResumen.valor || 0).toFixed(2)}</div>
+                    <div className="text-[10px] text-emerald-400">@ cost</div>
                   </div>
-                  <div>
-                    <label className="font-bold text-sm sm:text-base">Brand</label>
-                    <input
-                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
-                      value={productoActual.marca ?? ""}
-                      onChange={(e) => setProductoActual({ ...productoActual, marca: toUpper(e.target.value) })}
-                      disabled={disabled}
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold text-sm sm:text-base">Category</label>
-                    <input
-                      className="border rounded p-2 w-full uppercase text-sm sm:text-base"
-                      value={productoActual.categoria ?? ""}
-                      onChange={(e) => setProductoActual({ ...productoActual, categoria: toUpper(e.target.value) })}
-                      disabled={disabled}
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold text-sm sm:text-base">Size</label>
-                    <select
-                      className="border rounded p-2 w-full text-sm sm:text-base"
-                      value={isCustomSize ? "custom" : productoActual.size || ""}
-                      onChange={(e) => {
-                        if (disabled) return;
-                        if (e.target.value === "custom") setIsCustomSize(true);
-                        else {
-                          setIsCustomSize(false);
-                          setProductoActual((prev) => ({ ...prev, size: e.target.value }));
-                        }
-                      }}
-                      disabled={disabled}
-                    >
-                      <option value="">Select size</option>
-                      {SIZES_COMUNES.map((sz) => (
-                        <option value={sz} key={sz}>
-                          {sz}
-                        </option>
-                      ))}
-                      <option value="custom">Add custom size...</option>
-                    </select>
-                    {isCustomSize && (
-                      <input
-                        className="border rounded p-2 mt-1 w-full uppercase text-sm sm:text-base"
-                        value={sizeCustom}
-                        placeholder="Enter custom size"
-                        onChange={(e) => setSizeCustom(toUpper(e.target.value))}
-                        disabled={disabled}
-                      />
+                  <div className="bg-gray-50 rounded-xl p-2.5 text-center">
+                    <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Last Sold</div>
+                    <div className="text-sm font-bold text-gray-700 leading-tight">
+                      {ultimaVenta ? new Date(ultimaVenta).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                    </div>
+                    {ultimaVenta && (
+                      <div className="text-[10px] text-gray-400">{new Date(ultimaVenta).getFullYear()}</div>
                     )}
                   </div>
+                </div>
+              )}
 
+              {/* Tabs */}
+              <div className="flex -mx-0 border-b border-gray-100">
+                <button
+                  className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${tabActivo === "editar" ? "border-blue-600 text-blue-700" : "border-transparent text-gray-400 hover:text-gray-600"}`}
+                  onClick={() => setTabActivo("editar")}
+                >
+                  Edit Product
+                </button>
+                <button
+                  className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${tabActivo === "ventas" ? "border-blue-600 text-blue-700" : "border-transparent text-gray-400 hover:text-gray-600"}`}
+                  onClick={() => setTabActivo("ventas")}
+                >
+                  Sales History
+                </button>
+                {!editMode && productoActual?.id && tabActivo === "editar" && (
+                  <button className="ml-auto mb-1 bg-blue-600 text-white rounded-lg px-3 py-1 text-xs font-semibold" onClick={() => setEditMode(true)}>
+                    Edit
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── Scrollable Content ── */}
+            <div className="flex-1 overflow-y-auto">
+              {tabActivo === "editar" ? (
+                <form onSubmit={guardarProducto} className="px-4 sm:px-5 py-4 space-y-5">
+
+                  {/* SECTION: Product Info */}
                   <div>
-                    <label className="font-bold text-sm sm:text-base">Supplier</label>
-                    <BuscadorSuplidor
-                      value={suplidorId}
-                      name={suplidorNombre}
-                      disabled={disabled}
-                      onChange={(id, nombre) => {
-                        setSuplidorId(id);
-                        setSuplidorNombre(nombre);
-                        setProductoActual((prev) => ({ ...prev, suplidor_id: id }));
-                      }}
-                    />
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Product Info</p>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Code / UPC *</label>
+                        <input
+                          className="border border-gray-200 rounded-lg p-2.5 w-full uppercase text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                          value={productoActual.codigo ?? ""}
+                          onChange={(e) => setProductoActual({ ...productoActual, codigo: toUpper(e.target.value) })}
+                          required autoFocus disabled={disabled}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Name *</label>
+                        <input
+                          className="border border-gray-200 rounded-lg p-2.5 w-full uppercase text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                          value={productoActual.nombre ?? ""}
+                          onChange={(e) => setProductoActual({ ...productoActual, nombre: toUpper(e.target.value) })}
+                          required disabled={disabled}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Brand</label>
+                        <input
+                          className="border border-gray-200 rounded-lg p-2.5 w-full uppercase text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                          value={productoActual.marca ?? ""}
+                          onChange={(e) => setProductoActual({ ...productoActual, marca: toUpper(e.target.value) })}
+                          disabled={disabled}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Category</label>
+                        <input
+                          className="border border-gray-200 rounded-lg p-2.5 w-full uppercase text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                          value={productoActual.categoria ?? ""}
+                          onChange={(e) => setProductoActual({ ...productoActual, categoria: toUpper(e.target.value) })}
+                          disabled={disabled}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Size</label>
+                        <select
+                          className="border border-gray-200 rounded-lg p-2.5 w-full text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={isCustomSize ? "custom" : productoActual.size || ""}
+                          onChange={(e) => {
+                            if (disabled) return;
+                            if (e.target.value === "custom") setIsCustomSize(true);
+                            else { setIsCustomSize(false); setProductoActual((prev) => ({ ...prev, size: e.target.value })); }
+                          }}
+                          disabled={disabled}
+                        >
+                          <option value="">Select size</option>
+                          {SIZES_COMUNES.map((sz) => <option value={sz} key={sz}>{sz}</option>)}
+                          <option value="custom">Custom...</option>
+                        </select>
+                        {isCustomSize && (
+                          <input
+                            className="border border-gray-200 rounded-lg p-2.5 mt-1.5 w-full uppercase text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={sizeCustom}
+                            placeholder="Enter custom size"
+                            onChange={(e) => setSizeCustom(toUpper(e.target.value))}
+                            disabled={disabled}
+                          />
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Supplier</label>
+                        <BuscadorSuplidor
+                          value={suplidorId}
+                          name={suplidorNombre}
+                          disabled={disabled}
+                          onChange={(id, nombre) => {
+                            setSuplidorId(id);
+                            setSuplidorNombre(nombre);
+                            setProductoActual((prev) => ({ ...prev, suplidor_id: id }));
+                          }}
+                        />
+                      </div>
+                    </div>
                   </div>
 
+                  {/* SECTION: Pricing */}
                   <div>
-                    <label className="font-bold text-sm sm:text-base">Cost</label>
-                    <input
-                      className="border rounded p-2 w-full text-sm sm:text-base"
-                      value={productoActual.costo ?? ""}
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      onChange={(e) => setProductoActual({ ...productoActual, costo: e.target.value })}
-                      disabled={disabled}
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold text-sm sm:text-base">Price*</label>
-                    <input
-                      className="border rounded p-2 w-full text-sm sm:text-base"
-                      value={productoActual.precio ?? ""}
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      onChange={(e) => setProductoActual({ ...productoActual, precio: e.target.value })}
-                      required
-                      disabled={disabled}
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Pricing</p>
+                    <div className="grid grid-cols-2 gap-2.5 mb-2.5">
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Cost</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">$</span>
+                          <input
+                            className="border border-gray-200 rounded-lg pl-6 pr-3 py-2.5 w-full text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                            value={productoActual.costo ?? ""}
+                            type="number" step="0.01" min="0"
+                            onChange={(e) => setProductoActual({ ...productoActual, costo: e.target.value })}
+                            disabled={disabled}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Sale Price *</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">$</span>
+                          <input
+                            className="border border-gray-200 rounded-lg pl-6 pr-3 py-2.5 w-full text-sm font-semibold focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                            value={productoActual.precio ?? ""}
+                            type="number" step="0.01" min="0"
+                            onChange={(e) => setProductoActual({ ...productoActual, precio: e.target.value })}
+                            required disabled={disabled}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    {/* Live profit/margin card */}
                     {(() => {
                       const c = Number(productoActual?.costo || 0);
                       const p = Number(productoActual?.precio || 0);
-                      const margin = p > 0 ? ((p - c) / p) * 100 : 0;
-                      const markup = c > 0 ? ((p - c) / c) * 100 : 0;
+                      if (p === 0) return null;
+                      const profit = p - c;
+                      const margin = ((p - c) / p) * 100;
+                      const markup = c > 0 ? ((p - c) / c) * 100 : null;
+                      const isGood = margin >= 30;
+                      const isMid = margin >= 15 && margin < 30;
+                      const bgClass = isGood ? "bg-emerald-50 border-emerald-200" : isMid ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200";
+                      const valClass = isGood ? "text-emerald-700" : isMid ? "text-amber-600" : "text-red-600";
                       return (
-                        <div className="mt-1 sm:mt-2 flex flex-wrap gap-2 text-sm">
-                          <span className="inline-flex items-center rounded-full bg-blue-50 text-blue-800 px-3 py-1 text-xs sm:text-sm">
-                            Margin: <b className="ml-1">{margin.toFixed(1)}%</b>
-                          </span>
-                          <span className="inline-flex items-center rounded-full bg-violet-50 text-violet-800 px-3 py-1 text-xs sm:text-sm">
-                            Markup: <b className="ml-1">{markup.toFixed(1)}%</b>
-                          </span>
+                        <div className={`border rounded-xl p-3 flex items-center gap-3 ${bgClass}`}>
+                          <div className="flex-1">
+                            <p className="text-[10px] text-gray-500 uppercase font-semibold">Profit / unit</p>
+                            <p className={`text-xl font-bold leading-tight ${valClass}`}>${profit.toFixed(2)}</p>
+                          </div>
+                          <div className="text-center border-l border-gray-200 pl-3">
+                            <p className="text-[10px] text-gray-500 uppercase font-semibold">Margin</p>
+                            <p className={`text-lg font-bold ${valClass}`}>{margin.toFixed(1)}%</p>
+                          </div>
+                          {markup !== null && (
+                            <div className="text-center border-l border-gray-200 pl-3">
+                              <p className="text-[10px] text-gray-500 uppercase font-semibold">Markup</p>
+                              <p className="text-lg font-bold text-gray-600">{markup.toFixed(1)}%</p>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                   </div>
 
+                  {/* SECTION: Special Pricing */}
                   <div>
-                    <label className="font-bold text-sm sm:text-base">% Off (auto-applied)</label>
-                    <input
-                      className="border rounded p-2 w-full text-sm sm:text-base"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      value={productoActual.descuento_pct ?? ""}
-                      onChange={(e) => setProductoActual({ ...productoActual, descuento_pct: e.target.value })}
-                      placeholder="e.g. 10"
-                      disabled={disabled}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">It automatically applies in sales if bulk pricing does not apply.</p>
-                  </div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Special Pricing</p>
 
-                  <div className="md:col-span-2 border rounded p-3 sm:p-4">
-                    <b className="text-sm sm:text-base">Bulk pricing (optional)</b>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 mt-2 sm:mt-3">
-                      <div>
-                        <label className="font-bold text-sm sm:text-base">Min. qty (≥)</label>
-                        <input
-                          className="border rounded p-2 w-full text-sm sm:text-base"
-                          type="number"
-                          min="1"
-                          value={productoActual.bulk_min_qty ?? ""}
-                          onChange={(e) => setProductoActual((prev) => ({ ...prev, bulk_min_qty: e.target.value }))}
-                          placeholder="e.g. 10"
-                          disabled={disabled}
-                        />
+                    {/* Default Discount */}
+                    <div className="border border-gray-200 rounded-xl p-3.5 mb-2.5">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-700">Default Discount</p>
+                          <p className="text-xs text-gray-400 mt-0.5">Applies at checkout when bulk pricing doesn't apply</p>
+                        </div>
+                        {Number(productoActual.descuento_pct) > 0 && Number(productoActual.precio) > 0 && (
+                          <div className="text-right ml-3 flex-shrink-0">
+                            <p className="text-[10px] text-gray-400 uppercase font-semibold">Promo price</p>
+                            <p className="text-base font-bold text-orange-500">
+                              ${(Number(productoActual.precio) * (1 - Number(productoActual.descuento_pct) / 100)).toFixed(2)}
+                            </p>
+                          </div>
+                        )}
                       </div>
-                      <div>
-                        <label className="font-bold text-sm sm:text-base">Unit price at that qty</label>
-                        <input
-                          className="border rounded p-2 w-full text-sm sm:text-base"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={productoActual.bulk_unit_price ?? ""}
-                          onChange={(e) => setProductoActual((prev) => ({ ...prev, bulk_unit_price: e.target.value }))}
-                          placeholder="e.g. 9.60"
-                          disabled={disabled}
-                        />
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-24">
+                          <input
+                            className="border border-gray-200 rounded-lg py-2 pl-3 pr-7 w-full text-sm font-semibold text-center focus:ring-2 focus:ring-orange-400 focus:border-transparent outline-none"
+                            type="number" step="0.01" min="0" max="100"
+                            value={productoActual.descuento_pct ?? ""}
+                            onChange={(e) => setProductoActual({ ...productoActual, descuento_pct: e.target.value })}
+                            placeholder="0"
+                            disabled={disabled}
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-bold select-none">%</span>
+                        </div>
+                        {Number(productoActual.descuento_pct) > 0 && Number(productoActual.precio) > 0 && (
+                          <p className="text-xs text-gray-400">
+                            off ${Number(productoActual.precio).toFixed(2)} = saves ${(Number(productoActual.precio) * Number(productoActual.descuento_pct) / 100).toFixed(2)}
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1 sm:mt-2">If qty ≥ Min. qty, this unit price overrides base/% off in Sales.</p>
+
+                    {/* Bulk Pricing */}
+                    <div className="border border-gray-200 rounded-xl p-3.5">
+                      <p className="text-sm font-semibold text-gray-700 mb-0.5">Bulk Pricing</p>
+                      <p className="text-xs text-gray-400 mb-3">Overrides base price & discount when quantity reaches the minimum</p>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">Min. Qty (≥)</label>
+                          <input
+                            className="border border-gray-200 rounded-lg p-2.5 w-full text-sm text-center focus:ring-2 focus:ring-blue-500 outline-none"
+                            type="number" min="1"
+                            value={productoActual.bulk_min_qty ?? ""}
+                            onChange={(e) => setProductoActual((prev) => ({ ...prev, bulk_min_qty: e.target.value }))}
+                            placeholder="e.g. 10"
+                            disabled={disabled}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">Price per Unit</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">$</span>
+                            <input
+                              className="border border-gray-200 rounded-lg pl-6 pr-3 py-2.5 w-full text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                              type="number" step="0.01" min="0"
+                              value={productoActual.bulk_unit_price ?? ""}
+                              onChange={(e) => setProductoActual((prev) => ({ ...prev, bulk_unit_price: e.target.value }))}
+                              placeholder="e.g. 9.60"
+                              disabled={disabled}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      {Number(productoActual.bulk_min_qty) > 0 && Number(productoActual.bulk_unit_price) > 0 && (
+                        <p className="text-xs text-blue-600 font-medium mt-2">
+                          Buy {productoActual.bulk_min_qty}+ → ${Number(productoActual.bulk_unit_price).toFixed(2)}/unit
+                          {Number(productoActual.precio) > 0 && (
+                            <span className="text-gray-400 font-normal ml-1">
+                              (saves ${(Number(productoActual.precio) - Number(productoActual.bulk_unit_price)).toFixed(2)}/unit)
+                            </span>
+                          )}
+                        </p>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="md:col-span-2 border-t pt-2 sm:pt-3 mt-2 sm:mt-3">
-                    <b className="text-sm sm:text-base">Add stock now (optional)</b>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                  {/* SECTION: Add Stock */}
+                  <div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Add Stock</p>
+                    <div className="grid grid-cols-2 gap-2.5">
                       <div>
-                        <label className="font-bold text-sm sm:text-base">Quantity</label>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Quantity</label>
                         <input
-                          className="border rounded p-2 w-full text-sm sm:text-base"
-                          type="number"
-                          min="0"
+                          className="border border-gray-200 rounded-lg p-2.5 w-full text-sm text-center focus:ring-2 focus:ring-blue-500 outline-none"
+                          type="number" min="0"
                           value={productoActual.cantidad_inicial || ""}
                           onChange={(e) => setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })}
                           placeholder="0"
@@ -1487,9 +1583,9 @@ export default function Productos() {
                         />
                       </div>
                       <div>
-                        <label className="font-bold text-sm sm:text-base">Location</label>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Location</label>
                         <select
-                          className="border rounded p-2 w-full text-sm sm:text-base"
+                          className="border border-gray-200 rounded-lg p-2.5 w-full text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                           value={productoActual.ubicacion_inicial}
                           onChange={(e) => {
                             if (disabled) return;
@@ -1497,55 +1593,55 @@ export default function Productos() {
                             setProductoActual((prev) => ({
                               ...prev,
                               ubicacion_inicial: value,
-                              van_id_inicial: value.startsWith("van_")
-                                ? ubicaciones.find((u) => u.key === value)?.van_id
-                                : null,
+                              van_id_inicial: value.startsWith("van_") ? ubicaciones.find((u) => u.key === value)?.van_id : null,
                             }));
                           }}
                           disabled={disabled}
                         >
-                          {ubicaciones.map((u) => (
-                            <option key={u.key} value={u.key}>
-                              {u.nombre}
-                            </option>
-                          ))}
+                          {ubicaciones.map((u) => <option key={u.key} value={u.key}>{u.nombre}</option>)}
                         </select>
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1 sm:mt-2">If you set a quantity & location, stock will be added when you save.</p>
+                    <p className="text-xs text-gray-400 mt-1.5">Leave at 0 to save without adding stock.</p>
                   </div>
 
-                  <div className="md:col-span-2">
-                    <label className="font-bold text-sm sm:text-base">Product notes</label>
+                  {/* SECTION: Notes */}
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 block">Notes</label>
                     <textarea
-                      className="border rounded p-2 w-full min-h-[60px] uppercase text-sm sm:text-base"
+                      className="border border-gray-200 rounded-xl p-3 w-full min-h-[70px] uppercase text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
                       value={productoActual.notas || ""}
                       placeholder="Special notes, important details, etc."
                       onChange={(e) => setProductoActual({ ...productoActual, notas: toUpper(e.target.value) })}
                       disabled={disabled}
                     />
                   </div>
-                </div>
 
-                {mensaje && <div className="text-blue-700 text-center mt-2 sm:mt-3 text-sm sm:text-base">{mensaje}</div>}
+                  {mensaje && <p className="text-blue-700 text-center text-sm">{mensaje}</p>}
 
-                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4 sm:mt-6 sticky bottom-0 bg-white py-3 z-10">
-                  <button type="submit" className="sm:flex-1 bg-blue-700 text-white font-bold rounded px-5 py-2 text-sm sm:text-base" disabled={disabled}>
-                    {productoActual.id ? "Save changes" : "Add product"}
-                  </button>
-                  <button type="button" className="sm:flex-1 bg-gray-200 text-gray-800 rounded px-5 py-2 text-sm sm:text-base" onClick={() => imprimirEtiqueta(productoActual)}>
-                    🖨️ Print label
-                  </button>
-                  {productoActual.id && (
-                    <button type="button" className="sm:flex-1 bg-red-600 text-white rounded px-5 py-2 text-sm sm:text-base" onClick={eliminarProducto}disabled={disabled}>
-                      Delete
+                  {/* Action buttons */}
+                  <div className="flex gap-2 sticky bottom-0 bg-white pt-3 pb-4 border-t border-gray-100 -mx-4 sm:-mx-5 px-4 sm:px-5 mt-2">
+                    <button type="submit" className="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-bold rounded-xl py-3 text-sm transition-colors" disabled={disabled}>
+                      {productoActual.id ? "Save Changes" : "Add Product"}
                     </button>
-                  )}
+                    <button type="button" className="bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl px-4 py-3 text-sm transition-colors" onClick={() => imprimirEtiqueta(productoActual)}>
+                      🖨️
+                    </button>
+                    {productoActual.id && (
+                      <button type="button" className="bg-red-50 hover:bg-red-100 text-red-600 font-semibold rounded-xl px-4 py-3 text-sm transition-colors" onClick={eliminarProducto} disabled={disabled}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+
+                </form>
+              ) : (
+                <div className="px-4 sm:px-5 py-4">
+                  <PestañaVentas productoId={productoActual.id} nombre={productoActual.nombre} />
                 </div>
-              </form>
-            ) : (
-              <PestañaVentas productoId={productoActual.id} nombre={productoActual.nombre} />
-            )}
+              )}
+            </div>
+
           </div>
         </div>
       )}
