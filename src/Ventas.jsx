@@ -564,9 +564,23 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
 
     if (agreementSystemReady) {
       await actualizarVencidas(clienteId);
-     acuerdos = await getAcuerdosResumen(clienteId);
-console.log('🔍 acuerdosResumen:', JSON.stringify(acuerdos, null, 2));
-setAcuerdosResumen(acuerdos);
+      acuerdos = await getAcuerdosResumen(clienteId);
+
+      // 🔄 Auto-reconcile: si deuda en acuerdos > saldo CxC real,
+      // significa que pagos fueron aplicados a CxC pero no a las cuotas
+      const deudaAcuerdos = acuerdos ? Math.round(Number(acuerdos.deuda_en_acuerdos || 0) * 100) / 100 : 0;
+      if (deudaAcuerdos > saldo + 0.01 && saldo >= 0) {
+        const discrepancia = Math.round((deudaAcuerdos - saldo) * 100) / 100;
+        console.log(`🔄 Reconciliando cuotas en venta: deuda=${deudaAcuerdos} cxc=${saldo} diff=${discrepancia}`);
+        try {
+          await aplicarPagoAAcuerdos(clienteId, discrepancia);
+          acuerdos = await getAcuerdosResumen(clienteId); // recargar tras reconciliar
+        } catch (recErr) {
+          console.warn('⚠️ Error reconciliando cuotas:', recErr.message);
+        }
+      }
+
+      setAcuerdosResumen(acuerdos);
 
       const diasDeuda = await getDiasDeudaMasVieja(clienteId);
       const montoPagando = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
