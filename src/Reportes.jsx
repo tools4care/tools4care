@@ -899,12 +899,12 @@ function GananciasReport({ van }) {
       const ventaIds = (ventasData || []).map(v => v.id);
       if (ventaIds.length === 0) { setData([]); setSearched(true); return; }
 
-      // ── Step 2: detalle_ventas with product cost columns ──
+      // ── Step 2: detalle_ventas with product cost ──
       const { data: detalles, error: dErr } = await supabase
         .from("detalle_ventas")
         .select(`
-          cantidad, precio_unitario, subtotal, producto_id,
-          productos:producto_id(id, nombre, precio_costo, costo, costo_unitario, precio_venta)
+          cantidad, precio_unitario, subtotal, descuento, producto_id,
+          productos:producto_id(id, nombre, costo)
         `)
         .in("venta_id", ventaIds);
       if (dErr) throw dErr;
@@ -915,13 +915,17 @@ function GananciasReport({ van }) {
       (detalles || []).forEach(r => {
         const p = r.productos;
         if (!p) return;
-        // Try all common cost column names
-        const costo = Number(p.precio_costo || p.costo || p.costo_unitario || 0);
+        const costo = Number(p.costo || 0);
         if (costo > 0) hasCost = true;
+        const qty = Number(r.cantidad || 0);
+        // Revenue: prefer stored subtotal, else compute from price × (1 - discount%) × qty
+        const descuentoPct = Number(r.descuento || 0);
+        const precioConDescuento = Number(r.precio_unitario || 0) * (1 - descuentoPct / 100);
+        const revenue = Number(r.subtotal) > 0 ? Number(r.subtotal) : precioConDescuento * qty;
         if (!map[p.id]) map[p.id] = { id:p.id, nombre:p.nombre, costo, totalQty:0, totalRevenue:0, totalCost:0 };
-        map[p.id].totalQty     += Number(r.cantidad || 0);
-        map[p.id].totalRevenue += Number(r.subtotal || 0);
-        map[p.id].totalCost    += Number(r.cantidad || 0) * costo;
+        map[p.id].totalQty     += qty;
+        map[p.id].totalRevenue += revenue;
+        map[p.id].totalCost    += qty * costo;
       });
       if (!hasCost) setNoCostField(true);
       setData(Object.values(map).sort((a,b) => (b.totalRevenue-b.totalCost)-(a.totalRevenue-a.totalCost)));
