@@ -3138,14 +3138,25 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         }
       }
 
- // 🆕 APLICAR PAGO A CUOTAS DE ACUERDOS
+      // APLICAR PAGO A CUOTAS — directo, sin el caché RPC que puede silenciar el error
       if (montoParaCxC > 0) {
         try {
-          const { data: resCuotas } = await supabase.rpc('aplicar_pago_a_cuotas', {
-            p_cliente_id: selectedClient.id,
-            p_monto: montoParaCxC,
+          try {
+            const rpcCache = JSON.parse(localStorage.getItem('rpc-availability-v1') || '{}');
+            if (rpcCache['aplicar_pago_a_cuotas'] === false) {
+              delete rpcCache['aplicar_pago_a_cuotas'];
+              localStorage.setItem('rpc-availability-v1', JSON.stringify(rpcCache));
+            }
+          } catch (_) {}
+          const sbUrl = import.meta?.env?.VITE_SUPABASE_URL || 'https://gvloygqbavibmpakzdma.supabase.co';
+          const sbKey = import.meta?.env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o';
+          const session = supabase.auth.session ? supabase.auth.session() : (await supabase.auth.getSession())?.data?.session;
+          const authHeader = session?.access_token ? `Bearer ${session.access_token}` : `Bearer ${sbKey}`;
+          await fetch(`${sbUrl}/rest/v1/rpc/aplicar_pago_a_cuotas`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': sbKey, 'Authorization': authHeader },
+            body: JSON.stringify({ p_cliente_id: selectedClient.id, p_monto: montoParaCxC }),
           });
-          if (resCuotas?.ok) console.log('✅ Cuotas actualizadas desde venta:', resCuotas);
         } catch (e) {
           console.warn('⚠️ Error cuotas desde venta:', e.message);
         }
