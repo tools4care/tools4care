@@ -2197,41 +2197,51 @@ export default function Dashboard() {
         return;
       }
 
-      const ids = ventasRecientes.map(v => v.id);
+      // 3a. IDs de ventas de los últimos 30d (subconjunto) para calcular velocidad
+      const { data: ventas30d } = await supabase
+        .from("ventas")
+        .select("id")
+        .eq("van_id", van_id)
+        .gte("created_at", hace30d);
+      const ids30 = new Set((ventas30d || []).map(v => v.id));
+      const ids60 = ventasRecientes.map(v => v.id);
 
-      // 3. detalle_ventas con fecha para calcular velocidad y última venta
-      const { data: detalles } = await supabase
+      // 3b. detalle_ventas de los últimos 60d — solo producto_id y cantidad
+      const { data: detalles, error: detErr } = await supabase
         .from("detalle_ventas")
-        .select("producto_id, cantidad, created_at")
-        .in("venta_id", ids);
+        .select("venta_id, producto_id, cantidad")
+        .in("venta_id", ids60);
 
-      // 4. Calcular velocidad (últimos 30d) y última venta (últimos 60d) por producto
+      if (detErr) console.warn("⚠️ detalle_ventas error:", detErr.message);
+
+      // 4. Calcular vendido30d y qué productos tuvieron ventas en 60d
       const vendido30dMap  = new Map();
-      const ultimaVentaMap = new Map();
+      const productosConVentas = new Set();
 
       (detalles || []).forEach(d => {
         const pid = d.producto_id;
-        // Velocidad: solo contar unidades de los últimos 30 días
-        if (d.created_at >= hace30d) {
+        productosConVentas.add(pid);
+        if (ids30.has(d.venta_id)) {
           vendido30dMap.set(pid, (vendido30dMap.get(pid) || 0) + Number(d.cantidad || 0));
         }
-        // Última venta: máximo timestamp de los últimos 60d
-        const actual = ultimaVentaMap.get(pid);
-        if (!actual || d.created_at > actual) ultimaVentaMap.set(pid, d.created_at);
       });
 
-      // 5. Filtrar solo productos vendidos en 60d y calcular urgencia
-      const productosVendidos = new Set((detalles || []).map(d => d.producto_id));
-
+      // 5. Mostrar: productos vendidos en 60d con cantidad < 10
+      //    (cantidad === 0 pero sin ventas recientes = producto inactivo, no mostrar)
       const stockFiltrado = stockBajo
-        .filter(item => productosVendidos.has(item.producto_id))
+        .filter(item => productosConVentas.has(item.producto_id))
         .map(item => {
           const v30 = vendido30dMap.get(item.producto_id) || 0;
+          const tieneVentasRecientes = productosConVentas.has(item.producto_id);
           const velocidad = Number((v30 / 30).toFixed(2)); // unidades/día
           const diasRestantes = velocidad > 0
             ? Math.floor(item.cantidad / velocidad)
-            : 999; // no se sabe cuándo se agota si no hubo ventas en 30d
-          const urgencia = item.cantidad === 0 || diasRestantes < 7
+            : 999;
+          const urgencia = item.cantidad === 0
+            ? "critico"
+            : !tieneVentasRecientes
+            ? "sin_movimiento"
+            : diasRestantes < 7
             ? "critico"
             : diasRestantes < 14
             ? "bajo"
@@ -2246,7 +2256,7 @@ export default function Dashboard() {
             vendido30d:    v30,
             velocidad,
             diasRestantes,
-            ultimaVenta:   ultimaVentaMap.get(item.producto_id) || null,
+            ultimaVenta:   null,
             urgencia,
           };
         })
