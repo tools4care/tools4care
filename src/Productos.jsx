@@ -1103,64 +1103,58 @@ export default function Productos() {
                   <div
                     key={p.id}
                     id={`prod-row-${idx}`}
-                    className={`bg-white rounded-lg shadow-md p-4 cursor-pointer transition-all ${
-                      idx === hl ? "ring-2 ring-blue-500 bg-blue-50" : "active:bg-blue-50"
+                    className={`bg-white rounded-xl shadow-sm border border-gray-100 p-3.5 cursor-pointer transition-all active:scale-[0.99] ${
+                      idx === hl ? "ring-2 ring-blue-500 bg-blue-50 border-blue-200" : "active:bg-gray-50"
                     }`}
                     onMouseEnter={() => setHl(idx)}
                     onClick={() => abrirModal(p)}
                   >
-                    {/* Header con precio destacado */}
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex-1 min-w-0 pr-3">
-                        <h3 className="font-bold text-gray-900 text-base leading-tight mb-1">
-                          {p.nombre}
-                        </h3>
-                        {p.marca && (
-                          <p className="text-sm text-gray-600">{p.marca}</p>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xl sm:text-2xl font-bold text-green-600">
+                    {/* Row 1: Name + Price */}
+                    <div className="flex justify-between items-start gap-2">
+                      <h3 className="font-bold text-gray-900 text-sm leading-tight flex-1 min-w-0 pr-1 line-clamp-2">
+                        {p.nombre}
+                      </h3>
+                      <div className="flex-shrink-0 text-right">
+                        <div className="text-base font-bold text-emerald-600 leading-tight">
                           ${Number(p.precio || 0).toFixed(2)}
                         </div>
-                        {p.costo && (
-                          <div className="text-xs text-gray-500">
-                            Cost: ${Number(p.costo).toFixed(2)}
-                          </div>
+                        {p.costo > 0 && (
+                          (() => {
+                            const margin = ((Number(p.precio) - Number(p.costo)) / Number(p.precio) * 100);
+                            const color = margin >= 30 ? "text-emerald-600" : margin >= 15 ? "text-amber-500" : "text-red-500";
+                            return <div className={`text-[10px] font-semibold ${color}`}>{margin.toFixed(0)}% margin</div>;
+                          })()
                         )}
                       </div>
                     </div>
 
-                    {/* Info adicional en grid */}
-                    <div className="grid grid-cols-2 gap-2 text-sm border-t pt-3">
-                      <div>
-                        <span className="text-gray-500 text-xs">Code:</span>
-                        <p className="font-mono text-gray-900 truncate text-xs">{p.codigo}</p>
-                      </div>
-                      {p.size && (
-                        <div>
-                          <span className="text-gray-500 text-xs">Size:</span>
-                          <p className="text-gray-900 text-xs">{p.size}</p>
-                        </div>
-                      )}
-                      {p.categoria && (
-                        <div>
-                          <span className="text-gray-500 text-xs">Category:</span>
-                          <p className="text-gray-900 truncate text-xs">{p.categoria}</p>
-                        </div>
-                      )}
-                      {p.suplidor?.nombre && (
-                        <div>
-                          <span className="text-gray-500 text-xs">Supplier:</span>
-                          <p className="text-gray-900 truncate text-xs">{p.suplidor.nombre}</p>
-                        </div>
-                      )}
+                    {/* Row 2: Brand · Code */}
+                    <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-400">
+                      {p.marca && <span className="font-medium text-gray-500">{p.marca}</span>}
+                      {p.marca && p.codigo && <span>·</span>}
+                      {p.codigo && <span className="font-mono">{p.codigo}</span>}
                     </div>
 
-                    {/* Indicador visual de tap */}
-                    <div className="mt-3 pt-3 border-t text-center text-xs text-blue-600 font-semibold">
-                      Tap to view details →
-                    </div>
+                    {/* Row 3: Tags */}
+                    {(p.size || p.categoria) && (
+                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                        {p.size && (
+                          <span className="bg-blue-50 text-blue-600 text-[10px] font-medium px-1.5 py-0.5 rounded">
+                            {p.size}
+                          </span>
+                        )}
+                        {p.categoria && (
+                          <span className="bg-purple-50 text-purple-600 text-[10px] px-1.5 py-0.5 rounded truncate max-w-[140px]">
+                            {p.categoria}
+                          </span>
+                        )}
+                        {p.costo > 0 && (
+                          <span className="text-[10px] text-gray-400 ml-auto">
+                            cost ${Number(p.costo).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -1244,7 +1238,7 @@ export default function Productos() {
       {/* MODAL */}
       {modalAbierto && productoActual && (
         <div className="fixed inset-0 bg-black/50 flex justify-center items-end sm:items-center z-50 p-0 sm:p-4">
-          <div className="bg-white w-full h-[100dvh] sm:h-auto sm:max-h-[92vh] sm:rounded-2xl shadow-2xl max-w-lg flex flex-col overflow-hidden">
+          <div className="bg-white w-full sm:h-auto sm:max-h-[92vh] sm:rounded-2xl shadow-2xl max-w-lg flex flex-col" style={{overflow:'hidden', height:'calc(100dvh - 64px)'}}>
 
             {/* ── Sticky Header ── */}
             <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 sm:px-5 pt-4 pb-0 z-20">
@@ -1335,7 +1329,7 @@ export default function Productos() {
             {/* ── Scrollable Content ── */}
             <div className="flex-1 overflow-y-auto">
               {tabActivo === "editar" ? (
-                <form onSubmit={guardarProducto} className="px-4 sm:px-5 py-4 space-y-5">
+                <form id="producto-form" onSubmit={guardarProducto} className="px-4 sm:px-5 py-4 space-y-5">
 
                   {/* SECTION: Product Info */}
                   <div>
@@ -1619,21 +1613,6 @@ export default function Productos() {
 
                   {mensaje && <p className="text-blue-700 text-center text-sm">{mensaje}</p>}
 
-                  {/* Action buttons */}
-                  <div className="flex gap-2 sticky bottom-0 bg-white pt-3 pb-4 border-t border-gray-100 -mx-4 sm:-mx-5 px-4 sm:px-5 mt-2">
-                    <button type="submit" className="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-bold rounded-xl py-3 text-sm transition-colors" disabled={disabled}>
-                      {productoActual.id ? "Save Changes" : "Add Product"}
-                    </button>
-                    <button type="button" className="bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl px-4 py-3 text-sm transition-colors" onClick={() => imprimirEtiqueta(productoActual)}>
-                      🖨️
-                    </button>
-                    {productoActual.id && (
-                      <button type="button" className="bg-red-50 hover:bg-red-100 text-red-600 font-semibold rounded-xl px-4 py-3 text-sm transition-colors" onClick={eliminarProducto} disabled={disabled}>
-                        Delete
-                      </button>
-                    )}
-                  </div>
-
                 </form>
               ) : (
                 <div className="px-4 sm:px-5 py-4">
@@ -1641,6 +1620,37 @@ export default function Productos() {
                 </div>
               )}
             </div>
+
+            {/* ── Action Buttons — always visible, outside scroll ── */}
+            {tabActivo === "editar" && (
+              <div className="flex-shrink-0 flex gap-2 bg-white border-t border-gray-100 px-4 sm:px-5 pt-3 pb-4" style={{paddingBottom:'max(1rem, env(safe-area-inset-bottom))'}}>
+                <button
+                  type="submit"
+                  form="producto-form"
+                  className="flex-1 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-bold rounded-xl py-3 text-sm transition-colors shadow-sm"
+                  disabled={disabled}
+                >
+                  {productoActual.id ? "Save Changes" : "Add Product"}
+                </button>
+                <button
+                  type="button"
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl px-4 py-3 text-sm transition-colors"
+                  onClick={() => imprimirEtiqueta(productoActual)}
+                >
+                  🖨️
+                </button>
+                {productoActual.id && (
+                  <button
+                    type="button"
+                    className="bg-red-50 hover:bg-red-100 text-red-600 font-semibold rounded-xl px-4 py-3 text-sm transition-colors"
+                    onClick={eliminarProducto}
+                    disabled={disabled}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
 
           </div>
         </div>
