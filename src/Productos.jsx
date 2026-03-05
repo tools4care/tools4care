@@ -1237,8 +1237,8 @@ export default function Productos() {
 
       {/* MODAL */}
       {modalAbierto && productoActual && (
-        <div className="fixed inset-0 bg-black/50 flex justify-center items-end sm:items-center z-50 p-0 sm:p-4">
-          <div className="bg-white w-full sm:h-auto sm:max-h-[92vh] sm:rounded-2xl shadow-2xl max-w-lg flex flex-col" style={{overflow:'hidden', height:'calc(100dvh - 64px)'}}>
+        <div className="fixed inset-x-0 top-0 bg-black/50 flex justify-center items-end sm:items-center z-50 p-0 sm:p-4" style={{bottom:'64px'}}>
+          <div className="bg-white w-full h-full sm:h-auto sm:max-h-[92vh] sm:rounded-2xl shadow-2xl max-w-lg flex flex-col" style={{overflow:'hidden'}}>
 
             {/* ── Sticky Header ── */}
             <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 sm:px-5 pt-4 pb-0 z-20">
