@@ -2274,48 +2274,86 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
   // 🆕 CUOTAS PENDIENTES para indicador de cobertura
   const [cuotasPendientes, setCuotasPendientes] = useState([]);
+  const cargarCuotasRef = useRef(null);
 
+  // Helper: fetch cuotas pendientes del cliente
+  async function fetchCuotasPendientes(clienteId) {
+    const { data } = await supabase
+      .from("cuotas_acuerdo")
+      .select(`
+        id, numero_cuota, monto, monto_pagado, estado, fecha_vencimiento, acuerdo_id,
+        acuerdos_pago!inner ( id, estado, cliente_id, fecha_acuerdo, monto_total )
+      `)
+      .eq("acuerdos_pago.cliente_id", clienteId)
+      .eq("acuerdos_pago.estado", "activo")
+      .in("estado", ["pendiente", "vencida", "parcial"])
+      .order("fecha_vencimiento", { ascending: true });
+    return (data || [])
+      .filter(c => Math.round((c.monto - c.monto_pagado) * 100) / 100 > 0)
+      .sort((a, b) => {
+        const fa = a.acuerdos_pago?.fecha_acuerdo || "";
+        const fb = b.acuerdos_pago?.fecha_acuerdo || "";
+        if (fa !== fb) return fa.localeCompare(fb);
+        return (a.numero_cuota || 0) - (b.numero_cuota || 0);
+      });
+  }
 
-  useEffect(() => {
-    (async () => {
-      const info = await safeGetCxc(cliente.id);
-      if (info && setResumen) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
-    })();
-  }, [cliente.id, setResumen]);
+  // Helper: aplica pagos a cuotas via direct fetch (bypass RPC cache)
+  async function aplicarCuotasDirect(clienteId, monto) {
+    try {
+      const rpcCache = JSON.parse(localStorage.getItem('rpc-availability-v1') || '{}');
+      if (rpcCache['aplicar_pago_a_cuotas'] === false) {
+        delete rpcCache['aplicar_pago_a_cuotas'];
+        localStorage.setItem('rpc-availability-v1', JSON.stringify(rpcCache));
+      }
+    } catch (_) {}
+    const sbUrl = import.meta?.env?.VITE_SUPABASE_URL || 'https://gvloygqbavibmpakzdma.supabase.co';
+    const sbKey = import.meta?.env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o';
+    const session = supabase.auth.session ? supabase.auth.session() : (await supabase.auth.getSession())?.data?.session;
+    const authHeader = session?.access_token ? `Bearer ${session.access_token}` : `Bearer ${sbKey}`;
+    const res = await fetch(`${sbUrl}/rest/v1/rpc/aplicar_pago_a_cuotas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': sbKey, 'Authorization': authHeader },
+      body: JSON.stringify({ p_cliente_id: clienteId, p_monto: monto }),
+    });
+    if (!res.ok) console.warn('⚠️ aplicar_pago_a_cuotas:', res.status, await res.text());
+  }
 
-  // 🆕 Cargar cuotas pendientes al abrir
+  // Carga cuotas + auto-reconcilia si acuerdos > saldo CxC
   useEffect(() => {
     let alive = true;
-    (async () => {
-      try {
-        const { data } = await supabase
-          .from("cuotas_acuerdo")
-          .select(`
-            id, numero_cuota, monto, monto_pagado, estado, fecha_vencimiento, acuerdo_id,
-            acuerdos_pago!inner ( id, estado, cliente_id, fecha_acuerdo, monto_total )
-          `)
-          .eq("acuerdos_pago.cliente_id", cliente.id)
-          .eq("acuerdos_pago.estado", "activo")
-          .in("estado", ["pendiente", "vencida", "parcial"])
-          .order("fecha_vencimiento", { ascending: true });
 
-        if (alive && data) {
-          const conSaldo = data
-            .filter(c => Math.round((c.monto - c.monto_pagado) * 100) / 100 > 0)
-            .sort((a, b) => {
-              const fa = a.acuerdos_pago?.fecha_acuerdo || "";
-              const fb = b.acuerdos_pago?.fecha_acuerdo || "";
-              if (fa !== fb) return fa.localeCompare(fb);
-              return (a.numero_cuota || 0) - (b.numero_cuota || 0);
-            });
-          setCuotasPendientes(conSaldo);
+    async function cargarYReconciliar() {
+      try {
+        // 1. CxC balance (source of truth)
+        const cxcInfo = await safeGetCxc(cliente.id);
+        const cxcBalance = cxcInfo ? Math.round(Number(cxcInfo.saldo ?? 0) * 100) / 100 : 0;
+        if (alive && cxcInfo && setResumen) setResumen(r => ({ ...r, balance: cxcInfo.saldo, cxc: cxcInfo }));
+
+        // 2. Cuotas pendientes
+        let cuotas = await fetchCuotasPendientes(cliente.id);
+
+        // 3. Auto-reconcile: si el total de cuotas > saldo CxC, aplicar la diferencia
+        if (cuotas.length > 0) {
+          const totalCuotas = Math.round(cuotas.reduce((s, c) => s + (c.monto - c.monto_pagado), 0) * 100) / 100;
+          const discrepancia = Math.round((totalCuotas - cxcBalance) * 100) / 100;
+          if (discrepancia > 0.01) {
+            console.log(`🔄 Reconciliando cuotas: total=${totalCuotas} cxc=${cxcBalance} diff=${discrepancia}`);
+            await aplicarCuotasDirect(cliente.id, discrepancia);
+            cuotas = await fetchCuotasPendientes(cliente.id); // recargar tras reconciliar
+          }
         }
+
+        if (alive) setCuotasPendientes(cuotas);
       } catch (err) {
         console.warn("Error cargando cuotas:", err);
       }
-    })();
+    }
+
+    cargarCuotasRef.current = cargarYReconciliar;
+    cargarYReconciliar();
     return () => { alive = false; };
-  }, [cliente.id]);
+  }, [cliente.id, setResumen]);
 
 const coberturaCuotas = useMemo(() => {
     const pago = Math.round((Number(monto) || 0) * 100) / 100;
@@ -2634,41 +2672,16 @@ let restante = pago;
 
       const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
       setSaldoBase(saldoDespues);
-// Aplicar pago a cuotas — llamada directa (bypass caché RPC que puede marcarla como no disponible)
-try {
-  // Limpiar caché de RPC para esta función por si quedó marcada como no disponible
-  try {
-    const rpcCache = JSON.parse(localStorage.getItem('rpc-availability-v1') || '{}');
-    if (rpcCache['aplicar_pago_a_cuotas'] === false) {
-      delete rpcCache['aplicar_pago_a_cuotas'];
-      localStorage.setItem('rpc-availability-v1', JSON.stringify(rpcCache));
-    }
-  } catch (_) {}
-
-  const sbUrl = import.meta?.env?.VITE_SUPABASE_URL || 'https://gvloygqbavibmpakzdma.supabase.co';
-  const sbKey = import.meta?.env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o';
-  const session = supabase.auth.session ? supabase.auth.session() : (await supabase.auth.getSession())?.data?.session;
-  const authHeader = session?.access_token ? `Bearer ${session.access_token}` : `Bearer ${sbKey}`;
-
-  const res = await fetch(`${sbUrl}/rest/v1/rpc/aplicar_pago_a_cuotas`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'apikey': sbKey, 'Authorization': authHeader },
-    body: JSON.stringify({ p_cliente_id: cliente.id, p_monto: pagoAplicado }),
-  });
-  if (!res.ok) {
-    const errBody = await res.text();
-    console.warn('⚠️ aplicar_pago_a_cuotas error:', res.status, errBody);
-  }
-} catch (cuotaErr) {
-  console.warn('⚠️ Error aplicando pago a cuotas:', cuotaErr.message);
-}
+// Aplicar pago a cuotas usando helper compartido
+      await aplicarCuotasDirect(cliente.id, pagoAplicado);
       // limpiar input
       setMonto("");
       setApplyCardFee(false);
 
-      // refrescar CxC/tabla
+      // refrescar CxC/tabla + cuotas
       const info = await safeGetCxc(cliente.id);
       if (info && setResumen) setResumen((r) => ({ ...r, balance: info.saldo, cxc: info }));
+      if (cargarCuotasRef.current) cargarCuotasRef.current().catch(() => {});
       if (typeof refresh === "function") await refresh();
 
       // mensaje
