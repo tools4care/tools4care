@@ -61,7 +61,9 @@ const PAGO_MINIMO_SKIP_SI_BALANCE_MENOR_A = 10; // si debe menos de $10, no exig
 
 function calcularPagoMinimo(balanceAnterior) {
   if (!balanceAnterior || balanceAnterior < PAGO_MINIMO_SKIP_SI_BALANCE_MENOR_A) return 0;
-  return Number(Math.max(balanceAnterior * PAGO_MINIMO_PCT, PAGO_MINIMO_FIJO).toFixed(2));
+  // El mínimo nunca puede exceder lo que el cliente debe
+  const minCalc = Math.max(balanceAnterior * PAGO_MINIMO_PCT, PAGO_MINIMO_FIJO);
+  return Number(Math.min(balanceAnterior, minCalc).toFixed(2));
 }
 
 const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4CareMovil";
@@ -4759,7 +4761,8 @@ function renderStepPayment() {
                 {cubrioMinimo ? "✅ Minimum payment met" : "⚠️ Minimum payment not met"}
               </div>
               <div className="text-sm text-gray-600 mt-1">
-                Prior balance: <b>{fmt(oldDebt)}</b> · Min. required (20%): <b>{fmt(pagoMinimo)}</b>
+                Prior balance: <b>{fmt(oldDebt)}</b> · Min. required: <b>{fmt(pagoMinimo)}</b>
+                {pagoMinimo >= oldDebt ? " (full balance)" : " (20% or $30)"}
               </div>
             </div>
             {!cubrioMinimo && (
