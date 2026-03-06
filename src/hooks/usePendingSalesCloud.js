@@ -60,6 +60,7 @@ export function usePendingSalesCloud() {
       return;
     }
 
+    setLoading(true); // ← mostrar spinner cada vez que se refresca
     try {
       const { data, error: fetchErr } = await supabase
         .from('ventas_pendientes')

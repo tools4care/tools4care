@@ -3597,23 +3597,24 @@ function renderPendingSalesModal() {
         <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex items-center justify-between">
           <h3 className="font-bold text-lg flex items-center gap-2">
             📂 Pending Sales
-            {cloudPendingLoading && (
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-            )}
           </h3>
-          
+
           <div className="flex items-center gap-2">
             {/* Indicador de dispositivo actual */}
             <span className="text-xs bg-white/20 px-2 py-1 rounded-full">
               {deviceInfo.isPC ? '💻 PC' : deviceInfo.isPhone ? '📱 Phone' : '📱 Tablet'}
             </span>
-            
+
             <button
-              className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center"
+              className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center disabled:opacity-50"
               onClick={() => refreshPendingSales()}
+              disabled={cloudPendingLoading}
               title="Refresh"
             >
-              🔄
+              {cloudPendingLoading
+                ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                : <span>🔄</span>
+              }
             </button>
             
             <button
