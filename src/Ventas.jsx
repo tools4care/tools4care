@@ -747,6 +747,7 @@ const [acuerdosResumen, setAcuerdosResumen] = useState(null);
 const [reglasCredito, setReglasCredito] = useState(null);
 const [showAgreementModal, setShowAgreementModal] = useState(false);
 const [agreementPlan, setAgreementPlan] = useState(null);
+const [showBalanceSummary, setShowBalanceSummary] = useState(false);
 const [agreementException, setAgreementException] = useState(false);
 const [agreementExceptionNote, setAgreementExceptionNote] = useState("");
 const [agreementSystemReady, setAgreementSystemReady] = useState(false);
@@ -4766,6 +4767,61 @@ function renderStepPayment() {
         </div>
       )}
 
+      {/* ── ACCOUNT BALANCE SUMMARY (client-facing) ──── */}
+      {selectedClient?.id && (
+        <div className="rounded-xl overflow-hidden border-2 border-indigo-200 shadow-sm">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-slate-800 to-indigo-900 px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">📊</span>
+              <span className="text-white font-bold text-sm">Account Balance Summary</span>
+            </div>
+            <button
+              onClick={() => setShowBalanceSummary(true)}
+              className="bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+            >
+              👤 Show to Client
+            </button>
+          </div>
+          {/* Rows */}
+          <div className="bg-white divide-y divide-gray-100">
+            {balanceBefore > 0 && (
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-sm text-gray-600">Prior Balance</span>
+                <span className="font-bold text-red-700">{fmt(balanceBefore)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <span className="text-sm text-gray-600">+ Today's Sale</span>
+              <span className="font-bold text-blue-700">+ {fmt(saleTotal)}</span>
+            </div>
+            {paid > 0 && (
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-sm text-gray-600">− Payment Today</span>
+                <span className="font-bold text-emerald-700">− {fmt(paid)}</span>
+              </div>
+            )}
+            {change > 0 && (
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-sm text-gray-600">Change returned</span>
+                <span className="font-bold text-gray-500">+ {fmt(change)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between px-4 py-3 bg-gray-50">
+              <span className="font-bold text-gray-800">New Balance</span>
+              <span className={`text-2xl font-extrabold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-600"}`}>
+                {fmt(balanceAfter)}
+              </span>
+            </div>
+          </div>
+          {balanceAfter === 0 && (
+            <div className="bg-emerald-50 border-t border-emerald-200 px-4 py-2 text-center text-emerald-700 text-sm font-bold">
+              🎉 Account fully paid!
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── MIN PAYMENT ALERT ─────────────────────────── */}
       {oldDebt > 0 && pagoMinimo > 0 && (
         <div className={`rounded-xl border-2 p-4 ${cubrioMinimo ? "bg-green-50 border-green-300" : "bg-amber-50 border-amber-400"}`}>
@@ -4999,6 +5055,96 @@ function renderStepPayment() {
       {paymentError && (
         <div className="bg-red-100 border border-red-300 rounded-xl p-4 text-red-700 font-semibold text-center">
           {paymentError}
+        </div>
+      )}
+
+      {/* ── CLIENT BALANCE SUMMARY MODAL ─────────────── */}
+      {showBalanceSummary && (
+        <div className="fixed inset-0 z-[9999] flex flex-col overflow-hidden"
+          style={{ background: "linear-gradient(160deg, #0f172a 0%, #1e1b4b 50%, #1e3a5f 100%)" }}>
+          {/* Top bar */}
+          <div className="flex items-center justify-between px-5 py-4 bg-black/30 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+              <span className="text-slate-300 text-sm font-semibold">Showing to client</span>
+            </div>
+            <button
+              onClick={() => setShowBalanceSummary(false)}
+              className="bg-red-600 hover:bg-red-700 text-white text-sm font-bold px-4 py-1.5 rounded-lg transition-colors"
+            >✖ Close</button>
+          </div>
+
+          {/* Client name + date */}
+          <div className="text-center pt-8 pb-4 flex-shrink-0">
+            <div className="text-slate-400 text-xs uppercase tracking-[0.25em] font-bold mb-2">Account Summary</div>
+            <div className="text-4xl font-black text-white tracking-tight">
+              {`${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim() || "Client"}
+            </div>
+            <div className="text-slate-400 text-sm mt-2">
+              {new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+            </div>
+          </div>
+
+          {/* Content rows */}
+          <div className="flex-1 overflow-y-auto px-5 py-2 space-y-3">
+            {/* Prior balance */}
+            {balanceBefore > 0 && (
+              <div className="bg-white/10 backdrop-blur rounded-2xl px-5 py-4 flex items-center justify-between">
+                <div>
+                  <div className="text-slate-300 text-xs uppercase font-bold tracking-wide">Previous Balance</div>
+                  <div className="text-slate-400 text-xs mt-0.5">Amount owed before this visit</div>
+                </div>
+                <div className="text-3xl font-black text-red-400">{fmt(balanceBefore)}</div>
+              </div>
+            )}
+
+            {/* This sale */}
+            <div className="bg-white/10 backdrop-blur rounded-2xl px-5 py-4 flex items-center justify-between">
+              <div>
+                <div className="text-slate-300 text-xs uppercase font-bold tracking-wide">Today's Purchase</div>
+                <div className="text-slate-400 text-xs mt-0.5">{cartSafe.length} item{cartSafe.length !== 1 ? "s" : ""}</div>
+              </div>
+              <div className="text-3xl font-black text-blue-300">+ {fmt(saleTotal)}</div>
+            </div>
+
+            {/* Payment */}
+            {paid > 0 && (
+              <div className="bg-white/10 backdrop-blur rounded-2xl px-5 py-4 flex items-center justify-between">
+                <div>
+                  <div className="text-slate-300 text-xs uppercase font-bold tracking-wide">Payment Today</div>
+                  <div className="text-slate-400 text-xs mt-0.5">Amount received</div>
+                </div>
+                <div className="text-3xl font-black text-emerald-400">− {fmt(paid)}</div>
+              </div>
+            )}
+
+            {/* Divider + New balance */}
+            <div className={`rounded-2xl px-5 py-6 text-center border-2 ${balanceAfter > 0 ? "bg-amber-500/20 border-amber-400/50" : "bg-emerald-500/20 border-emerald-400/50"}`}>
+              <div className={`text-xs uppercase font-bold tracking-widest mb-2 ${balanceAfter > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+                New Balance
+              </div>
+              <div className={`text-6xl font-black ${balanceAfter > 0 ? "text-amber-300" : "text-emerald-400"}`}>
+                {fmt(balanceAfter)}
+              </div>
+              {balanceAfter === 0 ? (
+                <div className="text-emerald-400 font-bold text-lg mt-3">🎉 Account fully paid!</div>
+              ) : (
+                <div className="text-slate-400 text-sm mt-2">Remaining on account</div>
+              )}
+            </div>
+
+            {/* Change row */}
+            {change > 0 && (
+              <div className="bg-green-500/20 border-2 border-green-400/50 rounded-2xl px-5 py-4 flex items-center justify-between">
+                <div className="text-green-300 font-bold">💵 Change to return</div>
+                <div className="text-3xl font-black text-green-400">{fmt(change)}</div>
+              </div>
+            )}
+          </div>
+
+          <div className="text-center py-4 text-slate-500 text-xs flex-shrink-0">
+            Thank you for your business!
+          </div>
         </div>
       )}
     </div>
