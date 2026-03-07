@@ -748,6 +748,7 @@ const [reglasCredito, setReglasCredito] = useState(null);
 const [showAgreementModal, setShowAgreementModal] = useState(false);
 const [agreementPlan, setAgreementPlan] = useState(null);
 const [showBalanceSummary, setShowBalanceSummary] = useState(false);
+const [showFifo, setShowFifo] = useState(false);
 const [agreementException, setAgreementException] = useState(false);
 const [agreementExceptionNote, setAgreementExceptionNote] = useState("");
 const [agreementSystemReady, setAgreementSystemReady] = useState(false);
@@ -4743,28 +4744,36 @@ function renderStepPayment() {
 
       {/* ── FIFO BREAKDOWN (only when prior debt exists) ─── */}
       {oldDebt > 0 && (
-        <div className="bg-white rounded-xl border-2 border-gray-200 p-4 shadow-sm">
-          <div className="text-xs font-bold text-gray-500 uppercase mb-3 tracking-wide">💡 How this payment is applied</div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              <div className="text-sm text-red-700">
-                <span className="font-bold">1️⃣ Prior balance</span>
-                <span className="text-xs ml-2 text-red-500">({fmt(oldDebt)})</span>
+        <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm overflow-hidden">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+            onClick={() => setShowFifo(v => !v)}
+          >
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">💡 How this payment is applied</span>
+            <span className={`text-gray-400 text-xs transition-transform duration-200 ${showFifo ? "rotate-180" : ""}`}>▼</span>
+          </button>
+          {showFifo && (
+            <div className="px-4 pb-4 space-y-2">
+              <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                <div className="text-sm text-red-700">
+                  <span className="font-bold">1️⃣ Prior balance</span>
+                  <span className="text-xs ml-2 text-red-500">({fmt(oldDebt)})</span>
+                </div>
+                <div className="font-bold text-red-800">{fmt(paidToOldDebt)} applied</div>
               </div>
-              <div className="font-bold text-red-800">{fmt(paidToOldDebt)} applied</div>
-            </div>
-            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-              <div className="text-sm text-blue-700">
-                <span className="font-bold">2️⃣ This sale</span>
-                <span className="text-xs ml-2 text-blue-500">({fmt(saleTotal)})</span>
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <div className="text-sm text-blue-700">
+                  <span className="font-bold">2️⃣ This sale</span>
+                  <span className="text-xs ml-2 text-blue-500">({fmt(saleTotal)})</span>
+                </div>
+                <div className="font-bold text-blue-800">{fmt(paidForSale)} applied</div>
               </div>
-              <div className="font-bold text-blue-800">{fmt(paidForSale)} applied</div>
+              <div className="flex items-center justify-between bg-gray-50 border-2 border-gray-300 rounded-lg px-3 py-2">
+                <div className="text-sm font-bold text-gray-700">Remaining on A/R</div>
+                <div className={`font-bold text-lg ${amountToCredit > 0 ? "text-amber-700" : "text-emerald-700"}`}>{fmt(amountToCredit)}</div>
+              </div>
             </div>
-            <div className="flex items-center justify-between bg-gray-50 border-2 border-gray-300 rounded-lg px-3 py-2">
-              <div className="text-sm font-bold text-gray-700">Remaining on A/R</div>
-              <div className={`font-bold text-lg ${amountToCredit > 0 ? "text-amber-700" : "text-emerald-700"}`}>{fmt(amountToCredit)}</div>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -4796,6 +4805,12 @@ function renderStepPayment() {
               <span className="text-sm text-gray-600">+ Today's Sale</span>
               <span className="font-bold text-blue-700">+ {fmt(saleTotal)}</span>
             </div>
+            {balanceBefore > 0 && (
+              <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50">
+                <span className="text-sm font-semibold text-gray-700">= Total</span>
+                <span className="font-bold text-gray-900">{fmt(balanceBefore + saleTotal)}</span>
+              </div>
+            )}
             {paid > 0 && (
               <div className="flex items-center justify-between px-4 py-2.5">
                 <span className="text-sm text-gray-600">− Payment Today</span>
@@ -5107,6 +5122,16 @@ function renderStepPayment() {
               </div>
               <div className="text-3xl font-black text-blue-300">+ {fmt(saleTotal)}</div>
             </div>
+
+            {/* Total subtotal (prior + sale) */}
+            {balanceBefore > 0 && (
+              <div className="border-t border-white/20 pt-1">
+                <div className="bg-white/5 border border-white/20 rounded-2xl px-5 py-3 flex items-center justify-between">
+                  <div className="text-slate-300 text-sm font-bold uppercase tracking-wide">= Total</div>
+                  <div className="text-2xl font-black text-white">{fmt(balanceBefore + saleTotal)}</div>
+                </div>
+              </div>
+            )}
 
             {/* Payment */}
             {paid > 0 && (
