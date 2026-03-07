@@ -602,13 +602,23 @@ export default function Productos() {
     const digitsOnly = term.replace(/\D/g, "");
     const isBarcode = digitsOnly.length >= 8;
 
+    // Variantes para buscar: con ceros, sin ceros, texto completo
+    // Ej: "0722195001326" → también busca "722195001326" y viceversa
+    const digitsStripped = digitsOnly.replace(/^0+/, '') || digitsOnly;
+
     const baseSelect = "*, suplidor:suplidor_id(nombre)";
     const desde = (pagina - 1) * PAGE_SIZE;
     const hasta = desde + PAGE_SIZE - 1;
 
     try {
       if (isBarcode) {
-        const needles = Array.from(new Set([digitsOnly, termNoSpaces].filter(Boolean)));
+        // Busca exacto con TODAS las variantes (con ceros y sin ceros)
+        const needles = Array.from(new Set([
+          termNoSpaces,   // tal como se escribió/escaneó (con ceros si los tiene)
+          digitsOnly,     // solo dígitos del input
+          digitsStripped, // sin ceros al inicio
+        ].filter(Boolean)));
+
         if (needles.length > 0) {
           const { data: exactData, count: exactCount, error: exactErr } = await supabase
             .from("productos")
@@ -632,7 +642,10 @@ export default function Productos() {
 
       if (term) {
         if (isBarcode) {
-          query = query.ilike("codigo", `${digitsOnly || termNoSpaces}%`);
+          // Fallback ilike: busca prefijo con y sin ceros
+          query = query.or(
+            `codigo.ilike.${termNoSpaces}%,codigo.ilike.${digitsStripped}%`
+          );
         } else if (/^\d+$/.test(termNoSpaces)) {
           query = query.or(`codigo.ilike.${termNoSpaces}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`);
         } else {
@@ -656,15 +669,13 @@ export default function Productos() {
     }
   }
 
-  // 🆕 HANDLER DE ESCÁNER MEJORADO
+  // 🆕 HANDLER DE ESCÁNER — preserva ceros a la izquierda exactamente como los tiene el código
   const handleBarcodeScanned = (code) => {
-    let cleanedCode = code.replace(/^0+/, '');
-    if (cleanedCode === '') cleanedCode = '0';
-    
-    // Cerrar el escáner automáticamente
+    const cleanedCode = (code || '').trim(); // sin tocar los ceros
+    if (!cleanedCode) return;
+
     setShowScanner(false);
-    
-    // Enfocar el campo de búsqueda para facilitar la edición si es necesario
+
     setTimeout(() => {
       const searchInput = document.querySelector('input[placeholder="Search by code, name, brand, category..."]');
       if (searchInput) {
@@ -672,8 +683,7 @@ export default function Productos() {
         searchInput.select();
       }
     }, 300);
-    
-    // Realizar la búsqueda
+
     setPagina(1);
     setBusqueda(cleanedCode);
   };
@@ -1334,17 +1344,27 @@ export default function Productos() {
                   {/* SECTION: Product Info */}
                   <div>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Product Info</p>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Code / UPC *</label>
+
+                    {/* Code / UPC — full width, prominente */}
+                    <div className="mb-2.5">
+                      <label className="text-xs font-semibold text-gray-500 mb-1 block">
+                        Code / UPC *
+                        <span className="ml-1.5 text-[10px] font-normal text-gray-400 normal-case">(leading zeros are preserved)</span>
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base select-none">▌▌▌</span>
                         <input
-                          className="border border-gray-200 rounded-lg p-2.5 w-full uppercase text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                          className="border-2 border-gray-200 rounded-lg pl-9 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-blue-400 outline-none bg-gray-50 uppercase"
                           value={productoActual.codigo ?? ""}
-                          onChange={(e) => setProductoActual({ ...productoActual, codigo: toUpper(e.target.value) })}
+                          onChange={(e) => setProductoActual({ ...productoActual, codigo: e.target.value.toUpperCase() })}
+                          placeholder="Scan or type barcode..."
                           required autoFocus disabled={disabled}
                         />
                       </div>
-                      <div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="col-span-2">
                         <label className="text-xs font-semibold text-gray-500 mb-1 block">Name *</label>
                         <input
                           className="border border-gray-200 rounded-lg p-2.5 w-full uppercase text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
