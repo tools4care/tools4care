@@ -40,8 +40,8 @@ export default function UsuariosAdmin() {
     setError("");
     const { data, error: err } = await supabase
       .from("usuarios")
-      .select("id, email, nombre, rol, activo, created_at")
-      .order("created_at", { ascending: true });
+      .select("id, email, nombre, rol, activo")
+      .order("email", { ascending: true });
 
     if (err) {
       setError("Error loading users: " + err.message);
