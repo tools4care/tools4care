@@ -19,6 +19,7 @@ import {
   BarChart2,
   Shield,
   Globe,
+  Star,
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -49,7 +50,7 @@ export default function Sidebar() {
   const { usuario } = useUsuario();
   const { van, setVan } = useVan();
   const location = useLocation();
-  const { isAdmin, puedeVerSuplidores, puedeCambiarVan } = usePermisos();
+  const { isAdmin, isSupervisor, puedeVerSuplidores, puedeCambiarVan } = usePermisos();
 
   // ── Main menu (visible to ALL roles) ──
   const menuBase = [
@@ -99,11 +100,13 @@ export default function Sidebar() {
             className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
               isAdmin
                 ? "bg-purple-900/60 text-purple-300 border border-purple-700"
+                : isSupervisor
+                ? "bg-amber-900/60 text-amber-300 border border-amber-700"
                 : "bg-blue-900/60 text-blue-300 border border-blue-700"
             }`}
           >
-            {isAdmin ? <Shield size={10} /> : <Users2 size={10} />}
-            {isAdmin ? "Admin" : "Vendedor"}
+            {isAdmin ? <Shield size={10} /> : isSupervisor ? <Star size={10} /> : <Users2 size={10} />}
+            {isAdmin ? "Admin" : isSupervisor ? "Supervisor" : "Vendedor"}
           </span>
         </div>
 
