@@ -128,6 +128,18 @@ export function UsuarioProvider({ children }) {
 
       // ─── Usuario encontrado en DB ───
       if (userRow) {
+        // 🔒 Block inactive users — they cannot log in
+        if (userRow.activo === false) {
+          console.warn(`[UsuarioContext] (${source}) 🚫 Usuario inactivo:`, userRow.email);
+          setUsuario(null);
+          guardarUsuarioCache(null);
+          setCargando(false);
+          loadingRef.current = false;
+          alert("Tu cuenta ha sido desactivada. Contacta a tu administrador.");
+          await supabase.auth.signOut();
+          return;
+        }
+
         setUsuario(userRow);
         guardarUsuarioCache(userRow);
         console.log(`[UsuarioContext] (${source}) ✅ Usuario desde DB:`, userRow.nombre || userRow.email);
