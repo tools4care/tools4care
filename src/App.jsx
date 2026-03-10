@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
+import UsuariosAdmin from "./pages/UsuariosAdmin";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
 import Login from "./Login";
@@ -197,6 +198,15 @@ function PrivateRouteWithVan({ children }) {
   return children;
 }
 
+// Redirects non-admins away from admin-only routes
+function AdminRoute({ children }) {
+  const { usuario, cargando } = useUsuario();
+  if (cargando) return null;
+  if (!usuario) return <Navigate to="/login" replace />;
+  if (usuario.rol !== "admin") return <Navigate to="/" replace />;
+  return children;
+}
+
 function LayoutInterior() {
   const { syncing, ventasPendientes, syncError, lastSync, sincronizarAhora } = useSyncGlobal();
   return (
@@ -273,13 +283,13 @@ export default function App() {
             }
           />
 
-          {/* ÁREA ONLINE (protegido) */}
+          {/* ÁREA ONLINE (solo admin) */}
           <Route
             path="/online/*"
             element={
-              <PrivateRoute>
+              <AdminRoute>
                 <OnlineLayout />
-              </PrivateRoute>
+              </AdminRoute>
             }
           >
             <Route index element={<OnlineDashboard />} />
@@ -313,10 +323,13 @@ export default function App() {
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
             <Route path="cxc/sim" element={<CreditoSimulador />} />
-            <Route path="suplidores" element={<Suplidores />} />
-            
-            {/* 💰 COMISIONES (NUEVO) */}
-            <Route path="comisiones" element={<ComisionesPage />} />
+            <Route path="suplidores" element={<AdminRoute><Suplidores /></AdminRoute>} />
+
+            {/* 💰 COMISIONES (ADMIN) */}
+            <Route path="comisiones" element={<AdminRoute><ComisionesPage /></AdminRoute>} />
+
+            {/* 👥 USUARIOS (ADMIN) */}
+            <Route path="usuarios" element={<AdminRoute><UsuariosAdmin /></AdminRoute>} />
 
             {/* 📊 REPORTES (NUEVO) */}
             <Route path="reportes" element={<Reportes />} />

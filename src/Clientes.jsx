@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
+import { usePermisos } from "./hooks/usePermisos";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
@@ -598,6 +599,7 @@ async function requestAndSendPaymentReceipt({ client, payload }) {
 
 /* -------------------- COMPONENTE PRINCIPAL -------------------- */
 export default function Clientes() {
+  const { puedeEliminarClientes } = usePermisos();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -1686,7 +1688,7 @@ const fetchPage = async (opts = {}) => {
           setMesSeleccionado={setMesSeleccionado}
           onClose={() => setMostrarStats(false)}
           onEdit={() => { setMostrarStats(false); handleEditCliente(clienteSeleccionado); }}
-          onDelete={handleEliminar}
+          onDelete={puedeEliminarClientes ? handleEliminar : null}
           generatePDF={generatePDF}
           onRefreshCredito={async () => {
             const info = await safeGetCxc(clienteSeleccionado.id);
@@ -2212,13 +2214,15 @@ function ClienteStatsModal({
                 <Download size={18} />
                 Export PDF
               </button>
-              <button 
-                onClick={() => onDelete?.(cliente)} 
-                className="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all"
-              >
-                <Trash2 size={18} />
-                Delete Client
-              </button>
+              {onDelete && (
+                <button
+                  onClick={() => onDelete(cliente)}
+                  className="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all"
+                >
+                  <Trash2 size={18} />
+                  Delete Client
+                </button>
+              )}
             </div>
           </div>
         </div>

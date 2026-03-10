@@ -7,6 +7,7 @@ import ModalTraspasoStock from "./ModalTraspasoStock";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { useOffline } from "./hooks/useOffline";
 import { guardarInventarioVan, obtenerInventarioVan } from "./utils/offlineDB";
+import { usePermisos } from "./hooks/usePermisos";
 
 const PAGE_SIZE = 100;
 
@@ -20,6 +21,7 @@ function stockBadge(qty) {
 export default function Inventory() {
   const { van } = useVan();
   const { isOnline } = useOffline();
+  const { puedeAgregarAlmacen } = usePermisos();
 
   const [locations, setLocations] = useState([
     { key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" },
@@ -292,13 +294,20 @@ export default function Inventory() {
 
           {/* Action buttons */}
           <div className="flex gap-2">
-            <button
-              onClick={() => setModalOpen(true)}
-              disabled={!isOnline}
-              className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-xl font-semibold text-sm shadow disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-700 active:scale-95 transition-all"
-            >
-              <span className="text-base">➕</span> Add Stock
-            </button>
+            {/* Add Stock: disabled for vendedores when viewing warehouse */}
+            {(puedeAgregarAlmacen || selected?.tipo !== "warehouse") ? (
+              <button
+                onClick={() => setModalOpen(true)}
+                disabled={!isOnline}
+                className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-xl font-semibold text-sm shadow disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-700 active:scale-95 transition-all"
+              >
+                <span className="text-base">➕</span> Add Stock
+              </button>
+            ) : (
+              <div className="flex-1 flex items-center justify-center gap-2 bg-slate-100 text-slate-400 py-2.5 rounded-xl font-semibold text-sm border border-slate-200 cursor-not-allowed" title="Only admins can add stock to the warehouse">
+                <span className="text-base">🔒</span> Add Stock
+              </div>
+            )}
             <button
               onClick={() => setModalTransferOpen(true)}
               disabled={!isOnline}
