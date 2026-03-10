@@ -2,48 +2,59 @@
 // ─────────────────────────────────────────────────────────────────
 // Centralized Role-Based Permissions Hook
 // Usage:  const { isAdmin, puedeEliminarClientes, ... } = usePermisos();
-// Roles:  "admin" → full access | "vendedor" → scoped access
+//
+// Roles:
+//   "admin"      → full access — all features, user management, online, commissions
+//   "supervisor" → operational access — products, prices, clients, suppliers (no user mgmt / online / commissions)
+//   "vendedor"   → sales only — max 10% discount, view-only products, no deletes
 // ─────────────────────────────────────────────────────────────────
 import { useUsuario } from "../UsuarioContext";
 
 export function usePermisos() {
   const { usuario } = useUsuario();
-  const isAdmin = usuario?.rol === "admin";
-  const isVendedor = !isAdmin;
+  const rol = usuario?.rol ?? "vendedor";
+
+  const isAdmin      = rol === "admin";
+  const isSupervisor = rol === "supervisor";
+  const isVendedor   = !isAdmin && !isSupervisor;
+
+  // Admin + Supervisor share most operational permissions
+  const isPrivileged = isAdmin || isSupervisor;
 
   return {
     // ── Identity ──────────────────────────────────────────────
     isAdmin,
+    isSupervisor,
     isVendedor,
-    rol: usuario?.rol ?? "vendedor",
+    rol,
 
     // ── Products ──────────────────────────────────────────────
-    puedeCrearProductos:   isAdmin,  // "+ New product" button
-    puedeEditarProductos:  isAdmin,  // form fields editable, save button
-    puedeEliminarProductos:isAdmin,  // delete button
+    puedeCrearProductos:    isPrivileged,  // "+ New product" button
+    puedeEditarProductos:   isPrivileged,  // form fields editable, save button
+    puedeEliminarProductos: isPrivileged,  // delete button
 
     // ── Clients ───────────────────────────────────────────────
-    puedeCrearClientes:    true,     // both can create clients
-    puedeEditarClientes:   true,     // both can edit contact info
-    puedeEliminarClientes: isAdmin,  // delete client button
-    puedeEditarLimiteCredito: isAdmin, // credit limit field
+    puedeCrearClientes:       true,        // all roles can create clients
+    puedeEditarClientes:      true,        // all roles can edit contact info
+    puedeEliminarClientes:    isPrivileged, // delete client button
+    puedeEditarLimiteCredito: isPrivileged, // credit limit field
 
     // ── Sales ─────────────────────────────────────────────────
-    maxDescuentoPct:    isAdmin ? Infinity : 10, // max % discount per item
-    puedeCancelarVentas: isAdmin,    // cancel / void a sale
+    maxDescuentoPct:     isVendedor ? 10 : Infinity,  // vendedor capped at 10%
+    puedeCancelarVentas: isPrivileged,                // cancel / void a sale
 
     // ── Inventory ─────────────────────────────────────────────
-    puedeAgregarAlmacen: isAdmin,   // Add Stock to warehouse (not van)
-    // both can: add stock to van, transfer, view
+    puedeAgregarAlmacen: isPrivileged,   // Add Stock to warehouse (not van)
+    // all roles: add stock to van, transfer, view
 
     // ── Navigation (sidebar gating) ───────────────────────────
-    puedeVerSuplidores:   isAdmin,
-    puedeVerComisiones:   isAdmin,
-    puedeVerOnline:       isAdmin,
-    puedeGestionarUsuarios: isAdmin,
-    puedeCambiarVan:      isAdmin,
+    puedeVerSuplidores:     isPrivileged, // admin + supervisor
+    puedeVerComisiones:     isAdmin,      // admin only
+    puedeVerOnline:         isAdmin,      // admin only
+    puedeGestionarUsuarios: isAdmin,      // admin only
+    puedeCambiarVan:        isAdmin,      // admin only
 
     // ── Van Closeout ──────────────────────────────────────────
-    puedeCerrarVan: true,    // both can close their own van
+    puedeCerrarVan: true,    // all roles can close their own van
   };
 }

@@ -207,6 +207,15 @@ function AdminRoute({ children }) {
   return children;
 }
 
+// Allows admin AND supervisor (blocks vendedor)
+function PrivilegedRoute({ children }) {
+  const { usuario, cargando } = useUsuario();
+  if (cargando) return null;
+  if (!usuario) return <Navigate to="/login" replace />;
+  if (usuario.rol !== "admin" && usuario.rol !== "supervisor") return <Navigate to="/" replace />;
+  return children;
+}
+
 function LayoutInterior() {
   const { syncing, ventasPendientes, syncError, lastSync, sincronizarAhora } = useSyncGlobal();
   return (
@@ -323,7 +332,7 @@ export default function App() {
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
             <Route path="cxc/sim" element={<CreditoSimulador />} />
-            <Route path="suplidores" element={<AdminRoute><Suplidores /></AdminRoute>} />
+            <Route path="suplidores" element={<PrivilegedRoute><Suplidores /></PrivilegedRoute>} />
 
             {/* 💰 COMISIONES (ADMIN) */}
             <Route path="comisiones" element={<AdminRoute><ComisionesPage /></AdminRoute>} />
