@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
+import { usePermisos } from "./hooks/usePermisos";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { BarcodeScanner } from "./BarcodeScanner";
 
@@ -531,6 +532,7 @@ async function addStockSeleccionado(productoId, productoActual) {
    ============================================================ */
 
 export default function Productos() {
+  const { puedeCrearProductos, puedeEditarProductos, puedeEliminarProductos } = usePermisos();
   const PAGE_SIZE = 20; // Reducido para móviles
   const [productos, setProductos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
@@ -1020,7 +1022,8 @@ export default function Productos() {
     w.focus();
   }
 
-  const disabled = !editMode;
+  // disabled = not in editMode, OR user doesn't have product edit permission
+  const disabled = !editMode || !puedeEditarProductos;
   const toUpper = (v) => (v ?? "").toString().toUpperCase();
 
   return (
@@ -1056,14 +1059,16 @@ export default function Productos() {
             <span className="hidden sm:inline">Scan</span>
           </button>
         </div>
-        <button 
-          onClick={() => agregarProductoNuevo()} 
-          className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap flex items-center justify-center gap-2"
-          disabled={guardandoProducto} // 🆕 DESACTIVAR MIENTRAS SE GUARDA
-        >
-          <span>+</span>
-          <span>{guardandoProducto ? "Saving..." : "Add product"}</span> {/* 🆕 CAMBIAR TEXTO SEGÚN ESTADO */}
-        </button>
+        {puedeCrearProductos && (
+          <button
+            onClick={() => agregarProductoNuevo()}
+            className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap flex items-center justify-center gap-2"
+            disabled={guardandoProducto}
+          >
+            <span>+</span>
+            <span>{guardandoProducto ? "Saving..." : "Add product"}</span>
+          </button>
+        )}
       </div>
 
       {/* 🆕 ESCÁNER MEJORADO */}
@@ -1328,10 +1333,15 @@ export default function Productos() {
                 >
                   Sales History
                 </button>
-                {!editMode && productoActual?.id && tabActivo === "editar" && (
+                {!editMode && productoActual?.id && tabActivo === "editar" && puedeEditarProductos && (
                   <button className="ml-auto mb-1 bg-blue-600 text-white rounded-lg px-3 py-1 text-xs font-semibold" onClick={() => setEditMode(true)}>
                     Edit
                   </button>
+                )}
+                {!puedeEditarProductos && productoActual?.id && tabActivo === "editar" && (
+                  <span className="ml-auto mb-1 text-xs text-slate-400 flex items-center gap-1">
+                    🔒 View only
+                  </span>
                 )}
               </div>
             </div>
@@ -1644,14 +1654,16 @@ export default function Productos() {
             {/* ── Action Buttons — always visible, outside scroll ── */}
             {tabActivo === "editar" && (
               <div className="flex-shrink-0 flex gap-2 bg-white border-t border-gray-100 px-4 sm:px-5 pt-3 pb-4" style={{paddingBottom:'max(1rem, env(safe-area-inset-bottom))'}}>
-                <button
-                  type="submit"
-                  form="producto-form"
-                  className="flex-1 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-bold rounded-xl py-3 text-sm transition-colors shadow-sm"
-                  disabled={disabled}
-                >
-                  {productoActual.id ? "Save Changes" : "Add Product"}
-                </button>
+                {puedeEditarProductos && (
+                  <button
+                    type="submit"
+                    form="producto-form"
+                    className="flex-1 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-bold rounded-xl py-3 text-sm transition-colors shadow-sm"
+                    disabled={disabled}
+                  >
+                    {productoActual.id ? "Save Changes" : "Add Product"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl px-4 py-3 text-sm transition-colors"
@@ -1659,7 +1671,7 @@ export default function Productos() {
                 >
                   🖨️
                 </button>
-                {productoActual.id && (
+                {productoActual.id && puedeEliminarProductos && (
                   <button
                     type="button"
                     className="bg-red-50 hover:bg-red-100 text-red-600 font-semibold rounded-xl px-4 py-3 text-sm transition-colors"

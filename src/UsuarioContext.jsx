@@ -175,7 +175,7 @@ export function UsuarioProvider({ children }) {
             id: userAuth.id,
             email: userAuth.email,
             nombre: userAuth.user_metadata?.full_name || "",
-            rol: "admin",
+            rol: "vendedor", // new users start with minimum access (admin can promote via /usuarios)
             activo: true,
           }
         ])

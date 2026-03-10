@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
+import { usePermisos } from "./hooks/usePermisos";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { BarcodeScanner } from "./BarcodeScanner";
 import QRCode from "qrcode"; // npm install qrcode
@@ -516,6 +517,7 @@ function composeReceiptMessageEN(payload) {
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
+  const { maxDescuentoPct, puedeCancelarVentas } = usePermisos();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -2269,7 +2271,14 @@ function clearSale() {
   }
 
   function handleSetDescuento(producto_id, pct) {
-    const pctNum = Math.max(0, Math.min(100, Number(pct) || 0));
+    const rawPct = Number(pct) || 0;
+    // Enforce max discount for vendedores (admin = unlimited)
+    if (rawPct > maxDescuentoPct) {
+      alert(`Max discount allowed: ${maxDescuentoPct}%. Contact an admin for larger discounts.`);
+      setDiscountInputVal(String(maxDescuentoPct));
+      return;
+    }
+    const pctNum = Math.max(0, Math.min(100, rawPct));
     setCart((cart) =>
       cart.map((item) => {
         if (item.producto_id !== producto_id) return item;
@@ -3757,12 +3766,14 @@ function renderPendingSalesModal() {
                           </button>
                         )}
                         
-                        <button
-          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-          onClick={() => handleDeletePendingSale(v.id)}
-        >
-          🗑️
-        </button>
+                        {puedeCancelarVentas && (
+                          <button
+                            className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                            onClick={() => handleDeletePendingSale(v.id)}
+                          >
+                            🗑️
+                          </button>
+                        )}
       </div>
                     </div>
                   </div>
@@ -4376,7 +4387,7 @@ function renderStepProducts() {
                         <input
                           type="number"
                           min="0"
-                          max="100"
+                          max={maxDescuentoPct === Infinity ? 100 : maxDescuentoPct}
                           step="1"
                           autoFocus
                           value={discountInputVal}
@@ -4388,7 +4399,9 @@ function renderStepProducts() {
                           placeholder="0"
                           className="w-14 border border-blue-400 rounded-lg px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-300"
                         />
-                        <span className="text-xs text-gray-500">%</span>
+                        <span className="text-xs text-gray-500">
+                          %{maxDescuentoPct < Infinity ? ` (max ${maxDescuentoPct}%)` : ""}
+                        </span>
                         <button
                           className="bg-blue-500 text-white text-xs rounded-lg px-2 py-1 hover:bg-blue-600 active:scale-95 transition-all"
                           onClick={() => handleSetDescuento(p.producto_id, discountInputVal)}
