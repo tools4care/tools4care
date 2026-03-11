@@ -49,8 +49,38 @@ function Avatar({ nombre, email }) {
   );
 }
 
-/* ─── SQL fix for missing updated_at ─── */
-const FIX_SQL = `ALTER TABLE usuarios\n  ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();`;
+/* ─── SQL fix for missing updated_at + broken auth trigger ─── */
+const FIX_SQL = `-- Step 1: Add any missing columns
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS updated_at    timestamptz DEFAULT now();
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS descuento_max NUMERIC;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS modulos       TEXT[];
+
+-- Step 2: Fix the auth trigger (fires when a Supabase auth user is created)
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  INSERT INTO public.usuarios (id, email, nombre, rol, activo, updated_at)
+  VALUES (
+    new.id,
+    new.email,
+    COALESCE(new.raw_user_meta_data->>'full_name', ''),
+    'vendedor',
+    true,
+    now()
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET email      = EXCLUDED.email,
+        updated_at = now();
+  RETURN new;
+END;
+$$;
+
+-- Step 3: Re-attach the trigger
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();`;
 
 /* ─── SQL fix for missing permission columns ─── */
 const PERMISSIONS_SQL = `ALTER TABLE usuarios\n  ADD COLUMN IF NOT EXISTS descuento_max NUMERIC,\n  ADD COLUMN IF NOT EXISTS modulos TEXT[];`;
@@ -130,14 +160,14 @@ function NuevoUsuarioModal({ onClose, onCreado, onTriggerError }) {
       return;
     }
 
-    // 2. Insert into usuarios table
-    const { error: dbErr } = await supabase.from("usuarios").insert([{
+    // 2. Upsert into usuarios (handles both: trigger already inserted OR no trigger)
+    const { error: dbErr } = await supabaseAdmin.from("usuarios").upsert({
       id:     authData.user.id,
       email:  email.trim(),
-      nombre: nombre.trim(),
+      nombre: nombre.trim() || null,
       rol,
       activo: true,
-    }]);
+    }, { onConflict: "id" });
 
     if (dbErr) {
       // Auth user was created but DB insert failed — still show a partial warning
