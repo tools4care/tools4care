@@ -93,7 +93,7 @@ const MODULES = [
 /* ══════════════════════════════════════════════════════════════════
    MODAL — New User
 ══════════════════════════════════════════════════════════════════ */
-function NuevoUsuarioModal({ onClose, onCreado }) {
+function NuevoUsuarioModal({ onClose, onCreado, onTriggerError }) {
   const [email,    setEmail]    = useState("");
   const [nombre,   setNombre]   = useState("");
   const [rol,      setRol]      = useState("vendedor");
@@ -120,7 +120,12 @@ function NuevoUsuarioModal({ onClose, onCreado }) {
     });
 
     if (authErr) {
-      setError("Auth error: " + authErr.message);
+      if (authErr.message.toLowerCase().includes("database error")) {
+        onTriggerError?.();
+        setError("DB trigger error — run the SQL migration fix shown on the Users page, then retry.");
+      } else {
+        setError("Auth error: " + authErr.message);
+      }
       setSaving(false);
       return;
     }
@@ -165,7 +170,7 @@ function NuevoUsuarioModal({ onClose, onCreado }) {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4" autoComplete="off">
 
           {/* Email */}
           <div>
@@ -176,6 +181,7 @@ function NuevoUsuarioModal({ onClose, onCreado }) {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="user@company.com"
               required
+              autoComplete="off"
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
             />
           </div>
@@ -188,6 +194,7 @@ function NuevoUsuarioModal({ onClose, onCreado }) {
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
               placeholder="First Last"
+              autoComplete="off"
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
             />
           </div>
@@ -268,7 +275,7 @@ function NuevoUsuarioModal({ onClose, onCreado }) {
 /* ══════════════════════════════════════════════════════════════════
    MODAL — Delete confirmation
 ══════════════════════════════════════════════════════════════════ */
-function EliminarModal({ usuario: u, onClose, onEliminado }) {
+function EliminarModal({ usuario: u, onClose, onEliminado, onCascadeError }) {
   const [confirmText, setConfirmText] = useState("");
   const [saving,      setSaving]      = useState(false);
   const [error,       setError]       = useState("");
@@ -310,8 +317,8 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
     const { error: dbErr } = await supabaseAdmin.from("usuarios").delete().eq("id", u.id);
     if (dbErr) {
       if (dbErr.message.includes("foreign key constraint")) {
-        setCascadeErr(true);
-        setError("FK constraint — run the SQL cascade fix shown above, then retry.");
+        onCascadeError?.();
+        setError("FK constraint — run the SQL cascade fix shown on the Users page, then retry.");
       } else {
         setError("DB error: " + dbErr.message);
       }
@@ -991,6 +998,7 @@ export default function UsuariosAdmin() {
         <NuevoUsuarioModal
           onClose={() => setShowNuevo(false)}
           onCreado={handleCreado}
+          onTriggerError={() => setTriggerErr(true)}
         />
       )}
       {eliminarUser && (
@@ -998,6 +1006,7 @@ export default function UsuariosAdmin() {
           usuario={eliminarUser}
           onClose={() => setEliminarUser(null)}
           onEliminado={handleEliminado}
+          onCascadeError={() => setCascadeErr(true)}
         />
       )}
       {permisosUser && (
