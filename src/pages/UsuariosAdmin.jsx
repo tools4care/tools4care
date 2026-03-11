@@ -55,6 +55,26 @@ const FIX_SQL = `ALTER TABLE usuarios\n  ADD COLUMN IF NOT EXISTS updated_at tim
 /* ─── SQL fix for missing permission columns ─── */
 const PERMISSIONS_SQL = `ALTER TABLE usuarios\n  ADD COLUMN IF NOT EXISTS descuento_max NUMERIC,\n  ADD COLUMN IF NOT EXISTS modulos TEXT[];`;
 
+/* ─── SQL: permanent cascade-delete fix (run once in Supabase SQL editor) ─── */
+const CASCADE_SQL = `-- Permanent fix: cascade-delete user records automatically
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN
+    SELECT c.conname, c.conrelid::regclass AS tbl,
+           string_agg(a.attname, ', ') AS cols
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.confrelid = 'usuarios'::regclass AND c.contype = 'f'
+    GROUP BY c.conname, c.conrelid
+  LOOP
+    EXECUTE format(
+      'ALTER TABLE %s DROP CONSTRAINT %I;
+       ALTER TABLE %s ADD CONSTRAINT %I FOREIGN KEY (%s) REFERENCES usuarios(id) ON DELETE CASCADE;',
+      r.tbl, r.conname, r.tbl, r.conname, r.cols);
+  END LOOP;
+END $$;`;
+
 /* ─── Configurable modules ─── */
 const MODULES = [
   { key: "dashboard",  label: "Dashboard" },
@@ -270,17 +290,34 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
       return;
     }
 
-    // 2. Delete all FK-dependent records in parallel (ignore errors for empty tables)
+    // 2. Delete / nullify all FK-dependent records before deleting the user
     await Promise.all([
+      // Config / session tables — delete entirely
       supabaseAdmin.from("usuarios_vans").delete().eq("usuario_id", u.id),
       supabaseAdmin.from("usuario_sesion").delete().eq("usuario_id", u.id),
+      supabaseAdmin.from("cierres_van").delete().eq("usuario_id", u.id),
+      supabaseAdmin.from("ventas_pendientes").delete().eq("usuario_id", u.id),
       supabaseAdmin.from("configuraciones_comisiones").delete().eq("vendedor_id", u.id),
       supabaseAdmin.from("comisiones_calculadas").delete().eq("vendedor_id", u.id),
+      // Business data — preserve records but nullify the user reference
+      supabaseAdmin.from("ventas").update({ usuario_id: null }).eq("usuario_id", u.id),
+      supabaseAdmin.from("cierres_dia").update({ usuario_id: null }).eq("usuario_id", u.id),
+      supabaseAdmin.from("acuerdos_pago").update({ usuario_id: null }).eq("usuario_id", u.id),
+      supabaseAdmin.from("cxc_movimientos").update({ usuario_id: null }).eq("usuario_id", u.id),
     ]);
 
     // 3. Delete from usuarios table (use admin client to bypass RLS)
     const { error: dbErr } = await supabaseAdmin.from("usuarios").delete().eq("id", u.id);
-    if (dbErr) { setError("DB error: " + dbErr.message); setSaving(false); return; }
+    if (dbErr) {
+      if (dbErr.message.includes("foreign key constraint")) {
+        setCascadeErr(true);
+        setError("FK constraint — run the SQL cascade fix shown above, then retry.");
+      } else {
+        setError("DB error: " + dbErr.message);
+      }
+      setSaving(false);
+      return;
+    }
 
     onEliminado(u.id);
   }
@@ -519,6 +556,8 @@ export default function UsuariosAdmin() {
   const [permisosColErr,   setPermisosColErr]   = useState(false);
   const [copied,           setCopied]           = useState(false);
   const [copiedPermisos,   setCopiedPermisos]   = useState(false);
+  const [copiedCascade,    setCopiedCascade]    = useState(false);
+  const [cascadeErr,       setCascadeErr]       = useState(false);
   const [showNuevo,        setShowNuevo]        = useState(false);
   const [eliminarUser,     setEliminarUser]     = useState(null);
   const [permisosUser,     setPermisosUser]     = useState(null);
@@ -571,6 +610,14 @@ export default function UsuariosAdmin() {
     navigator.clipboard.writeText(PERMISSIONS_SQL).then(() => {
       setCopiedPermisos(true);
       setTimeout(() => setCopiedPermisos(false), 2000);
+    });
+  }
+
+  /* ── Copy cascade SQL ── */
+  function copiarCascadeSQL() {
+    navigator.clipboard.writeText(CASCADE_SQL).then(() => {
+      setCopiedCascade(true);
+      setTimeout(() => setCopiedCascade(false), 2000);
     });
   }
 
@@ -744,6 +791,35 @@ export default function UsuariosAdmin() {
           <button
             onClick={() => { setPermisosColErr(false); cargar(); }}
             className="mt-3 text-xs text-violet-600 hover:text-violet-800 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* ─── Cascade FK SQL banner ─── */}
+      {cascadeErr && (
+        <div className="bg-orange-50 border border-orange-300 rounded-xl px-5 py-4 mb-5">
+          <div className="flex items-center gap-2 text-orange-800 font-semibold text-sm mb-1">
+            <AlertCircle size={16} /> Foreign Key fix required for Delete
+          </div>
+          <p className="text-xs text-orange-700 mb-3">
+            Run this <strong>once</strong> in <strong>Supabase → SQL Editor</strong> to enable automatic cascade deletion. After that, users can be deleted without errors:
+          </p>
+          <div className="relative">
+            <pre className="bg-orange-100 border border-orange-200 rounded-lg px-4 py-3 text-xs text-orange-900 font-mono overflow-x-auto whitespace-pre-wrap">
+              {CASCADE_SQL}
+            </pre>
+            <button
+              onClick={copiarCascadeSQL}
+              className="absolute top-2 right-2 flex items-center gap-1 text-xs bg-orange-200 hover:bg-orange-300 text-orange-800 px-2 py-1 rounded-md transition-all"
+            >
+              <Copy size={11} /> {copiedCascade ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <button
+            onClick={() => setCascadeErr(false)}
+            className="mt-3 text-xs text-orange-600 hover:text-orange-800 underline"
           >
             Dismiss
           </button>
