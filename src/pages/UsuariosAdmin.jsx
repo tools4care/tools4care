@@ -6,7 +6,7 @@ import { supabaseAdmin, isAdminConfigured } from "../supabaseAdmin";
 import { useUsuario }                      from "../UsuarioContext";
 import {
   Shield, Star, User, Check, X, RefreshCw, AlertCircle,
-  ChevronDown, Copy, UserPlus, Trash2, Eye, EyeOff, Key,
+  ChevronDown, Copy, UserPlus, Trash2, Eye, EyeOff, Key, Settings,
 } from "lucide-react";
 
 /* ─── Role config ─── */
@@ -51,6 +51,24 @@ function Avatar({ nombre, email }) {
 
 /* ─── SQL fix for missing updated_at ─── */
 const FIX_SQL = `ALTER TABLE usuarios\n  ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();`;
+
+/* ─── SQL fix for missing permission columns ─── */
+const PERMISSIONS_SQL = `ALTER TABLE usuarios\n  ADD COLUMN IF NOT EXISTS descuento_max NUMERIC,\n  ADD COLUMN IF NOT EXISTS modulos TEXT[];`;
+
+/* ─── Configurable modules ─── */
+const MODULES = [
+  { key: "dashboard",  label: "Dashboard" },
+  { key: "ventas",     label: "Sales / Ventas" },
+  { key: "facturas",   label: "Invoices / Facturas" },
+  { key: "clientes",   label: "Customers / Clientes" },
+  { key: "productos",  label: "Products / Productos" },
+  { key: "inventario", label: "Inventory / Inventario" },
+  { key: "cierres",    label: "Van Closeout" },
+  { key: "cxc",        label: "Accounts Receivable" },
+  { key: "reportes",   label: "Reports / Reportes" },
+  { key: "suplidores", label: "Suppliers / Suplidores" },
+  { key: "comisiones", label: "Commissions / Comisiones" },
+];
 
 /* ══════════════════════════════════════════════════════════════════
    MODAL — New User
@@ -252,8 +270,8 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
       return;
     }
 
-    // 2. Delete from usuarios table
-    const { error: dbErr } = await supabase.from("usuarios").delete().eq("id", u.id);
+    // 2. Delete from usuarios table (use admin client to bypass RLS)
+    const { error: dbErr } = await supabaseAdmin.from("usuarios").delete().eq("id", u.id);
     if (dbErr) { setError("DB error: " + dbErr.message); setSaving(false); return; }
 
     onEliminado(u.id);
@@ -326,6 +344,151 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   MODAL — Permissions
+══════════════════════════════════════════════════════════════════ */
+function PermisosModal({ usuario: u, onClose, onGuardado }) {
+  const isAdmin      = u.rol === "admin";
+  const isSupervisor = u.rol === "supervisor";
+  const isPrivileged = isAdmin || isSupervisor;
+
+  function roleDefaultModulos() {
+    return MODULES
+      .filter(m => {
+        if (m.key === "comisiones") return isAdmin;
+        if (m.key === "suplidores") return isPrivileged;
+        return true;
+      })
+      .map(m => m.key);
+  }
+
+  const [sinLimite,      setSinLimite]      = useState(u.descuento_max == null);
+  const [descuentoMax,   setDescuentoMax]   = useState(u.descuento_max != null ? String(u.descuento_max) : "");
+  const [useRoleDefault, setUseRoleDefault] = useState(u.modulos == null);
+  const [selectedMods,   setSelectedMods]   = useState(u.modulos != null ? u.modulos : roleDefaultModulos());
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState("");
+
+  function toggleMod(key) {
+    setSelectedMods(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
+
+  async function handleSave() {
+    if (!isAdminConfigured) { setError("Service key not configured."); return; }
+    setSaving(true);
+    setError("");
+    const descuento_max = sinLimite ? null : (descuentoMax === "" ? null : parseFloat(descuentoMax));
+    const modulos       = useRoleDefault ? null : selectedMods;
+    const { error: err } = await supabaseAdmin.from("usuarios").update({ descuento_max, modulos }).eq("id", u.id);
+    if (err) { setError("Error: " + err.message); setSaving(false); return; }
+    onGuardado({ ...u, descuento_max, modulos });
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col">
+
+        {/* Header */}
+        <div className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white rounded-t-2xl px-6 py-5 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center">
+              <Settings size={20} />
+            </div>
+            <div>
+              <h2 className="font-bold text-lg">Permissions</h2>
+              <p className="text-indigo-200 text-xs truncate max-w-[180px]">{u.nombre || u.email}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center transition-all">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-5 overflow-y-auto">
+
+          {/* Discount */}
+          <div>
+            <p className="text-xs font-semibold text-slate-600 mb-2">Max discount %</p>
+            <label className="flex items-center gap-2 text-xs text-slate-600 mb-2 cursor-pointer">
+              <input type="checkbox" checked={sinLimite} onChange={(e) => setSinLimite(e.target.checked)} className="rounded" />
+              No limit (use role default)
+            </label>
+            {!sinLimite && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number" min="0" max="100"
+                  value={descuentoMax}
+                  onChange={(e) => setDescuentoMax(e.target.value)}
+                  placeholder="e.g. 25"
+                  className="w-24 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+                <span className="text-sm text-slate-500">%</span>
+              </div>
+            )}
+          </div>
+
+          {/* Modules */}
+          <div>
+            <p className="text-xs font-semibold text-slate-600 mb-2">Visible modules</p>
+            <label className="flex items-center gap-2 text-xs text-slate-600 mb-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useRoleDefault}
+                onChange={(e) => { setUseRoleDefault(e.target.checked); if (e.target.checked) setSelectedMods(roleDefaultModulos()); }}
+                className="rounded"
+              />
+              Use role defaults
+            </label>
+            <div className="space-y-1.5">
+              {MODULES.map(m => (
+                <label
+                  key={m.key}
+                  className={`flex items-center gap-2.5 text-xs px-3 py-2 rounded-xl border transition-all ${
+                    useRoleDefault
+                      ? "opacity-50 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-500"
+                      : selectedMods.includes(m.key)
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700 cursor-pointer"
+                      : "bg-slate-50 border-slate-200 text-slate-600 cursor-pointer"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedMods.includes(m.key)}
+                    onChange={() => !useRoleDefault && toggleMod(m.key)}
+                    disabled={useRoleDefault}
+                    className="rounded"
+                  />
+                  {m.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2 text-xs flex items-start gap-2">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" /> {error}
+            </div>
+          )}
+
+          <div className="flex gap-3 pb-1">
+            <button onClick={onClose} className="flex-1 border border-slate-200 text-slate-600 rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-50 transition-all">
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-2.5 text-sm font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {saving ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════════════════════════════════ */
 export default function UsuariosAdmin() {
@@ -335,10 +498,13 @@ export default function UsuariosAdmin() {
   const [error,        setError]        = useState("");
   const [saving,       setSaving]       = useState(null);  // "<id>_rol" | "<id>_activo"
   const [toast,        setToast]        = useState(null);  // { msg, type }
-  const [triggerErr,   setTriggerErr]   = useState(false);
-  const [copied,       setCopied]       = useState(false);
-  const [showNuevo,    setShowNuevo]    = useState(false);
-  const [eliminarUser, setEliminarUser] = useState(null);  // user object to delete
+  const [triggerErr,       setTriggerErr]       = useState(false);
+  const [permisosColErr,   setPermisosColErr]   = useState(false);
+  const [copied,           setCopied]           = useState(false);
+  const [copiedPermisos,   setCopiedPermisos]   = useState(false);
+  const [showNuevo,        setShowNuevo]        = useState(false);
+  const [eliminarUser,     setEliminarUser]     = useState(null);
+  const [permisosUser,     setPermisosUser]     = useState(null);
 
   /* ── Load ── */
   const cargar = useCallback(async () => {
@@ -346,10 +512,24 @@ export default function UsuariosAdmin() {
     setError("");
     const { data, error: err } = await supabase
       .from("usuarios")
-      .select("id, email, nombre, rol, activo")
+      .select("id, email, nombre, rol, activo, descuento_max, modulos")
       .order("email", { ascending: true });
-    if (err) setError("Error loading users: " + err.message);
-    else     setUsuarios(data || []);
+    if (err) {
+      if (err.message.includes("descuento_max") || err.message.includes("modulos")) {
+        setPermisosColErr(true);
+        // Fall back to basic columns
+        const { data: data2, error: err2 } = await supabase
+          .from("usuarios")
+          .select("id, email, nombre, rol, activo")
+          .order("email", { ascending: true });
+        if (err2) setError("Error loading users: " + err2.message);
+        else      setUsuarios(data2 || []);
+      } else {
+        setError("Error loading users: " + err.message);
+      }
+    } else {
+      setUsuarios(data || []);
+    }
     setLoading(false);
   }, []);
 
@@ -366,6 +546,14 @@ export default function UsuariosAdmin() {
     navigator.clipboard.writeText(FIX_SQL).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  /* ── Copy permissions SQL ── */
+  function copiarPermisosSQL() {
+    navigator.clipboard.writeText(PERMISSIONS_SQL).then(() => {
+      setCopiedPermisos(true);
+      setTimeout(() => setCopiedPermisos(false), 2000);
     });
   }
 
@@ -411,6 +599,13 @@ export default function UsuariosAdmin() {
     setUsuarios((p) => [...p, nuevoUsuario].sort((a, b) => a.email.localeCompare(b.email)));
     setShowNuevo(false);
     showToast(`✓ ${nuevoUsuario.nombre || nuevoUsuario.email} added successfully.`);
+  }
+
+  /* ── After permissions saved ── */
+  function handlePermisosGuardados(updated) {
+    setUsuarios((p) => p.map((x) => x.id === updated.id ? updated : x));
+    setPermisosUser(null);
+    showToast(`Permissions updated for ${updated.nombre || updated.email}.`);
   }
 
   /* ── After user deleted ── */
@@ -503,6 +698,35 @@ export default function UsuariosAdmin() {
           <button
             onClick={() => { setTriggerErr(false); cargar(); }}
             className="mt-3 text-xs text-amber-600 hover:text-amber-800 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* ─── Permissions columns SQL banner ─── */}
+      {permisosColErr && (
+        <div className="bg-violet-50 border border-violet-300 rounded-xl px-5 py-4 mb-5">
+          <div className="flex items-center gap-2 text-violet-800 font-semibold text-sm mb-1">
+            <Settings size={16} /> Database migration required for Permissions
+          </div>
+          <p className="text-xs text-violet-700 mb-3">
+            Run this in <strong>Supabase → SQL Editor</strong> to enable per-user discount limits and module control:
+          </p>
+          <div className="relative">
+            <pre className="bg-violet-100 border border-violet-200 rounded-lg px-4 py-3 text-xs text-violet-900 font-mono overflow-x-auto">
+              {PERMISSIONS_SQL}
+            </pre>
+            <button
+              onClick={copiarPermisosSQL}
+              className="absolute top-2 right-2 flex items-center gap-1 text-xs bg-violet-200 hover:bg-violet-300 text-violet-800 px-2 py-1 rounded-md transition-all"
+            >
+              <Copy size={11} /> {copiedPermisos ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <button
+            onClick={() => { setPermisosColErr(false); cargar(); }}
+            className="mt-3 text-xs text-violet-600 hover:text-violet-800 underline"
           >
             Dismiss
           </button>
@@ -621,6 +845,16 @@ export default function UsuariosAdmin() {
                   )}
                 </button>
 
+                {/* Permissions button */}
+                <button
+                  onClick={() => setPermisosUser(u)}
+                  disabled={isSaving}
+                  title="Edit permissions"
+                  className="w-9 h-9 rounded-xl border border-slate-200 bg-slate-50 text-slate-400 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 flex items-center justify-center transition-all shrink-0"
+                >
+                  <Settings size={14} />
+                </button>
+
                 {/* Delete button */}
                 {!isMe && (
                   <button
@@ -671,6 +905,13 @@ export default function UsuariosAdmin() {
           usuario={eliminarUser}
           onClose={() => setEliminarUser(null)}
           onEliminado={handleEliminado}
+        />
+      )}
+      {permisosUser && (
+        <PermisosModal
+          usuario={permisosUser}
+          onClose={() => setPermisosUser(null)}
+          onGuardado={handlePermisosGuardados}
         />
       )}
     </div>
