@@ -270,8 +270,13 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
       return;
     }
 
-    // 2. Delete related records that FK-reference this user (ignore 404/not-found)
-    await supabaseAdmin.from("configuraciones_comisiones").delete().eq("vendedor_id", u.id);
+    // 2. Delete all FK-dependent records in parallel (ignore errors for empty tables)
+    await Promise.all([
+      supabaseAdmin.from("usuarios_vans").delete().eq("usuario_id", u.id),
+      supabaseAdmin.from("usuario_sesion").delete().eq("usuario_id", u.id),
+      supabaseAdmin.from("configuraciones_comisiones").delete().eq("vendedor_id", u.id),
+      supabaseAdmin.from("comisiones_calculadas").delete().eq("vendedor_id", u.id),
+    ]);
 
     // 3. Delete from usuarios table (use admin client to bypass RLS)
     const { error: dbErr } = await supabaseAdmin.from("usuarios").delete().eq("id", u.id);
