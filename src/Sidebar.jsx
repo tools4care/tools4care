@@ -50,35 +50,29 @@ export default function Sidebar() {
   const { usuario } = useUsuario();
   const { van, setVan } = useVan();
   const location = useLocation();
-  const { isAdmin, isSupervisor, puedeVerSuplidores, puedeCambiarVan } = usePermisos();
+  const { isAdmin, isSupervisor, puedeVerModulo, puedeCambiarVan } = usePermisos();
 
-  // ── Main menu (visible to ALL roles) ──
-  const menuBase = [
-    { to: "/",          icon: <LayoutDashboard size={ICON_SIZE} className="text-blue-400" />,  text: "Dashboard" },
-    { to: "/ventas",    icon: <ShoppingCart    size={ICON_SIZE} className="text-green-500" />,  text: "Sales" },
-    { to: "/facturas",  icon: <FileText        size={ICON_SIZE} className="text-purple-500" />, text: "Invoices" },
-    { to: "/clientes",  icon: <Users           size={ICON_SIZE} className="text-yellow-500" />, text: "Customers" },
-    { to: "/productos", icon: <Package         size={ICON_SIZE} className="text-pink-500" />,   text: "Products" },
-    { to: "/inventario",icon: <Boxes           size={ICON_SIZE} className="text-teal-500" />,   text: "Inventory" },
-    { to: "/cierres",   icon: <Repeat          size={ICON_SIZE} className="text-cyan-600" />,   text: "Van Closeout" },
-    { to: "/cxc",       icon: <CreditCard      size={ICON_SIZE} className="text-orange-400" />, text: "Accounts Receivable" },
-    { to: "/reportes",  icon: <BarChart2       size={ICON_SIZE} className="text-rose-400" />,   text: "Reports" },
+  // ── Main menu filtered by per-user module permissions ──
+  const allMenuItems = [
+    { key: "dashboard",  to: "/",          icon: <LayoutDashboard size={ICON_SIZE} className="text-blue-400" />,   text: "Dashboard" },
+    { key: "ventas",     to: "/ventas",    icon: <ShoppingCart    size={ICON_SIZE} className="text-green-500" />,   text: "Sales" },
+    { key: "facturas",   to: "/facturas",  icon: <FileText        size={ICON_SIZE} className="text-purple-500" />,  text: "Invoices" },
+    { key: "clientes",   to: "/clientes",  icon: <Users           size={ICON_SIZE} className="text-yellow-500" />,  text: "Customers" },
+    { key: "productos",  to: "/productos", icon: <Package         size={ICON_SIZE} className="text-pink-500" />,    text: "Products" },
+    { key: "inventario", to: "/inventario",icon: <Boxes           size={ICON_SIZE} className="text-teal-500" />,    text: "Inventory" },
+    { key: "cierres",    to: "/cierres",   icon: <Repeat          size={ICON_SIZE} className="text-cyan-600" />,    text: "Van Closeout" },
+    { key: "cxc",        to: "/cxc",       icon: <CreditCard      size={ICON_SIZE} className="text-orange-400" />,  text: "Accounts Receivable" },
+    { key: "reportes",   to: "/reportes",  icon: <BarChart2       size={ICON_SIZE} className="text-rose-400" />,    text: "Reports" },
+    { key: "suplidores", to: "/suplidores",icon: <UserCircle2     size={ICON_SIZE} className="text-indigo-400" />,  text: "Suppliers" },
+    { key: "comisiones", to: "/comisiones",icon: <DollarSign      size={ICON_SIZE} className="text-emerald-400" />, text: "Commissions" },
   ];
 
-  // Suppliers only if permitted
-  if (puedeVerSuplidores) {
-    menuBase.splice(8, 0, {
-      to: "/suplidores",
-      icon: <UserCircle2 size={ICON_SIZE} className="text-indigo-400" />,
-      text: "Suppliers",
-    });
-  }
+  const menuBase = allMenuItems.filter(item => puedeVerModulo(item.key));
 
-  // ── Admin-only section ──
+  // ── Admin-only section (never per-user configurable) ──
   const adminMenu = [
-    { to: "/comisiones", icon: <DollarSign size={ICON_SIZE} className="text-emerald-400" />, text: "Commissions" },
-    { to: "/online",     icon: <Globe      size={ICON_SIZE} className="text-sky-400"     />, text: "Online Store" },
-    { to: "/usuarios",   icon: <Shield     size={ICON_SIZE} className="text-purple-400"  />, text: "Users" },
+    { to: "/online",   icon: <Globe   size={ICON_SIZE} className="text-sky-400"    />, text: "Online Store" },
+    { to: "/usuarios", icon: <Shield  size={ICON_SIZE} className="text-purple-400" />, text: "Users" },
   ];
 
   function handleLogout() {
