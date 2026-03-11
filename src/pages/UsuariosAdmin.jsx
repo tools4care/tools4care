@@ -244,17 +244,17 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
     setSaving(true);
     setError("");
 
-    // 1. Delete from usuarios table first
-    const { error: dbErr } = await supabase.from("usuarios").delete().eq("id", u.id);
-    if (dbErr) { setError("DB error: " + dbErr.message); setSaving(false); return; }
-
-    // 2. Delete from Supabase auth
+    // 1. Delete from Supabase auth first (ignore 404 – user may not exist in auth)
     const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(u.id);
-    if (authErr) {
-      setError("Auth delete error: " + authErr.message + " (record removed from DB)");
+    if (authErr && authErr.status !== 404) {
+      setError("Auth error: " + authErr.message);
       setSaving(false);
       return;
     }
+
+    // 2. Delete from usuarios table
+    const { error: dbErr } = await supabase.from("usuarios").delete().eq("id", u.id);
+    if (dbErr) { setError("DB error: " + dbErr.message); setSaving(false); return; }
 
     onEliminado(u.id);
   }
