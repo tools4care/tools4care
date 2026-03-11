@@ -220,9 +220,15 @@ async function fetchCartItems(cartId) {
   if (itErr) throw itErr;
   const ids = (items || []).map((i) => i.producto_id);
   if (!ids.length) return [];
-  const { data: prods, error: pErr } = await supabase.from("online_products_v").select("id, codigo, nombre, marca, price_base, price_online, stock").in("id", ids);
+
+  const [{ data: prods, error: pErr }, { data: covers }] = await Promise.all([
+    supabase.from("online_products_v").select("id, codigo, nombre, marca, price_base, price_online, stock").in("id", ids),
+    supabase.from("product_main_image_v").select("producto_id, main_image_url").in("producto_id", ids),
+  ]);
   if (pErr) throw pErr;
+
   const idx = new Map((prods || []).map((p) => [p.id, p]));
+  const coverMap = new Map((covers || []).map((c) => [c.producto_id, c.main_image_url]));
   const result = [];
   for (const i of items || []) {
     const p = idx.get(i.producto_id);
@@ -240,6 +246,7 @@ async function fetchCartItems(cartId) {
     result.push({
       producto_id: i.producto_id,
       qty,
+      main_image_url: coverMap.get(i.producto_id) || null,
       producto: { id: p.id, codigo: p.codigo, nombre: p.nombre, marca: p.marca, precio: unit, stock },
     });
   }
@@ -474,6 +481,34 @@ export default function Checkout() {
     promo?.code,
     hasStockIssues,
   ]);
+
+  async function updateCheckoutQty(productoId, newQty) {
+    if (!cartId) return;
+    if (newQty <= 0) {
+      setItems((prev) => prev.filter((it) => it.producto_id !== productoId));
+      try { await supabase.from("cart_items").delete().eq("cart_id", cartId).eq("producto_id", productoId); } catch {}
+      return;
+    }
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.producto_id !== productoId) return it;
+        const stock = Number(it.producto?.stock ?? 0);
+        const clamped = stock > 0 ? Math.min(newQty, stock) : Math.min(newQty, 999);
+        return { ...it, qty: clamped };
+      })
+    );
+    try {
+      const item = items.find((it) => it.producto_id === productoId);
+      const stock = Number(item?.producto?.stock ?? 0);
+      const clamped = stock > 0 ? Math.min(newQty, stock) : Math.min(newQty, 999);
+      await supabase.from("cart_items").update({ qty: clamped }).eq("cart_id", cartId).eq("producto_id", productoId);
+    } catch {}
+  }
+
+  async function removeCheckoutItem(productoId) {
+    setItems((prev) => prev.filter((it) => it.producto_id !== productoId));
+    try { await supabase.from("cart_items").delete().eq("cart_id", cartId).eq("producto_id", productoId); } catch {}
+  }
 
   async function handlePaid(paymentIntent) {
     try {
@@ -750,7 +785,7 @@ export default function Checkout() {
                 <span>Items in cart</span>
                 <span className="bg-blue-100 text-blue-800 text-sm px-2 py-1 rounded-full">{items.length}</span>
               </h2>
-              <div className="space-y-3 max-h-80 overflow-y-auto">
+              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                 {items.map((item) => {
                   const producto = item.producto || {};
                   const nombre = producto.nombre || `Product #${item.producto_id}`;
@@ -760,29 +795,74 @@ export default function Checkout() {
                   const unit = Number(producto.precio || 0);
                   const line = qty * unit;
                   const stock = Number(producto.stock ?? 0);
-                  const exceedsStock = qty > stock;
-                  const isLowStock = stock > 0 && stock < 5;
-                  const isOutOfStock = stock === 0;
+                  const exceedsStock = stock > 0 && qty > stock;
+                  const atMax = stock > 0 && qty >= stock;
+                  const isLowStock = stock > 0 && stock < 5 && !exceedsStock;
                   return (
-                    <div key={item.producto_id} className={`flex gap-3 pb-3 border-b last:border-b-0 ${exceedsStock ? "bg-red-50 p-2 rounded-lg" : ""}`}>
-                      <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <span className="text-2xl">📦</span>
+                    <div
+                      key={item.producto_id}
+                      className={`flex gap-3 pb-3 border-b last:border-b-0 ${exceedsStock ? "bg-red-50 p-2 rounded-lg" : ""}`}
+                    >
+                      {/* Imagen */}
+                      <div className="w-16 h-16 bg-gray-50 rounded-lg border flex items-center justify-center flex-shrink-0 overflow-hidden">
+                        {item.main_image_url ? (
+                          <img
+                            src={item.main_image_url}
+                            alt={nombre}
+                            className="w-full h-full object-contain p-1"
+                            loading="lazy"
+                            onError={(e) => (e.currentTarget.style.display = "none")}
+                          />
+                        ) : (
+                          <svg width="24" height="24" viewBox="0 0 24 24" className="text-gray-300">
+                            <path fill="currentColor" d="M20 6h-2.18c.07-.44.18-.88.18-1.36C18 2.99 16.21 1 14 1c-1.8 0-2.96 1.08-3.96 2.09L10 3.16l-.04-.07C9.04 2.08 7.8 1 6 1 3.79 1 2 2.99 2 4.64c0 .48.11.92.18 1.36H0l1 14h22l1-14h-4zm-6-3c1.1 0 2 .9 2 2 0 .48-.18.92-.5 1.27L13 8.74l-1.13-1.27A1.99 1.99 0 0 1 11 6c0-1.1.9-2 2-2z"/>
+                          </svg>
+                        )}
                       </div>
+
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-sm truncate">{nombre}</div>
-                        {(marca || codigo) && <div className="text-xs text-gray-500 mt-0.5">{[marca, codigo].filter(Boolean).join(" • ")}</div>}
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-sm text-gray-600">Qty: {qty}</span>
-                          <span className="text-xs text-gray-400">×</span>
-                          <span className="text-sm text-gray-600">${fmt(unit)}</span>
+                        {(marca || codigo) && (
+                          <div className="text-xs text-gray-400 mt-0.5">
+                            {[marca, codigo].filter(Boolean).join(" · ")}
+                          </div>
+                        )}
+
+                        {/* Qty controls */}
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <button
+                            className="w-7 h-7 rounded-md border flex items-center justify-center hover:bg-gray-50 text-gray-600 font-medium"
+                            onClick={() => updateCheckoutQty(item.producto_id, qty - 1)}
+                            title="Decrease"
+                          >−</button>
+                          <span className="w-7 text-center text-sm font-medium">{qty}</span>
+                          <button
+                            className="w-7 h-7 rounded-md border flex items-center justify-center hover:bg-gray-50 text-gray-600 font-medium disabled:opacity-40"
+                            onClick={() => updateCheckoutQty(item.producto_id, qty + 1)}
+                            disabled={atMax}
+                            title={atMax ? "Max stock reached" : "Increase"}
+                          >+</button>
+                          <button
+                            className="ml-1 text-xs text-rose-600 hover:underline"
+                            onClick={() => removeCheckoutItem(item.producto_id)}
+                          >
+                            Remove
+                          </button>
                         </div>
-                        {exceedsStock && <div className="text-xs text-red-700 font-semibold mt-1">⚠️ Exceeds stock ({stock} available)</div>}
-                        {isOutOfStock && !exceedsStock && <div className="text-xs text-red-700 font-semibold mt-1">⚠️ Out of stock</div>}
-                        {isLowStock && !exceedsStock && <div className="text-xs text-amber-700 mt-1">Only {stock} left</div>}
+
+                        {exceedsStock && (
+                          <div className="text-xs text-red-700 font-semibold mt-1">
+                            ⚠ Only {stock} in stock
+                          </div>
+                        )}
+                        {isLowStock && (
+                          <div className="text-xs text-amber-700 mt-1">Only {stock} left</div>
+                        )}
                       </div>
-                      <div className="text-right flex-shrink-0">
+
+                      <div className="text-right flex-shrink-0 min-w-[56px]">
                         <div className="font-bold text-sm">${fmt(line)}</div>
-                        {qty > 1 && <div className="text-xs text-gray-500">${fmt(unit)} each</div>}
+                        {qty > 1 && <div className="text-xs text-gray-400">${fmt(unit)} c/u</div>}
                       </div>
                     </div>
                   );
