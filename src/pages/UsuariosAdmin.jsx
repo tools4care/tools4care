@@ -270,7 +270,10 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
       return;
     }
 
-    // 2. Delete from usuarios table (use admin client to bypass RLS)
+    // 2. Delete related records that FK-reference this user (ignore 404/not-found)
+    await supabaseAdmin.from("configuraciones_comisiones").delete().eq("vendedor_id", u.id);
+
+    // 3. Delete from usuarios table (use admin client to bypass RLS)
     const { error: dbErr } = await supabaseAdmin.from("usuarios").delete().eq("id", u.id);
     if (dbErr) { setError("DB error: " + dbErr.message); setSaving(false); return; }
 
@@ -346,7 +349,7 @@ function EliminarModal({ usuario: u, onClose, onEliminado }) {
 /* ══════════════════════════════════════════════════════════════════
    MODAL — Permissions
 ══════════════════════════════════════════════════════════════════ */
-function PermisosModal({ usuario: u, onClose, onGuardado }) {
+function PermisosModal({ usuario: u, onClose, onGuardado, onTriggerError }) {
   const isAdmin      = u.rol === "admin";
   const isSupervisor = u.rol === "supervisor";
   const isPrivileged = isAdmin || isSupervisor;
@@ -379,7 +382,16 @@ function PermisosModal({ usuario: u, onClose, onGuardado }) {
     const descuento_max = sinLimite ? null : (descuentoMax === "" ? null : parseFloat(descuentoMax));
     const modulos       = useRoleDefault ? null : selectedMods;
     const { error: err } = await supabaseAdmin.from("usuarios").update({ descuento_max, modulos }).eq("id", u.id);
-    if (err) { setError("Error: " + err.message); setSaving(false); return; }
+    if (err) {
+      if (err.message.includes("updated_at") || err.message.includes("no field")) {
+        onTriggerError?.();
+        setError("DB migration required — run the SQL fix shown on the Users page.");
+      } else {
+        setError("Error: " + err.message);
+      }
+      setSaving(false);
+      return;
+    }
     onGuardado({ ...u, descuento_max, modulos });
   }
 
@@ -912,6 +924,7 @@ export default function UsuariosAdmin() {
           usuario={permisosUser}
           onClose={() => setPermisosUser(null)}
           onGuardado={handlePermisosGuardados}
+          onTriggerError={() => setTriggerErr(true)}
         />
       )}
     </div>
