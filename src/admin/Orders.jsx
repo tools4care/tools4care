@@ -1,5 +1,5 @@
 // src/admin/Orders.jsx
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
 /* =========================
@@ -629,7 +629,6 @@ export default function Orders() {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("today");
-  const [expanded, setExpanded] = useState({});
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailId, setDetailId] = useState(null);
 
@@ -729,24 +728,6 @@ export default function Orders() {
       supabase.removeChannel(channel);
     };
   }, [fetchCount, fetchPage]);
-
-  async function toggleExpand(orderId) {
-    if (expanded[orderId]) {
-      setExpanded((prev) => {
-        const copy = { ...prev };
-        delete copy[orderId];
-        return copy;
-      });
-      return;
-    }
-    const { data, error } = await supabase
-      .from("order_items")
-      .select("id, producto_id, nombre, qty, precio_unit, marca, codigo, taxable")
-      .eq("order_id", orderId)
-      .order("id", { ascending: true });
-
-    setExpanded((prev) => ({ ...prev, [orderId]: error ? "error" : data || [] }));
-  }
 
   // ⚠️ Solo cambia el estado. El inventario lo maneja el trigger en la BD.
   async function updateStatus(orderId, next) {
@@ -936,153 +917,67 @@ export default function Orders() {
               <tbody className="[&>tr:nth-child(even)]:bg-gray-50/60">
                 {rows.map((r) => {
                   const addr = r.address_json || null;
-                  const items = expanded[r.id];
                   const isSelected = r.id === detailId && detailOpen;
                   return (
-                    <Fragment key={r.id}>
-                      <tr
-                        className={`border-t hover:bg-gray-50/70 ${
-                          isSelected ? "ring-2 ring-blue-200" : ""
-                        }`}
-                      >
-                        <td className="px-3 py-4">{r.id}</td>
-                        <td className="px-3 py-4">
-                          {new Date(r.created_at).toLocaleString()}
-                        </td>
-                        <td className="px-3 py-4 align-top">
-                          <div className="font-medium">{r.name || "—"}</div>
-                          {addr ? <AddressBlock address={addr} /> : null}
-                        </td>
-                        <td className="px-3 py-4">
-                          <div>{r.email || "—"}</div>
-                          <div className="text-gray-600">{r.phone || "—"}</div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            <span className="font-mono">
-                              {r.payment_intent_id}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 font-semibold">
-                          {fmtMoney(r.amount_total, r.currency)}
-                        </td>
-                        <td className="px-3 py-4">
-                          <span
-                            className={`inline-block rounded-full px-2 py-0.5 text-xs border ${badgeClasses(
-                              r.status
-                            )}`}
-                          >
-                            {r.status ?? "pending"}
-                          </span>
-                          <div className="mt-2">
-                            <select
-                              value={r.status ?? "pending"}
-                              onChange={(e) => updateStatus(r.id, e.target.value)}
-                              className="text-xs border rounded px-2 py-1 bg-white"
-                              title="Cambiar estado"
-                            >
-                              {STATUS_UPDATE_OPTS.map((s) => (
-                                <option key={s} value={s}>
-                                  {s}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 text-right space-x-2">
-                          <button
-                            onClick={() => toggleExpand(r.id)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border hover:bg-gray-50 text-sm"
-                          >
-                            {items ? "Ocultar" : "Ver ítems"}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setDetailId(r.id);
-                              setDetailOpen(true);
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border hover:bg-gray-50 text-sm"
-                          >
-                            Detalle
-                          </button>
-                        </td>
-                      </tr>
-
-                      {items && items !== "error" && (
-                        <tr className="bg-gray-50">
-                          <td className="px-3 py-3" colSpan={7}>
-                            <div className="text-sm">
-                              <div className="font-medium mb-2">Ítems</div>
-                              <div className="overflow-x-auto">
-                                <table className="w-full border bg-white rounded">
-                                  <thead>
-                                    <tr className="text-left bg-gray-50">
-                                      <th className="px-3 py-2">Producto</th>
-                                      <th className="px-3 py-2">Marca</th>
-                                      <th className="px-3 py-2">Código</th>
-                                      <th className="px-3 py-2">Qty</th>
-                                      <th className="px-3 py-2">Precio</th>
-                                      <th className="px-3 py-2">Total</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {items.map((it) => (
-                                      <tr key={it.id} className="border-t">
-                                        <td className="px-3 py-2">
-                                          {it.nombre || it.producto_id}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                          {it.marca || "—"}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                          {it.codigo || "—"}
-                                        </td>
-                                        <td className="px-3 py-2">{it.qty}</td>
-                                        <td className="px-3 py-2">
-                                          {fmtMoney(it.precio_unit, r.currency)}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                          {fmtMoney(
-                                            (it.qty || 0) * (it.precio_unit || 0),
-                                            r.currency
-                                          )}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-
-                              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-                                <div>
-                                  <span className="text-gray-600">Subtotal: </span>
-                                  <b>{fmtMoney(r.amount_subtotal, r.currency)}</b>
-                                </div>
-                                <div>
-                                  <span className="text-gray-600">Envío: </span>
-                                  <b>{fmtMoney(r.amount_shipping, r.currency)}</b>
-                                </div>
-                                <div>
-                                  <span className="text-gray-600">Impuestos: </span>
-                                  <b>{fmtMoney(r.amount_taxes, r.currency)}</b>
-                                </div>
-                                <div>
-                                  <span className="text-gray-600">Total: </span>
-                                  <b>{fmtMoney(r.amount_total, r.currency)}</b>
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-
-                      {items === "error" && (
-                        <tr className="bg-red-50">
-                          <td className="px-3 py-2 text-red-700" colSpan={7}>
-                            No se pudieron cargar los ítems de esta orden.
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
+                    <tr
+                      key={r.id}
+                      className={`border-t hover:bg-gray-50/70 cursor-pointer ${
+                        isSelected ? "ring-2 ring-inset ring-blue-200 bg-blue-50/30" : ""
+                      }`}
+                      onClick={() => {
+                        setDetailId(r.id);
+                        setDetailOpen(true);
+                      }}
+                    >
+                      <td className="px-3 py-4 text-sm font-mono text-gray-500">#{r.id}</td>
+                      <td className="px-3 py-4 text-sm text-gray-600">
+                        {new Date(r.created_at).toLocaleString("es-MX", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                      <td className="px-3 py-4 align-top">
+                        <div className="font-medium text-sm">{r.name || "—"}</div>
+                        {addr ? <AddressBlock address={addr} /> : null}
+                      </td>
+                      <td className="px-3 py-4 text-sm">
+                        <div className="text-gray-700">{r.email || "—"}</div>
+                        <div className="text-gray-500">{r.phone || "—"}</div>
+                      </td>
+                      <td className="px-3 py-4 font-semibold text-sm">
+                        {fmtMoney(r.amount_total, r.currency)}
+                      </td>
+                      <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={r.status ?? "pending"}
+                          onChange={(e) => updateStatus(r.id, e.target.value)}
+                          className={`text-xs border rounded-full px-2.5 py-1 font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 ${badgeClasses(r.status)}`}
+                          title="Cambiar estado"
+                        >
+                          {STATUS_UPDATE_OPTS.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => {
+                            setDetailId(r.id);
+                            setDetailOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-sm font-medium shadow-sm transition-colors"
+                        >
+                          <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                          </svg>
+                          Detalle
+                        </button>
+                      </td>
+                    </tr>
                   );
                 })}
 
