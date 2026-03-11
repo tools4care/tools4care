@@ -1,6 +1,6 @@
 // src/storefront/Storefront.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import {
   addToCart,
@@ -11,6 +11,7 @@ import {
   removeCartItem,
 } from "./cartApi";
 import AuthModal from "./AuthModal";
+import AccountPanel from "./AccountPanel";
 
 /* -------------------- Helpers -------------------- */
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
@@ -73,6 +74,26 @@ const norm = (s = "") =>
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
+
+/* -------------------- Toast -------------------- */
+function Toast({ toasts }) {
+  if (!toasts.length) return null;
+  return (
+    <div className="fixed bottom-20 sm:bottom-6 right-4 z-[200] flex flex-col gap-2 items-end pointer-events-none">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className="bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 animate-fade-in"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" className="text-emerald-400 flex-shrink-0">
+            <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+          </svg>
+          {t.msg}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /* -------------------- Cart Drawer -------------------- */
 function CartDrawer({ open, onClose }) {
@@ -261,15 +282,94 @@ function CartDrawer({ open, onClose }) {
             >
               Keep shopping
             </button>
-            <a
-              href="/checkout"
+            <Link
+              to="/storefront/checkout"
               className="text-center rounded-lg bg-blue-600 text-white px-3 py-2 hover:bg-blue-700"
+              onClick={onClose}
             >
               Go to checkout
-            </a>
+            </Link>
           </div>
         </div>
       </aside>
+    </div>
+  );
+}
+
+/* -------------------- Product Card -------------------- */
+// Definida FUERA de Storefront para tener identidad estable y no violar Rules of Hooks
+function ProductCard({ p, onAdd }) {
+  const [adding, setAdding] = useState(false);
+  const price = Number(p.price_online ?? p.price_base ?? 0);
+  const hasOffer =
+    p.price_online != null &&
+    p.price_base != null &&
+    Number(p.price_online) < Number(p.price_base);
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+      <div className="p-3">
+        <div className="relative">
+          <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
+            {p.main_image_url ? (
+              <img
+                src={p.main_image_url}
+                alt={p.nombre}
+                className="w-full h-full object-contain p-2"
+                loading="lazy"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            ) : (
+              <span className="text-xs text-gray-400">no image</span>
+            )}
+          </div>
+          {(hasOffer || p.is_deal) && (
+            <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+              {p.deal_badge || "Deal"}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px]">
+          {p.nombre}
+        </div>
+        <div className="text-xs text-gray-500">{p.marca || "—"}</div>
+
+        {p.descripcion ? (
+          <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">
+            {p.descripcion}
+          </div>
+        ) : (
+          <div className="mt-1 text-xs text-gray-400 min-h-[32px]"> </div>
+        )}
+
+        <div className="mt-2 font-semibold">
+          <Price value={price} />
+          {hasOffer ? (
+            <span className="ml-2 text-xs text-gray-500 line-through">
+              <Price value={p.price_base} />
+            </span>
+          ) : null}
+        </div>
+
+        <button
+          type="button"
+          className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          disabled={adding}
+          onClick={async () => {
+            try {
+              setAdding(true);
+              await onAdd(p);
+            } finally {
+              setAdding(false);
+            }
+          }}
+        >
+          {adding ? "Adding…" : "Add to cart"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -346,12 +446,20 @@ export default function Storefront() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("signup");
   const [cartOpen, setCartOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   const [settings, setSettings] = useState(null); // site_settings (logo + nombre)
+  const [toasts, setToasts] = useState([]);
 
   const navigate = useNavigate();
   const offersRef = useRef(null);
   const reloadTimeoutRef = useRef(null);
+
+  function showToast(msg) {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, msg }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2500);
+  }
 
   // sesión
   useEffect(() => {
@@ -577,93 +685,17 @@ export default function Storefront() {
 
   const total = useMemo(() => rows.length, [rows]);
 
-  // Optimismo suave
+  // Optimismo suave + toast
   async function handleAdd(p) {
     setCount((c) => c + 1);
+    showToast(`${p.nombre?.slice(0, 28) || "Item"} added to cart`);
     try {
       const newCount = await addToCart(p, 1);
       setCount(newCount);
-      setCartOpen(true);
     } catch (e) {
       setCount((c) => Math.max(0, c - 1));
       alert(String(e?.message || "Could not add to cart."));
     }
-  }
-
-  function ProductCard({ p }) {
-    const [adding, setAdding] = useState(false);
-    const price = Number(p.price_online ?? p.price_base ?? 0);
-    const hasOffer =
-      p.price_online != null &&
-      p.price_base != null &&
-      Number(p.price_online) < Number(p.price_base);
-
-    return (
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="p-3">
-          <div className="relative">
-            <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
-              {p.main_image_url ? (
-                <img
-                  src={p.main_image_url}
-                  alt={p.nombre}
-                  className="w-full h-full object-contain p-2"
-                  loading="lazy"
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-              ) : (
-                <span className="text-xs text-gray-400">no image</span>
-              )}
-            </div>
-            {(hasOffer || p.is_deal) && (
-              <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-                {p.deal_badge || "Deal"}
-              </span>
-            )}
-          </div>
-
-          <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px]">
-            {p.nombre}
-          </div>
-          <div className="text-xs text-gray-500">{p.marca || "—"}</div>
-
-          {p.descripcion ? (
-            <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">
-              {p.descripcion}
-            </div>
-          ) : (
-            <div className="mt-1 text-xs text-gray-400 min-h-[32px]"> </div>
-          )}
-
-          <div className="mt-2 font-semibold">
-            <Price value={price} />
-            {hasOffer ? (
-              <span className="ml-2 text-xs text-gray-500 line-through">
-                <Price value={p.price_base} />
-              </span>
-            ) : null}
-          </div>
-
-          <button
-            type="button"
-            className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-            disabled={adding}
-            onClick={async () => {
-              try {
-                setAdding(true);
-                await handleAdd(p);
-              } finally {
-                setAdding(false);
-              }
-            }}
-          >
-            {adding ? "Adding…" : "Add to cart"}
-          </button>
-        </div>
-      </div>
-    );
   }
 
   // Featured deals
@@ -744,39 +776,33 @@ export default function Storefront() {
             <div className="hidden sm:flex items-center gap-2">
               <button
                 className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={() => {
-                  setAuthMode("signup");
-                  setAuthOpen(true);
-                }}
-                title="Create account"
-              >
-                Sign up
-              </button>
-              <button
-                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={() => {
-                  setAuthMode("login");
-                  setAuthOpen(true);
-                }}
-                title="Sign in"
+                onClick={() => { setAuthMode("login"); setAuthOpen(true); }}
               >
                 Sign in
               </button>
-            </div>
-          ) : (
-            <div className="hidden sm:flex items-center gap-2">
-              <span className="text-sm text-gray-700 truncate max-w-[180px]">
-                Hi, {user.email}
-              </span>
               <button
-                className="px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={async () => {
-                  await supabase.auth.signOut();
-                }}
+                className="inline-flex items-center px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium"
+                onClick={() => { setAuthMode("signup"); setAuthOpen(true); }}
               >
-                Sign out
+                Sign up
               </button>
             </div>
+          ) : (
+            <button
+              className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl border hover:bg-gray-50 transition-colors"
+              onClick={() => setAccountOpen(true)}
+              title="My account"
+            >
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold">
+                {(user?.user_metadata?.name || user?.email || "U").charAt(0).toUpperCase()}
+              </div>
+              <span className="text-sm text-gray-700 truncate max-w-[120px]">
+                {user?.user_metadata?.name || user?.email?.split("@")[0]}
+              </span>
+              <svg width="14" height="14" viewBox="0 0 24 24" className="text-gray-400 flex-shrink-0">
+                <path fill="currentColor" d="M7 10l5 5 5-5z"/>
+              </svg>
+            </button>
           )}
 
           {/* Cart (desktop header) */}
@@ -853,7 +879,7 @@ export default function Storefront() {
         {deals.length ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {deals.slice(0, 8).map((p) => (
-              <ProductCard key={p.id} p={p} />
+              <ProductCard key={p.id} p={p} onAdd={handleAdd} />
             ))}
           </div>
         ) : (
@@ -867,7 +893,7 @@ export default function Storefront() {
         {[...allRows].length ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {[...allRows].slice(0, 12).map((p) => (
-              <ProductCard key={p.id} p={p} />
+              <ProductCard key={p.id} p={p} onAdd={handleAdd} />
             ))}
           </div>
         ) : (
@@ -953,7 +979,7 @@ export default function Storefront() {
         )}
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
-            <ProductCard key={p.id} p={p} />
+            <ProductCard key={p.id} p={p} onAdd={handleAdd} />
           ))}
         </div>
       </section>
@@ -970,8 +996,18 @@ export default function Storefront() {
         onSignedIn={() => setAuthOpen(false)}
       />
 
+      {/* Account panel */}
+      <AccountPanel
+        open={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        user={user}
+      />
+
       {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
+
+      {/* Toasts */}
+      <Toast toasts={toasts} />
 
       {/* Mobile bottom bar */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
@@ -996,22 +1032,26 @@ export default function Storefront() {
             Search
           </a>
 
-          {/* Único botón: abre el modal con ambas opciones (login/sign up) */}
-          {!user && (
+          {/* Account / Login button */}
+          {!user ? (
             <button
-              className="flex flex-col items-center text-xs"
-              onClick={() => {
-                setAuthMode("login"); // modo inicial; dentro del modal el usuario puede cambiar a Sign up
-                setAuthOpen(true);
-              }}
+              className="flex flex-col items-center text-xs text-gray-600"
+              onClick={() => { setAuthMode("login"); setAuthOpen(true); }}
             >
               <svg width="22" height="22" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"
-                />
+                <path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"/>
               </svg>
-              Login / Sign up
+              Sign in
+            </button>
+          ) : (
+            <button
+              className="flex flex-col items-center text-xs text-blue-600"
+              onClick={() => setAccountOpen(true)}
+            >
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold">
+                {(user?.user_metadata?.name || user?.email || "U").charAt(0).toUpperCase()}
+              </div>
+              Account
             </button>
           )}
 

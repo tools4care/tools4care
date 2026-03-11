@@ -17,22 +17,104 @@ async function getOnlineVanId() {
   return data?.id ?? null;
 }
 
-function Price({ v }) {
-  const n = Number(v || 0);
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+function fmtPrice(n) {
+  const v = Number(n || 0);
+  return v.toLocaleString("en-US", {
+    style: "currency", currency: "USD",
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
 }
 
+/* ─── Toggle switch (pure CSS) ─── */
+function Toggle({ checked, onChange, label, color = "blue" }) {
+  const bg = checked
+    ? color === "green" ? "bg-emerald-500" : color === "amber" ? "bg-amber-500" : "bg-blue-600"
+    : "bg-gray-200";
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 ${bg}`}
+      >
+        <span
+          className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ${checked ? "translate-x-4" : "translate-x-0"}`}
+        />
+      </button>
+      {label && <span className="text-xs text-gray-600 leading-tight">{label}</span>}
+    </label>
+  );
+}
+
+/* ─── Inline text input with save on Enter/blur ─── */
+function InlineInput({ value, placeholder, onSave, type = "text", prefix = "", className = "" }) {
+  const [local, setLocal] = useState(value ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const dirty = useRef(false);
+
+  useEffect(() => { setLocal(value ?? ""); dirty.current = false; }, [value]);
+
+  async function commit() {
+    if (!dirty.current) return;
+    dirty.current = false;
+    setSaving(true);
+    try {
+      await onSave(local);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch {
+      // silent
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="relative flex items-center">
+      {prefix && <span className="absolute left-2.5 text-xs text-gray-400 pointer-events-none">{prefix}</span>}
+      <input
+        type={type}
+        className={`w-full border rounded-lg text-sm py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-gray-50 focus:bg-white transition-colors ${prefix ? "pl-5" : "pl-2.5"} pr-7 ${className}`}
+        placeholder={placeholder}
+        value={local}
+        onChange={(e) => { setLocal(e.target.value); dirty.current = true; setSaved(false); }}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      />
+      <div className="absolute right-2 pointer-events-none">
+        {saving ? (
+          <svg className="animate-spin w-3 h-3 text-blue-500" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+          </svg>
+        ) : saved ? (
+          <svg width="12" height="12" viewBox="0 0 24 24" className="text-emerald-500">
+            <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+          </svg>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Status dot ─── */
+function StatusDot({ visible, visibleOnline }) {
+  if (visibleOnline) return <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" title="Visible online" />;
+  if (visible) return <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Visible in admin only" />;
+  return <span className="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0" title="Hidden" />;
+}
+
+/* ─── Main component ─── */
 export default function OnlineCatalog() {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [onlineVan, setOnlineVan] = useState(null);
+  const [expandedDeals, setExpandedDeals] = useState(new Set());
 
   const [imgOpen, setImgOpen] = useState(false);
   const [imgPid, setImgPid] = useState(null);
@@ -46,16 +128,10 @@ export default function OnlineCatalog() {
       if (!v) v = await getOnlineVanId();
       setOnlineVan(v);
 
-      // 1) SOLO inventario del VAN Online con stock > 0
+      // 1) Stock del VAN Online con cantidad > 0
       const { data: stock, error: stErr } = await supabase
         .from("stock_van")
-        .select(
-          `
-          producto_id,
-          cantidad,
-          productos ( id, codigo, nombre, marca, precio )
-        `
-        )
+        .select("producto_id, cantidad, productos ( id, codigo, nombre, marca, precio )")
         .eq("van_id", v)
         .gt("cantidad", 0)
         .order("producto_id", { ascending: true });
@@ -63,20 +139,32 @@ export default function OnlineCatalog() {
 
       const ids = (stock || []).map((r) => r.producto_id);
 
-      // 2) meta online
+      // 2) Meta online
       let metaMap = new Map();
       if (ids.length) {
         const { data: metas, error: mErr } = await supabase
           .from("online_product_meta")
-          .select(
-            "producto_id, price_online, visible, visible_online, descripcion, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority, meta_updated_at"
-          )
+          .select("producto_id, price_online, visible, visible_online, descripcion, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority, meta_updated_at")
           .in("producto_id", ids);
         if (mErr) throw mErr;
         (metas || []).forEach((m) => metaMap.set(m.producto_id, m));
       }
 
-      // 3) combinar
+      // 3) Imágenes principales
+      let coverMap = new Map();
+      if (ids.length) {
+        const chunkSize = 150;
+        for (let i = 0; i < ids.length; i += chunkSize) {
+          const slice = ids.slice(i, i + chunkSize);
+          const { data: covers } = await supabase
+            .from("product_main_image_v")
+            .select("producto_id, main_image_url")
+            .in("producto_id", slice);
+          (covers || []).forEach((c) => coverMap.set(c.producto_id, c.main_image_url));
+        }
+      }
+
+      // 4) Combinar
       let combined = (stock || [])
         .filter((s) => !!s.productos)
         .map((s) => {
@@ -100,10 +188,11 @@ export default function OnlineCatalog() {
             deal_badge: m.deal_badge || "Deal",
             deal_priority: Number(m.deal_priority ?? 0),
             meta_updated_at: m.meta_updated_at || null,
+            main_image_url: coverMap.get(s.producto_id) || null,
           };
         });
 
-      // 4) búsqueda local
+      // 5) Filtro local de búsqueda
       const term = q.trim().toLowerCase();
       if (term) {
         combined = combined.filter(
@@ -117,26 +206,17 @@ export default function OnlineCatalog() {
       setRows(combined);
       setLastUpdate(new Date());
     } catch (err) {
-      alert(err?.message || "Could not load catalog.");
+      console.error(err);
       setRows([]);
     } finally {
       setLoading(false);
     }
   }
 
-  // carga inicial
-  useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { reload(); }, []); // eslint-disable-line
+  useEffect(() => { reload(); }, [q]); // eslint-disable-line
 
-  // cambios de búsqueda
-  useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
-
-  // realtime para refrescar sin recargar la página
+  // Realtime con debounce
   useEffect(() => {
     let channel;
     (async () => {
@@ -145,31 +225,19 @@ export default function OnlineCatalog() {
         if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
         reloadTimeoutRef.current = setTimeout(() => reload(), 600);
       };
-
       channel = supabase
         .channel("online-catalog-admin-watch")
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "stock_van", filter: `van_id=eq.${v}` },
-          scheduleReload
-        )
+        .on("postgres_changes", { event: "*", schema: "public", table: "stock_van", filter: `van_id=eq.${v}` }, scheduleReload)
         .on("postgres_changes", { event: "*", schema: "public", table: "productos" }, scheduleReload)
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "online_product_meta" },
-          scheduleReload
-        )
+        .on("postgres_changes", { event: "*", schema: "public", table: "online_product_meta" }, scheduleReload)
         .subscribe();
     })();
-
     return () => {
       if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
       if (channel) supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line
 
-  // upsert meta
   async function upsertMeta(producto_id, patch) {
     const { error } = await supabase
       .from("online_product_meta")
@@ -182,242 +250,347 @@ export default function OnlineCatalog() {
       await upsertMeta(id, { [field]: value });
       setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
     } catch (e) {
-      alert(e?.message || "Update failed.");
+      console.error(e);
     }
   }
 
   async function onUpdate(id, patch) {
-    try {
-      await upsertMeta(id, patch);
-      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-    } catch (e) {
-      alert(e?.message || "Update failed.");
-    }
+    await upsertMeta(id, patch);
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
-  const total = useMemo(() => rows.length, [rows]);
+  function toggleDeal(id) {
+    setExpandedDeals((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // Stats
+  const stats = useMemo(() => ({
+    total: rows.length,
+    online: rows.filter((r) => r.visible_online).length,
+    deals: rows.filter((r) => r.is_deal).length,
+    hidden: rows.filter((r) => !r.visible && !r.visible_online).length,
+  }), [rows]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
-      <div className="w-full max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4">
-          <div className="flex items-center justify-between gap-3">
+    <div className="min-h-screen bg-gray-50">
+      <div className="w-full max-w-5xl mx-auto px-3 py-4 sm:px-6">
+
+        {/* ─── Header ─── */}
+        <div className="bg-white rounded-2xl shadow-sm border p-4 sm:p-5 mb-4">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                🛍️ Tienda Online
+              <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                🛍️ Online Catalog
               </h1>
-              <p className="text-xs text-gray-600 mt-1">
-                Catálogo · solo productos con stock en <b>VAN Online</b>.
+              <p className="text-xs text-gray-500 mt-0.5">
+                Products with stock in <span className="font-semibold text-gray-700">VAN Online</span>
               </p>
             </div>
-
-            <OnlineCatalogActions
-              onlineVanId={onlineVan}
-              onChanged={() => reload()}
-            />
+            <OnlineCatalogActions onlineVanId={onlineVan} onChanged={reload} />
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-            <span className="px-2 py-1 rounded-lg border bg-blue-50 text-blue-700">Online Store</span>
-            <input
-              className="border rounded-lg px-3 py-2"
-              placeholder="Search by name, brand or code…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+          {/* Stats bar */}
+          <div className="mt-4 grid grid-cols-4 gap-2">
+            {[
+              { label: "Total", value: stats.total, color: "text-gray-800" },
+              { label: "Live online", value: stats.online, color: "text-emerald-600" },
+              { label: "Deals", value: stats.deals, color: "text-amber-600" },
+              { label: "Hidden", value: stats.hidden, color: "text-gray-400" },
+            ].map((s) => (
+              <div key={s.label} className="bg-gray-50 rounded-xl p-2.5 border text-center">
+                <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
+                <div className="text-[10px] text-gray-400 leading-tight">{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Search + controls */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px]">
+              <svg width="16" height="16" viewBox="0 0 24 24" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
+              </svg>
+              <input
+                className="w-full border rounded-xl pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-gray-50 focus:bg-white transition-colors"
+                placeholder="Search by name, brand or code…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+            </div>
             <button
-              className="px-3 py-2 rounded-lg text-white bg-gradient-to-r from-blue-600 to-blue-700 shadow-md hover:shadow-lg"
+              className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
               onClick={reload}
+              disabled={loading}
             >
-              {loading ? "Loading…" : "Refresh"}
+              {loading ? (
+                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24">
+                  <path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                </svg>
+              )}
+              Refresh
             </button>
-            <span className="ml-auto text-xs text-gray-500">
-              Last update: {lastUpdate ? lastUpdate.toLocaleString() : "—"}
+            <span className="text-xs text-gray-400 ml-auto">
+              {lastUpdate ? `Updated ${lastUpdate.toLocaleTimeString()}` : "—"}
             </span>
           </div>
         </div>
 
-        {/* Meta info */}
-        <div className="text-sm text-gray-600 mb-2 px-1">
-          {loading ? "Loading…" : `${total} item${total === 1 ? "" : "s"}`} · VAN: {onlineVan || "—"}
+        {/* ─── Legend ─── */}
+        <div className="flex items-center gap-4 text-[11px] text-gray-500 px-1 mb-3">
+          <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"/> Live online</div>
+          <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"/> Admin only</div>
+          <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300"/> Hidden</div>
+          <div className="text-gray-400">{stats.total} item{stats.total !== 1 ? "s" : ""} · VAN: {onlineVan ? onlineVan.slice(0, 8) + "…" : "—"}</div>
         </div>
 
-        {/* Listado */}
-        <div className="space-y-3">
-          {rows.map((r) => {
-            const shownPrice = Number(r.price_online ?? r.price_base ?? 0);
-            const hasOffer =
-              r.price_online != null && r.price_base != null && r.price_online < r.price_base;
+        {/* ─── Product rows ─── */}
+        {loading && rows.length === 0 ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-white rounded-2xl border h-24 animate-pulse" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="bg-white rounded-2xl border p-12 text-center">
+            <div className="text-4xl mb-3">📭</div>
+            <div className="text-gray-500">No products found.</div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((r) => {
+              const hasOffer = r.price_online != null && r.price_base != null && r.price_online < r.price_base;
+              const dealExpanded = expandedDeals.has(r.id);
 
-            return (
-              <div key={r.id} className="bg-white border rounded-xl p-3 shadow-sm">
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="font-medium truncate">{r.nombre}</div>
-                      <div className="text-right whitespace-nowrap">
-                        <div className="font-semibold">
-                          <Price v={shownPrice} />
-                          {hasOffer && (
-                            <span className="ml-2 text-xs text-gray-500 line-through">
-                              <Price v={r.price_base} />
-                            </span>
-                          )}
+              return (
+                <div
+                  key={r.id}
+                  className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-shadow hover:shadow-md ${r.visible_online ? "" : r.visible ? "opacity-80" : "opacity-60"}`}
+                >
+                  {/* ── Main row ── */}
+                  <div className="p-3 sm:p-4">
+                    <div className="flex gap-3">
+
+                      {/* Thumbnail */}
+                      <div className="w-14 h-14 flex-shrink-0 rounded-xl border overflow-hidden bg-gray-50 flex items-center justify-center">
+                        {r.main_image_url ? (
+                          <img
+                            src={r.main_image_url}
+                            alt={r.nombre}
+                            className="w-full h-full object-contain p-1"
+                            loading="lazy"
+                            onError={(e) => (e.currentTarget.style.display = "none")}
+                          />
+                        ) : (
+                          <svg width="20" height="20" viewBox="0 0 24 24" className="text-gray-300">
+                            <path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                          </svg>
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1 flex items-center gap-2">
+                            <StatusDot visible={r.visible} visibleOnline={r.visible_online} />
+                            <div className="font-semibold text-gray-900 truncate">{r.nombre}</div>
+                            {r.is_deal && (
+                              <span className="flex-shrink-0 text-[10px] bg-rose-100 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded-full font-semibold">
+                                {r.deal_badge || "Deal"}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex-shrink-0 text-right">
+                            <div className="font-bold text-gray-800 text-sm">
+                              {fmtPrice(r.price_online ?? r.price_base)}
+                            </div>
+                            {hasOffer && (
+                              <div className="text-[11px] text-gray-400 line-through">{fmtPrice(r.price_base)}</div>
+                            )}
+                            <div className="text-[11px] text-gray-500 mt-0.5">
+                              Stock: <span className={`font-semibold ${r.qty <= 3 ? "text-rose-600" : "text-gray-700"}`}>{r.qty}</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-[11px] text-gray-500">
-                          Qty: <b>{r.qty}</b>
+
+                        <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                          <span>{r.marca}</span>
+                          <span className="text-gray-300">·</span>
+                          <code className="font-mono">{r.codigo}</code>
                         </div>
                       </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {r.marca} · <span className="font-mono">{r.codigo}</span>
-                    </div>
 
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={!!r.visible}
-                          onChange={(e) => onToggle(r.id, "visible", e.target.checked)}
+                    {/* ── Controls row ── */}
+                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+
+                      {/* Toggles */}
+                      <div className="flex flex-col gap-2">
+                        <Toggle
+                          checked={r.visible}
+                          onChange={(v) => onToggle(r.id, "visible", v)}
+                          label="Visible (admin)"
                         />
-                        Visible (admin)
-                      </label>
-
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={!!r.visible_online}
-                          onChange={(e) => onToggle(r.id, "visible_online", e.target.checked)}
+                        <Toggle
+                          checked={r.visible_online}
+                          onChange={(v) => onToggle(r.id, "visible_online", v)}
+                          label="Visible online"
+                          color="green"
                         />
-                        Visible online
-                      </label>
+                      </div>
 
-                      <div className="md:col-span-2">
-                        <input
-                          className="w-full border rounded-lg px-2 py-1"
-                          placeholder="Online price"
-                          defaultValue={r.price_online ?? ""}
-                          onBlur={(e) => {
-                            const val = e.target.value.trim();
-                            if (val === "") {
-                              onUpdate(r.id, { price_online: null });
-                            } else {
-                              const n = Number(val);
-                              onUpdate(r.id, { price_online: Number.isFinite(n) ? n : null });
-                            }
+                      {/* Online price */}
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-1 font-medium uppercase tracking-wide">Online price</label>
+                        <InlineInput
+                          value={r.price_online != null ? String(r.price_online) : ""}
+                          placeholder={`Base: ${fmtPrice(r.price_base)}`}
+                          type="number"
+                          prefix="$"
+                          onSave={async (val) => {
+                            const trimmed = val.trim();
+                            const n = trimmed === "" ? null : Number(trimmed);
+                            await onUpdate(r.id, { price_online: trimmed === "" ? null : (Number.isFinite(n) ? n : null) });
                           }}
                         />
                       </div>
 
-                      <div className="md:col-span-2">
-                        <input
-                          className="w-full border rounded-lg px-2 py-1"
-                          placeholder="Description"
-                          defaultValue={r.descripcion || ""}
-                          onBlur={(e) =>
-                            onUpdate(r.id, { descripcion: e.target.value.trim() || "N/A" })
-                          }
+                      {/* Description */}
+                      <div>
+                        <label className="block text-[10px] text-gray-400 mb-1 font-medium uppercase tracking-wide">Description</label>
+                        <InlineInput
+                          value={r.descripcion || ""}
+                          placeholder="Short description…"
+                          onSave={async (val) => onUpdate(r.id, { descripcion: val.trim() || "" })}
                         />
                       </div>
-                    </div>
 
-                    {/* deals */}
-                    <div className="mt-2 grid grid-cols-2 md:grid-cols-6 gap-2 items-center">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={!!r.is_deal}
-                          onChange={(e) => onToggle(r.id, "is_deal", e.target.checked)}
-                        />
-                        Deal
-                      </label>
+                      {/* Actions */}
+                      <div className="flex flex-col gap-1.5">
+                        {/* Deal toggle */}
+                        <button
+                          className={`flex items-center justify-between gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                            r.is_deal
+                              ? "bg-rose-50 border-rose-200 text-rose-700"
+                              : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                          }`}
+                          onClick={() => {
+                            onToggle(r.id, "is_deal", !r.is_deal);
+                            if (!r.is_deal) setExpandedDeals((prev) => new Set([...prev, r.id]));
+                          }}
+                        >
+                          <span>🏷️ {r.is_deal ? "Deal ON" : "Make deal"}</span>
+                          {r.is_deal && (
+                            <svg
+                              width="12" height="12" viewBox="0 0 24 24"
+                              className={`transition-transform ${dealExpanded ? "rotate-180" : ""}`}
+                              onClick={(e) => { e.stopPropagation(); toggleDeal(r.id); }}
+                            >
+                              <path fill="currentColor" d="M7 10l5 5 5-5z"/>
+                            </svg>
+                          )}
+                        </button>
 
-                      <input
-                        className="border rounded-lg px-2 py-1"
-                        placeholder="Badge"
-                        defaultValue={r.deal_badge || "Deal"}
-                        onBlur={(e) =>
-                          onUpdate(r.id, { deal_badge: e.target.value.trim() || "Deal" })
-                        }
-                      />
-
-                      <input
-                        type="datetime-local"
-                        className="border rounded-lg px-2 py-1"
-                        defaultValue={
-                          r.deal_starts_at ? new Date(r.deal_starts_at).toISOString().slice(0, 16) : ""
-                        }
-                        onBlur={(e) =>
-                          onUpdate(r.id, {
-                            deal_starts_at: e.target.value
-                              ? new Date(e.target.value).toISOString()
-                              : null,
-                            meta_updated_at: new Date().toISOString(),
-                          })
-                        }
-                      />
-
-                      <input
-                        type="datetime-local"
-                        className="border rounded-lg px-2 py-1"
-                        defaultValue={
-                          r.deal_ends_at ? new Date(r.deal_ends_at).toISOString().slice(0, 16) : ""
-                        }
-                        onBlur={(e) =>
-                          onUpdate(r.id, {
-                            deal_ends_at: e.target.value
-                              ? new Date(e.target.value).toISOString()
-                              : null,
-                            meta_updated_at: new Date().toISOString(),
-                          })
-                        }
-                      />
-
-                      <input
-                        type="number"
-                        className="border rounded-lg px-2 py-1"
-                        defaultValue={r.deal_priority ?? 0}
-                        onBlur={(e) =>
-                          onUpdate(r.id, { deal_priority: Number(e.target.value || 0) })
-                        }
-                      />
-
-                      <button
-                        className="px-2.5 py-1.5 rounded-lg border hover:bg-gray-50"
-                        onClick={() => {
-                          setImgPid(r.id);
-                          setImgOpen(true);
-                        }}
-                      >
-                        Images…
-                      </button>
-                    </div>
-
-                    <div className="mt-1 text-[11px] text-gray-500">
-                      Meta updated:{" "}
-                      {r.meta_updated_at ? new Date(r.meta_updated_at).toLocaleString() : "—"}
+                        {/* Images button */}
+                        <button
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium bg-gray-50 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-colors"
+                          onClick={() => { setImgPid(r.id); setImgOpen(true); }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24">
+                            <path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                          </svg>
+                          Images
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
 
-        <Suspense fallback={null}>
-          {imgOpen && (
-            <ProductImagesPanel
-              open={imgOpen}
-              productoId={imgPid}
-              onClose={() => {
-                setImgOpen(false);
-                setImgPid(null);
-              }}
-            />
-          )}
-        </Suspense>
+                  {/* ── Deal section (expandable) ── */}
+                  {r.is_deal && dealExpanded && (
+                    <div className="border-t bg-rose-50/40 px-3 sm:px-4 py-3">
+                      <div className="text-[10px] text-rose-600 font-semibold uppercase tracking-wide mb-2">Deal settings</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {/* Badge */}
+                        <div>
+                          <label className="block text-[10px] text-gray-400 mb-1">Badge text</label>
+                          <InlineInput
+                            value={r.deal_badge || "Deal"}
+                            placeholder="e.g. SUPER DEAL"
+                            onSave={async (v) => onUpdate(r.id, { deal_badge: v.trim() || "Deal" })}
+                          />
+                        </div>
+
+                        {/* Priority */}
+                        <div>
+                          <label className="block text-[10px] text-gray-400 mb-1">Priority (higher = first)</label>
+                          <InlineInput
+                            value={String(r.deal_priority ?? 0)}
+                            placeholder="0"
+                            type="number"
+                            onSave={async (v) => onUpdate(r.id, { deal_priority: Number(v) || 0 })}
+                          />
+                        </div>
+
+                        {/* Start date */}
+                        <div>
+                          <label className="block text-[10px] text-gray-400 mb-1">Starts at</label>
+                          <input
+                            type="datetime-local"
+                            className="w-full border rounded-lg px-2 py-1.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                            defaultValue={r.deal_starts_at ? new Date(r.deal_starts_at).toISOString().slice(0, 16) : ""}
+                            onBlur={(e) => onUpdate(r.id, {
+                              deal_starts_at: e.target.value ? new Date(e.target.value).toISOString() : null,
+                              meta_updated_at: new Date().toISOString(),
+                            })}
+                          />
+                        </div>
+
+                        {/* End date */}
+                        <div>
+                          <label className="block text-[10px] text-gray-400 mb-1">Ends at</label>
+                          <input
+                            type="datetime-local"
+                            className="w-full border rounded-lg px-2 py-1.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                            defaultValue={r.deal_ends_at ? new Date(r.deal_ends_at).toISOString().slice(0, 16) : ""}
+                            onBlur={(e) => onUpdate(r.id, {
+                              deal_ends_at: e.target.value ? new Date(e.target.value).toISOString() : null,
+                              meta_updated_at: new Date().toISOString(),
+                            })}
+                          />
+                        </div>
+                      </div>
+
+                      {r.meta_updated_at && (
+                        <div className="mt-2 text-[10px] text-gray-400">
+                          Last updated: {new Date(r.meta_updated_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      <Suspense fallback={null}>
+        {imgOpen && (
+          <ProductImagesPanel
+            open={imgOpen}
+            productoId={imgPid}
+            onClose={() => { setImgOpen(false); setImgPid(null); }}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }
