@@ -217,6 +217,12 @@ const getPaymentMethodLabel = (method) => {
 function CierrePreviewModal({ van, usuario, previewData, onClose }) {
   const { ventas = [], pagos = [], fechas = [], resumen = {}, gastos = [], observaciones = "" } = previewData || {};
 
+  // Email state
+  const [showEmailPanel, setShowEmailPanel] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
   const byMethod = useMemo(() => {
     const map = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
     ventas.forEach((v) => {
@@ -253,6 +259,131 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     venmo:    { label: "Venmo",     icon: "💙", color: "bg-blue-100   text-blue-800   border-blue-200",   dot: "bg-blue-500",   bar: "bg-blue-500"   },
     applepay: { label: "Apple Pay", icon: "🍎", color: "bg-gray-100   text-gray-800   border-gray-300",   dot: "bg-gray-700",   bar: "bg-gray-700"   },
     other:    { label: "Other",     icon: "💸", color: "bg-amber-100  text-amber-800  border-amber-200",  dot: "bg-amber-500",  bar: "bg-amber-500"  },
+  };
+
+  const handleSendEmail = async () => {
+    if (!emailInput.trim()) return;
+    setSendingEmail(true);
+    try {
+      const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+      const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
+      const dateRange = fechas.length ? `${formatUS(fechas[0])} – ${formatUS(fechas[fechas.length - 1])}` : "—";
+
+      const gastosRows = gastosValidos.map((g) => `
+        <tr>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${formatUS(g.fecha)}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;text-transform:capitalize;">${g.categoria || ""}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.descripcion || ""}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;font-weight:bold;color:#c2410c;text-align:right;">${fmtCurrency(g.monto)}</td>
+        </tr>`).join("");
+
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:650px;margin:0 auto;">
+          <div style="background:linear-gradient(135deg,#1d4ed8,#4f46e5);padding:24px;border-radius:12px 12px 0 0;">
+            <h1 style="color:white;margin:0;font-size:22px;">Closure Report</h1>
+            <p style="color:#bfdbfe;margin:6px 0 0;font-size:13px;">
+              ${dateRange} &nbsp;·&nbsp; VAN: ${van?.nombre_van || van?.nombre || "—"} &nbsp;·&nbsp; By: ${usuario?.nombre || usuario?.email || "—"}
+            </p>
+          </div>
+
+          <div style="background:#f9fafb;padding:20px;border:1px solid #e5e7eb;border-top:none;">
+
+            <h2 style="font-size:15px;color:#374151;margin:0 0 10px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">Payment Summary</h2>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+              <thead>
+                <tr style="background:#1d4ed8;color:white;">
+                  <th style="padding:8px;text-align:left;font-size:12px;">Method</th>
+                  <th style="padding:8px;text-align:right;font-size:12px;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">💵 Cash</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(byMethod.efectivo)}</td></tr>
+                <tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">💳 Card</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(byMethod.tarjeta)}</td></tr>
+                <tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">🏦 Transfer</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(byMethod.transferencia)}</td></tr>
+                <tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">💰 Other</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(byMethod.otro)}</td></tr>
+                <tr style="font-weight:bold;background:#eff6ff;">
+                  <td style="padding:8px;">TOTAL</td>
+                  <td style="padding:8px;text-align:right;">${fmtCurrency(grandTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h2 style="font-size:15px;color:#374151;margin:0 0 8px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">Sales (${ventas.length}) &amp; Payments (${pagos.length})</h2>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+              <thead>
+                <tr style="background:#4b5563;color:white;">
+                  <th style="padding:6px 8px;text-align:left;font-size:11px;">Time</th>
+                  <th style="padding:6px 8px;text-align:left;font-size:11px;">Client</th>
+                  <th style="padding:6px 8px;text-align:left;font-size:11px;">Method</th>
+                  <th style="padding:6px 8px;text-align:right;font-size:11px;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${ventas.map((v) => `
+                  <tr>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#6b7280;">${new Date(v.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${v.clientes?.nombre || "—"}</td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${v.metodo_pago || "—"}</td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:bold;">${fmtCurrency(v.total_pagado || v.total_venta)}</td>
+                  </tr>`).join("")}
+                ${pagos.map((p) => `
+                  <tr style="background:#faf5ff;">
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#6b7280;">${new Date(p.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${p.clientes?.nombre || "—"} <em style="color:#9ca3af;font-size:10px;">(payment)</em></td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${p.metodo || "—"}</td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:bold;color:#7c3aed;">${fmtCurrency(p.monto)}</td>
+                  </tr>`).join("")}
+              </tbody>
+            </table>
+
+            ${gastosValidos.length > 0 ? `
+            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #fed7aa;padding-bottom:6px;">⛽ Driver Expenses</h2>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+              <thead>
+                <tr style="background:#ea580c;color:white;">
+                  <th style="padding:8px;text-align:left;font-size:12px;">Date</th>
+                  <th style="padding:8px;text-align:left;font-size:12px;">Category</th>
+                  <th style="padding:8px;text-align:left;font-size:12px;">Description</th>
+                  <th style="padding:8px;text-align:right;font-size:12px;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${gastosRows}
+                <tr style="font-weight:bold;background:#ffedd5;">
+                  <td colspan="3" style="padding:8px;text-align:right;color:#c2410c;">Total Expenses</td>
+                  <td style="padding:8px;text-align:right;color:#c2410c;">${fmtCurrency(gastosTotal)}</td>
+                </tr>
+              </tbody>
+            </table>` : ""}
+
+            ${observaciones ? `
+            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">📝 Notes</h2>
+            <div style="background:white;border:1px solid #e5e7eb;border-radius:8px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:16px;">${observaciones}</div>
+            ` : ""}
+
+          </div>
+
+          <div style="background:#f3f4f6;padding:12px;border-radius:0 0 12px 12px;text-align:center;font-size:11px;color:#9ca3af;">
+            Generated ${new Date().toLocaleString()} &nbsp;·&nbsp; Tools4Care Financial System
+          </div>
+        </div>
+      `;
+
+      const { data, error } = await supabase.functions.invoke("send-order-email", {
+        body: {
+          to: emailInput.trim(),
+          subject: `Closure Report — ${dateRange} — VAN ${van?.nombre_van || van?.nombre || "—"}`,
+          html,
+        },
+      });
+
+      if (error || !data?.ok) throw new Error(error?.message || data?.error || "Failed to send");
+      setEmailSent(true);
+    } catch (e) {
+      alert("Error sending email: " + e.message);
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   const handlePrint = () => {
@@ -421,11 +552,53 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
             <button onClick={handlePrint} className="bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 transition-colors">
               <Printer size={15} /> Print
             </button>
+            <button
+              onClick={() => { setShowEmailPanel((v) => !v); setEmailSent(false); }}
+              className={`px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 transition-colors ${showEmailPanel ? "bg-white text-blue-700" : "bg-white/20 hover:bg-white/30 text-white"}`}
+            >
+              <Send size={15} /> Email
+            </button>
             <button onClick={onClose} className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-colors">
               <X size={18} />
             </button>
           </div>
         </div>
+
+        {/* Email panel */}
+        {showEmailPanel && (
+          <div className="px-6 py-3 border-b border-gray-100 bg-blue-50 flex items-center gap-3">
+            <Send size={15} className="text-blue-600 shrink-0" />
+            <span className="text-sm font-medium text-blue-700 shrink-0">Send report to:</span>
+            {emailSent ? (
+              <span className="flex items-center gap-1.5 text-emerald-700 text-sm font-medium">
+                <CheckCircle size={15} /> Sent successfully!
+              </span>
+            ) : (
+              <>
+                <input
+                  type="email"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  placeholder="admin@example.com"
+                  className="flex-1 border border-blue-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                  onKeyDown={(e) => e.key === "Enter" && handleSendEmail()}
+                />
+                <button
+                  onClick={handleSendEmail}
+                  disabled={sendingEmail || !emailInput.trim()}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 disabled:opacity-50 transition-colors shrink-0"
+                >
+                  {sendingEmail ? (
+                    <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white" />
+                  ) : (
+                    <Send size={13} />
+                  )}
+                  Send
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Modal Body - scrollable */}
         <div className="flex-1 overflow-y-auto p-6" id="cierre-preview-content">
