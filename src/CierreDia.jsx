@@ -320,6 +320,22 @@ function generarPDFCierreDia({
   doc.save(nombreArchivo);
 }
 
+/* ======================= GASTOS CONDUCTOR ======================= */
+const EXPENSE_CATEGORIES = [
+  { value: "combustible",    label: "Combustible",    icon: "⛽" },
+  { value: "comida",         label: "Comida",         icon: "🍔" },
+  { value: "peaje",          label: "Peaje / Toll",   icon: "🛣️" },
+  { value: "estacionamiento",label: "Estacionamiento",icon: "🅿️" },
+  { value: "mantenimiento",  label: "Mantenimiento",  icon: "🔧" },
+  { value: "materiales",     label: "Materiales",     icon: "📦" },
+  { value: "otro",           label: "Otro",           icon: "💸" },
+];
+
+function catLabel(v) {
+  const c = EXPENSE_CATEGORIES.find((x) => x.value === v);
+  return c ? `${c.icon} ${c.label}` : v;
+}
+
 /* ======================= VISTA CIERRE DETALLADO ======================= */
 function VistaCierreDetallado({ datos, onConfirmar, onCancelar }) {
   const [montosReales, setMontosReales] = useState({
@@ -331,20 +347,92 @@ function VistaCierreDetallado({ datos, onConfirmar, onCancelar }) {
   const [showVentas, setShowVentas] = useState(false);
   const [showPagos, setShowPagos] = useState(false);
 
+  // ── Gastos del conductor ──
+  const [gastos, setGastos] = useState([]);
+  const [gastosLoading, setGastosLoading] = useState(true);
+
+  useEffect(() => {
+    if (!datos?.van_id || !datos?.fecha) { setGastosLoading(false); return; }
+    (async () => {
+      const { data } = await supabase
+        .from("gastos_conductor")
+        .select("id, categoria, descripcion, monto")
+        .eq("van_id", datos.van_id)
+        .eq("fecha", datos.fecha)
+        .order("created_at", { ascending: true });
+      setGastos(
+        (data || []).map((g) => ({ ...g, _key: g.id, _saved: true }))
+      );
+      setGastosLoading(false);
+    })();
+  }, [datos?.van_id, datos?.fecha]);
+
+  function addGasto() {
+    setGastos((prev) => [
+      ...prev,
+      { _key: crypto.randomUUID(), _saved: false, categoria: "combustible", descripcion: "", monto: "" },
+    ]);
+  }
+
+  function removeGasto(key) {
+    setGastos((prev) => prev.filter((g) => g._key !== key));
+  }
+
+  function updateGasto(key, field, value) {
+    setGastos((prev) =>
+      prev.map((g) => (g._key === key ? { ...g, [field]: value } : g))
+    );
+  }
+
+  const totalGastos = useMemo(
+    () => gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0),
+    [gastos]
+  );
+
+  // Gastos solo se descuentan del efectivo (cash)
+  const cashEsperadoNeto = datos.totales.esperado.cash - totalGastos;
+
   const discrepancias = {
-    cash: (Number(montosReales.cash) || 0) - datos.totales.esperado.cash,
+    cash: (Number(montosReales.cash) || 0) - cashEsperadoNeto,
     card: (Number(montosReales.card) || 0) - datos.totales.esperado.card,
     transfer: (Number(montosReales.transfer) || 0) - datos.totales.esperado.transfer,
   };
 
   const totalDiscrepancia = discrepancias.cash + discrepancias.card + discrepancias.transfer;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!montosReales.cash && !montosReales.card && !montosReales.transfer) {
       alert('⚠️ Debes ingresar al menos un monto real contado');
       return;
+    }
+
+    // Guardar gastos en la BD
+    const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+    if (datos?.van_id && datos?.fecha) {
+      try {
+        // Borrar los anteriores para este van/fecha y re-insertar
+        await supabase
+          .from("gastos_conductor")
+          .delete()
+          .eq("van_id", datos.van_id)
+          .eq("fecha", datos.fecha);
+
+        if (gastosValidos.length) {
+          await supabase.from("gastos_conductor").insert(
+            gastosValidos.map((g) => ({
+              van_id: datos.van_id,
+              fecha: datos.fecha,
+              categoria: g.categoria,
+              descripcion: g.descripcion || "",
+              monto: Number(g.monto) || 0,
+            }))
+          );
+        }
+      } catch (err) {
+        console.error("Error guardando gastos:", err);
+      }
     }
 
     onConfirmar({
@@ -355,6 +443,8 @@ function VistaCierreDetallado({ datos, onConfirmar, onCancelar }) {
       },
       discrepancias,
       observaciones,
+      gastos: gastosValidos,
+      totalGastos,
       datos,
     });
   };
@@ -425,9 +515,16 @@ function VistaCierreDetallado({ datos, onConfirmar, onCancelar }) {
                 <label className="block">
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-bold text-gray-800">💵 Efectivo</span>
-                    <span className="text-sm text-gray-600">
-                      Esperado: ${datos.totales.esperado.cash.toFixed(2)}
-                    </span>
+                    <div className="text-right">
+                      <div className="text-sm text-gray-600">
+                        Esperado neto: <span className="font-semibold text-gray-900">${cashEsperadoNeto.toFixed(2)}</span>
+                      </div>
+                      {totalGastos > 0 && (
+                        <div className="text-xs text-orange-500">
+                          (bruto ${datos.totales.esperado.cash.toFixed(2)} − gastos ${totalGastos.toFixed(2)})
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <input
                     type="number"
@@ -544,6 +641,110 @@ function VistaCierreDetallado({ datos, onConfirmar, onCancelar }) {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* ─── Gastos del Conductor ─── */}
+          <div className="border-2 border-orange-200 rounded-2xl overflow-hidden">
+            <div className="bg-orange-50 px-5 py-4 flex items-center justify-between">
+              <div>
+                <div className="font-bold text-orange-900 flex items-center gap-2">
+                  ⛽ Gastos del Conductor
+                </div>
+                <div className="text-xs text-orange-700 mt-0.5">
+                  Se descuentan del efectivo en mano antes del cierre
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-orange-500 uppercase font-semibold">Total gastos</div>
+                <div className="text-2xl font-extrabold text-orange-700">
+                  ${totalGastos.toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-2 bg-white">
+              {gastosLoading ? (
+                <div className="text-sm text-gray-400 py-2 text-center">Cargando gastos…</div>
+              ) : gastos.length === 0 ? (
+                <div className="text-sm text-gray-400 py-2 text-center">
+                  Sin gastos registrados para este día
+                </div>
+              ) : (
+                gastos.map((g) => (
+                  <div key={g._key} className="flex items-center gap-2">
+                    <select
+                      value={g.categoria}
+                      onChange={(e) => updateGasto(g._key, "categoria", e.target.value)}
+                      className="border rounded-xl px-2 py-2 text-sm bg-white shrink-0 w-44"
+                    >
+                      {EXPENSE_CATEGORIES.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.icon} {c.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Descripción (opcional)"
+                      value={g.descripcion}
+                      onChange={(e) => updateGasto(g._key, "descripcion", e.target.value)}
+                      className="border rounded-xl px-3 py-2 text-sm flex-1 min-w-0"
+                    />
+                    <div className="relative w-28 shrink-0">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={g.monto}
+                        onChange={(e) => updateGasto(g._key, "monto", e.target.value)}
+                        className="border rounded-xl pl-6 pr-3 py-2 text-sm w-full font-semibold"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeGasto(g._key)}
+                      className="p-2 rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                ))
+              )}
+
+              <button
+                type="button"
+                onClick={addGasto}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-orange-300 text-orange-600 hover:bg-orange-50 text-sm font-medium transition-colors"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Agregar gasto
+              </button>
+
+              {totalGastos > 0 && (
+                <div className="mt-1 bg-orange-50 rounded-xl p-3 border border-orange-200 text-sm">
+                  <div className="flex justify-between text-gray-600">
+                    <span>Efectivo bruto esperado:</span>
+                    <span className="font-medium">${datos.totales.esperado.cash.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-orange-700 mt-1">
+                    <span>– Gastos del conductor:</span>
+                    <span className="font-medium">–${totalGastos.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-gray-900 mt-2 pt-2 border-t border-orange-200">
+                    <span>= Efectivo neto a entregar:</span>
+                    <span className="text-green-700">${cashEsperadoNeto.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Detalles de Ventas y Pagos (Colapsables) */}
