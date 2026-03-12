@@ -369,15 +369,20 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
         </div>
       `;
 
-      const { data, error } = await supabase.functions.invoke("send-order-email", {
-        body: {
-          to: emailInput.trim(),
-          subject: `Closure Report — ${dateRange} — VAN ${van?.nombre_van || van?.nombre || "—"}`,
-          html,
-        },
-      });
-
-      if (error || !data?.ok) throw new Error(error?.message || data?.error || "Failed to send");
+      const resp = await fetch(
+        "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/send-order-email",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: emailInput.trim(),
+            subject: `Closure Report — ${dateRange} — VAN ${van?.nombre_van || van?.nombre || "—"}`,
+            html,
+          }),
+        }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Failed to send");
       setEmailSent(true);
     } catch (e) {
       alert("Error sending email: " + e.message);

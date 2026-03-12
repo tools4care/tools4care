@@ -672,15 +672,20 @@ useEffect(() => {
         </div>
       `;
 
-      const { data, error } = await supabase.functions.invoke("send-order-email", {
-        body: {
-          to: reportEmail.trim(),
-          subject: `Van Closure Report — ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} — ${van?.nombre || "VAN"}`,
-          html,
-        },
-      });
-
-      if (error || !data?.ok) throw new Error(error?.message || data?.error || "Failed to send email");
+      const resp = await fetch(
+        "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/send-order-email",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: reportEmail.trim(),
+            subject: `Van Closure Report — ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} — ${van?.nombre || "VAN"}`,
+            html,
+          }),
+        }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Failed to send email");
       setEmailSent(true);
     } catch (e) {
       console.error("Email error:", e);
