@@ -215,7 +215,7 @@ const getPaymentMethodLabel = (method) => {
 
 // Preview modal: shows closure details for a date range (read-only)
 function CierrePreviewModal({ van, usuario, previewData, onClose }) {
-  const { ventas = [], pagos = [], fechas = [], resumen = {} } = previewData || {};
+  const { ventas = [], pagos = [], fechas = [], resumen = {}, gastos = [], observaciones = "" } = previewData || {};
 
   const byMethod = useMemo(() => {
     const map = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
@@ -356,6 +356,43 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
         styles: { fontSize: 8 },
         headStyles: { fillColor: [75, 85, 99], textColor: 255 },
       });
+    }
+
+    // Driver Expenses
+    if (gastos.length > 0) {
+      const gastosY = doc.lastAutoTable.finalY + 12;
+      doc.setFontSize(12);
+      doc.text("Driver Expenses", 14, gastosY);
+      const gastosRows = gastos.map((g) => [
+        formatUS(g.fecha),
+        g.categoria || "—",
+        g.descripcion || "—",
+        fmtCurrency(Number(g.monto) || 0),
+      ]);
+      const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+      gastosRows.push(["", "", "TOTAL", fmtCurrency(gastosTotal)]);
+      autoTable(doc, {
+        startY: gastosY + 4,
+        head: [["Date", "Category", "Description", "Amount"]],
+        body: gastosRows,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+        didParseCell: (data) => {
+          if (data.row.index === gastosRows.length - 1) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [255, 237, 213];
+          }
+        },
+      });
+    }
+
+    // Notes / Observaciones
+    if (observaciones) {
+      const notesY = doc.lastAutoTable.finalY + 12;
+      doc.setFontSize(12);
+      doc.text("Notes", 14, notesY);
+      doc.setFontSize(9);
+      doc.text(observaciones, 14, notesY + 8, { maxWidth: 180 });
     }
 
     doc.save(`Closure_${van?.nombre_van || "VAN"}_${fechas[0] || "report"}.pdf`);
@@ -586,7 +623,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
               <h2 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
                 <CreditCard size={16} /> Direct Payments ({pagos.length})
               </h2>
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <div className="overflow-x-auto rounded-xl border border-gray-200 mb-6">
                 <table className="min-w-full text-sm divide-y divide-gray-100">
                   <thead className="bg-gray-700 text-white">
                     <tr>
@@ -610,6 +647,55 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </>
+          )}
+
+          {/* Driver Expenses (Gastos del Conductor) */}
+          {gastos.length > 0 && (() => {
+            const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+            return (
+              <>
+                <h2 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+                  <span>⛽</span> Driver Expenses ({gastos.length})
+                </h2>
+                <div className="overflow-x-auto rounded-xl border border-orange-200 mb-6">
+                  <table className="min-w-full text-sm divide-y divide-orange-100">
+                    <thead className="bg-orange-600 text-white">
+                      <tr>
+                        {["Date", "Category", "Description", "Amount"].map((h) => (
+                          <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-orange-50">
+                      {gastos.map((g, i) => (
+                        <tr key={g.id || i} className="hover:bg-orange-50/50">
+                          <td className="px-3 py-2 text-gray-600 text-xs whitespace-nowrap">{formatUS(g.fecha)}</td>
+                          <td className="px-3 py-2 capitalize text-gray-700">{g.categoria || "—"}</td>
+                          <td className="px-3 py-2 text-gray-700">{g.descripcion || "—"}</td>
+                          <td className="px-3 py-2 font-bold text-orange-700">{fmtCurrency(g.monto)}</td>
+                        </tr>
+                      ))}
+                      <tr className="bg-orange-100">
+                        <td colSpan={3} className="px-3 py-2 text-right font-bold text-orange-800 text-sm">Total Expenses</td>
+                        <td className="px-3 py-2 font-extrabold text-orange-900">{fmtCurrency(gastosTotal)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            );
+          })()}
+
+          {/* Notes / Observaciones */}
+          {observaciones && (
+            <>
+              <h2 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+                <FileText size={16} /> Notes
+              </h2>
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                {observaciones}
               </div>
             </>
           )}
@@ -665,7 +751,7 @@ function HistorialCierres({ van, usuario }) {
     }
   };
 
-  const generatePreview = async (fechas) => {
+  const generatePreview = async (fechas, previewObservaciones = "") => {
     if (!van?.id || !fechas.length) return;
     setGenerating(true);
     setError(null);
@@ -751,7 +837,24 @@ function HistorialCierres({ van, usuario }) {
         filteredPagos = filteredPagos.filter((p) => (p.clientes?.nombre || "").toLowerCase().includes(q));
       }
 
-      setPreviewData({ ventas: filteredVentas, pagos: filteredPagos, fechas, resumen: {} });
+      // Fetch driver expenses for these dates
+      const sortedFechas = [...fechas].sort();
+      const { data: gastosData } = await supabase
+        .from("gastos_conductor")
+        .select("id, fecha, categoria, descripcion, monto")
+        .eq("van_id", van.id)
+        .gte("fecha", sortedFechas[0])
+        .lte("fecha", sortedFechas[sortedFechas.length - 1])
+        .order("fecha", { ascending: true });
+
+      setPreviewData({
+        ventas: filteredVentas,
+        pagos: filteredPagos,
+        fechas,
+        resumen: {},
+        gastos: gastosData || [],
+        observaciones: previewObservaciones,
+      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -760,7 +863,7 @@ function HistorialCierres({ van, usuario }) {
   };
 
   const handleGenerateCustom = () => generatePreview([from, to]);
-  const handleViewCierre = (cierre) => generatePreview([cierre.fecha]);
+  const handleViewCierre = (cierre) => generatePreview([cierre.fecha], cierre.observaciones || "");
 
   return (
     <div>
