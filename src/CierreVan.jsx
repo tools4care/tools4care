@@ -41,6 +41,17 @@ import {
   Printer,
 } from "lucide-react";
 
+/* ========================= Gastos Conductor ========================= */
+const EXPENSE_CATEGORIES_VAN = [
+  { value: "combustible",     label: "Combustible",     icon: "⛽" },
+  { value: "comida",          label: "Comida",          icon: "🍔" },
+  { value: "peaje",           label: "Peaje / Toll",    icon: "🛣️" },
+  { value: "estacionamiento", label: "Estacionamiento", icon: "🅿️" },
+  { value: "mantenimiento",   label: "Mantenimiento",   icon: "🔧" },
+  { value: "materiales",      label: "Materiales",      icon: "📦" },
+  { value: "otro",            label: "Otro",            icon: "💸" },
+];
+
 /* ========================= Constants ========================= */
 const PAYMENT_METHODS = {
   efectivo: { label: "Cash", color: "#4CAF50", icon: "💵" },
@@ -146,8 +157,54 @@ export default function CierreVan() {
   const [tipoMensaje, setTipoMensaje] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
+  // ── Gastos del conductor (multi-día) ──
+  const [gastos, setGastos] = useState([]);
+  const [gastosLoading, setGastosLoading] = useState(false);
 
+  // Cargar gastos existentes cuando cambian las fechas
+  useEffect(() => {
+    if (!van?.id || !fechasSeleccionadas.length) return;
+    setGastosLoading(true);
+    (async () => {
+      const { data } = await supabase
+        .from("gastos_conductor")
+        .select("id, fecha, categoria, descripcion, monto")
+        .eq("van_id", van.id)
+        .in("fecha", fechasSeleccionadas)
+        .order("fecha", { ascending: true });
+      setGastos(
+        (data || []).map((g) => ({ ...g, _key: g.id, _saved: true }))
+      );
+      setGastosLoading(false);
+    })();
+  }, [van?.id, fechasSeleccionadas]);
 
+  function addGasto() {
+    const defaultFecha = fechasSeleccionadas[0] || new Date().toISOString().slice(0, 10);
+    setGastos((prev) => [
+      ...prev,
+      {
+        _key: crypto.randomUUID(),
+        _saved: false,
+        fecha: defaultFecha,
+        categoria: "combustible",
+        descripcion: "",
+        monto: "",
+      },
+    ]);
+  }
+
+  function removeGasto(key) {
+    setGastos((prev) => prev.filter((g) => g._key !== key));
+  }
+
+  function updateGasto(key, field, value) {
+    setGastos((prev) =>
+      prev.map((g) => (g._key === key ? { ...g, [field]: value } : g))
+    );
+  }
+
+  const totalGastos = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
 
   // ✅ FUENTE DE VERDAD: Totales del RPC (sin duplicación)
   const [resumenPorFecha, setResumenPorFecha] = useState({});
@@ -422,6 +479,25 @@ useEffect(() => {
       if (observacionesCompletas.length > maxObservacionesLength) {
         observacionesCompletas =
           observacionesCompletas.substring(0, maxObservacionesLength) + "...";
+      }
+
+      // Guardar gastos del conductor
+      const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+      if (gastosValidos.length) {
+        await supabase
+          .from("gastos_conductor")
+          .delete()
+          .eq("van_id", van.id)
+          .in("fecha", fechasSeleccionadas);
+        await supabase.from("gastos_conductor").insert(
+          gastosValidos.map((g) => ({
+            van_id: van.id,
+            fecha: g.fecha || fechasSeleccionadas[0],
+            categoria: g.categoria,
+            descripcion: g.descripcion || "",
+            monto: Number(g.monto) || 0,
+          }))
+        );
       }
 
       // Crear un cierre por cada fecha seleccionada
@@ -995,8 +1071,12 @@ useEffect(() => {
     });
 
     const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
+    const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+    // Cash neto = efectivo esperado - gastos del conductor
+    const efectivoNeto = totalEfectivo - gastosTotal;
+    const totalCajaNeto = efectivoNeto + totalTarjeta + totalTransferencia;
     const totalReal = cashReal + cardReal + transferReal + otherReal;
-    const diferencia = Math.abs(totalCaja - totalReal);
+    const diferencia = Math.abs(totalCajaNeto - totalReal);
 
     console.log('💰 TOTALES FINALES:', {
       totalEfectivo,
@@ -1014,6 +1094,9 @@ useEffect(() => {
       totalTransferencia, // Del RPC ✅
       totalOtros: 0,
       totalCaja,
+      gastosTotal,
+      efectivoNeto,
+      totalCajaNeto,
       diferencia,
     };
   }, [
@@ -1024,6 +1107,7 @@ useEffect(() => {
     cardReal,
     transferReal,
     otherReal,
+    gastos,
   ]);
 
   /* ========================= Combined Transactions List ========================= */
@@ -1493,6 +1577,112 @@ useEffect(() => {
         {/* Control panel */}
         <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6 mb-6">
           <div className="flex flex-col gap-4">
+
+            {/* ── Gastos del Conductor ── */}
+            <div className="border-2 border-orange-200 rounded-xl overflow-hidden">
+              <div className="bg-orange-50 px-4 py-3 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-orange-900 text-sm">⛽ Gastos del Conductor</div>
+                  <div className="text-xs text-orange-600 mt-0.5">
+                    Se descuentan del efectivo en mano antes del cierre
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-orange-500 font-semibold uppercase">Total</div>
+                  <div className="text-xl font-extrabold text-orange-700">
+                    {fmtCurrency(totalGastos)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-white space-y-2">
+                {gastosLoading ? (
+                  <div className="text-sm text-gray-400 py-2 text-center">Cargando gastos…</div>
+                ) : gastos.length === 0 ? (
+                  <div className="text-sm text-gray-400 py-2 text-center">
+                    Sin gastos registrados
+                  </div>
+                ) : (
+                  gastos.map((g) => (
+                    <div key={g._key} className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                      {fechasSeleccionadas.length > 1 && (
+                        <select
+                          value={g.fecha}
+                          onChange={(e) => updateGasto(g._key, "fecha", e.target.value)}
+                          className="border rounded-lg px-2 py-1.5 text-xs bg-white w-32 shrink-0"
+                        >
+                          {fechasSeleccionadas.map((f) => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
+                        </select>
+                      )}
+                      <select
+                        value={g.categoria}
+                        onChange={(e) => updateGasto(g._key, "categoria", e.target.value)}
+                        className="border rounded-lg px-2 py-1.5 text-sm bg-white shrink-0 w-40"
+                      >
+                        {EXPENSE_CATEGORIES_VAN.map((c) => (
+                          <option key={c.value} value={c.value}>{c.icon} {c.label}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="Descripción"
+                        value={g.descripcion}
+                        onChange={(e) => updateGasto(g._key, "descripcion", e.target.value)}
+                        className="border rounded-lg px-3 py-1.5 text-sm flex-1 min-w-0"
+                      />
+                      <div className="relative w-28 shrink-0">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          value={g.monto}
+                          onChange={(e) => updateGasto(g._key, "monto", e.target.value)}
+                          className="border rounded-lg pl-6 pr-2 py-1.5 text-sm w-full font-semibold"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeGasto(g._key)}
+                        className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+
+                <button
+                  type="button"
+                  onClick={addGasto}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border-2 border-dashed border-orange-300 text-orange-600 hover:bg-orange-50 text-sm font-medium transition-colors"
+                >
+                  <Plus size={14} />
+                  Agregar gasto
+                </button>
+
+                {totales.gastosTotal > 0 && (
+                  <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-sm space-y-1">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Efectivo bruto esperado:</span>
+                      <span className="font-medium">{fmtCurrency(totales.totalEfectivo)}</span>
+                    </div>
+                    <div className="flex justify-between text-orange-700">
+                      <span>– Gastos del conductor:</span>
+                      <span className="font-medium">–{fmtCurrency(totales.gastosTotal)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-gray-900 pt-1 border-t border-orange-200">
+                      <span>= Efectivo neto a entregar:</span>
+                      <span className="text-green-700">{fmtCurrency(totales.efectivoNeto)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Notes */}
             <div className="w-full">
               <label className="block text-sm font-medium text-gray-700 mb-1">
