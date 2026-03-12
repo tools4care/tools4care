@@ -14,6 +14,16 @@ import {
 } from "lucide-react";
 
 /* ========================= Constants ========================= */
+const EXPENSE_CATEGORIES_VAN = [
+  { value: "combustible",     label: "Combustible",  icon: "⛽" },
+  { value: "comida",          label: "Comida",        icon: "🍔" },
+  { value: "peaje",           label: "Peaje / Toll",  icon: "🛣️" },
+  { value: "estacionamiento", label: "Parking",       icon: "🅿️" },
+  { value: "mantenimiento",   label: "Mantenimiento", icon: "🔧" },
+  { value: "materiales",      label: "Materiales",    icon: "📦" },
+  { value: "otro",            label: "Otro",          icon: "💸" },
+];
+
 const PAYMENT_METHODS = {
   efectivo: { label: "Cash", color: "#4CAF50", icon: "💵" },
   tarjeta: { label: "Card", color: "#2196F3", icon: "💳" },
@@ -222,6 +232,44 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
   const [emailInput, setEmailInput] = useState("");
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+
+  // Gastos editable state
+  const [localGastos, setLocalGastos] = useState(gastos);
+  const [showAddGasto, setShowAddGasto] = useState(false);
+  const [newGasto, setNewGasto] = useState({ fecha: fechas[0] || "", categoria: "combustible", descripcion: "", monto: "" });
+  const [savingGasto, setSavingGasto] = useState(false);
+
+  const handleAddGasto = async () => {
+    if (!newGasto.monto || !newGasto.fecha) return;
+    setSavingGasto(true);
+    try {
+      const { data, error } = await supabase.from("gastos_conductor").insert({
+        van_id: van.id,
+        fecha: newGasto.fecha,
+        categoria: newGasto.categoria,
+        descripcion: newGasto.descripcion || "",
+        monto: Number(newGasto.monto),
+      }).select().single();
+      if (error) throw error;
+      setLocalGastos((prev) => [...prev, data]);
+      setNewGasto({ fecha: fechas[0] || "", categoria: "combustible", descripcion: "", monto: "" });
+      setShowAddGasto(false);
+    } catch (e) {
+      alert("Error saving expense: " + e.message);
+    } finally {
+      setSavingGasto(false);
+    }
+  };
+
+  const handleDeleteGasto = async (id) => {
+    try {
+      const { error } = await supabase.from("gastos_conductor").delete().eq("id", id);
+      if (error) throw error;
+      setLocalGastos((prev) => prev.filter((g) => g.id !== id));
+    } catch (e) {
+      alert("Error deleting expense: " + e.message);
+    }
+  };
 
   const byMethod = useMemo(() => {
     const map = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
@@ -829,39 +877,110 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
             </>
           )}
 
-          {/* Driver Expenses (Gastos del Conductor) */}
-          {gastos.length > 0 && (() => {
-            const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+          {/* Driver Expenses (Gastos del Conductor) — editable */}
+          {(() => {
+            const gastosTotal = localGastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
             return (
               <>
-                <h2 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
-                  <span>⛽</span> Driver Expenses ({gastos.length})
-                </h2>
-                <div className="overflow-x-auto rounded-xl border border-orange-200 mb-6">
-                  <table className="min-w-full text-sm divide-y divide-orange-100">
-                    <thead className="bg-orange-600 text-white">
-                      <tr>
-                        {["Date", "Category", "Description", "Amount"].map((h) => (
-                          <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-orange-50">
-                      {gastos.map((g, i) => (
-                        <tr key={g.id || i} className="hover:bg-orange-50/50">
-                          <td className="px-3 py-2 text-gray-600 text-xs whitespace-nowrap">{formatUS(g.fecha)}</td>
-                          <td className="px-3 py-2 capitalize text-gray-700">{g.categoria || "—"}</td>
-                          <td className="px-3 py-2 text-gray-700">{g.descripcion || "—"}</td>
-                          <td className="px-3 py-2 font-bold text-orange-700">{fmtCurrency(g.monto)}</td>
-                        </tr>
-                      ))}
-                      <tr className="bg-orange-100">
-                        <td colSpan={3} className="px-3 py-2 text-right font-bold text-orange-800 text-sm">Total Expenses</td>
-                        <td className="px-3 py-2 font-extrabold text-orange-900">{fmtCurrency(gastosTotal)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-base font-bold text-gray-700 flex items-center gap-2">
+                    <span>⛽</span> Driver Expenses {localGastos.length > 0 && `(${localGastos.length})`}
+                  </h2>
+                  <button
+                    onClick={() => setShowAddGasto((v) => !v)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-50 border border-orange-200 text-orange-700 hover:bg-orange-100 text-xs font-semibold transition-colors"
+                  >
+                    <Plus size={13} /> Add Expense
+                  </button>
                 </div>
+
+                {/* Add expense form */}
+                {showAddGasto && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4 flex flex-wrap gap-2 items-end">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Date</label>
+                      <input type="date" value={newGasto.fecha}
+                        onChange={(e) => setNewGasto((p) => ({ ...p, fecha: e.target.value }))}
+                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Category</label>
+                      <select value={newGasto.categoria}
+                        onChange={(e) => setNewGasto((p) => ({ ...p, categoria: e.target.value }))}
+                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white">
+                        {EXPENSE_CATEGORIES_VAN.map((c) => (
+                          <option key={c.value} value={c.value}>{c.icon} {c.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex-1 min-w-32">
+                      <label className="block text-xs text-gray-500 mb-1">Description</label>
+                      <input type="text" placeholder="e.g. Shell station"
+                        value={newGasto.descripcion}
+                        onChange={(e) => setNewGasto((p) => ({ ...p, descripcion: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+                    </div>
+                    <div className="w-28">
+                      <label className="block text-xs text-gray-500 mb-1">Amount</label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                        <input type="number" step="0.01" min="0" placeholder="0.00"
+                          value={newGasto.monto}
+                          onChange={(e) => setNewGasto((p) => ({ ...p, monto: e.target.value }))}
+                          className="w-full border border-gray-300 rounded-lg pl-6 pr-2 py-1.5 text-sm font-semibold" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={handleAddGasto} disabled={savingGasto || !newGasto.monto || !newGasto.fecha}
+                        className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors">
+                        {savingGasto ? "Saving…" : "Save"}
+                      </button>
+                      <button onClick={() => setShowAddGasto(false)}
+                        className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm transition-colors">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {localGastos.length === 0 ? (
+                  <div className="text-sm text-gray-400 text-center py-4 bg-gray-50 rounded-xl border border-dashed border-gray-200 mb-6">
+                    No expenses recorded for this closure
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-orange-200 mb-6">
+                    <table className="min-w-full text-sm divide-y divide-orange-100">
+                      <thead className="bg-orange-600 text-white">
+                        <tr>
+                          {["Date", "Category", "Description", "Amount", ""].map((h, i) => (
+                            <th key={i} className="px-3 py-2.5 text-left text-xs font-semibold uppercase">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-orange-50">
+                        {localGastos.map((g, i) => (
+                          <tr key={g.id || i} className="hover:bg-orange-50/50">
+                            <td className="px-3 py-2 text-gray-600 text-xs whitespace-nowrap">{formatUS(g.fecha)}</td>
+                            <td className="px-3 py-2 capitalize text-gray-700">{g.categoria || "—"}</td>
+                            <td className="px-3 py-2 text-gray-700">{g.descripcion || "—"}</td>
+                            <td className="px-3 py-2 font-bold text-orange-700">{fmtCurrency(g.monto)}</td>
+                            <td className="px-2 py-2">
+                              <button onClick={() => handleDeleteGasto(g.id)}
+                                className="p-1 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors">
+                                <X size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="bg-orange-100">
+                          <td colSpan={3} className="px-3 py-2 text-right font-bold text-orange-800 text-sm">Total Expenses</td>
+                          <td className="px-3 py-2 font-extrabold text-orange-900">{fmtCurrency(gastosTotal)}</td>
+                          <td />
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </>
             );
           })()}

@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS gastos_conductor (
   id            UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-  van_id        INTEGER       REFERENCES vans(id) ON DELETE CASCADE,
+  van_id        UUID          REFERENCES vans(id) ON DELETE CASCADE,
   fecha         DATE          NOT NULL,
   categoria     TEXT          NOT NULL DEFAULT 'otro',
   descripcion   TEXT          NOT NULL DEFAULT '',
