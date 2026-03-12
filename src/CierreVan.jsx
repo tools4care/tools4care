@@ -161,6 +161,12 @@ export default function CierreVan() {
   const [gastos, setGastos] = useState([]);
   const [gastosLoading, setGastosLoading] = useState(false);
 
+  // ── Post-close report dialog ──
+  const [showPostCloseDialog, setShowPostCloseDialog] = useState(false);
+  const [reportEmail, setReportEmail] = useState("");
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
   // Cargar gastos existentes cuando cambian las fechas
   useEffect(() => {
     if (!van?.id || !fechasSeleccionadas.length) return;
@@ -554,16 +560,133 @@ useEffect(() => {
       localStorage.removeItem("pre_cierre_fechas");
       localStorage.removeItem("pre_cierre_fecha");
 
-      // Redirigir después de 2 segundos
-      setTimeout(() => {
-        navigate("/cierres");
-      }, 2000);
+      // Show post-close report dialog instead of auto-redirecting
+      setShowPostCloseDialog(true);
     } catch (err) {
       console.error("❌ Error closing dates:", err);
       setMensaje("Error registering closure: " + err.message);
       setTipoMensaje("error");
     } finally {
       setCargando(false);
+    }
+  };
+
+  /* ========================= Email Report ========================= */
+  const handleSendEmailReport = async () => {
+    if (!reportEmail.trim()) return;
+    setSendingEmail(true);
+    try {
+      const totalReal = cashReal + cardReal + transferReal + otherReal;
+      const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+      const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
+
+      const gastosRows = gastosValidos.map((g) => `
+        <tr>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.fecha || ""}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;text-transform:capitalize;">${g.categoria || ""}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.descripcion || ""}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;font-weight:bold;color:#c2410c;text-align:right;">${fmtCurrency(g.monto)}</td>
+        </tr>`).join("");
+
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:650px;margin:0 auto;">
+          <div style="background:linear-gradient(135deg,#1d4ed8,#4f46e5);padding:24px;border-radius:12px 12px 0 0;">
+            <h1 style="color:white;margin:0;font-size:22px;">Van Closure Report</h1>
+            <p style="color:#bfdbfe;margin:6px 0 0;font-size:13px;">
+              ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} &nbsp;·&nbsp;
+              VAN: ${van?.nombre || "—"} &nbsp;·&nbsp;
+              By: ${usuario?.nombre || "—"}
+            </p>
+          </div>
+
+          <div style="background:#f9fafb;padding:20px;border:1px solid #e5e7eb;border-top:none;">
+
+            <h2 style="font-size:15px;color:#374151;margin:0 0 10px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">Payment Summary</h2>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+              <thead>
+                <tr style="background:#1d4ed8;color:white;">
+                  <th style="padding:8px;text-align:left;font-size:12px;">Method</th>
+                  <th style="padding:8px;text-align:right;font-size:12px;">System</th>
+                  <th style="padding:8px;text-align:right;font-size:12px;">Real</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">💵 Cash</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(totales.totalEfectivo)}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(cashReal)}</td></tr>
+                <tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">💳 Card</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(totales.totalTarjeta)}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(cardReal)}</td></tr>
+                <tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">🏦 Transfer</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(totales.totalTransferencia)}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtCurrency(transferReal)}</td></tr>
+                <tr style="font-weight:bold;background:#eff6ff;">
+                  <td style="padding:8px;">TOTAL</td>
+                  <td style="padding:8px;text-align:right;">${fmtCurrency(totales.totalCaja)}</td>
+                  <td style="padding:8px;text-align:right;">${fmtCurrency(totalReal)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            ${gastosValidos.length > 0 ? `
+            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #fed7aa;padding-bottom:6px;">⛽ Driver Expenses</h2>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+              <thead>
+                <tr style="background:#ea580c;color:white;">
+                  <th style="padding:8px;text-align:left;font-size:12px;">Date</th>
+                  <th style="padding:8px;text-align:left;font-size:12px;">Category</th>
+                  <th style="padding:8px;text-align:left;font-size:12px;">Description</th>
+                  <th style="padding:8px;text-align:right;font-size:12px;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${gastosRows}
+                <tr style="font-weight:bold;background:#ffedd5;">
+                  <td colspan="3" style="padding:8px;text-align:right;color:#c2410c;">Total Expenses</td>
+                  <td style="padding:8px;text-align:right;color:#c2410c;">${fmtCurrency(gastosTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px;margin-bottom:16px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px;color:#6b7280;font-size:13px;">
+                <span>Gross Cash Expected:</span><span>${fmtCurrency(totales.totalEfectivo)}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px;color:#c2410c;font-size:13px;">
+                <span>– Driver Expenses:</span><span>–${fmtCurrency(gastosTotal)}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px;border-top:1px solid #fed7aa;padding-top:8px;">
+                <span>= Net Cash to Turn In:</span><span style="color:#16a34a;">${fmtCurrency(totales.efectivoNeto)}</span>
+              </div>
+            </div>
+            ` : ""}
+
+            ${observaciones.trim() ? `
+            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">📝 Notes</h2>
+            <div style="background:white;border:1px solid #e5e7eb;border-radius:8px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:16px;">${observaciones}</div>
+            ` : ""}
+
+            <div style="background:${totales.diferencia === 0 ? "#f0fdf4" : "#fef2f2"};border:1px solid ${totales.diferencia === 0 ? "#bbf7d0" : "#fecaca"};border-radius:8px;padding:12px;">
+              <div style="font-weight:bold;color:${totales.diferencia === 0 ? "#166534" : "#991b1b"};font-size:14px;">
+                ${totales.diferencia === 0 ? "✅ Balanced — No discrepancy" : `⚠️ Discrepancy: ${fmtCurrency(totales.diferencia)}`}
+              </div>
+            </div>
+          </div>
+
+          <div style="background:#f3f4f6;padding:12px;border-radius:0 0 12px 12px;text-align:center;font-size:11px;color:#9ca3af;">
+            Generated ${new Date().toLocaleString()} &nbsp;·&nbsp; Tools4Care Financial System
+          </div>
+        </div>
+      `;
+
+      const { data, error } = await supabase.functions.invoke("send-order-email", {
+        body: {
+          to: reportEmail.trim(),
+          subject: `Van Closure Report — ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} — ${van?.nombre || "VAN"}`,
+          html,
+        },
+      });
+
+      if (error || !data?.ok) throw new Error(error?.message || data?.error || "Failed to send email");
+      setEmailSent(true);
+    } catch (e) {
+      console.error("Email error:", e);
+      alert("Error sending email: " + e.message);
+    } finally {
+      setSendingEmail(false);
     }
   };
 
@@ -774,6 +897,44 @@ useEffect(() => {
           fontStyle: "bold",
         },
       });
+
+      // Driver Expenses
+      const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+      if (gastosValidos.length > 0) {
+        const gastosY = doc.lastAutoTable.finalY + 10;
+        doc.setFillColor(234, 88, 12);
+        doc.rect(14, gastosY, 182, 10, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(12);
+        doc.setFont("helvetica", "bold");
+        doc.text("Driver Expenses", 14, gastosY + 8);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0, 0, 0);
+
+        const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
+        const gastosTableBody = gastosValidos.map((g) => [
+          g.fecha || fechasSeleccionadas[0],
+          g.categoria || "otro",
+          g.descripcion || "",
+          fmtCurrency(g.monto),
+        ]);
+        gastosTableBody.push(["", "", "TOTAL", fmtCurrency(gastosTotal)]);
+
+        autoTable(doc, {
+          startY: gastosY + 12,
+          head: [["Date", "Category", "Description", "Amount"]],
+          body: gastosTableBody,
+          theme: "grid",
+          styles: { fontSize: 8 },
+          headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+          didParseCell: (data) => {
+            if (data.row.index === gastosTableBody.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [255, 237, 213];
+            }
+          },
+        });
+      }
 
       // Notes
       if (observaciones) {
@@ -2119,6 +2280,105 @@ useEffect(() => {
       </div>
 
       
+
+      {/* Post-Close Report Dialog */}
+      {showPostCloseDialog && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-t-2xl px-6 py-5 text-center">
+              <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                <CheckCircle size={28} className="text-white" />
+              </div>
+              <h2 className="text-white text-xl font-bold">Closure Confirmed!</h2>
+              <p className="text-green-100 text-sm mt-1">
+                {fechasSeleccionadas.length} date{fechasSeleccionadas.length !== 1 ? "s" : ""} successfully closed
+              </p>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* Summary pills */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                  <p className="text-xs text-green-600 font-medium">Cash (net)</p>
+                  <p className="text-lg font-bold text-green-800">{fmtCurrency(totales.efectivoNeto)}</p>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+                  <p className="text-xs text-blue-600 font-medium">Total in System</p>
+                  <p className="text-lg font-bold text-blue-800">{fmtCurrency(totales.totalCaja)}</p>
+                </div>
+                {totales.gastosTotal > 0 && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+                    <p className="text-xs text-orange-600 font-medium">Expenses</p>
+                    <p className="text-lg font-bold text-orange-800">–{fmtCurrency(totales.gastosTotal)}</p>
+                  </div>
+                )}
+                <div className={`border rounded-xl p-3 text-center ${totales.diferencia === 0 ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-200"}`}>
+                  <p className={`text-xs font-medium ${totales.diferencia === 0 ? "text-emerald-600" : "text-red-600"}`}>Discrepancy</p>
+                  <p className={`text-lg font-bold ${totales.diferencia === 0 ? "text-emerald-800" : "text-red-800"}`}>
+                    {totales.diferencia === 0 ? "✓ $0.00" : fmtCurrency(totales.diferencia)}
+                  </p>
+                </div>
+              </div>
+
+              {/* PDF download */}
+              <button
+                onClick={handleGenerarPDF}
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors shadow-md"
+              >
+                <Download size={18} />
+                Download PDF Report
+              </button>
+
+              {/* Email section */}
+              <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <Send size={15} />
+                  Send Report by Email
+                </div>
+                {emailSent ? (
+                  <div className="flex items-center gap-2 text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2.5 text-sm font-medium">
+                    <CheckCircle size={15} />
+                    Report sent successfully!
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type="email"
+                      value={reportEmail}
+                      onChange={(e) => setReportEmail(e.target.value)}
+                      placeholder="admin@example.com"
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      onKeyDown={(e) => e.key === "Enter" && handleSendEmailReport()}
+                    />
+                    <button
+                      onClick={handleSendEmailReport}
+                      disabled={sendingEmail || !reportEmail.trim()}
+                      className="bg-gray-900 hover:bg-black text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-1.5 disabled:opacity-50 transition-colors shrink-0"
+                    >
+                      {sendingEmail ? (
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                      ) : (
+                        <Send size={14} />
+                      )}
+                      Send
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Navigate to history */}
+              <button
+                onClick={() => navigate("/cierres")}
+                className="w-full border border-gray-300 text-gray-700 hover:bg-gray-50 py-2.5 rounded-xl font-medium text-sm transition-colors"
+              >
+                Go to Closure History →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Cash breakdown modal */}
 
