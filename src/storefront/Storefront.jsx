@@ -142,7 +142,8 @@ function CartDrawer({ open, onClose }) {
     optimisticSet(productoId, next);
     try {
       await updateCartItemQty(productoId, next);
-      await refresh();
+      // No refresh() — the optimistic update already reflects the correct qty/subtotal.
+      // Calling refresh() was causing a loading flicker on every quantity change.
     } catch (e) {
       setLines(prev);
       alert(e?.message || "Could not update quantity.");
