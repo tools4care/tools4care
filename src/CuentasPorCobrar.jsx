@@ -15,6 +15,9 @@ import {
   Legend,
   BarChart,
   Bar,
+  ReferenceLine,
+  ComposedChart,
+  Cell,
 } from "recharts";
 
 const PAGE_SIZE_DEFAULT = 25;
@@ -488,59 +491,171 @@ function CustomerHistoryModal({ cliente, onClose }) {
                     </div>
 
                     <div className="bg-white border-2 border-gray-200 rounded-xl p-4 sm:p-6">
-                      <h3 className="font-bold text-gray-900 mb-4 text-lg flex items-center gap-2">
-                        <IconChart />
-                        Balance Evolution
-                      </h3>
+                      <div className="flex items-start justify-between mb-4 gap-2 flex-wrap">
+                        <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                          <IconChart />
+                          Balance Evolution
+                        </h3>
+                        {Number(cliente?.limite_politica) > 0 && (
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200 whitespace-nowrap">
+                            <svg width="14" height="6" viewBox="0 0 14 6"><line x1="0" y1="3" x2="14" y2="3" stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 2"/></svg>
+                            Limit {fmt(cliente.limite_politica)}
+                          </div>
+                        )}
+                      </div>
                       <div className="h-72 sm:h-80">
                         <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={historyData.monthlyBalance}>
+                          <AreaChart data={historyData.monthlyBalance} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                             <defs>
-                              <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#ef4444" stopOpacity={0.8}/>
-                                <stop offset="95%" stopColor="#ef4444" stopOpacity={0.1}/>
+                              <linearGradient id="gradBalance" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.75}/>
+                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0.04}/>
+                              </linearGradient>
+                              <linearGradient id="gradPayments" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%"  stopColor="#10b981" stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
                               </linearGradient>
                             </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                            <XAxis dataKey="month" style={{ fontSize: '11px' }} />
-                            <YAxis style={{ fontSize: '11px' }} />
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                            <XAxis
+                              dataKey="month"
+                              tick={{ fontSize: 11, fill: '#9ca3af' }}
+                              axisLine={false}
+                              tickLine={false}
+                            />
+                            <YAxis
+                              tick={{ fontSize: 11, fill: '#9ca3af' }}
+                              axisLine={false}
+                              tickLine={false}
+                              tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v}`}
+                              width={54}
+                            />
                             <Tooltip
                               contentStyle={{
-                                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                                border: 'none',
+                                backgroundColor: '#fff',
+                                border: '1px solid #e5e7eb',
                                 borderRadius: '12px',
-                                boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
-                                padding: '12px',
+                                boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+                                padding: '10px 14px',
+                                fontSize: '12px',
                               }}
-                              formatter={(value) => [currency(value), 'Balance']}
+                              labelStyle={{ fontWeight: 700, color: '#111827', marginBottom: '6px', fontSize: '13px' }}
+                              formatter={(value, name) => {
+                                if (name === 'balance')  return [currency(value), '💜 Outstanding Balance'];
+                                if (name === 'payments') return [currency(value), '💚 Monthly Payments'];
+                                return [currency(value), name];
+                              }}
                             />
-                            <Area type="monotone" dataKey="balance" stroke="#ef4444" fill="url(#colorBalance)" strokeWidth={2} />
+                            <Legend
+                              iconType="circle"
+                              iconSize={8}
+                              formatter={(name) => name === 'balance' ? 'Outstanding Balance' : 'Monthly Payments'}
+                              wrapperStyle={{ paddingTop: '14px', fontSize: '12px', color: '#6b7280' }}
+                            />
+                            {Number(cliente?.limite_politica) > 0 && (
+                              <ReferenceLine
+                                y={Number(cliente.limite_politica)}
+                                stroke="#f59e0b"
+                                strokeDasharray="6 4"
+                                strokeWidth={2}
+                                label={{ value: 'Credit Limit', fill: '#d97706', fontSize: 10, fontWeight: 600, position: 'insideTopRight', offset: 6 }}
+                              />
+                            )}
+                            <Area
+                              type="monotone"
+                              dataKey="payments"
+                              name="payments"
+                              stroke="#10b981"
+                              strokeWidth={1.5}
+                              fill="url(#gradPayments)"
+                              dot={false}
+                              activeDot={{ r: 4, fill: '#10b981', stroke: '#fff', strokeWidth: 2 }}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="balance"
+                              name="balance"
+                              stroke="#6366f1"
+                              strokeWidth={2.5}
+                              fill="url(#gradBalance)"
+                              dot={{ r: 3.5, fill: '#6366f1', stroke: '#fff', strokeWidth: 2 }}
+                              activeDot={{ r: 6, fill: '#6366f1', stroke: '#fff', strokeWidth: 2 }}
+                            />
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
                     </div>
 
                     <div className="bg-white border-2 border-gray-200 rounded-xl p-4 sm:p-6">
-                      <h3 className="font-bold text-gray-900 mb-4 text-lg">Purchases vs Payments</h3>
+                      <div className="mb-4">
+                        <h3 className="font-bold text-gray-900 text-lg">Monthly Cash Flow</h3>
+                        <p className="text-xs text-gray-400 mt-0.5">Purchases billed vs payments collected each month</p>
+                      </div>
                       <div className="h-72 sm:h-80">
                         <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={historyData.monthlyPurchases}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                            <XAxis dataKey="month" style={{ fontSize: '11px' }} />
-                            <YAxis style={{ fontSize: '11px' }} />
+                          <ComposedChart data={historyData.monthlyPurchases} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="gradPurchasesBar" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%"   stopColor="#3b82f6" stopOpacity={0.9}/>
+                                <stop offset="100%" stopColor="#6366f1" stopOpacity={0.7}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                            <XAxis
+                              dataKey="month"
+                              tick={{ fontSize: 11, fill: '#9ca3af' }}
+                              axisLine={false}
+                              tickLine={false}
+                            />
+                            <YAxis
+                              tick={{ fontSize: 11, fill: '#9ca3af' }}
+                              axisLine={false}
+                              tickLine={false}
+                              tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v}`}
+                              width={54}
+                            />
                             <Tooltip
                               contentStyle={{
-                                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                                border: 'none',
+                                backgroundColor: '#fff',
+                                border: '1px solid #e5e7eb',
                                 borderRadius: '12px',
-                                boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
+                                boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+                                padding: '10px 14px',
+                                fontSize: '12px',
                               }}
-                              formatter={(value) => currency(value)}
+                              labelStyle={{ fontWeight: 700, color: '#111827', marginBottom: '6px', fontSize: '13px' }}
+                              content={({ active, payload, label }) => {
+                                if (!active || !payload?.length) return null;
+                                const p = payload[0]?.payload || {};
+                                const net = (p.purchases || 0) - (p.payments || 0);
+                                return (
+                                  <div style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', boxShadow: '0 8px 30px rgba(0,0,0,0.12)', padding: '10px 14px', fontSize: '12px' }}>
+                                    <div style={{ fontWeight: 700, color: '#111827', marginBottom: '8px', fontSize: '13px' }}>{label}</div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '4px' }}>
+                                      <span style={{ color: '#6b7280' }}>🛒 Purchases</span>
+                                      <span style={{ fontWeight: 600, color: '#3b82f6' }}>{currency(p.purchases || 0)}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '4px' }}>
+                                      <span style={{ color: '#6b7280' }}>💚 Payments</span>
+                                      <span style={{ fontWeight: 600, color: '#10b981' }}>{currency(p.payments || 0)}</span>
+                                    </div>
+                                    <div style={{ borderTop: '1px solid #e5e7eb', marginTop: '6px', paddingTop: '6px', display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                                      <span style={{ color: '#6b7280' }}>{net > 0 ? '📈 Net owed' : '✅ Net paid'}</span>
+                                      <span style={{ fontWeight: 700, color: net > 0 ? '#f59e0b' : '#10b981' }}>{currency(Math.abs(net))}</span>
+                                    </div>
+                                  </div>
+                                );
+                              }}
                             />
-                            <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                            <Bar dataKey="purchases" fill="#3b82f6" name="Purchases" radius={[8, 8, 0, 0]} />
-                            <Bar dataKey="payments" fill="#10b981" name="Payments" radius={[8, 8, 0, 0]} />
-                          </BarChart>
+                            <Legend
+                              iconType="square"
+                              iconSize={10}
+                              formatter={(name) => name === 'purchases' ? 'Purchases' : name === 'payments' ? 'Payments' : name}
+                              wrapperStyle={{ paddingTop: '14px', fontSize: '12px', color: '#6b7280' }}
+                            />
+                            <Bar dataKey="purchases" name="purchases" fill="url(#gradPurchasesBar)" radius={[6, 6, 0, 0]} maxBarSize={44} />
+                            <Bar dataKey="payments" name="payments" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={44} />
+                          </ComposedChart>
                         </ResponsiveContainer>
                       </div>
                     </div>
