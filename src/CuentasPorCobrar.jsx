@@ -111,6 +111,28 @@ function fmt(n) {
     maximumFractionDigits: 2,
   })}`;
 }
+function fmtDate(raw) {
+  if (!raw) return "—";
+  return dayjs(raw).format("MMM D, YYYY");
+}
+function parseAddr(raw) {
+  if (!raw) return "";
+  try {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (obj && typeof obj === "object") {
+      return [obj.calle, obj.ciudad, obj.estado, obj.zip].filter(Boolean).join(", ");
+    }
+  } catch {}
+  return String(raw);
+}
+function scoreColor(score) {
+  const s = Number(score || 0);
+  if (s >= 750) return { bg: "bg-green-100", text: "text-green-800", border: "border-green-300" };
+  if (s >= 650) return { bg: "bg-blue-100",  text: "text-blue-800",  border: "border-blue-300"  };
+  if (s >= 550) return { bg: "bg-yellow-100",text: "text-yellow-800",border: "border-yellow-300"};
+  if (s >= 400) return { bg: "bg-orange-100",text: "text-orange-800",border: "border-orange-300"};
+  return              { bg: "bg-red-100",   text: "text-red-800",   border: "border-red-300"   };
+}
 const normalizePhone = (raw) => {
   if (!raw) return "";
   const digits = String(raw).replace(/\D/g, "");
@@ -289,7 +311,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
         .reverse();
 
       const paymentHistory = paidSales.map(v => ({
-        date: dayjs(v.fecha).format('MM/DD/YYYY'),
+        date: fmtDate(v.fecha),
         amount: Number(v.total_pagado || v.total || 0),
         method: v.estado_pago === 'pagado' ? 'Full Payment' : 'Partial Payment',
       }));
@@ -1341,140 +1363,175 @@ export default function CuentasPorCobrar() {
 
           {/* MOBILE: Cards */}
           <div className="block lg:hidden space-y-3">
-            {!loading && rows.map((r) => (
-              <div key={r.cliente_id} className="bg-white border-2 border-gray-200 rounded-xl shadow-lg overflow-hidden">
-                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4">
-                  <div className="font-bold text-lg truncate">{r.cliente_nombre}</div>
-                  <div className="text-sm text-blue-100 truncate">#{r.cliente_id?.slice?.(0, 8)}...</div>
-                  {r.nombre_negocio && <div className="text-sm text-blue-100 mt-1 truncate">🏪 {r.nombre_negocio}</div>}
-                  {r.direccion && <div className="text-xs text-blue-200 mt-0.5 truncate">📍 {r.direccion}</div>}
-                  {r.telefono && <div className="text-xs text-blue-200 mt-0.5 truncate">📞 {r.telefono}</div>}
-                </div>
-
-                <div className="p-4 space-y-3">
-                  {/* Metrics */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                      <div className="text-xs text-red-600 font-semibold">Balance</div>
-                      <div className="font-bold text-lg text-red-700 truncate">{fmt(r.saldo)}</div>
+            {!loading && rows.map((r) => {
+              const sc = scoreColor(r.score_base);
+              const usePct = r.limite_politica > 0 ? Math.min(100, Math.round((r.saldo / r.limite_politica) * 100)) : 0;
+              const addrStr = parseAddr(r.direccion);
+              return (
+                <div key={r.cliente_id} className="bg-white border border-gray-200 rounded-2xl shadow-md overflow-hidden">
+                  {/* Header */}
+                  <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 pt-4 pb-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-base leading-tight truncate">{r.cliente_nombre}</div>
+                        {r.nombre_negocio && <div className="text-xs text-blue-100 mt-0.5 truncate">🏪 {r.nombre_negocio}</div>}
+                      </div>
+                      <span className={`flex-shrink-0 text-xs font-bold px-2 py-1 rounded-full border ${sc.bg} ${sc.text} ${sc.border}`}>
+                        {Number(r.score_base ?? 0)}
+                      </span>
                     </div>
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <div className="text-xs text-blue-600 font-semibold">Score</div>
-                      <div className="font-bold text-lg text-blue-700">{Number(r.score_base ?? 0)}</div>
-                    </div>
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 font-semibold">Limit</div>
-                      <div className="font-bold text-lg text-gray-700 truncate">{fmt(r.limite_politica)}</div>
-                    </div>
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                      <div className="text-xs text-green-600 font-semibold">Available</div>
-                      <div className="font-bold text-lg text-green-700 truncate">{fmt(r.credito_disponible)}</div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                      {r.telefono && <span className="text-xs text-blue-100">📞 {r.telefono}</span>}
+                      {addrStr && <span className="text-xs text-blue-100 truncate">📍 {addrStr}</span>}
                     </div>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex flex-col gap-2">
+                  <div className="px-4 py-3 space-y-3">
+                    {/* Credit usage bar */}
+                    <div>
+                      <div className="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>Credit used</span>
+                        <span className="font-semibold">{usePct}%</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${usePct >= 90 ? "bg-red-500" : usePct >= 70 ? "bg-amber-400" : "bg-emerald-500"}`}
+                          style={{ width: `${usePct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Metrics */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-red-50 border border-red-100 rounded-xl p-2.5 text-center">
+                        <div className="text-[10px] text-red-500 font-semibold uppercase mb-0.5">Balance</div>
+                        <div className="font-bold text-sm text-red-700">{fmt(r.saldo)}</div>
+                      </div>
+                      <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5 text-center">
+                        <div className="text-[10px] text-gray-500 font-semibold uppercase mb-0.5">Limit</div>
+                        <div className="font-bold text-sm text-gray-700">{fmt(r.limite_politica)}</div>
+                      </div>
+                      <div className="bg-green-50 border border-green-100 rounded-xl p-2.5 text-center">
+                        <div className="text-[10px] text-green-500 font-semibold uppercase mb-0.5">Available</div>
+                        <div className="font-bold text-sm text-green-700">{fmt(r.credito_disponible)}</div>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
                     <div className="flex gap-2">
                       <button
-                        className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-3 py-2.5 rounded-lg text-sm font-semibold shadow-md"
+                        className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm"
                         onClick={() => { setSelected(r); setOpenReminder(true); }}
                       >
                         💬 Reminder
                       </button>
                       <button
-                        className="flex-1 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-3 py-2.5 rounded-lg text-sm font-semibold shadow-md"
+                        className="flex-1 bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm"
                         onClick={() => { setSelected(r); setOpenHistory(true); }}
                       >
                         📊 History
                       </button>
+                      {adminMode && (
+                        <button
+                          className="bg-blue-600 text-white px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm"
+                          onClick={() => openEditor(r)}
+                        >
+                          ✏️
+                        </button>
+                      )}
                     </div>
-                    {adminMode && (
-                      <button
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white px-3 py-2.5 rounded-lg text-sm font-semibold shadow-md"
-                        onClick={() => openEditor(r)}
-                      >
-                        ✏️ Edit Limit
-                      </button>
-                    )}
-                  </div>
 
-                  {r.limite_manual != null && (
-                    <div className="flex items-center gap-1 text-xs">
-                      <span className="px-2 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-semibold">
+                    {r.limite_manual != null && (
+                      <span className="inline-flex text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-semibold">
                         ⚠️ Manual override
                       </span>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* DESKTOP: Table */}
-          <div className="hidden lg:block bg-white border-2 border-gray-200 rounded-xl overflow-hidden shadow-xl">
+          <div className="hidden lg:block bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-xl">
             <div className="overflow-x-auto">
               <table className="min-w-full">
                 <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
                   <tr>
-                    <th className="text-left px-4 py-3 text-xs font-bold text-gray-700 uppercase">Customer</th>
-                    <th className="text-right px-4 py-3 text-xs font-bold text-gray-700 uppercase">Balance</th>
-                    <th className="text-center px-4 py-3 text-xs font-bold text-gray-700 uppercase">Score</th>
-                    <th className="text-right px-4 py-3 text-xs font-bold text-gray-700 uppercase">Limit</th>
-                    <th className="text-right px-4 py-3 text-xs font-bold text-gray-700 uppercase">Available</th>
-                    <th className="px-4 py-3 text-xs font-bold text-gray-700 uppercase text-center">Actions</th>
+                    <th className="text-left px-5 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Customer</th>
+                    <th className="text-right px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Balance</th>
+                    <th className="text-center px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Score</th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Credit Usage</th>
+                    <th className="text-right px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Available</th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider text-center">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {!loading && rows.map((r) => (
-                    <tr key={r.cliente_id} className="hover:bg-blue-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-gray-900">{r.cliente_nombre}</div>
-                        <div className="text-xs text-gray-500">#{r.cliente_id?.slice?.(0, 8)}...</div>
-                        {r.nombre_negocio && <div className="text-xs text-gray-600 mt-0.5">🏪 {r.nombre_negocio}</div>}
-                        {r.direccion && <div className="text-xs text-gray-500 mt-0.5">📍 {r.direccion}</div>}
-                        {r.telefono && <div className="text-xs text-gray-500 mt-0.5">📞 {r.telefono}</div>}
-                        <div className="mt-1 flex items-center gap-2">
-                          {adminMode && (
+                <tbody className="divide-y divide-gray-100">
+                  {!loading && rows.map((r) => {
+                    const sc = scoreColor(r.score_base);
+                    const usePct = r.limite_politica > 0 ? Math.min(100, Math.round((r.saldo / r.limite_politica) * 100)) : 0;
+                    const addrStr = parseAddr(r.direccion);
+                    return (
+                      <tr key={r.cliente_id} className="hover:bg-blue-50/50 transition-colors">
+                        <td className="px-5 py-3">
+                          <div className="font-semibold text-gray-900 leading-tight">{r.cliente_nombre}</div>
+                          {r.nombre_negocio && <div className="text-xs text-gray-500 mt-0.5">🏪 {r.nombre_negocio}</div>}
+                          {addrStr && <div className="text-xs text-gray-400 mt-0.5">📍 {addrStr}</div>}
+                          {r.telefono && <div className="text-xs text-gray-400 mt-0.5">📞 {r.telefono}</div>}
+                          <div className="mt-1 flex items-center gap-2">
+                            {adminMode && (
+                              <button
+                                className="text-xs px-2 py-0.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 font-semibold"
+                                onClick={() => openEditor(r)}
+                              >
+                                ✏️ Edit
+                              </button>
+                            )}
+                            {r.limite_manual != null && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-semibold">
+                                override
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold text-red-600 text-base">{fmt(r.saldo)}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold border ${sc.bg} ${sc.text} ${sc.border}`}>
+                            {Number(r.score_base ?? 0)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 w-40">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${usePct >= 90 ? "bg-red-500" : usePct >= 70 ? "bg-amber-400" : "bg-emerald-500"}`}
+                                style={{ width: `${usePct}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-gray-500 font-medium w-8 text-right">{usePct}%</span>
+                          </div>
+                          <div className="text-xs text-gray-400 mt-0.5 text-right">{fmt(r.limite_politica)} limit</div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold text-green-600">{fmt(r.credito_disponible)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-1.5 justify-center">
                             <button
-                              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 font-semibold"
-                              onClick={() => openEditor(r)}
+                              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-xs font-semibold shadow-sm"
+                              onClick={() => { setSelected(r); setOpenReminder(true); }}
                             >
-                              ✏️ Edit
+                              💬 Reminder
                             </button>
-                          )}
-                          {r.limite_manual != null && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-semibold">
-                              override
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right font-bold text-red-600">{fmt(r.saldo)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className="inline-flex px-3 py-1 rounded-full text-sm font-bold bg-blue-100 text-blue-800">
-                          {Number(r.score_base ?? 0)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold">{fmt(r.limite_politica)}</td>
-                      <td className="px-4 py-3 text-right font-bold text-green-600">{fmt(r.credito_disponible)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2 justify-center">
-                          <button
-                            className="px-3 py-2 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-sm font-semibold shadow-md"
-                            onClick={() => { setSelected(r); setOpenReminder(true); }}
-                          >
-                            💬 Reminder
-                          </button>
-                          <button
-                            className="px-3 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-sm font-semibold shadow-md"
-                            onClick={() => { setSelected(r); setOpenHistory(true); }}
-                          >
-                            📊 History
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            <button
+                              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-semibold shadow-sm"
+                              onClick={() => { setSelected(r); setOpenHistory(true); }}
+                            >
+                              📊 History
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
