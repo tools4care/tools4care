@@ -246,92 +246,162 @@ function CustomerHistoryModal({ cliente, onClose }) {
 
   async function loadHistoryData() {
     if (!cliente?.cliente_id) return;
-    
     setLoading(true);
     try {
       const sixMonthsAgo = dayjs().subtract(6, 'month').format('YYYY-MM-DD');
-      
-      const { data: ventas } = await supabase
-        .from('ventas')
-        .select('fecha, total, estado_pago, total_pagado')
-        .eq('cliente_id', cliente.cliente_id)
-        .gte('fecha', sixMonthsAgo)
-        .order('fecha', { ascending: true });
 
-      console.log('Ventas cargadas:', ventas);
+      // ── Fetch ventas AND direct pagos in parallel ──────────────────────────
+      const [ventasRes, pagosRes] = await Promise.all([
+        supabase
+          .from('ventas')
+          .select('id, fecha, total, estado_pago, total_pagado, metodo_pago')
+          .eq('cliente_id', cliente.cliente_id)
+          .gte('fecha', sixMonthsAgo)
+          .order('fecha', { ascending: true }),
+        supabase
+          .from('pagos')
+          .select('id, fecha_pago, monto, metodo_pago')
+          .eq('cliente_id', cliente.cliente_id)
+          .gte('fecha_pago', sixMonthsAgo)
+          .order('fecha_pago', { ascending: true }),
+      ]);
 
-      const monthlyData = {};
+      const ventas = ventasRes.data || [];
+      const pagos  = pagosRes.data  || [];
+
+      // ── Build monthly buckets ──────────────────────────────────────────────
       const last6Months = [];
-      
+      const monthlyData = {};
       for (let i = 5; i >= 0; i--) {
-        const month = dayjs().subtract(i, 'month').format('YYYY-MM');
-        last6Months.push(month);
-        monthlyData[month] = {
-          month: dayjs().subtract(i, 'month').format('MMM YYYY'),
-          balance: 0,
-          purchases: 0,
-          payments: 0,
-          transactions: 0,
+        const key = dayjs().subtract(i, 'month').format('YYYY-MM');
+        last6Months.push(key);
+        monthlyData[key] = {
+          month: dayjs().subtract(i, 'month').format('MMM YY'),
+          purchases: 0, payments: 0, transactions: 0, directPayments: 0,
         };
       }
 
-      (ventas || []).forEach(v => {
-        const month = dayjs(v.fecha).format('YYYY-MM');
-        if (monthlyData[month]) {
-          monthlyData[month].purchases += Number(v.total || 0);
-          monthlyData[month].payments += Number(v.total_pagado || 0);
-          monthlyData[month].transactions += 1;
+      ventas.forEach(v => {
+        const key = dayjs(v.fecha).format('YYYY-MM');
+        if (monthlyData[key]) {
+          monthlyData[key].purchases  += Number(v.total        || 0);
+          monthlyData[key].payments   += Number(v.total_pagado || 0);
+          monthlyData[key].transactions += 1;
+        }
+      });
+      pagos.forEach(p => {
+        const key = dayjs(p.fecha_pago).format('YYYY-MM');
+        if (monthlyData[key]) {
+          monthlyData[key].payments       += Number(p.monto || 0);
+          monthlyData[key].directPayments += Number(p.monto || 0);
         }
       });
 
-      let runningBalance = 0;
-      const monthlyBalance = last6Months.map(month => {
-        const data = monthlyData[month];
-        runningBalance += data.purchases - data.payments;
-        return {
-          ...data,
-          balance: Math.max(0, runningBalance),
-        };
+      // ── Monthly balance trend ──────────────────────────────────────────────
+      let running = 0;
+      const monthlyBalance = last6Months.map(key => {
+        const d = monthlyData[key];
+        running += d.purchases - d.payments;
+        return { ...d, balance: Math.max(0, running) };
       });
 
-      const baseScore = Number(cliente.score_base || 500);
-      const scoreHistory = last6Months.map((month, idx) => {
-        const data = monthlyData[month];
-        const paymentRate = data.purchases > 0 ? data.payments / data.purchases : 0;
-        const variance = (paymentRate - 0.5) * 40;
-        return {
-          month: data.month,
-          score: Math.min(1000, Math.max(0, baseScore + variance + (Math.random() * 20 - 10))),
-        };
+      // ── Real Score Factors ─────────────────────────────────────────────────
+      const total   = ventas.length;
+      const pagadas = ventas.filter(v => v.estado_pago === 'pagado').length;
+      const parciales = ventas.filter(v =>
+        v.estado_pago !== 'pagado' && Number(v.total_pagado) > 0
+      ).length;
+      const sinPago = ventas.filter(v => !Number(v.total_pagado)).length;
+
+      const payHistPct = total > 0 ? Math.round((pagadas / total) * 100) : 0;
+      const utilPct    = Number(cliente.limite_politica) > 0
+        ? Math.min(100, Math.round((Number(cliente.saldo) / Number(cliente.limite_politica)) * 100))
+        : 0;
+      const monthsWithAct = last6Months.filter(k => monthlyData[k].transactions > 0).length;
+      const monthsWithPay = last6Months.filter(k => monthlyData[k].payments > 0).length;
+      const activityPct   = Math.round((monthsWithAct / 6) * 100);
+      const consistPct    = Math.round((monthsWithPay / 6) * 100);
+
+      const scoreFactors = [
+        { label: 'Payment History',    value: payHistPct,          color: 'bg-green-500',  desc: `${pagadas} of ${total} invoices fully paid` },
+        { label: 'Credit Utilization', value: Math.max(0, 100 - utilPct), color: 'bg-blue-500', desc: `${utilPct}% of limit currently used` },
+        { label: 'Purchase Activity',  value: activityPct,         color: 'bg-purple-500', desc: `Active in ${monthsWithAct} of 6 months` },
+        { label: 'Payment Consistency',value: consistPct,          color: 'bg-indigo-500', desc: `Payments in ${monthsWithPay} of 6 months` },
+      ];
+
+      // ── Combined payment list (ventas + pagos directos) ───────────────────
+      const allPayments = [];
+      ventas.filter(v => Number(v.total_pagado) > 0).forEach(v => {
+        allPayments.push({
+          date:   fmtDate(v.fecha),
+          rawDate: v.fecha,
+          amount: Number(v.total_pagado),
+          total:  Number(v.total),
+          method: v.metodo_pago || '—',
+          type:   v.estado_pago === 'pagado' ? 'full' : 'partial',
+        });
       });
+      pagos.forEach(p => {
+        allPayments.push({
+          date:    fmtDate(p.fecha_pago),
+          rawDate: p.fecha_pago,
+          amount:  Number(p.monto),
+          total:   null,
+          method:  p.metodo_pago || '—',
+          type:    'direct',
+        });
+      });
+      allPayments.sort((a, b) => new Date(b.rawDate) - new Date(a.rawDate));
 
-      const paidSales = (ventas || [])
-        .filter(v => v.estado_pago === 'pagado' && Number(v.total_pagado || 0) > 0)
-        .slice(-10)
-        .reverse();
+      // ── Aggregate stats ────────────────────────────────────────────────────
+      const totalPurchases6m = ventas.reduce((s, v) => s + Number(v.total || 0), 0);
+      const totalPaid6m      = ventas.reduce((s, v) => s + Number(v.total_pagado || 0), 0)
+                             + pagos.reduce((s, p)  => s + Number(p.monto || 0), 0);
+      const avgPurchase      = total > 0 ? totalPurchases6m / total : 0;
+      const purchaseFreq     = +(total / 6).toFixed(1);
+      const recent3  = last6Months.slice(3).reduce((s, k) => s + monthlyData[k].purchases, 0);
+      const prev3    = last6Months.slice(0, 3).reduce((s, k) => s + monthlyData[k].purchases, 0);
+      const seasonalTrend = prev3 > 0 ? Math.round(((recent3 - prev3) / prev3) * 100) : 0;
 
-      const paymentHistory = paidSales.map(v => ({
-        date: fmtDate(v.fecha),
-        amount: Number(v.total_pagado || v.total || 0),
-        method: v.estado_pago === 'pagado' ? 'Full Payment' : 'Partial Payment',
-      }));
+      // ── Dynamic recommendations ───────────────────────────────────────────
+      const recs = [];
+      if (payHistPct >= 80)
+        recs.push({ icon: '✅', text: `Strong payment record — ${payHistPct}% of invoices fully paid.` });
+      else if (payHistPct >= 50)
+        recs.push({ icon: '⚠️', text: `${sinPago} invoices with no payment. Follow up to reduce balance.` });
+      else
+        recs.push({ icon: '🔴', text: `High unpaid rate (${100 - payHistPct}%). Consider tightening credit terms.` });
 
-      console.log('Payment history:', paymentHistory);
+      if (utilPct >= 90)
+        recs.push({ icon: '⚠️', text: `Credit limit almost exhausted (${utilPct}% used). Prioritize collection.` });
+      else if (utilPct <= 30 && total > 0)
+        recs.push({ icon: '✅', text: `Good credit headroom — only ${utilPct}% of limit used.` });
+
+      if (seasonalTrend > 10)
+        recs.push({ icon: '📈', text: `Purchases up ${seasonalTrend}% vs previous 3 months.` });
+      else if (seasonalTrend < -10)
+        recs.push({ icon: '📉', text: `Purchases down ${Math.abs(seasonalTrend)}% vs previous 3 months.` });
+
+      if (recs.length === 0)
+        recs.push({ icon: '→', text: 'Keep monitoring payment trends each month.' });
 
       setHistoryData({
         monthlyBalance,
         monthlyPurchases: monthlyBalance,
-        scoreHistory,
-        paymentHistory,
+        scoreFactors,
+        paymentHistory: allPayments.slice(0, 20),
+        stats: {
+          totalPurchases: totalPurchases6m,
+          totalPaid: totalPaid6m,
+          avgPurchase,
+          purchaseFreq,
+          seasonalTrend,
+          pagadas, parciales, sinPago, total,
+        },
+        recs,
       });
     } catch (error) {
       console.error('Error loading history:', error);
-      setHistoryData({
-        monthlyBalance: [],
-        monthlyPurchases: [],
-        scoreHistory: [],
-        paymentHistory: [],
-      });
     } finally {
       setLoading(false);
     }
@@ -499,63 +569,71 @@ function CustomerHistoryModal({ cliente, onClose }) {
                       </button>
                     </div>
 
-                    {/* Contenido adicional que se muestra/oculta */}
-                    {showMore && (
-                      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-6">
-                        <h3 className="font-bold text-gray-900 mb-4 text-lg">Detailed Financial Analysis</h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                          <div className="bg-white rounded-xl p-5 shadow-sm">
-                            <h4 className="font-bold text-gray-800 mb-3">Payment Behavior</h4>
-                            <div className="space-y-3">
+                    {/* Detailed Analysis — 100% real data */}
+                    {showMore && historyData.stats && (
+                      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl p-5 space-y-4">
+                        <h3 className="font-bold text-gray-900 text-base">Detailed Financial Analysis</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="bg-white rounded-xl p-4 shadow-sm">
+                            <h4 className="font-bold text-gray-800 mb-3 text-sm">Invoice Behavior</h4>
+                            <div className="space-y-2 text-sm">
                               <div className="flex justify-between">
-                                <span className="text-gray-600">On-time payments:</span>
-                                <span className="font-bold text-green-600">78%</span>
+                                <span className="text-gray-600">Fully paid:</span>
+                                <span className="font-bold text-green-600">
+                                  {historyData.stats.total > 0 ? Math.round((historyData.stats.pagadas / historyData.stats.total) * 100) : 0}%
+                                  <span className="font-normal text-gray-400 ml-1">({historyData.stats.pagadas})</span>
+                                </span>
                               </div>
                               <div className="flex justify-between">
-                                <span className="text-gray-600">Late payments:</span>
-                                <span className="font-bold text-red-600">15%</span>
+                                <span className="text-gray-600">Partial payment:</span>
+                                <span className="font-bold text-yellow-600">
+                                  {historyData.stats.total > 0 ? Math.round((historyData.stats.parciales / historyData.stats.total) * 100) : 0}%
+                                  <span className="font-normal text-gray-400 ml-1">({historyData.stats.parciales})</span>
+                                </span>
                               </div>
                               <div className="flex justify-between">
-                                <span className="text-gray-600">Missed payments:</span>
-                                <span className="font-bold text-red-600">7%</span>
+                                <span className="text-gray-600">No payment:</span>
+                                <span className="font-bold text-red-600">
+                                  {historyData.stats.total > 0 ? Math.round((historyData.stats.sinPago / historyData.stats.total) * 100) : 0}%
+                                  <span className="font-normal text-gray-400 ml-1">({historyData.stats.sinPago})</span>
+                                </span>
                               </div>
                             </div>
                           </div>
-                          <div className="bg-white rounded-xl p-5 shadow-sm">
-                            <h4 className="font-bold text-gray-800 mb-3">Purchase Patterns</h4>
-                            <div className="space-y-3">
+                          <div className="bg-white rounded-xl p-4 shadow-sm">
+                            <h4 className="font-bold text-gray-800 mb-3 text-sm">Purchase Patterns</h4>
+                            <div className="space-y-2 text-sm">
                               <div className="flex justify-between">
-                                <span className="text-gray-600">Avg. purchase value:</span>
-                                <span className="font-bold text-blue-600">{fmt(125.75)}</span>
+                                <span className="text-gray-600">Avg. invoice value:</span>
+                                <span className="font-bold text-blue-600">{fmt(historyData.stats.avgPurchase)}</span>
                               </div>
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Purchase frequency:</span>
-                                <span className="font-bold text-purple-600">2.3/month</span>
+                                <span className="font-bold text-purple-600">{historyData.stats.purchaseFreq}/month</span>
                               </div>
                               <div className="flex justify-between">
-                                <span className="text-gray-600">Seasonal trend:</span>
-                                <span className="font-bold text-orange-600">+12%</span>
+                                <span className="text-gray-600">Trend vs prev 3m:</span>
+                                <span className={`font-bold ${historyData.stats.seasonalTrend >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {historyData.stats.seasonalTrend >= 0 ? '+' : ''}{historyData.stats.seasonalTrend}%
+                                </span>
                               </div>
                             </div>
                           </div>
                         </div>
-                        <div className="mt-6 bg-white rounded-xl p-5 shadow-sm">
-                          <h4 className="font-bold text-gray-800 mb-3">Recommendations</h4>
-                          <ul className="space-y-2 text-gray-700">
-                            <li className="flex items-start gap-2">
-                              <span className="text-green-500 mt-1">✓</span>
-                              <span>Consider increasing credit limit by 15% based on payment history</span>
-                            </li>
-                            <li className="flex items-start gap-2">
-                              <span className="text-yellow-500 mt-1">⚠</span>
-                              <span>Monitor late payment patterns during holiday season</span>
-                            </li>
-                            <li className="flex items-start gap-2">
-                              <span className="text-blue-500 mt-1">→</span>
-                              <span>Offer early payment discount to improve cash flow</span>
-                            </li>
-                          </ul>
-                        </div>
+                        {/* Recommendations — data-driven */}
+                        {(historyData.recs || []).length > 0 && (
+                          <div className="bg-white rounded-xl p-4 shadow-sm">
+                            <h4 className="font-bold text-gray-800 mb-3 text-sm">Insights</h4>
+                            <ul className="space-y-2">
+                              {(historyData.recs || []).map((r, i) => (
+                                <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                                  <span className="flex-shrink-0">{r.icon}</span>
+                                  <span>{r.text}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -563,69 +641,66 @@ function CustomerHistoryModal({ cliente, onClose }) {
 
                 {/* Score Tab */}
                 {activeTab === 'score' && (
-                  <div className="space-y-6">
-                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-6 sm:p-8">
-                      <div className="text-center">
-                        <div className="text-sm font-bold text-blue-600 uppercase mb-3">Current Credit Score</div>
-                        <div className="text-7xl sm:text-8xl font-bold text-blue-700 mb-4">{Number(cliente?.score_base || 0)}</div>
-                        <div className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-white border-2 border-blue-300 shadow-md">
-                          <IconTrending up={Number(cliente?.score_base || 0) >= 550} />
-                          <span className="font-bold text-gray-700 text-lg">
-                            {Number(cliente?.score_base || 0) >= 750 ? 'Excellent' : 
-                             Number(cliente?.score_base || 0) >= 650 ? 'Good' :
-                             Number(cliente?.score_base || 0) >= 550 ? 'Fair' : 'Poor'}
-                          </span>
-                        </div>
-                      </div>
+                  <div className="space-y-5">
+                    {/* Score badge */}
+                    {(() => { const sc = scoreColor(cliente?.score_base); return (
+                    <div className={`${sc.bg} border-2 ${sc.border} rounded-2xl p-6 text-center`}>
+                      <div className={`text-xs font-bold uppercase mb-2 ${sc.text}`}>Current Credit Score</div>
+                      <div className={`text-8xl font-bold mb-3 ${sc.text}`}>{Number(cliente?.score_base || 0)}</div>
+                      <span className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border-2 ${sc.border} font-bold ${sc.text} text-base`}>
+                        <IconTrending up={Number(cliente?.score_base || 0) >= 550} />
+                        {Number(cliente?.score_base || 0) >= 750 ? 'Excellent' :
+                         Number(cliente?.score_base || 0) >= 650 ? 'Good' :
+                         Number(cliente?.score_base || 0) >= 550 ? 'Fair' :
+                         Number(cliente?.score_base || 0) >= 400 ? 'Poor' : 'Very Poor'}
+                      </span>
                     </div>
+                    ); })()}
 
-                    <div className="bg-white border-2 border-gray-200 rounded-xl p-4 sm:p-6">
-                      <h3 className="font-bold text-gray-900 mb-4 text-lg">Score History (6 months)</h3>
-                      <div className="h-72 sm:h-80">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={historyData.scoreHistory}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                            <XAxis dataKey="month" style={{ fontSize: '11px' }} />
-                            <YAxis domain={[0, 1000]} style={{ fontSize: '11px' }} />
-                            <Tooltip
-                              contentStyle={{
-                                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                                border: 'none',
-                                borderRadius: '12px',
-                                boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
-                              }}
-                              formatter={(value) => [Math.round(value), 'Score']}
-                            />
-                            <Line type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={3} dot={{ r: 6, fill: '#3b82f6' }} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-
-                    <div className="bg-white border-2 border-gray-200 rounded-xl p-4 sm:p-6">
-                      <h3 className="font-bold text-gray-900 mb-4 text-lg">Score Factors</h3>
+                    {/* Score Factors — 100% real */}
+                    <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                      <h3 className="font-bold text-gray-900 mb-4 text-base">Score Factors</h3>
                       <div className="space-y-4">
-                        {[
-                          { label: 'Payment History', value: 85, color: 'bg-green-500' },
-                          { label: 'Credit Utilization', value: 65, color: 'bg-blue-500' },
-                          { label: 'Account Age', value: 75, color: 'bg-purple-500' },
-                          { label: 'Payment Consistency', value: 70, color: 'bg-indigo-500' },
-                        ].map((factor, idx) => (
+                        {(historyData.scoreFactors || []).map((f, idx) => (
                           <div key={idx}>
-                            <div className="flex justify-between mb-2">
-                              <span className="text-sm font-semibold text-gray-700">{factor.label}</span>
-                              <span className="text-sm font-bold text-gray-900">{factor.value}%</span>
+                            <div className="flex justify-between items-baseline mb-1">
+                              <div>
+                                <span className="text-sm font-semibold text-gray-800">{f.label}</span>
+                                {f.desc && <span className="ml-2 text-xs text-gray-400">{f.desc}</span>}
+                              </div>
+                              <span className="text-sm font-bold text-gray-900 ml-2 flex-shrink-0">{f.value}%</span>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-4">
-                              <div 
-                                className={`${factor.color} h-4 rounded-full transition-all duration-500`}
-                                style={{ width: `${factor.value}%` }}
+                            <div className="w-full bg-gray-100 rounded-full h-3">
+                              <div
+                                className={`${f.color} h-3 rounded-full transition-all duration-700`}
+                                style={{ width: `${f.value}%` }}
                               />
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
+
+                    {/* Invoice breakdown */}
+                    {historyData.stats && historyData.stats.total > 0 && (
+                      <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                        <h3 className="font-bold text-gray-900 mb-4 text-base">Invoice Breakdown (6 months)</h3>
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                          <div className="bg-green-50 border border-green-100 rounded-xl p-3">
+                            <div className="text-2xl font-bold text-green-700">{historyData.stats.pagadas}</div>
+                            <div className="text-xs text-green-600 font-semibold mt-0.5">Fully Paid</div>
+                          </div>
+                          <div className="bg-yellow-50 border border-yellow-100 rounded-xl p-3">
+                            <div className="text-2xl font-bold text-yellow-700">{historyData.stats.parciales}</div>
+                            <div className="text-xs text-yellow-600 font-semibold mt-0.5">Partial</div>
+                          </div>
+                          <div className="bg-red-50 border border-red-100 rounded-xl p-3">
+                            <div className="text-2xl font-bold text-red-700">{historyData.stats.sinPago}</div>
+                            <div className="text-xs text-red-600 font-semibold mt-0.5">Unpaid</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -690,34 +765,43 @@ function CustomerHistoryModal({ cliente, onClose }) {
                       </div>
                       <div className="divide-y divide-gray-200 max-h-96 overflow-y-auto">
                         {historyData.paymentHistory.length === 0 ? (
-                          <div className="p-12 text-center text-gray-500">
-                            <div className="text-6xl mb-4">💳</div>
-                            <div className="font-semibold text-gray-700 mb-2 text-lg">No payment history found</div>
-                            <div className="text-sm text-gray-500">Payments will appear here once the customer makes purchases</div>
+                          <div className="p-10 text-center text-gray-500">
+                            <div className="text-5xl mb-3">💳</div>
+                            <div className="font-semibold text-gray-700 mb-1">No payments in the last 6 months</div>
+                            <div className="text-xs text-gray-400">Payments will appear here once recorded</div>
                           </div>
                         ) : (
-                          historyData.paymentHistory.map((payment, idx) => (
-                            <div key={idx} className="p-4 hover:bg-green-50 transition-colors">
-                              <div className="flex items-center justify-between gap-4">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                    <div className="font-bold text-xl text-gray-900">{currency(payment.amount)}</div>
-                                    <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800 border border-green-200">
-                                      ✓ {payment.method}
-                                    </span>
+                          historyData.paymentHistory.map((payment, idx) => {
+                            const isFull   = payment.type === 'full';
+                            const isDirect = payment.type === 'direct';
+                            return (
+                              <div key={idx} className="px-4 py-3 hover:bg-gray-50 transition-colors">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-gray-900">{currency(payment.amount)}</span>
+                                      {payment.total && (
+                                        <span className="text-xs text-gray-400">of {currency(payment.total)}</span>
+                                      )}
+                                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                                        isFull    ? 'bg-green-100 text-green-700 border-green-200' :
+                                        isDirect  ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                                                    'bg-yellow-100 text-yellow-700 border-yellow-200'
+                                      }`}>
+                                        {isFull ? '✓ Paid' : isDirect ? '→ Direct' : '~ Partial'}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-400">
+                                      <span>📅 {payment.date}</span>
+                                      {payment.method && payment.method !== '—' && (
+                                        <span>💳 {payment.method}</span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="text-sm text-gray-500">
-                                    <span className="inline-flex items-center gap-1">
-                                      📅 {payment.date}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="flex-shrink-0 text-3xl">
-                                  💰
                                 </div>
                               </div>
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
                     </div>
