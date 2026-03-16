@@ -16,7 +16,7 @@ function normMetodo(s) {
   const x = String(s || "").trim().toLowerCase();
   if (["cash", "efectivo"].includes(x)) return "Cash";
   if (["card", "tarjeta", "credit", "debit"].includes(x)) return "Card";
-  if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(x)) return "Transfer";
+  if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(x) || x.startsWith("transfer")) return "Transfer";
   if (["mix", "mixed", "mixto"].includes(x)) return "Mix";
   return x ? x[0].toUpperCase() + x.slice(1) : "-";
 }

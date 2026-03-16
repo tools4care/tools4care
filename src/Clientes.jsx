@@ -597,6 +597,13 @@ async function requestAndSendPaymentReceipt({ client, payload }) {
   else if (wants === "email") await sendEmailSmart({ to: client.email, subject, html, text });
 }
 
+const TRANSFER_SUBS = [
+  { key: "zelle",    label: "Zelle",     color: "bg-purple-600" },
+  { key: "cashapp",  label: "Cash App",  color: "bg-green-600"  },
+  { key: "venmo",    label: "Venmo",     color: "bg-blue-600"   },
+  { key: "applepay", label: "Apple Pay", color: "bg-gray-800"   },
+];
+
 /* -------------------- COMPONENTE PRINCIPAL -------------------- */
 export default function Clientes() {
   const { puedeEliminarClientes } = usePermisos();
@@ -2262,6 +2269,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
   const [monto, setMonto] = useState("");
   const [metodo, setMetodo] = useState("Cash");
+  const [subMetodo, setSubMetodo] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
@@ -2616,6 +2624,9 @@ let restante = pago;
 
       const pagoAplicado = round2(Math.min(montoIngresado, saldoActualUI));
       const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+      const metodoPagoFinal = metodo === "Transfer" && subMetodo
+        ? `Transfer - ${TRANSFER_SUBS.find(s => s.key === subMetodo)?.label || subMetodo}`
+        : metodo;
 
       // ── MODO OFFLINE: guardar en cola local ───────────────────
       if (!navigator.onLine) {
@@ -2623,7 +2634,7 @@ let restante = pago;
           cliente_id: cliente.id,
           van_id: van.id,
           monto: pagoAplicado,
-          metodo_pago: metodo,
+          metodo_pago: metodoPagoFinal,
           fecha_pago: new Date().toISOString(),
           _cliente_nombre: cliente?.nombre || "",
         });
@@ -2638,7 +2649,7 @@ let restante = pago;
       let rpcOk = false;
       try {
         const { error } = await supabase.rpc("cxc_registrar_pago", {
-          p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_idem: makeUUID(),
+          p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_idem: makeUUID(),
         });
         if (!error) rpcOk = true;
       } catch (err) {
@@ -2647,7 +2658,7 @@ let restante = pago;
           const handleSecondCall = async () => {
             try {
               const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
-                p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodo, p_van_id: van.id, p_fecha: new Date().toISOString(),
+                p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_fecha: new Date().toISOString(),
               });
               if (!e2) {
                 rpcOk = true;
@@ -2669,7 +2680,7 @@ let restante = pago;
 
       if (!rpcOk) {
         const { error: insErr } = await supabase.from("pagos").insert([{
-          cliente_id: cliente.id, monto: pagoAplicado, metodo_pago: metodo, fecha_pago: new Date().toISOString(),
+          cliente_id: cliente.id, monto: pagoAplicado, metodo_pago: metodoPagoFinal, fecha_pago: new Date().toISOString(),
         }]);
         if (insErr) throw insErr;
       }
@@ -2928,7 +2939,7 @@ let restante = pago;
                     <select
                       className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white font-medium"
                       value={metodo}
-                      onChange={e => setMetodo(e.target.value)}
+                      onChange={e => { setMetodo(e.target.value); setSubMetodo(null); }}
                     >
                       <option value="Cash">💵 Cash</option>
                       <option value="Card">💳 Card</option>
@@ -2947,6 +2958,32 @@ let restante = pago;
                       </button>
                     )}
                   </div>
+
+                  {/* Transfer sub-method chips */}
+                  {metodo === "Transfer" && (
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <p className="text-[11px] uppercase text-gray-500 font-semibold mb-2 tracking-wide">Via</p>
+                      <div className="flex flex-wrap gap-2">
+                        {TRANSFER_SUBS.map((s) => {
+                          const active = subMetodo === s.key;
+                          return (
+                            <button
+                              key={s.key}
+                              type="button"
+                              onClick={() => setSubMetodo(active ? null : s.key)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 shadow-sm border-2 ${
+                                active
+                                  ? `${s.color} text-white border-transparent shadow-md`
+                                  : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
+                              }`}
+                            >
+                              {s.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* 🆕 CHECKBOX PARA FEE */}
                   {metodo === "Card" && (
