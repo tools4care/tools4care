@@ -2680,7 +2680,7 @@ let restante = pago;
 
       if (!rpcOk) {
         const { error: insErr } = await supabase.from("pagos").insert([{
-          cliente_id: cliente.id, monto: pagoAplicado, metodo_pago: metodoPagoFinal, fecha_pago: new Date().toISOString(),
+          cliente_id: cliente.id, van_id: van.id, monto: pagoAplicado, metodo_pago: metodoPagoFinal, fecha_pago: new Date().toISOString(),
         }]);
         if (insErr) throw insErr;
       }
