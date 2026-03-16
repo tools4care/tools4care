@@ -89,7 +89,7 @@ async function calcularCierreCompleto(van_id, fecha) {
       breakdown.cash = monto;
     } else if (["card", "tarjeta", "credit", "debit"].includes(metodoRaw)) {
       breakdown.card = monto;
-    } else if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(metodoRaw)) {
+    } else if (["transfer", "transferencia", "wire", "zelle", "bank"].includes(metodoRaw) || metodoRaw.startsWith("transfer")) {
       breakdown.transfer = monto;
     } else {
       breakdown.mix = monto;
