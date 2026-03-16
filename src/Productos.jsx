@@ -542,6 +542,8 @@ export default function Productos() {
   
   // 🆕 AÑADIR ESTE ESTADO PARA EL BOTÓN "ADD PRODUCT"
   const [guardandoProducto, setGuardandoProducto] = useState(false);
+  const [codigoVerificando, setCodigoVerificando] = useState(false);
+  const [codigoExisteInfo, setCodigoExisteInfo] = useState(null); // { nombre, id } si ya existe
 
   const [modalAbierto, setModalAbierto] = useState(false);
   const [productoActual, setProductoActual] = useState(null);
@@ -763,6 +765,8 @@ export default function Productos() {
     setStockResumen({ unidades: 0, valor: 0 });
     setUltimaVenta(null);
     setEditMode(true);
+    setCodigoExisteInfo(null);
+    setCodigoVerificando(false);
   }
 
   function agregarProductoNuevo(codigoForzado = "") {
@@ -808,6 +812,23 @@ export default function Productos() {
     }
     if (!location.pathname.endsWith("/productos/nuevo")) modalAutoOpenRef.current = false;
   }, [location.pathname, modalAbierto]);
+
+  async function checkCodigoExiste(codigo) {
+    if (!codigo || codigo.trim() === "") { setCodigoExisteInfo(null); return; }
+    setCodigoVerificando(true);
+    setCodigoExisteInfo(null);
+    const { data } = await supabase
+      .from("productos")
+      .select("id, nombre")
+      .eq("codigo", codigo.trim())
+      .maybeSingle();
+    setCodigoVerificando(false);
+    if (data && (!productoActual?.id || data.id !== productoActual.id)) {
+      setCodigoExisteInfo({ nombre: data.nombre, id: data.id });
+    } else {
+      setCodigoExisteInfo(null);
+    }
+  }
 
   async function guardarProducto(e) {
     e.preventDefault();
@@ -890,9 +911,11 @@ export default function Productos() {
     );
 
     await cargarProductos();
-    window.alert(savedMessage);
-    cerrarModal();
-    setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO AL FINAL
+    setMensaje("✓ " + savedMessage);
+    setTimeout(() => {
+      cerrarModal();
+      setGuardandoProducto(false);
+    }, 1200);
   }
 
   async function eliminarProducto() {
@@ -1364,13 +1387,26 @@ export default function Productos() {
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base select-none">▌▌▌</span>
                         <input
-                          className="border-2 border-gray-200 rounded-lg pl-9 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-blue-400 outline-none bg-gray-50 uppercase"
+                          className={`border-2 rounded-lg pl-9 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 outline-none bg-gray-50 uppercase ${codigoExisteInfo ? "border-amber-400 focus:ring-amber-400 focus:border-amber-400" : "border-gray-200 focus:ring-blue-500 focus:border-blue-400"}`}
                           value={productoActual.codigo ?? ""}
-                          onChange={(e) => setProductoActual({ ...productoActual, codigo: e.target.value.toUpperCase() })}
+                          onChange={(e) => { setProductoActual({ ...productoActual, codigo: e.target.value.toUpperCase() }); setCodigoExisteInfo(null); }}
+                          onBlur={(e) => checkCodigoExiste(e.target.value)}
                           placeholder="Scan or type barcode..."
-                          required autoFocus disabled={disabled}
+                          required autoFocus disabled={disabled || guardandoProducto}
                         />
+                        {codigoVerificando && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs animate-pulse">checking...</span>
+                        )}
                       </div>
+                      {codigoExisteInfo && (
+                        <div className="mt-1.5 flex items-start gap-1.5 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
+                          <span className="text-amber-500 text-sm leading-none mt-0.5">⚠️</span>
+                          <div>
+                            <p className="text-xs font-semibold text-amber-700">This code already exists</p>
+                            <p className="text-xs text-amber-600">{codigoExisteInfo.nombre}</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-2.5">
@@ -1641,7 +1677,11 @@ export default function Productos() {
                     />
                   </div>
 
-                  {mensaje && <p className="text-blue-700 text-center text-sm">{mensaje}</p>}
+                  {mensaje && (
+                    <p className={`text-center text-sm font-medium py-1 px-3 rounded-lg ${mensaje.startsWith("✓") ? "text-green-700 bg-green-50" : "text-red-600 bg-red-50"}`}>
+                      {mensaje}
+                    </p>
+                  )}
 
                 </form>
               ) : (
@@ -1658,10 +1698,20 @@ export default function Productos() {
                   <button
                     type="submit"
                     form="producto-form"
-                    className="flex-1 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-bold rounded-xl py-3 text-sm transition-colors shadow-sm"
-                    disabled={disabled}
+                    className="flex-1 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-bold rounded-xl py-3 text-sm transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    disabled={disabled || guardandoProducto}
                   >
-                    {productoActual.id ? "Save Changes" : "Add Product"}
+                    {guardandoProducto ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                        </svg>
+                        Saving...
+                      </>
+                    ) : (
+                      productoActual.id ? "Save Changes" : "Add Product"
+                    )}
                   </button>
                 )}
                 <button
