@@ -5,7 +5,7 @@ export async function syncUsuario(email) {
   if (!email) return null;
   const { data, error } = await supabase
     .from("usuarios")
-    .select("*")
+    .select("id,email,nombre,rol,activo,modulos,descuento_max")
     .eq("email", email.toLowerCase())
     .single();
   if (error) return null;
