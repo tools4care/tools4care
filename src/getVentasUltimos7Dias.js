@@ -6,10 +6,11 @@ export async function getVentasUltimos7Dias() {
   const fechaFin = dayjs().endOf("day").format("YYYY-MM-DD");
   const { data, error } = await supabase
     .from("ventas")
-    .select("*")
+    .select("id,fecha,total,total_pagado,estado_pago,metodo_pago,cliente_id,van_id,notas")
     .gte("fecha", fechaInicio)
     .lte("fecha", fechaFin)
-    .order("fecha", { ascending: false });
+    .order("fecha", { ascending: false })
+    .limit(500);
 
   if (error) {
     console.error("Error consultando ventas:", error);

@@ -2080,10 +2080,11 @@ export default function Dashboard() {
 
     const { data: ventasData, error: errVentas } = await supabase
       .from("ventas")
-      .select("*")
+      .select("id,fecha,total,total_pagado,estado_pago,metodo_pago,cliente_id,notas,van_id")
       .eq("van_id", vanId)
       .gte("fecha", desde)
-      .order("fecha", { ascending: false });
+      .order("fecha", { ascending: false })
+      .limit(2000);  // tope defensivo — 2k ventas por período es más que suficiente
 
     if (errVentas) {
       setVentas([]);
@@ -2275,7 +2276,7 @@ export default function Dashboard() {
     try {
       const { data, error } = await supabase
         .from("rutas_barberias")
-        .select("*")
+        .select("id,van_id,dia,negocio,telefono,direccion,orden,hora_visita,visitada,notas")
         .eq("van_id", vanId)
         .eq("dia", fecha)
         .order("orden", { ascending: true })
