@@ -428,9 +428,23 @@ async function sendEmailSmart({ to, subject, html, text }) {
     }
   }
 
+  // Use same anchor-click trick as SMS — avoids popup-blocker on iOS/Android
   const mailto = buildMailtoUrl(to, subject, text);
-  const w = mailto ? window.open(mailto, "_blank") : null;
-  if (!w && text) {
+  if (mailto) {
+    try {
+      const a = document.createElement("a");
+      a.href = mailto;
+      a.rel = "noopener";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return { ok: true, via: "mailto" };
+    } catch {
+      // fall through to clipboard fallback
+    }
+  }
+  if (text) {
     try {
       await navigator.clipboard.writeText(text);
       alert("Email copiado. Abre tu correo y pega el contenido.");
@@ -439,7 +453,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
       return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
     }
   }
-  return { ok: true, via: "mailto" };
+  return { ok: false, reason: "mailto_failed" };
 }
 
 async function askChannel({ hasPhone, hasEmail }) {
@@ -1882,48 +1896,64 @@ useEffect(() => {
     [payments]
   );
 
-  const balanceBeforeRaw =
-    cxcBalance != null && !Number.isNaN(Number(cxcBalance))
-      ? Number(cxcBalance)
-      : Number(getClientBalance(selectedClient));
-  
-  const balanceBefore = Math.max(0, Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0);
+  // useMemo: 20 valores financieros derivados en un solo bloque.
+  // Solo recalcula cuando cambian: carrito, pagos, balance CxC, o cliente.
+  // Antes recalculaban en CADA render (al abrir QR, escribir nota, etc.)
+  const {
+    balanceBefore, oldDebt, totalAPagar,
+    paidToOldDebt, paidForSale, paidApplied,
+    pagoMinimo, cubrioMinimo, faltaParaMinimo,
+    change, mostrarAdvertencia, balanceAfter, amountToCredit,
+    clientScore, showCreditPanel, computedLimit,
+    creditLimit, creditAvailable, excesoCredito,
+  } = useMemo(() => {
+    const balanceBeforeRaw =
+      cxcBalance != null && !Number.isNaN(Number(cxcBalance))
+        ? Number(cxcBalance)
+        : Number(getClientBalance(selectedClient));
+    const balanceBefore = Math.max(0, Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0);
+    const oldDebt       = balanceBefore;
+    const totalAPagar   = oldDebt + saleTotal;
 
-  const oldDebt = balanceBefore;
-  const totalAPagar = oldDebt + saleTotal;
+    // FIFO: primero se paga la deuda vieja, luego la venta nueva
+    const paidToOldDebt = Math.min(paid, oldDebt);
+    const paidForSale   = Math.min(saleTotal, Math.max(0, paid - paidToOldDebt));
+    const paidApplied   = paidToOldDebt + paidForSale;
 
-// ✅ FIFO: primero se paga la deuda vieja, luego la venta nueva
-const paidToOldDebt   = Math.min(paid, oldDebt);
-const paidForSale     = Math.min(saleTotal, Math.max(0, paid - paidToOldDebt));
-const paidApplied     = paidToOldDebt + paidForSale;
+    // Pago mínimo requerido esta visita
+    const pagoMinimo      = calcularPagoMinimo(oldDebt);
+    const cubrioMinimo    = pagoMinimo === 0 || paid >= pagoMinimo;
+    const faltaParaMinimo = Math.max(0, pagoMinimo - paid);
 
-// ✅ Pago mínimo requerido esta visita
-const pagoMinimo        = calcularPagoMinimo(oldDebt);
-const cubrioMinimo      = pagoMinimo === 0 || paid >= pagoMinimo;
-const faltaParaMinimo   = Math.max(0, pagoMinimo - paid);
+    const change             = Math.max(0, paid - totalAPagar);
+    const mostrarAdvertencia = paid > totalAPagar;
 
-  const change = Math.max(0, paid - totalAPagar);
-  const mostrarAdvertencia = paid > totalAPagar;
+    const balanceAfter   = Math.max(0, balanceBefore + saleTotal - paidApplied);
+    const amountToCredit = Math.max(0, balanceAfter - balanceBefore);
 
-  const balanceAfter = Math.max(0, balanceBefore + saleTotal - paidApplied);
-  const amountToCredit = Math.max(0, balanceAfter - balanceBefore);
+    const clientScore    = Number(selectedClient?.score_credito ?? 600);
+    const showCreditPanel = !!selectedClient && !!selectedClient.id &&
+                            (clientHistory.has || balanceBefore !== 0);
+    const computedLimit  = policyLimit(clientScore);
+    const creditLimit    = showCreditPanel ? Number(cxcLimit ?? computedLimit) : 0;
+    const creditAvailable = showCreditPanel
+      ? Number(
+          cxcAvailable != null && !Number.isNaN(Number(cxcAvailable))
+            ? cxcAvailable
+            : Math.max(0, creditLimit - balanceBefore)
+        )
+      : 0;
+    const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
-  const clientScore = Number(selectedClient?.score_credito ?? 600);
-  const showCreditPanel = !!selectedClient && !!selectedClient.id && (clientHistory.has || balanceBefore !== 0);
-
-  const computedLimit = policyLimit(clientScore);
-  const creditLimit = showCreditPanel ? Number(cxcLimit ?? computedLimit) : 0;
-
-  const creditAvailable = showCreditPanel
-    ? Number(
-        cxcAvailable != null && !Number.isNaN(Number(cxcAvailable))
-          ? cxcAvailable
-          : Math.max(0, creditLimit - balanceBefore)
-      )
-    : 0;
-
-
-  const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
+    return {
+      balanceBefore, oldDebt, totalAPagar,
+      paidToOldDebt, paidForSale, paidApplied,
+      pagoMinimo, cubrioMinimo, faltaParaMinimo,
+      change, mostrarAdvertencia, balanceAfter, amountToCredit,
+      clientScore, showCreditPanel, computedLimit,
+      creditLimit, creditAvailable, excesoCredito,
+    };
+  }, [saleTotal, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has]);
 
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
