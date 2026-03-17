@@ -1,5 +1,5 @@
 // src/Ventas.jsx - PARTE 1 DE 3 (Imports, Constantes, Helpers)
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
@@ -1825,7 +1825,8 @@ useEffect(() => {
 }, [productSearch, van?.id, topProducts, isOffline, allProducts]);
 
   /* ---------- Totales & crédito ---------- */
-  const cartSafe = Array.isArray(cart) ? cart : [];
+  // useMemo: referencia estable — evita recalcular cuando cambia estado no relacionado
+  const cartSafe = useMemo(() => Array.isArray(cart) ? cart : [], [cart]);
 
   // 🆕 AUTO-SAVE: PEGAR EL BLOQUE AQUÍ
   useEffect(() => {
@@ -1871,8 +1872,15 @@ useEffect(() => {
     };
   }, [selectedClient?.id, cartSafe.length, payments, notes, step]);
 
-  const saleTotal = cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0);
-  const paid = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+  // useMemo: solo recalcula cuando el carrito o pagos cambian
+  const saleTotal = useMemo(
+    () => cartSafe.reduce((t, p) => t + p.cantidad * p.precio_unitario, 0),
+    [cartSafe]
+  );
+  const paid = useMemo(
+    () => payments.reduce((s, p) => s + Number(p.monto || 0), 0),
+    [payments]
+  );
 
   const balanceBeforeRaw =
     cxcBalance != null && !Number.isNaN(Number(cxcBalance))
@@ -2211,44 +2219,38 @@ function clearSale() {
     }
   }
 
-  function handleAddProduct(p) {
+  // useCallback: referencia estable — evita que botones del carrito re-renderizen
+  // sin necesidad cuando cambia estado no relacionado (QR modal, notas, etc.)
+  const handleAddProduct = useCallback((p) => {
     const stockNow = Number(p.cantidad ?? p.stock ?? 0);
     if (!Number.isFinite(stockNow) || stockNow <= 0) {
       setProductError("Sin stock disponible para este producto.");
       return;
     }
-
-    const exists = cartSafe.find((x) => x.producto_id === p.producto_id);
-    const qty = 1;
-
     const meta = extractPricingFromRow(p);
-    const unit = computeUnitPriceFromRow(p, qty);
-
+    const unit = computeUnitPriceFromRow(p, 1);
     const safeName = p.productos?.nombre ?? p.nombre ?? "—";
-
-    if (!exists) {
-      setCart((prev) => [
-        ...prev,
-        {
-          producto_id: p.producto_id,
-          nombre: safeName,
-          _pricing: { ...meta, base: meta.base || unit || 0 },
-          precio_unitario: unit,
-          cantidad: qty,
-        },
-      ]);
-    }
+    // Functional updater: evita capturar cartSafe stale
+    setCart((prevCart) => {
+      const safe = Array.isArray(prevCart) ? prevCart : [];
+      if (safe.find((x) => x.producto_id === p.producto_id)) return prevCart;
+      return [...safe, {
+        producto_id: p.producto_id,
+        nombre: safeName,
+        _pricing: { ...meta, base: meta.base || unit || 0 },
+        precio_unitario: unit,
+        cantidad: 1,
+      }];
+    });
     setProductSearch("");
-    // Return focus to search so user can quickly search next product
     setTimeout(() => productSearchRef.current?.focus(), 50);
-  }
+  }, []); // setCart/setProductError/setProductSearch son estables (useState)
 
-  function handleEditQuantity(producto_id, cantidad) {
+  const handleEditQuantity = useCallback((producto_id, cantidad) => {
     setCart((cart) =>
       cart.map((item) => {
         if (item.producto_id !== producto_id) return item;
         const qty = Math.max(1, Number(cantidad));
-
         const meta = item._pricing ?? extractPricingFromRow(item);
         const unit =
           unitPriceFromProduct(
@@ -2260,19 +2262,17 @@ function clearSale() {
             },
             qty
           ) || computeUnitPriceFromRow(item, qty);
-
         return { ...item, cantidad: qty, precio_unitario: unit };
       })
     );
-  }
+  }, []); // functional updater — no captura estado externo
 
-  function handleRemoveProduct(producto_id) {
+  const handleRemoveProduct = useCallback((producto_id) => {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
-  }
+  }, []); // functional updater — no captura estado externo
 
-  function handleSetDescuento(producto_id, pct) {
+  const handleSetDescuento = useCallback((producto_id, pct) => {
     const rawPct = Number(pct) || 0;
-    // Enforce max discount for vendedores (admin = unlimited)
     if (rawPct > maxDescuentoPct) {
       alert(`Max discount allowed: ${maxDescuentoPct}%. Contact an admin for larger discounts.`);
       setDiscountInputVal(String(maxDescuentoPct));
@@ -2289,64 +2289,44 @@ function clearSale() {
     );
     setDiscountTarget(null);
     setDiscountInputVal("");
-  }
+  }, [maxDescuentoPct]); // recrea solo cuando cambia el permiso de descuento
 
-  // ✅ FIX: handleChangePayment con redondeo a 2 decimales
-// ✅ NUEVA VERSIÓN - Reemplazar la función completa
-function handleChangePayment(index, field, value) {
-  setPayments((arr) => arr.map((p, i) => {
-    if (i !== index) return p;
-    
-    // Si es el campo monto
-    if (field === "monto") {
-      // Permitir valores vacíos, puntos, o "0"
-      if (value === '' || value === '.' || value === '0' || value === 0) {
-        return { ...p, [field]: 0 };
+  const handleChangePayment = useCallback((index, field, value) => {
+    setPayments((arr) => arr.map((p, i) => {
+      if (i !== index) return p;
+      if (field === "monto") {
+        if (value === '' || value === '.' || value === '0' || value === 0) {
+          return { ...p, [field]: 0 };
+        }
+        const numValue = Number(value);
+        if (Number.isFinite(numValue) && numValue >= 0) {
+          return { ...p, [field]: numValue };
+        }
+        return p;
       }
-      
-      // Convertir a número
-      const numValue = Number(value);
-      
-      // Si es un número válido y positivo
-      if (Number.isFinite(numValue) && numValue >= 0) {
-        return { ...p, [field]: numValue };
-      }
-      
-      // Si no es válido, mantener el valor actual
-      return p;
-    }
-    
-    // Para otros campos (forma de pago)
-    return { ...p, [field]: value };
-  }));
-}
+      return { ...p, [field]: value };
+    }));
+  }, []); // functional updater — no captura estado externo
 
-  // ✅ FIX: handleAddPayment con redondeo a 2 decimales
-  function handleAddPayment() {
-    // Calcula cuánto falta por pagar
-    const alreadyPaid = payments.reduce((sum, p) => sum + Number(p.monto || 0), 0);
-    const remaining = Math.max(0, totalAPagar - alreadyPaid);
-    
-    // Si es el primer pago, usar saleTotal, si no, usar lo que falta
-    const initialAmount = payments.length === 0 ? saleTotal : remaining;
-    
-    // ✅ FIX: Redondear a 2 decimales
-    const roundedAmount = Number(initialAmount.toFixed(2));
-    
-    setPayments([...payments, { forma: "efectivo", monto: roundedAmount }]);
-  }
+  const handleAddPayment = useCallback(() => {
+    setPayments((prevPayments) => {
+      const alreadyPaid = prevPayments.reduce((sum, p) => sum + Number(p.monto || 0), 0);
+      const remaining = Math.max(0, totalAPagar - alreadyPaid);
+      const initialAmount = prevPayments.length === 0 ? saleTotal : remaining;
+      const roundedAmount = Number(initialAmount.toFixed(2));
+      return [...prevPayments, { forma: "efectivo", monto: roundedAmount }];
+    });
+  }, [saleTotal, totalAPagar]); // saleTotal ya es memoized; totalAPagar depende de él
 
-  function handleRemovePayment(index) {
+  const handleRemovePayment = useCallback((index) => {
     setPayments((ps) => (ps.length === 1 ? ps : ps.filter((_, i) => i !== index)));
-  }
+  }, []); // functional updater — no captura estado externo
 
-  function handleBarcodeScanned(code) {
-    // Usar el código tal cual - la búsqueda manejará las variantes
+  const handleBarcodeScanned = useCallback((code) => {
     setProductSearch(code.trim());
     setShowScanner(false);
-    // Return focus so the user can confirm / navigate results with keyboard
     setTimeout(() => productSearchRef.current?.focus(), 150);
-  }
+  }, []); // productSearchRef es estable (useRef)
 
  async function handleSelectPendingSale(sale) {
     // Si es una pending sale de la nube
