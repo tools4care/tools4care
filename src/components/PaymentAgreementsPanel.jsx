@@ -23,9 +23,9 @@ export default function PaymentAgreementsPanel({ clienteId, clienteName, onRefre
     try {
      const { data: acData } = await supabase
   .from("acuerdos_pago")
-  .select("*")
+  .select("id,estado,fecha_acuerdo,cliente_id")
   .eq("cliente_id", clienteId)
-  .neq("estado", "cancelado")  // ✅ Excluir cancelados
+  .neq("estado", "cancelado")
   .order("fecha_acuerdo", { ascending: true });
 
       const ids = (acData || []).map((a) => a.id);
@@ -33,7 +33,7 @@ export default function PaymentAgreementsPanel({ clienteId, clienteName, onRefre
       if (ids.length > 0) {
         const { data } = await supabase
           .from("cuotas_acuerdo")
-          .select("*")
+          .select("id,acuerdo_id,estado,monto,monto_pagado,fecha_vencimiento")
           .in("acuerdo_id", ids)
           .order("fecha_vencimiento", { ascending: true });
         cuData = data || [];

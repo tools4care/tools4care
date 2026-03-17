@@ -22,7 +22,7 @@ export const ComisionesService = {
     try {
       const { data, error } = await supabase
         .from('vans')
-        .select('*')
+        .select('id,nombre_van,activo')
         .eq('activo', true)
         .order('nombre_van');
       
@@ -59,7 +59,7 @@ export const ComisionesService = {
     try {
       const { data, error } = await supabase
         .from('configuraciones_comisiones')
-        .select('*')
+        .select('id,van_id,vendedor_id,comisiones_por_metodo,salario_base,bonos,descuentos,activo')
         .eq('van_id', vanId)
         .eq('vendedor_id', vendedorId)
         .eq('activo', true)
@@ -96,11 +96,12 @@ async obtenerVentasEnRango(vanId, vendedorId, fechaInicio, fechaFin) {
 
     const { data: ventas, error } = await supabase
       .from('ventas')
-      .select('*')
+      .select('pago_efectivo,pago_tarjeta,pago_transferencia,pago_otro')
       .eq('van_id', vanId)
       .eq('usuario_id', vendedorId)
       .gte('fecha', inicio.toISOString())
-      .lte('fecha', fin.toISOString());
+      .lte('fecha', fin.toISOString())
+      .limit(5000);
 
     if (error) throw error;
 
