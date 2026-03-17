@@ -189,10 +189,16 @@ function BuscadorSuplidor({ value, name, onChange, disabled }) {
       setSuplidores([]);
       return;
     }
-    (async () => {
-      const { data } = await supabase.from("suplidores").select("*").ilike("nombre", `%${busqueda}%`);
+    // Debounce 300ms — evita llamadas API en cada tecla
+    const timer = setTimeout(async () => {
+      const { data } = await supabase
+        .from("suplidores")
+        .select("id,nombre")            // solo columnas necesarias
+        .ilike("nombre", `%${busqueda}%`)
+        .limit(10);                     // máximo 10 resultados para el picker
       setSuplidores(data || []);
-    })();
+    }, 300);
+    return () => clearTimeout(timer);  // cancela si el usuario sigue escribiendo
   }, [busqueda]);
 
   function pickSupplier(idx) {
