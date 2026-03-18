@@ -1,5 +1,5 @@
 // src/online/OnlineDashboard.jsx
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
@@ -98,7 +98,7 @@ export default function OnlineDashboard() {
   const [recent, setRecent] = useState([]);
   const [lastUpdate, setLastUpdate] = useState(null);
 
-  async function loadStats(p = period) {
+  const loadStats = useCallback(async (p = period) => {
     setLoading(true);
     try {
       const start = getPeriodStart(p);
@@ -119,11 +119,11 @@ export default function OnlineDashboard() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [period]);
 
   useEffect(() => {
     loadStats(period);
-  }, [period]);
+  }, [loadStats]);
 
   const paidOrders = useMemo(
     () =>

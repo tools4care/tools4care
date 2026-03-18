@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useUsuario } from '../UsuarioContext';
 import { ComisionesService } from '../lib/comisiones-service';
 
@@ -15,10 +15,16 @@ export default function ComisionesPage() {
   const [configuracion, setConfiguracion] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [cargando, setCargando] = useState(false);
-  
+  const [mensaje, setMensaje] = useState('');
+
   const [ajustesManuales, setAjustesManuales] = useState({
-    descuentos: {}
+    descuentos: {},
   });
+
+  const showMsg = useCallback((msg, ms = 3500) => {
+    setMensaje(msg);
+    setTimeout(() => setMensaje(''), ms);
+  }, []);
 
   useEffect(() => {
     cargarDatosIniciales();
@@ -32,72 +38,59 @@ export default function ComisionesPage() {
     if (vendedoresData) setVendedores(vendedoresData);
   };
 
-  const recalcularLocal = (configActualizada = configuracion) => {
+  const recalcularLocal = useCallback((configActualizada, ajustes = ajustesManuales) => {
     if (!resultado || !configActualizada) return;
 
     const comisionPorMetodo = {};
     let comisionTotal = 0;
 
-    Object.keys(resultado.desglosePorMetodo).forEach(metodo => {
+    Object.keys(resultado.desglosePorMetodo).forEach((metodo) => {
       const datos = resultado.desglosePorMetodo[metodo];
       const configMetodo = configActualizada.comisiones_por_metodo[metodo];
-      
+
       if (configMetodo && configMetodo.activo) {
-        const comision = datos.monto * (configMetodo.porcentaje / 100);
-        
-        comisionPorMetodo[metodo] = {
-          monto: datos.monto,
-          porcentaje: configMetodo.porcentaje,
-          comision: comision
-        };
-        
+        const comision = Number((datos.monto * (configMetodo.porcentaje / 100)).toFixed(2));
+        comisionPorMetodo[metodo] = { monto: datos.monto, porcentaje: configMetodo.porcentaje, comision };
         comisionTotal += comision;
       } else {
-        comisionPorMetodo[metodo] = {
-          monto: datos.monto,
-          porcentaje: 0,
-          comision: 0
-        };
+        comisionPorMetodo[metodo] = { monto: datos.monto, porcentaje: 0, comision: 0 };
       }
     });
 
+    comisionTotal = Number(comisionTotal.toFixed(2));
+
     let totalDescuentos = 0;
     if (configActualizada.descuentos) {
-      configActualizada.descuentos.filter(d => d.activo).forEach(descuento => {
-        if (descuento.tipo === 'manual') {
-          totalDescuentos += parseFloat(ajustesManuales.descuentos[descuento.id] || 0);
-        } else {
-          totalDescuentos += parseFloat(descuento.montoFijo || 0);
-        }
+      configActualizada.descuentos.filter((d) => d.activo).forEach((descuento) => {
+        totalDescuentos += descuento.tipo === 'manual'
+          ? parseFloat(ajustes.descuentos[descuento.id] || 0)
+          : parseFloat(descuento.montoFijo || 0);
       });
     }
+    totalDescuentos = Number(totalDescuentos.toFixed(2));
 
-    const nuevoResultado = {
-      ...resultado,
+    setResultado((prev) => ({
+      ...prev,
       comisionPorMetodo,
       comisionTotal,
       salarioBase: configActualizada.salario_base || 0,
       totalDescuentos,
-      totalAPagar: (configActualizada.salario_base || 0) + comisionTotal - totalDescuentos
-    };
-
-    setResultado(nuevoResultado);
-  };
+      totalAPagar: Number(((configActualizada.salario_base || 0) + comisionTotal - totalDescuentos).toFixed(2)),
+    }));
+  }, [resultado, ajustesManuales]);
 
   const cargarDatos = async () => {
     if (!vanSeleccionada || !vendedorSeleccionado) {
-      alert('Select a van and a seller');
+      showMsg('❌ Selecciona una van y un vendedor');
       return;
     }
 
     setCargando(true);
-    
     try {
       const { data: config, error: configError } = await ComisionesService.obtenerConfiguracion(
         vanSeleccionada,
         vendedorSeleccionado
       );
-      
       if (configError) throw configError;
       setConfiguracion(config);
 
@@ -108,13 +101,11 @@ export default function ComisionesPage() {
         fechaFin,
         ajustesManuales
       );
-      
       if (calcError) throw calcError;
       setResultado(comision);
-
+      showMsg('✅ Datos cargados exitosamente');
     } catch (error) {
-      console.error('Error:', error);
-      alert('Error loading data: ' + error.message);
+      showMsg('❌ Error: ' + error.message, 5000);
     } finally {
       setCargando(false);
     }
@@ -128,56 +119,14 @@ export default function ComisionesPage() {
     recalcularLocal(nuevaConfig);
   };
 
-  const actualizarDescuento = async (idDescuento, valor) => {
+  const actualizarDescuento = useCallback((idDescuento, valor) => {
     const nuevosAjustes = {
       ...ajustesManuales,
-      descuentos: {
-        ...ajustesManuales.descuentos,
-        [idDescuento]: parseFloat(valor) || 0
-      }
+      descuentos: { ...ajustesManuales.descuentos, [idDescuento]: parseFloat(valor) || 0 },
     };
     setAjustesManuales(nuevosAjustes);
-    
-    if (configuracion) {
-      recalcularConAjustes(configuracion, nuevosAjustes);
-    }
-  };
-
-  const recalcular = async (configActualizada = configuracion) => {
-    try {
-      const { data, error } = await ComisionesService.calcularComisiones(
-        vanSeleccionada,
-        vendedorSeleccionado,
-        fechaInicio,
-        fechaFin,
-        ajustesManuales,
-        configActualizada
-      );
-      
-      if (error) throw error;
-      setResultado(data);
-    } catch (error) {
-      console.error('Error recalculating:', error);
-    }
-  };
-
-  const recalcularConAjustes = async (config, ajustes) => {
-    try {
-      const { data, error } = await ComisionesService.calcularComisiones(
-        vanSeleccionada,
-        vendedorSeleccionado,
-        fechaInicio,
-        fechaFin,
-        ajustes,
-        config
-      );
-      
-      if (error) throw error;
-      setResultado(data);
-    } catch (error) {
-      console.error('Error recalculating:', error);
-    }
-  };
+    recalcularLocal(configuracion, nuevosAjustes);
+  }, [ajustesManuales, configuracion]);
 
   const guardarConfiguracion = async () => {
     try {
@@ -186,17 +135,16 @@ export default function ComisionesPage() {
         vendedorSeleccionado,
         configuracion
       );
-      
       if (error) throw error;
-      alert('✅ Configuration saved successfully');
+      showMsg('✅ Configuración guardada exitosamente');
     } catch (error) {
-      alert('❌ Error saving: ' + error.message);
+      showMsg('❌ Error al guardar: ' + error.message, 5000);
     }
   };
 
   const aprobarPago = async () => {
-    if (!window.confirm('Are you sure you want to approve this payment?')) return;
-    
+    if (!window.confirm('¿Estás seguro de aprobar este pago?')) return;
+
     try {
       if (!resultado.id) {
         const { data: guardado, error: guardarError } = await ComisionesService.guardarCalculo(
@@ -206,24 +154,18 @@ export default function ComisionesPage() {
           fechaFin,
           resultado
         );
-        
         if (guardarError) throw guardarError;
-        setResultado({ ...resultado, id: guardado.id });
-        
         const { error } = await ComisionesService.aprobarPago(guardado.id);
         if (error) throw error;
-        
-        alert('✅ Payment approved');
-        setResultado({ ...resultado, id: guardado.id, estado: 'aprobado' });
+        setResultado((prev) => ({ ...prev, id: guardado.id, estado: 'aprobado' }));
       } else {
         const { error } = await ComisionesService.aprobarPago(resultado.id);
         if (error) throw error;
-        
-        alert('✅ Payment approved');
-        setResultado({ ...resultado, estado: 'aprobado' });
+        setResultado((prev) => ({ ...prev, estado: 'aprobado' }));
       }
+      showMsg('✅ Pago aprobado exitosamente');
     } catch (error) {
-      alert('❌ Error approving: ' + error.message);
+      showMsg('❌ Error al aprobar: ' + error.message, 5000);
     }
   };
 
@@ -474,6 +416,15 @@ export default function ComisionesPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto bg-gray-50 min-h-screen">
+      {mensaje && (
+        <div className={`mb-4 p-4 rounded-lg font-medium ${
+          mensaje.includes('❌')
+            ? 'bg-red-100 text-red-700 border border-red-300'
+            : 'bg-green-100 text-green-700 border border-green-300'
+        }`}>
+          {mensaje}
+        </div>
+      )}
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h1 className="text-3xl font-bold mb-6 text-gray-800">
           🎯 Commission Configuration
@@ -547,13 +498,14 @@ export default function ComisionesPage() {
           <div className="bg-white rounded-lg shadow-md p-6 mb-6">
             <h2 className="text-2xl font-bold mb-4 text-gray-800">📊 Sales Summary</h2>
             
-            <table className="w-full">
+            <div className="overflow-x-auto -mx-6 sm:mx-0">
+            <table className="w-full min-w-[480px]">
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="text-left p-4">Method</th>
-                  <th className="text-right p-4">Amount</th>
-                  <th className="text-center p-4">Commission %</th>
-                  <th className="text-right p-4">Earned</th>
+                  <th className="text-left p-3 sm:p-4">Method</th>
+                  <th className="text-right p-3 sm:p-4">Amount</th>
+                  <th className="text-center p-3 sm:p-4">Commission %</th>
+                  <th className="text-right p-3 sm:p-4">Earned</th>
                 </tr>
               </thead>
               <tbody>
@@ -563,37 +515,38 @@ export default function ComisionesPage() {
                   
                   return (
                     <tr key={metodo} className="border-t">
-                      <td className="p-4 capitalize font-medium">{metodo}</td>
-                      <td className="p-4 text-right">
+                      <td className="p-3 sm:p-4 capitalize font-medium">{metodo}</td>
+                      <td className="p-3 sm:p-4 text-right">
                         ${datos.monto.toFixed(2)}
-                        <span className="text-sm text-gray-500 ml-2">
+                        <span className="text-xs text-gray-500 ml-1 hidden sm:inline">
                           ({datos.porcentaje.toFixed(1)}%)
                         </span>
                       </td>
-                      <td className="p-4 text-center">
-                        <input 
+                      <td className="p-3 sm:p-4 text-center">
+                        <input
                           type="number"
                           step="0.5"
-                          className="w-20 border rounded px-2 py-1 text-center"
+                          className="w-16 sm:w-20 border rounded px-2 py-1 text-center"
                           value={configuracion.comisiones_por_metodo[metodo]?.porcentaje || 0}
                           onChange={(e) => actualizarPorcentaje(metodo, e.target.value)}
                         />
                         %
                       </td>
-                      <td className="p-4 text-right font-semibold text-green-600">
+                      <td className="p-3 sm:p-4 text-right font-semibold text-green-600">
                         ${comision.comision.toFixed(2)}
                       </td>
                     </tr>
                   );
                 })}
                 <tr className="border-t-2 font-bold bg-gray-50">
-                  <td className="p-4">TOTAL</td>
-                  <td className="p-4 text-right">${resultado.ventasTotales.toFixed(2)}</td>
+                  <td className="p-3 sm:p-4">TOTAL</td>
+                  <td className="p-3 sm:p-4 text-right">${resultado.ventasTotales.toFixed(2)}</td>
                   <td></td>
-                  <td className="p-4 text-right text-green-600">${resultado.comisionTotal.toFixed(2)}</td>
+                  <td className="p-3 sm:p-4 text-right text-green-600">${resultado.comisionTotal.toFixed(2)}</td>
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
@@ -605,11 +558,11 @@ export default function ComisionesPage() {
                 <span className="font-semibold">${resultado.comisionTotal.toFixed(2)}</span>
               </div>
               
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
                 <span>Base salary:</span>
                 <div className="flex gap-2 items-center">
                   <span className="text-sm">$</span>
-                  <input 
+                  <input
                     type="number"
                     step="50"
                     className="w-32 border rounded px-2 py-1 text-right"
@@ -665,30 +618,30 @@ export default function ComisionesPage() {
               )}
 
               <div className="pt-4 border-t-2">
-                <div className="flex justify-between text-3xl font-bold">
-                  <span>💵 TOTAL:</span>
-                  <span className="text-blue-600">${resultado.totalAPagar.toFixed(2)}</span>
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
+                  <span className="text-xl sm:text-3xl font-bold">💵 TOTAL:</span>
+                  <span className="text-2xl sm:text-3xl font-bold text-blue-600">${resultado.totalAPagar.toFixed(2)}</span>
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-3 gap-4">
-              <button 
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
                 onClick={guardarConfiguracion}
-                className="bg-gray-600 text-white px-4 py-3 rounded-lg hover:bg-gray-700"
+                className="bg-gray-600 text-white px-4 py-3 rounded-lg hover:bg-gray-700 font-medium transition-colors"
               >
                 💾 Save Config
               </button>
-              <button 
+              <button
                 onClick={generarReporte}
-                className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700"
+                className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 font-medium transition-colors"
               >
                 📄 Print PDF
               </button>
-              <button 
+              <button
                 onClick={aprobarPago}
                 disabled={resultado.estado !== 'pendiente'}
-                className="bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 disabled:bg-gray-400"
+                className="bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium transition-colors"
               >
                 ✅ Approve
               </button>
