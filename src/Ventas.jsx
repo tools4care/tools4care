@@ -1,5 +1,6 @@
 // src/Ventas.jsx - PARTE 1 DE 3 (Imports, Constantes, Helpers)
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import { useToast } from "./hooks/useToast";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
@@ -534,6 +535,7 @@ export default function Sales() {
   const { maxDescuentoPct, puedeCancelarVentas } = usePermisos();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { toast, confirm: confirmDialog } = useToast();
 
   // ====================== AGENTE DE CRÉDITO ======================
   const [clientRisk, setClientRisk] = useState(null);
@@ -2479,7 +2481,7 @@ async function handleProcessReturn() {
     }
 
     if (itemsToReturn.length === 0) {
-      alert("Selecciona al menos un producto para devolver.");
+      toast.warning("Selecciona al menos un producto para devolver");
       setProcessingReturn(false);
       return;
     }
@@ -2489,16 +2491,15 @@ async function handleProcessReturn() {
       .map(it => `• ${it.nombre} x${it.cantidad} = ${fmt(it.cantidad * it.precio_unitario)}`)
       .join('\n');
 
-    if (!confirm(
+    const confirmed = await confirmDialog(
       `🔄 Confirmar Devolución\n\n` +
       `${itemsSummary}\n\n` +
       `Total a devolver: ${fmt(totalRefund)}\n` +
-      `Estado original: ${selectedInvoice.estado_pago}\n\n` +
-      (selectedInvoice.estado_pago === 'pagado' 
-        ? `💵 Se debe entregar ${fmt(totalRefund)} en efectivo al cliente`
-        : `📋 Se reducirá la deuda del cliente en ${fmt(totalRefund)}`) +
-      `\n\n¿Continuar?`
-    )) {
+      (selectedInvoice.estado_pago === 'pagado'
+        ? `💵 Se entregará ${fmt(totalRefund)} en efectivo al cliente`
+        : `📋 Se reducirá la deuda del cliente en ${fmt(totalRefund)}`)
+    );
+    if (!confirmed) {
       setProcessingReturn(false);
       return;
     }
@@ -2529,27 +2530,16 @@ async function handleProcessReturn() {
 
      // 3. Mostrar resultado con desglose
 if (rpcResult.requiere_reembolso_efectivo) {
-  const cashBack = Number(rpcResult.cash_refund || 0);
-  const debtReduced = Number(rpcResult.cxc_adjustment || 0);
-  
-  let message = `✅ Devolución procesada exitosamente.\n\n`;
-  
-  if (cashBack > 0) {
-    message += `💵 Devolver al cliente en EFECTIVO: ${fmt(cashBack)}\n`;
-  }
-  if (debtReduced > 0) {
-    message += `📋 Deuda reducida en: ${fmt(debtReduced)}\n`;
-  }
-  
-  message += `\nTotal devolución: ${fmt(totalRefund)}`;
-  message += `\nID: ${rpcResult.devolucion_id?.slice(0, 8)}...`;
-  
-  alert(message);
+  const cashBack    = Number(rpcResult.cash_refund     || 0);
+  const debtReduced = Number(rpcResult.cxc_adjustment  || 0);
+  const parts = [`Devolución procesada — total ${fmt(totalRefund)}`];
+  if (cashBack    > 0) parts.push(`💵 Entregar en efectivo: ${fmt(cashBack)}`);
+  if (debtReduced > 0) parts.push(`📋 Deuda reducida: ${fmt(debtReduced)}`);
+  toast.return(parts.join(" · "), 7000);
 } else {
-  alert(
-    `✅ Devolución procesada.\n\n` +
-    `📋 Deuda reducida en ${fmt(Number(rpcResult.cxc_adjustment || 0))}.\n\n` +
-    `ID: ${rpcResult.devolucion_id?.slice(0, 8)}...`
+  toast.return(
+    `Devolución procesada — deuda reducida ${fmt(Number(rpcResult.cxc_adjustment || 0))}`,
+    6000
   );
 }
 
@@ -4082,7 +4072,7 @@ function renderStepClient() {
     if (value.trim().toLowerCase() === "#devolucion") {
       setAppMode('devolucion');
       setClientSearch("");
-      alert("🔄 MODO DEVOLUCIÓN ACTIVADO\n\nBusca el cliente para ver sus facturas.");
+      toast.return("Modo devolución activado — busca el cliente para ver sus facturas");
       return;
     }
 
@@ -4098,7 +4088,7 @@ function renderStepClient() {
             if (e.key === "Enter" && clientSearch.trim() === SECRET_CODE) {
               setMigrationMode((v) => !v);
               setClientSearch("");
-              alert(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
+              toast.info(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
               return;
             }
             // ↓ Move focus down the list

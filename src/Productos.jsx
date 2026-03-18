@@ -4,6 +4,18 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { usePermisos } from "./hooks/usePermisos";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { BarcodeScanner } from "./BarcodeScanner";
+import { useToast } from "./hooks/useToast";
+
+// Generate a unique in-store product code (12-digit, starts with 2 = internal UPC-A range)
+function generateProductCode() {
+  const digits = Array.from({ length: 11 }, () => Math.floor(Math.random() * 10)).join("");
+  const raw = "2" + digits;
+  // UPC-A check digit
+  const odd  = [0,2,4,6,8,10].reduce((s, i) => s + Number(raw[i]), 0);
+  const even = [1,3,5,7,9].reduce((s, i)    => s + Number(raw[i]), 0);
+  const check = (10 - ((odd * 3 + even) % 10)) % 10;
+  return raw + check;
+}
 
 /* ============================================================
    ===============  Crear / Buscar SUPLIDORES  ================
@@ -539,6 +551,7 @@ async function addStockSeleccionado(productoId, productoActual) {
 
 export default function Productos() {
   const { puedeCrearProductos, puedeEditarProductos, puedeEliminarProductos } = usePermisos();
+  const { toast } = useToast();
   const PAGE_SIZE = 20; // Reducido para móviles
   const [productos, setProductos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
@@ -980,7 +993,7 @@ export default function Productos() {
     const code = String(prod.codigo ?? "").trim();
 
     if (!code) {
-      alert("Este producto no tiene código/UPC para generar el código de barras.");
+      toast.warning("Este producto no tiene código/UPC. Usa 'Generate Code' para asignar uno.");
       return;
     }
 
@@ -1042,7 +1055,7 @@ export default function Productos() {
 
     const w = window.open("", "_blank");
     if (!w) {
-      alert("Habilita los pop-ups del navegador para imprimir la etiqueta.");
+      toast.warning("Habilita los pop-ups del navegador para imprimir la etiqueta.");
       return;
     }
     w.document.open("text/html", "replace");
@@ -1390,18 +1403,35 @@ export default function Productos() {
                         Code / UPC *
                         <span className="ml-1.5 text-[10px] font-normal text-gray-400 normal-case">(leading zeros are preserved)</span>
                       </label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base select-none">▌▌▌</span>
-                        <input
-                          className={`border-2 rounded-lg pl-9 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 outline-none bg-gray-50 uppercase ${codigoExisteInfo ? "border-amber-400 focus:ring-amber-400 focus:border-amber-400" : "border-gray-200 focus:ring-blue-500 focus:border-blue-400"}`}
-                          value={productoActual.codigo ?? ""}
-                          onChange={(e) => { setProductoActual({ ...productoActual, codigo: e.target.value.toUpperCase() }); setCodigoExisteInfo(null); }}
-                          onBlur={(e) => checkCodigoExiste(e.target.value)}
-                          placeholder="Scan or type barcode..."
-                          required autoFocus disabled={disabled || guardandoProducto}
-                        />
-                        {codigoVerificando && (
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs animate-pulse">checking...</span>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base select-none">▌▌▌</span>
+                          <input
+                            className={`border-2 rounded-lg pl-9 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 outline-none bg-gray-50 uppercase ${codigoExisteInfo ? "border-amber-400 focus:ring-amber-400 focus:border-amber-400" : "border-gray-200 focus:ring-blue-500 focus:border-blue-400"}`}
+                            value={productoActual.codigo ?? ""}
+                            onChange={(e) => { setProductoActual({ ...productoActual, codigo: e.target.value.toUpperCase() }); setCodigoExisteInfo(null); }}
+                            onBlur={(e) => checkCodigoExiste(e.target.value)}
+                            placeholder="Scan or type barcode..."
+                            required autoFocus disabled={disabled || guardandoProducto}
+                          />
+                          {codigoVerificando && (
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs animate-pulse">checking...</span>
+                          )}
+                        </div>
+                        {!disabled && !productoActual.codigo && (
+                          <button
+                            type="button"
+                            title="Generar código interno automático"
+                            className="flex-shrink-0 px-3 py-2.5 text-xs font-bold rounded-lg border-2 border-dashed border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors whitespace-nowrap"
+                            onClick={() => {
+                              const newCode = generateProductCode();
+                              setProductoActual((p) => ({ ...p, codigo: newCode }));
+                              setCodigoExisteInfo(null);
+                              toast.info("Código generado — guarda el producto para confirmar");
+                            }}
+                          >
+                            ⚡ Generate
+                          </button>
                         )}
                       </div>
                       {codigoExisteInfo && (

@@ -27,6 +27,7 @@ import OnlineDiscounts from "./online/Discounts";
 import { NetworkIndicator } from "./components/NetworkIndicator";
 import { SyncProvider, useSyncGlobal } from "./hooks/SyncContext";
 import { SyncToast } from "./components/SyncToast";
+import { ToastProvider } from "./hooks/useToast";
 
 // === Storefront público ===
 import Storefront from "./storefront/Storefront";
@@ -48,6 +49,9 @@ import ComisionesPage from './pages/ComisionesPage';
 
 // 📊 Reportes (NUEVO)
 import Reportes from './Reportes';
+
+// 🧾 Tax / Impuestos
+import TaxConfig from './pages/TaxConfig';
 
 // Componente de carga profesional
 const LoadingScreen = () => {
@@ -264,6 +268,7 @@ export default function App() {
   }
 
   return (
+    <ToastProvider>
     <UsuarioProvider>
       <VanProvider>
         <Routes>
@@ -343,10 +348,14 @@ export default function App() {
             {/* 📊 REPORTES (NUEVO) */}
             <Route path="reportes" element={<Reportes />} />
 
+            {/* 🧾 TAX / IMPUESTOS */}
+            <Route path="tax" element={<AdminRoute><TaxConfig /></AdminRoute>} />
+
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>
       </VanProvider>
     </UsuarioProvider>
+    </ToastProvider>
   );
 }
