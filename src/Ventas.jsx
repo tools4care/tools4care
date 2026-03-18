@@ -4320,9 +4320,9 @@ function renderStepClient() {
             setPayments([{ forma: "efectivo", monto: 0 }]);
             setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 });
             setClientRisk(null);
-setClientBehavior(null);
-setCreditProfile(null);
-
+            setClientBehavior(null);
+            setCreditProfile(null);
+            setStep(2); // go straight to products
           }}
           className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-4 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200"
         >
@@ -4770,35 +4770,43 @@ function renderStepPayment() {
             )}
           </div>
           <div className="text-right">
-            <div className="text-slate-300 text-xs uppercase tracking-wide">Total Owed</div>
+            <div className="text-slate-300 text-xs uppercase tracking-wide">{balanceBefore > 0 ? "Total Owed" : "Total"}</div>
             <div className="text-white font-extrabold text-xl">{fmt(totalAPagar)}</div>
           </div>
         </div>
 
         {/* Metrics grid */}
-        <div className={`grid gap-0 divide-x divide-gray-100 ${balanceBefore > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
-          {balanceBefore > 0 && (
-            <div className="p-3 text-center bg-red-50">
-              <div className="text-[10px] uppercase text-red-600 font-semibold tracking-wide">Prior Balance</div>
-              <div className="text-lg font-bold text-red-700 mt-0.5">{fmt(balanceBefore)}</div>
+        {(() => {
+          const showAR = !!selectedClient?.id;
+          const cols = balanceBefore > 0 ? (showAR ? 4 : 3) : (showAR ? 3 : 2);
+          return (
+            <div className={`grid gap-0 divide-x divide-gray-100 grid-cols-${cols}`}>
+              {balanceBefore > 0 && (
+                <div className="p-3 text-center bg-red-50">
+                  <div className="text-[10px] uppercase text-red-600 font-semibold tracking-wide">Prior Balance</div>
+                  <div className="text-lg font-bold text-red-700 mt-0.5">{fmt(balanceBefore)}</div>
+                </div>
+              )}
+              <div className="p-3 text-center bg-blue-50">
+                <div className="text-[10px] uppercase text-blue-600 font-semibold tracking-wide">This Sale</div>
+                <div className="text-lg font-bold text-blue-800 mt-0.5">{fmt(saleTotalWithTax)}</div>
+                {taxEnabled && taxAmount > 0 && (
+                  <div className="text-[10px] text-blue-500 mt-0.5">{taxName} {taxRate}%: +{fmt(taxAmount)}</div>
+                )}
+              </div>
+              <div className="p-3 text-center bg-emerald-50">
+                <div className="text-[10px] uppercase text-emerald-600 font-semibold tracking-wide">Paid Now</div>
+                <div className="text-lg font-bold text-emerald-700 mt-0.5">{fmt(paid)}</div>
+              </div>
+              {showAR && (
+                <div className={`p-3 text-center ${amountToCredit > 0 ? "bg-amber-50" : "bg-gray-50"}`}>
+                  <div className={`text-[10px] uppercase font-semibold tracking-wide ${amountToCredit > 0 ? "text-amber-600" : "text-gray-500"}`}>Goes to A/R</div>
+                  <div className={`text-lg font-bold mt-0.5 ${amountToCredit > 0 ? "text-amber-700" : "text-gray-400"}`}>{fmt(amountToCredit)}</div>
+                </div>
+              )}
             </div>
-          )}
-          <div className="p-3 text-center bg-blue-50">
-            <div className="text-[10px] uppercase text-blue-600 font-semibold tracking-wide">This Sale</div>
-            <div className="text-lg font-bold text-blue-800 mt-0.5">{fmt(saleTotalWithTax)}</div>
-            {taxEnabled && taxAmount > 0 && (
-              <div className="text-[10px] text-blue-500 mt-0.5">{taxName} {taxRate}%: +{fmt(taxAmount)}</div>
-            )}
-          </div>
-          <div className="p-3 text-center bg-emerald-50">
-            <div className="text-[10px] uppercase text-emerald-600 font-semibold tracking-wide">Paid Now</div>
-            <div className="text-lg font-bold text-emerald-700 mt-0.5">{fmt(paid)}</div>
-          </div>
-          <div className={`p-3 text-center ${amountToCredit > 0 ? "bg-amber-50" : "bg-gray-50"}`}>
-            <div className={`text-[10px] uppercase font-semibold tracking-wide ${amountToCredit > 0 ? "text-amber-600" : "text-gray-500"}`}>Goes to A/R</div>
-            <div className={`text-lg font-bold mt-0.5 ${amountToCredit > 0 ? "text-amber-700" : "text-gray-400"}`}>{fmt(amountToCredit)}</div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Change banner */}
         {change > 0 && (
@@ -4860,12 +4868,6 @@ function renderStepPayment() {
               <span className="text-lg">📊</span>
               <span className="text-white font-bold text-sm">Account Balance Summary</span>
             </div>
-            <button
-              onClick={() => setShowBalanceSummary(true)}
-              className="bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1"
-            >
-              👤 Show to Client
-            </button>
           </div>
           {/* Rows */}
           <div className="bg-white divide-y divide-gray-100">
@@ -4910,6 +4912,18 @@ function renderStepPayment() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── SHOW TO CLIENT (big prominent button) ─── */}
+      {selectedClient?.id && (
+        <button
+          onClick={() => setShowBalanceSummary(true)}
+          className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white py-4 rounded-xl font-bold text-base shadow-lg hover:shadow-xl active:scale-98 transition-all flex items-center justify-center gap-3"
+        >
+          <span className="text-xl">📱</span>
+          Show Summary to Client
+          <span className="text-xl">👤</span>
+        </button>
       )}
 
       {/* ── MIN PAYMENT ALERT ─────────────────────────── */}
