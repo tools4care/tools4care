@@ -26,7 +26,6 @@ export const ComisionesService = {
         .eq('activo', true)
         .order('nombre_van');
       
-      console.log('🚐 Vans encontradas:', data);
       if (error) throw error;
       return { data, error: null };
     } catch (error) {
@@ -45,7 +44,6 @@ export const ComisionesService = {
         .eq('activo', true)
         .order('nombre');
       
-      console.log('👥 Usuarios encontrados:', data);
       if (error) throw error;
       return { data, error: null };
     } catch (error) {

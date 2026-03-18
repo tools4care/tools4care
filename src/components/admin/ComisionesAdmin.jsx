@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ComisionesService } from '../../lib/comisiones-service';
 
 function ComisionesAdmin() {
@@ -18,20 +18,12 @@ function ComisionesAdmin() {
     cargarDatosIniciales();
   }, []);
 
-  const cargarDatosIniciales = async () => {
-    console.log('🔄 Cargando datos iniciales...');
+  const cargarDatosIniciales = useCallback(async () => {
     const { data: vansData } = await ComisionesService.obtenerVans();
     const { data: vendedoresData } = await ComisionesService.obtenerVendedores();
-    
-    if (vansData) {
-      console.log('✅ Vans cargadas:', vansData);
-      setVans(vansData);
-    }
-    if (vendedoresData) {
-      console.log('✅ Vendedores cargados:', vendedoresData);
-      setVendedores(vendedoresData);
-    }
-  };
+    if (vansData) setVans(vansData);
+    if (vendedoresData) setVendedores(vendedoresData);
+  }, []);
 
   const cargarDatos = async () => {
     if (!vanSeleccionada || !vendedorSeleccionado) {
@@ -44,34 +36,21 @@ function ComisionesAdmin() {
     setMensaje('');
     
     try {
-      console.log('🔄 Obteniendo configuración...');
       const { data: config, error: configError } = await ComisionesService.obtenerConfiguracion(
         vanSeleccionada,
         vendedorSeleccionado
       );
-      
-      if (configError) {
-        console.error('Error configuración:', configError);
-        throw new Error('Error al obtener configuración: ' + configError.message);
-      }
-      
-      console.log('✅ Configuración obtenida:', config);
+      if (configError) throw new Error('Error al obtener configuración: ' + configError.message);
       setConfiguracion(config);
 
-      console.log('🔄 Calculando comisiones...');
       const { data: comision, error: calcError } = await ComisionesService.calcularComisiones(
         vanSeleccionada,
         vendedorSeleccionado,
         fecha,
+        fecha,
         {}
       );
-      
-      if (calcError) {
-        console.error('Error cálculo:', calcError);
-        throw new Error('Error al calcular comisiones: ' + calcError.message);
-      }
-      
-      console.log('✅ Comisiones calculadas:', comision);
+      if (calcError) throw new Error('Error al calcular comisiones: ' + calcError.message);
       setResultado(comision);
       setMensaje('✅ Datos cargados exitosamente');
       setTimeout(() => setMensaje(''), 3000);
@@ -85,66 +64,41 @@ function ComisionesAdmin() {
     }
   };
 
-  const actualizarPorcentaje = async (metodo, nuevoValor) => {
-    if (!configuracion) return;
+  const actualizarPorcentaje = useCallback((metodo, nuevoValor) => {
+    if (!configuracion || !resultado) return;
 
-    console.log(`🔄 Actualizando ${metodo} a ${nuevoValor}%`);
-    
     const nuevaConfig = {
       ...configuracion,
       comisiones_por_metodo: {
         ...configuracion.comisiones_por_metodo,
         [metodo]: {
           ...configuracion.comisiones_por_metodo[metodo],
-          porcentaje: parseFloat(nuevoValor) || 0
-        }
-      }
+          porcentaje: parseFloat(nuevoValor) || 0,
+        },
+      },
     };
-    
     setConfiguracion(nuevaConfig);
-    
-    // Recalcular con nueva configuración
-    try {
-      const { data: comision } = await ComisionesService.calcularComisiones(
-        vanSeleccionada,
-        vendedorSeleccionado,
-        fecha,
-        {}
-      );
-      
-      if (comision) {
-        // Recalcular comisiones manualmente con nuevos porcentajes
-        const comisionPorMetodo = {};
-        let comisionTotal = 0;
 
-        Object.keys(comision.desglosePorMetodo).forEach(m => {
-          const datos = comision.desglosePorMetodo[m];
-          const configMetodo = nuevaConfig.comisiones_por_metodo[m];
-          
-          if (configMetodo && configMetodo.activo) {
-            const com = datos.monto * (configMetodo.porcentaje / 100);
-            
-            comisionPorMetodo[m] = {
-              monto: datos.monto,
-              porcentaje: configMetodo.porcentaje,
-              comision: com
-            };
-            
-            comisionTotal += com;
-          }
-        });
-
-        setResultado({
-          ...comision,
-          comisionPorMetodo,
-          comisionTotal,
-          totalAPagar: nuevaConfig.salario_base + comisionTotal
-        });
+    // Recalcular en local — no hace falta llamar al servidor
+    const comisionPorMetodo = {};
+    let comisionTotal = 0;
+    Object.keys(resultado.desglosePorMetodo).forEach((m) => {
+      const datos = resultado.desglosePorMetodo[m];
+      const configMetodo = nuevaConfig.comisiones_por_metodo[m];
+      if (configMetodo && configMetodo.activo) {
+        const com = Number((datos.monto * (configMetodo.porcentaje / 100)).toFixed(2));
+        comisionPorMetodo[m] = { monto: datos.monto, porcentaje: configMetodo.porcentaje, comision: com };
+        comisionTotal += com;
       }
-    } catch (error) {
-      console.error('Error al recalcular:', error);
-    }
-  };
+    });
+    comisionTotal = Number(comisionTotal.toFixed(2));
+    setResultado((prev) => ({
+      ...prev,
+      comisionPorMetodo,
+      comisionTotal,
+      totalAPagar: Number(((nuevaConfig.salario_base || 0) + comisionTotal).toFixed(2)),
+    }));
+  }, [configuracion, resultado]);
 
   const guardarConfiguracion = async () => {
     if (!configuracion) {
@@ -352,9 +306,9 @@ function ComisionesAdmin() {
               </div>
 
               <div className="pt-4 border-t-2 border-gray-300">
-                <div className="flex justify-between items-center p-4 bg-blue-100 rounded-lg">
-                  <span className="text-2xl font-bold text-gray-900">💵 TOTAL A PAGAR:</span>
-                  <span className="text-3xl font-bold text-blue-600">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 p-4 bg-blue-100 rounded-lg">
+                  <span className="text-lg sm:text-2xl font-bold text-gray-900">💵 TOTAL A PAGAR:</span>
+                  <span className="text-2xl sm:text-3xl font-bold text-blue-600">
                     ${resultado.totalAPagar?.toFixed(2) || '0.00'}
                   </span>
                 </div>
