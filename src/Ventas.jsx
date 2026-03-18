@@ -695,6 +695,9 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [paymentError, setPaymentError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Tax toggle per sale (Option A)
+  const [taxEnabled, setTaxEnabled] = useState(false);
+
 
   // pendingSales ahora viene del hook cloudPendingSales
   const pendingSales = cloudPendingSales;
@@ -1898,6 +1901,28 @@ useEffect(() => {
     [payments]
   );
 
+  // Tax calculation — reads config from TaxConfig localStorage key
+  const taxConfig = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("tools4care_tax_config") || "{}"); }
+    catch { return {}; }
+  }, []);
+  const taxRate     = Number(taxConfig.rate ?? 0);
+  const taxName     = taxConfig.name || "Tax";
+  const taxIncluded = taxConfig.taxIncluded ?? false;
+  const taxAmount   = useMemo(() => {
+    if (!taxEnabled || taxRate === 0) return 0;
+    if (taxIncluded) {
+      // tax is already baked into the price — extract it
+      return Number((saleTotal - saleTotal / (1 + taxRate / 100)).toFixed(2));
+    }
+    return Number((saleTotal * (taxRate / 100)).toFixed(2));
+  }, [taxEnabled, saleTotal, taxRate, taxIncluded]);
+  // Grand total visible to the customer (only changes when not tax-included)
+  const saleTotalWithTax = useMemo(() => {
+    if (!taxEnabled || taxIncluded) return saleTotal;
+    return Number((saleTotal + taxAmount).toFixed(2));
+  }, [taxEnabled, saleTotal, taxAmount, taxIncluded]);
+
   // useMemo: 20 valores financieros derivados en un solo bloque.
   // Solo recalcula cuando cambian: carrito, pagos, balance CxC, o cliente.
   // Antes recalculaban en CADA render (al abrir QR, escribir nota, etc.)
@@ -1915,11 +1940,11 @@ useEffect(() => {
         : Number(getClientBalance(selectedClient));
     const balanceBefore = Math.max(0, Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0);
     const oldDebt       = balanceBefore;
-    const totalAPagar   = oldDebt + saleTotal;
+    const totalAPagar   = oldDebt + saleTotalWithTax;
 
     // FIFO: primero se paga la deuda vieja, luego la venta nueva
     const paidToOldDebt = Math.min(paid, oldDebt);
-    const paidForSale   = Math.min(saleTotal, Math.max(0, paid - paidToOldDebt));
+    const paidForSale   = Math.min(saleTotalWithTax, Math.max(0, paid - paidToOldDebt));
     const paidApplied   = paidToOldDebt + paidForSale;
 
     // Pago mínimo requerido esta visita
@@ -1930,7 +1955,7 @@ useEffect(() => {
     const change             = Math.max(0, paid - totalAPagar);
     const mostrarAdvertencia = paid > totalAPagar;
 
-    const balanceAfter   = Math.max(0, balanceBefore + saleTotal - paidApplied);
+    const balanceAfter   = Math.max(0, balanceBefore + saleTotalWithTax - paidApplied);
     const amountToCredit = Math.max(0, balanceAfter - balanceBefore);
 
     const clientScore    = Number(selectedClient?.score_credito ?? 600);
@@ -1955,7 +1980,7 @@ useEffect(() => {
       clientScore, showCreditPanel, computedLimit,
       creditLimit, creditAvailable, excesoCredito,
     };
-  }, [saleTotal, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has]);
+  }, [saleTotalWithTax, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has]);
 
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
@@ -1980,7 +2005,7 @@ useEffect(() => {
   ) {
     // ⚠️ VERIFICAR: Solo auto-fill si acabamos de entrar al paso 3
     // y el campo nunca ha sido tocado manualmente
-    const roundedTotal = Number(saleTotal.toFixed(2));
+    const roundedTotal = Number(saleTotalWithTax.toFixed(2));
     setPayments([{ ...payments[0], monto: roundedTotal }]);
     setPaymentAutoFilled(true);
   }
@@ -1994,7 +2019,7 @@ useEffect(() => {
   if (step === 3 && paymentAutoFilled && payments.length > 1) {
     setPaymentAutoFilled(false);
   }
-}, [step, totalAPagar, payments.length, paymentAutoFilled, saleTotal]);
+}, [step, totalAPagar, payments.length, paymentAutoFilled, saleTotalWithTax]);
   /* ========== STRIPE QR FUNCTIONS (🆕 CON FEE) ========== */
 
   // 📱 Genera QR para pago con Stripe
@@ -2829,8 +2854,8 @@ if (selectedClient?.id) {
             van_id: van.id,
             usuario_id: usuario.id,
             // Totales (todos los campos que usa Supabase)
-            total_venta: Number(saleTotal.toFixed(2)),
-            total: Number(saleTotal.toFixed(2)),
+            total_venta: Number(saleTotalWithTax.toFixed(2)),
+            total: Number(saleTotalWithTax.toFixed(2)),
             total_pagado: Number(paidForSale_offline.toFixed(2)),
             // Estado y método
             estado_pago: estadoPago_offline,
@@ -3019,11 +3044,11 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
     cliente_id: selectedClient?.id ?? null,
     van_id: van.id ?? null,
     usuario_id: usuario.id,
-    total_venta: Number(saleTotal.toFixed(2)),      // ✅ COLUMNA CORRECTA
-    total: Number(saleTotal.toFixed(2)),            // ✅ MANTENER POR COMPATIBILIDAD
+    total_venta: Number(saleTotalWithTax.toFixed(2)),  // ✅ includes tax when enabled
+    total: Number(saleTotalWithTax.toFixed(2)),        // ✅ MANTENER POR COMPATIBILIDAD
     total_pagado: Number(paidForSaleNow.toFixed(2)),
           estado_pago: estadoPago,
-          pago: pagoJson,
+          pago: { ...pagoJson, tax_rate: taxEnabled ? taxRate : 0, tax_amount: taxEnabled ? taxAmount : 0, subtotal: Number(saleTotal.toFixed(2)) },
           pago_efectivo: pagoEfectivo,
           pago_tarjeta: pagoTarjeta,
           pago_transferencia: pagoTransf,
@@ -4699,7 +4724,40 @@ function renderStepPayment() {
 
   return (
     <div className="space-y-5">
-      <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">💳 Payment</h2>
+        {taxRate > 0 && (
+          <button
+            onClick={() => setTaxEnabled(v => !v)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold border-2 transition-all ${
+              taxEnabled
+                ? "bg-emerald-600 border-emerald-600 text-white shadow-md"
+                : "bg-white border-gray-300 text-gray-600 hover:border-emerald-400"
+            }`}
+          >
+            <span>{taxEnabled ? "🧾" : "🪙"}</span>
+            <span>{taxEnabled ? `${taxName} ON (${taxRate}%)` : `Apply ${taxName}`}</span>
+          </button>
+        )}
+      </div>
+
+      {/* ── TAX BREAKDOWN (when tax is on) ───────────── */}
+      {taxEnabled && taxRate > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1">
+          <div className="flex items-center justify-between text-sm text-gray-700">
+            <span>Subtotal</span>
+            <span className="font-semibold">{fmt(saleTotal)}</span>
+          </div>
+          <div className="flex items-center justify-between text-sm text-amber-700">
+            <span>{taxName} ({taxRate}%){taxIncluded ? " — included" : ""}</span>
+            <span className="font-semibold">+{fmt(taxAmount)}</span>
+          </div>
+          <div className="flex items-center justify-between font-bold text-gray-900 border-t border-amber-300 pt-1">
+            <span>Total with {taxName}</span>
+            <span>{fmt(saleTotalWithTax)}</span>
+          </div>
+        </div>
+      )}
 
       {/* ── SALE SUMMARY (always visible) ────────────── */}
       <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm overflow-hidden">
@@ -4727,7 +4785,10 @@ function renderStepPayment() {
           )}
           <div className="p-3 text-center bg-blue-50">
             <div className="text-[10px] uppercase text-blue-600 font-semibold tracking-wide">This Sale</div>
-            <div className="text-lg font-bold text-blue-800 mt-0.5">{fmt(saleTotal)}</div>
+            <div className="text-lg font-bold text-blue-800 mt-0.5">{fmt(saleTotalWithTax)}</div>
+            {taxEnabled && taxAmount > 0 && (
+              <div className="text-[10px] text-blue-500 mt-0.5">{taxName} {taxRate}%: +{fmt(taxAmount)}</div>
+            )}
           </div>
           <div className="p-3 text-center bg-emerald-50">
             <div className="text-[10px] uppercase text-emerald-600 font-semibold tracking-wide">Paid Now</div>
