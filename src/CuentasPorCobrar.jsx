@@ -1554,9 +1554,11 @@ export default function CuentasPorCobrar() {
 
           {!loading && rows.length === 0 && (
             <div className="bg-white rounded-xl p-8 text-center border-2 border-gray-200 shadow-lg">
-              <div className="text-6xl mb-4">🔍</div>
-              <div className="text-gray-500 font-semibold">No results found</div>
-              <div className="text-sm text-gray-400 mt-2">Check your database connection</div>
+              <div className="text-6xl mb-4">🎉</div>
+              <div className="text-gray-700 font-bold text-lg">Sin cuentas pendientes</div>
+              <div className="text-sm text-gray-400 mt-2">
+                Todos los clientes están al corriente — no hay saldos por cobrar en este período.
+              </div>
             </div>
           )}
 
