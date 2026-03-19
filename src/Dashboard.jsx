@@ -2482,6 +2482,19 @@ export default function Dashboard() {
   const sparklineData = ventasSerie.slice(-7).map(d => ({ value: d.total }));
   const maxProducto = productosTop.length > 0 ? productosTop[0].cantidad : 1;
 
+  // Normaliza direcciones que pueden venir como JSON string o texto plano
+  function formatDireccion(dir) {
+    if (!dir) return null;
+    try {
+      const obj = typeof dir === "string" ? JSON.parse(dir) : dir;
+      if (typeof obj === "object" && obj !== null) {
+        const partes = [obj.calle, obj.ciudad, obj.estado, obj.zip].filter(Boolean);
+        return partes.join(", ") || null;
+      }
+    } catch (_) { /* no era JSON, continuar */ }
+    return typeof dir === "string" ? dir.trim() || null : null;
+  }
+
   // Estadísticas de ruta
   const rutasCompletadas = rutasBarberias.filter(r => r.visitada).length;
   const rutasPendientes = rutasBarberias.length - rutasCompletadas;
@@ -2666,10 +2679,10 @@ export default function Dashboard() {
 
                       {/* Detalles adicionales */}
                       <div className="space-y-1">
-                        {barberia.direccion && (
+                        {formatDireccion(barberia.direccion) && (
                           <div className="flex items-start gap-2 text-sm text-gray-600">
                             <IconLocation className="flex-shrink-0 mt-0.5" />
-                            <span>{barberia.direccion}</span>
+                            <span>{formatDireccion(barberia.direccion)}</span>
                           </div>
                         )}
                         {barberia.telefono && (
