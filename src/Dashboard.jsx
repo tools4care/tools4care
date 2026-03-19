@@ -2276,7 +2276,7 @@ export default function Dashboard() {
     try {
       const { data, error } = await supabase
         .from("rutas_barberias")
-        .select("id,van_id,dia,negocio,telefono,direccion,orden,hora_visita,visitada,notas")
+        .select("id,van_id,dia,barberia_nombre,negocio,telefono,direccion,orden,hora_visita,visitada,notas")
         .eq("van_id", vanId)
         .eq("dia", fecha)
         .order("orden", { ascending: true })
@@ -2319,6 +2319,45 @@ export default function Dashboard() {
       cargarRutasBarberias(van.id, fechaRutaSeleccionada);
     } catch (error) {
       console.error("Error al eliminar:", error);
+    }
+  }
+
+  // Copia las barberías de hace 7 días a la fecha seleccionada, con visitada=false
+  async function copiarSemanaAnterior() {
+    if (!van?.id) return;
+    const fechaAnterior = dayjs(fechaRutaSeleccionada).subtract(7, "day").format("YYYY-MM-DD");
+    try {
+      const { data, error } = await supabase
+        .from("rutas_barberias")
+        .select("barberia_nombre,negocio,direccion,telefono,hora_visita,notas,orden")
+        .eq("van_id", van.id)
+        .eq("dia", fechaAnterior);
+
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert("No hay barberías en la ruta de la semana anterior para copiar.");
+        return;
+      }
+
+      const inserts = data.map((b) => ({
+        van_id: van.id,
+        barberia_nombre: b.barberia_nombre || b.negocio,
+        direccion: b.direccion,
+        telefono: b.telefono,
+        hora_visita: b.hora_visita,
+        notas: b.notas,
+        orden: b.orden,
+        dia: fechaRutaSeleccionada,
+        visitada: false, // siempre resetear al copiar
+      }));
+
+      const { error: insertError } = await supabase.from("rutas_barberias").insert(inserts);
+      if (insertError) throw insertError;
+
+      cargarRutasBarberias(van.id, fechaRutaSeleccionada);
+    } catch (err) {
+      console.error("Error al copiar ruta:", err);
+      alert("Error al copiar la ruta de la semana anterior.");
     }
   }
 
@@ -2498,13 +2537,20 @@ export default function Dashboard() {
               <h2 className="text-xl font-bold text-gray-800 leading-tight">Daily Route</h2>
               <p className="text-xs text-gray-500">Barbershops to visit today</p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
               <input
                 type="date"
                 value={fechaRutaSeleccionada}
                 onChange={(e) => setFechaRutaSeleccionada(e.target.value)}
                 className="border-2 border-gray-200 focus:border-purple-500 rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors"
               />
+              <button
+                onClick={copiarSemanaAnterior}
+                title="Copiar ruta de hace 7 días (visitadas se resetean)"
+                className="bg-amber-100 hover:bg-amber-200 text-amber-700 font-bold py-1.5 px-3 rounded-lg transition-all flex items-center gap-1 text-xs whitespace-nowrap border border-amber-300"
+              >
+                🔄 Copiar semana ant.
+              </button>
               <button
                 onClick={() => setShowAddBarberia(true)}
                 className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold py-1.5 px-3 rounded-lg shadow-lg transition-all flex items-center gap-1.5 text-sm whitespace-nowrap"
@@ -2539,17 +2585,25 @@ export default function Dashboard() {
               <div className="inline-block w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
             </div>
           ) : rutasBarberias.length === 0 ? (
-            <div className="text-center py-12 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl">
-              <div className="text-6xl mb-3">🗺️</div>
-              <div className="font-semibold text-gray-700 mb-2">No route planned</div>
-              <div className="text-sm text-gray-500 mb-4">Add barbershops to your daily route</div>
-              <button
-                onClick={() => setShowAddBarberia(true)}
-                className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition-all inline-flex items-center gap-2"
-              >
-                <IconPlus />
-                Add First Barbershop
-              </button>
+            <div className="text-center py-10 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl">
+              <div className="text-5xl mb-3">🗺️</div>
+              <div className="font-semibold text-gray-700 mb-1">No hay ruta planificada</div>
+              <div className="text-sm text-gray-500 mb-4">Agrega barberías o copia la ruta de la semana pasada</div>
+              <div className="flex items-center justify-center gap-3 flex-wrap">
+                <button
+                  onClick={copiarSemanaAnterior}
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2.5 px-5 rounded-xl shadow-md transition-all inline-flex items-center gap-2"
+                >
+                  🔄 Copiar ruta anterior
+                </button>
+                <button
+                  onClick={() => setShowAddBarberia(true)}
+                  className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold py-2.5 px-5 rounded-xl shadow-md transition-all inline-flex items-center gap-2"
+                >
+                  <IconPlus />
+                  Nueva barbería
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
@@ -2577,7 +2631,7 @@ export default function Dashboard() {
                       <div className="flex items-start justify-between gap-3 mb-2">
                         <div className="flex-1">
                           <h3 className={`font-bold text-lg ${barberia.visitada ? "line-through text-gray-500" : "text-gray-900"}`}>
-                            {barberia.barberia_nombre}
+                            {barberia.barberia_nombre || barberia.negocio || "Sin nombre"}
                           </h3>
                           {barberia.hora_visita && (
                             <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
