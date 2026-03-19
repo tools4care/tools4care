@@ -2276,7 +2276,7 @@ export default function Dashboard() {
     try {
       const { data, error } = await supabase
         .from("rutas_barberias")
-        .select("id,van_id,dia,barberia_nombre,negocio,telefono,direccion,orden,hora_visita,visitada,notas")
+        .select("id,van_id,dia,barberia_nombre,telefono,direccion,orden,hora_visita,visitada,notas")
         .eq("van_id", vanId)
         .eq("dia", fecha)
         .order("orden", { ascending: true })
@@ -2329,7 +2329,7 @@ export default function Dashboard() {
     try {
       const { data, error } = await supabase
         .from("rutas_barberias")
-        .select("barberia_nombre,negocio,direccion,telefono,hora_visita,notas,orden")
+        .select("barberia_nombre,direccion,telefono,hora_visita,notas,orden")
         .eq("van_id", van.id)
         .eq("dia", fechaAnterior);
 
@@ -2341,7 +2341,7 @@ export default function Dashboard() {
 
       const inserts = data.map((b) => ({
         van_id: van.id,
-        barberia_nombre: b.barberia_nombre || b.negocio,
+        barberia_nombre: b.barberia_nombre,
         direccion: b.direccion,
         telefono: b.telefono,
         hora_visita: b.hora_visita,
@@ -2631,7 +2631,7 @@ export default function Dashboard() {
                       <div className="flex items-start justify-between gap-3 mb-2">
                         <div className="flex-1">
                           <h3 className={`font-bold text-lg ${barberia.visitada ? "line-through text-gray-500" : "text-gray-900"}`}>
-                            {barberia.barberia_nombre || barberia.negocio || "Sin nombre"}
+                            {barberia.barberia_nombre || "Sin nombre"}
                           </h3>
                           {barberia.hora_visita && (
                             <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
