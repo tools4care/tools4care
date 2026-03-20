@@ -366,6 +366,48 @@ function CustomerHistoryModal({ cliente, onClose }) {
       const prev3    = last6Months.slice(0, 3).reduce((s, k) => s + monthlyData[k].purchases, 0);
       const seasonalTrend = prev3 > 0 ? Math.round(((recent3 - prev3) / prev3) * 100) : 0;
 
+      // ── Score History mensual (Health Score 0-100 por mes) ───────────────
+      // Calcula comportamiento crediticio mes a mes con los datos disponibles
+      const scoreHistory = last6Months.map((key) => {
+        const d = monthlyData[key];
+
+        // PPR del mes (pagos ÷ compras)
+        const pprMes = d.purchases > 0
+          ? Math.min(d.payments / d.purchases, 2)
+          : d.payments > 0 ? 2.0 : 0;
+
+        // Health base = 50 neutro
+        let h = 50;
+
+        // PPR del mes (peso: 40pts)
+        if      (pprMes >= 1.4) h += 40;
+        else if (pprMes >= 1.2) h += 32;
+        else if (pprMes >= 1.0) h += 22;
+        else if (pprMes >= 0.8) h += 12;
+        else if (pprMes >= 0.5) h +=  2;
+        else if (pprMes >  0  ) h -= 12;
+        else                    h -= 25; // sin actividad ni pago
+
+        // Bonus por actividad y consistencia (peso: 10pts)
+        if (d.transactions > 0) h += 5;
+        if (d.payments > 0)     h += 5;
+        // Pago sin compra nueva = señal muy positiva (pagando deuda vieja)
+        if (d.payments > 0 && d.transactions === 0) h += 10;
+
+        const health = Math.max(0, Math.min(100, Math.round(h)));
+        const label = health >= 80 ? 'Excelente' : health >= 65 ? 'Bueno'
+                    : health >= 50 ? 'Estable'   : health >= 35 ? 'Alerta' : 'Crítico';
+
+        return {
+          month: d.month,
+          health,
+          ppr: Number(pprMes.toFixed(2)),
+          pagos: d.payments,
+          compras: d.purchases,
+          label,
+        };
+      });
+
       // ── Dynamic recommendations ───────────────────────────────────────────
       const recs = [];
       if (payHistPct >= 80)
@@ -392,6 +434,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
         monthlyBalance,
         monthlyPurchases: monthlyBalance,
         scoreFactors,
+        scoreHistory,
         paymentHistory: allPayments.slice(0, 20),
         stats: {
           totalPurchases: totalPurchases6m,
@@ -757,6 +800,96 @@ function CustomerHistoryModal({ cliente, onClose }) {
                 {/* Score Tab */}
                 {activeTab === 'score' && (
                   <div className="space-y-5">
+
+                    {/* ── Gráfica de comportamiento mensual ── */}
+                    {historyData.scoreHistory?.length > 0 && (
+                      <div className="bg-white border-2 border-gray-200 rounded-2xl p-4">
+                        <div className="flex items-center justify-between mb-1">
+                          <h3 className="font-bold text-gray-900 text-sm">Comportamiento Crediticio (6 meses)</h3>
+                          {/* Leyenda de zonas */}
+                          <div className="flex items-center gap-3 text-xs text-gray-400">
+                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" />Bueno</span>
+                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />Alerta</span>
+                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />Crítico</span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-400 mb-3">Health Score mensual (0–100) basado en PPR y consistencia de pagos</p>
+                        <div className="h-52">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={historyData.scoreHistory} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="month" style={{ fontSize: '11px' }} tick={{ fill: '#6b7280' }} />
+                              <YAxis domain={[0, 100]} style={{ fontSize: '11px' }} tick={{ fill: '#6b7280' }} />
+                              <Tooltip
+                                content={({ active, payload }) => {
+                                  if (!active || !payload?.length) return null;
+                                  const d = payload[0].payload;
+                                  const color = d.health >= 65 ? '#16a34a' : d.health >= 50 ? '#d97706' : '#dc2626';
+                                  return (
+                                    <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs min-w-[140px]">
+                                      <div className="font-bold text-gray-800 mb-2">{d.month}</div>
+                                      <div className="flex items-center justify-between gap-3 mb-1">
+                                        <span className="text-gray-500">Health</span>
+                                        <span className="font-bold text-base" style={{ color }}>{d.health}/100</span>
+                                      </div>
+                                      <div className="flex items-center justify-between gap-3 mb-1">
+                                        <span className="text-gray-500">Estado</span>
+                                        <span className="font-semibold" style={{ color }}>{d.label}</span>
+                                      </div>
+                                      <div className="border-t border-gray-100 mt-2 pt-2 space-y-1">
+                                        <div className="flex justify-between"><span className="text-gray-400">PPR mes</span><span className="font-medium">{d.ppr}x</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-400">Compras</span><span className="font-medium">${d.compras.toFixed(0)}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-400">Pagos</span><span className="font-medium text-green-600">${d.pagos.toFixed(0)}</span></div>
+                                      </div>
+                                    </div>
+                                  );
+                                }}
+                              />
+                              {/* Zonas de referencia */}
+                              <ReferenceLine y={80} stroke="#16a34a" strokeDasharray="4 4" strokeOpacity={0.5} label={{ value: 'Excelente', position: 'right', fontSize: 9, fill: '#16a34a' }} />
+                              <ReferenceLine y={65} stroke="#d97706" strokeDasharray="4 4" strokeOpacity={0.5} label={{ value: 'Bueno', position: 'right', fontSize: 9, fill: '#d97706' }} />
+                              <ReferenceLine y={35} stroke="#dc2626" strokeDasharray="4 4" strokeOpacity={0.5} label={{ value: 'Crítico', position: 'right', fontSize: 9, fill: '#dc2626' }} />
+                              {/* Línea con color dinámico por punto */}
+                              <Line
+                                type="monotone"
+                                dataKey="health"
+                                stroke="#8b5cf6"
+                                strokeWidth={2.5}
+                                dot={(props) => {
+                                  const { cx, cy, payload } = props;
+                                  const color = payload.health >= 65 ? '#16a34a' : payload.health >= 35 ? '#d97706' : '#dc2626';
+                                  return <circle key={`dot-${cx}-${cy}`} cx={cx} cy={cy} r={5} fill={color} stroke="#fff" strokeWidth={2} />;
+                                }}
+                                activeDot={{ r: 7, stroke: '#8b5cf6', strokeWidth: 2 }}
+                                name="Health Score"
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+
+                        {/* Resumen tendencia */}
+                        {(() => {
+                          const hist = historyData.scoreHistory;
+                          if (hist.length < 2) return null;
+                          const ultimo = hist[hist.length - 1].health;
+                          const penultimo = hist[hist.length - 2].health;
+                          const diff = ultimo - penultimo;
+                          const avg = Math.round(hist.reduce((s, d) => s + d.health, 0) / hist.length);
+                          return (
+                            <div className="mt-3 flex items-center justify-between text-xs px-1">
+                              <span className="text-gray-400">Promedio 6m: <span className="font-bold text-gray-700">{avg}/100</span></span>
+                              {diff > 0
+                                ? <span className="text-green-600 font-semibold">↑ Mejorando +{diff} pts vs mes anterior</span>
+                                : diff < 0
+                                ? <span className="text-red-500 font-semibold">↓ Empeorando {diff} pts vs mes anterior</span>
+                                : <span className="text-gray-400">→ Sin cambio vs mes anterior</span>
+                              }
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
                     {/* Score badge */}
                     {(() => { const sc = scoreColor(cliente?.score_base); return (
                     <div className={`${sc.bg} border-2 ${sc.border} rounded-2xl p-6 text-center`}>
