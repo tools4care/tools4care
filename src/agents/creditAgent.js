@@ -368,20 +368,52 @@ export function evaluateCredit({
   // Recomendaciones
   const recomendaciones = [];
 
+  // Health Score y estado del límite
+  const hs = reglasCredito?.healthScore;
+  if (hs !== undefined) {
+    if (hs >= 90) {
+      recomendaciones.push(`⭐ Health ${hs}/100 — Cliente ejemplar. Considera AUMENTAR el límite de crédito.`);
+    } else if (hs >= 75) {
+      recomendaciones.push(`🟢 Health ${hs}/100 — Buen pagador. Mantener o aumentar límite.`);
+    } else if (hs >= 60) {
+      recomendaciones.push(`🟡 Health ${hs}/100 — Estable. Monitorear tendencia.`);
+    } else if (hs >= 45) {
+      recomendaciones.push(`🟠 Health ${hs}/100 — Atrasado. Límite reducido 20%. Exigir pago mínimo.`);
+    } else if (hs >= 30) {
+      recomendaciones.push(`🔴 Health ${hs}/100 — Riesgo. Límite reducido 40%. Solo ventas pequeñas.`);
+    } else if (hs >= 15) {
+      recomendaciones.push(`🚨 Health ${hs}/100 — Crítico. Límite reducido 65%. Requiere pago antes de vender.`);
+    } else {
+      recomendaciones.push(`⛔ Health ${hs}/100 — Near-freeze. Solo deuda vieja. No extender crédito.`);
+    }
+  }
+
   // PPR-based recommendations
   if (pprData) {
-    if (pprData.clasificacion === "peligro") {
-      recomendaciones.push(`🔴 PPR ${pprData.ppr.toFixed(2)} — Pays only ${Math.round(pprData.ppr * 100)}% of purchases. Require higher payment.`);
-    } else if (pprData.clasificacion === "alerta") {
-      recomendaciones.push(`🟠 PPR ${pprData.ppr.toFixed(2)} — Pays less than purchases. Debt growing.`);
-    } else if (pprData.clasificacion === "excelente") {
-      recomendaciones.push(`⭐ PPR ${pprData.ppr.toFixed(2)} — Excellent! Pays more than purchases.`);
+    const pprEfectivo = ppr30Data?.ppr30 ?? pprData.ppr;
+    if (pprEfectivo < 0.5) {
+      recomendaciones.push(`🔴 PPR ${pprEfectivo.toFixed(2)} — Paga solo ${Math.round(pprEfectivo * 100)}% de lo que compra. Deuda creciendo.`);
+    } else if (pprEfectivo < 0.8) {
+      recomendaciones.push(`🟠 PPR ${pprEfectivo.toFixed(2)} — Paga menos de lo que compra. Exigir más en cada visita.`);
+    } else if (pprEfectivo >= 1.2) {
+      recomendaciones.push(`⭐ PPR ${pprEfectivo.toFixed(2)} — Paga MÁS de lo que compra. Excelente comportamiento.`);
+    } else if (pprEfectivo >= 1.0) {
+      recomendaciones.push(`✅ PPR ${pprEfectivo.toFixed(2)} — Paga todo lo que compra. Buen cliente.`);
     }
 
     if (pprData.tendencia === "empeorando") {
-      recomendaciones.push("📉 Payment trend declining — monitor closely");
+      recomendaciones.push("📉 Tendencia empeorando — monitorear en próximas visitas");
     } else if (pprData.tendencia === "mejorando") {
-      recomendaciones.push("📈 Payment trend improving — good sign");
+      recomendaciones.push("📈 Tendencia mejorando — señal de recuperación");
+    }
+  }
+
+  // Streak recommendations
+  if (streakData) {
+    if (streakData.pagoUltimos3) {
+      recomendaciones.push(`🔥 Pagó en últimos 3 días ($${streakData.totalPagadoUltimos7.toFixed(2)} esta semana) — constancia premiada`);
+    } else if (streakData.pagoUltimos7) {
+      recomendaciones.push(`✅ Pagó en últimos 7 días ($${streakData.totalPagadoUltimos7.toFixed(2)} esta semana)`);
     }
   }
 

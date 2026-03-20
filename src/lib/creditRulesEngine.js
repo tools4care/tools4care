@@ -19,30 +19,23 @@ const CONFIG = {
   PPR_ESTABLE: 0.8,
   PPR_ALERTA: 0.5,
 
-  // Pago mínimo base (% de compra nueva)
-  PAGO_MIN_BASE: 0.50,              // 50% siempre
+  // Pago mínimo base (% de compra nueva) — NUNCA CAMBIAR
+  PAGO_MIN_BASE: 0.50,              // 50% siempre de compra nueva
 
   // Pago mínimo extra de deuda vieja según PPR
-  PAGO_DEUDA_PPR_EXCELENTE: 0.00,   // no requiere extra
-  PAGO_DEUDA_PPR_BUENO: 0.00,       // no requiere extra
-  PAGO_DEUDA_PPR_ESTABLE: 0.10,     // 10% de deuda vieja
-  PAGO_DEUDA_PPR_ALERTA: 0.20,      // 20% de deuda vieja
-  PAGO_DEUDA_PPR_PELIGRO: 0.30,     // 30% de deuda vieja
+  PAGO_DEUDA_PPR_EXCELENTE: 0.00,
+  PAGO_DEUDA_PPR_BUENO: 0.00,
+  PAGO_DEUDA_PPR_ESTABLE: 0.10,
+  PAGO_DEUDA_PPR_ALERTA: 0.20,
+  PAGO_DEUDA_PPR_PELIGRO: 0.30,
 
-  // Multiplicadores de límite según PPR
-  LIMITE_MULT_EXCELENTE: 1.10,      // +10%
-  LIMITE_MULT_BUENO: 1.00,          // sin cambio
-  LIMITE_MULT_ESTABLE: 0.90,        // -10%
-  LIMITE_MULT_ALERTA: 0.75,         // -25%
-  LIMITE_MULT_PELIGRO: 0.50,        // -50%
+  // Congelamiento — condiciones más claras
+  MAX_ACUERDOS_ROTOS_CONGELAR: 3,   // 3+ acuerdos rotos (era 2 — un error no = congelamiento)
+  DIAS_SIN_PAGO_CONGELAR: 21,       // 21+ días sin pagar con deuda activa = congelar
+  PPR_CONGELAR: 0.25,               // PPR < 0.25 junto con inactividad = congelar
 
-  // Penalizaciones
-  PEN_ACUERDO_ROTO: 0.25,           // -25% por acuerdo roto
-  MAX_ACUERDOS_ROTOS_CONGELAR: 2,
+  // Límites para evaluar cuotas vencidas
   MAX_CUOTAS_VENCIDAS: 1,
-  PEN_CUOTA_VENCIDA: 0.10,          // -10% por cuota vencida
-  PEN_INACTIVO_CON_DEUDA: 0.20,     // -20% si inactivo 30+ días con deuda
-  DIAS_INACTIVO_TRIGGER: 30,
 
   // Deuda vieja
   DIAS_DEUDA_VIEJA_TRIGGER: 10,
@@ -165,43 +158,91 @@ function calcularPagoMinimoPorPPR(pprClasificacion, montoVenta, saldoActual) {
 }
 
 
+// ========================= CREDIT HEALTH SCORE =========================
+/**
+ * Puntaje de Salud Crediticia (0–100).
+ * Diseñado para van-based POS: clientes que pagan poco a poco en días distintos.
+ *
+ * OBJETIVO: premiar consistencia + monto pagado, castigar abandono de deuda.
+ * NUNCA afecta la regla del 50% de compra nueva.
+ *
+ * 90-100 → Excelente → +30% límite (mérito)
+ *  75-89 → Bueno     → +15% límite
+ *  60-74 → Estable   → sin cambio
+ *  45-59 → Alerta    → -20% límite
+ *  30-44 → Riesgo    → -40% límite
+ *  15-29 → Crítico   → -60% límite (aún puede comprar pequeño)
+ *   0-14 → Freeze    → -90% límite (solo pago de deuda)
+ */
+export function calcularCreditHealthScore({ pprData, ppr30Data, streakData, acuerdos, diasInactivo, saldoActual }) {
+  let health = 60; // base neutral
+
+  // 1. PPR — usa PPR-30días si disponible (más justo para pagadores parciales)
+  //    El PPR-30d captura pagos entre visitas que el PPR-por-visitas ignora
+  const ppr = r2(ppr30Data?.ppr30 ?? pprData?.ppr ?? 0.5);
+  if      (ppr >= 1.4) health += 40;  // paga MÁS que lo que compra → mérito máximo
+  else if (ppr >= 1.2) health += 32;
+  else if (ppr >= 1.0) health += 22;  // paga todo lo que compra
+  else if (ppr >= 0.8) health += 12;
+  else if (ppr >= 0.6) health += 2;
+  else if (ppr >= 0.4) health -= 12;
+  else                 health -= 28;  // paga menos del 40% → alto riesgo
+
+  // 2. Consistencia de pagos (streak) — clave para POS van
+  //    Un cliente que viene $5 diarios vale más que uno que desaparece
+  if      (streakData?.pagoUltimos3)  health += 25; // pagó en últimos 3 días
+  else if (streakData?.pagoUltimos7)  health += 15; // pagó en últimos 7 días
+  else if (diasInactivo >= 21 && saldoActual > 0) health -= 30; // 3+ semanas sin pagar
+  else if (diasInactivo >= 14 && saldoActual > 0) health -= 15;
+  else if (diasInactivo >=  7 && saldoActual > 0) health -=  5;
+
+  // 3. Incumplimiento de acuerdos — penalización progresiva (no cliff)
+  const rotos    = acuerdos?.acuerdos_rotos       || 0;
+  const vencidas = acuerdos?.cuotas_vencidas_total || 0;
+  health -= Math.min(rotos    * 12, 36); // cap: -36 máximo por acuerdos rotos
+  health -= Math.min(vencidas *  5, 20); // cap: -20 máximo por cuotas vencidas
+
+  // 4. Bonus por tendencia del PPR (señal de recuperación)
+  if (pprData?.tendencia === "mejorando")   health += 5;
+  if (pprData?.tendencia === "empeorando") health -= 5;
+
+  return Math.max(0, Math.min(100, Math.round(health)));
+}
+
+
 // ========================= LÍMITE DINÁMICO =========================
+/**
+ * Calcula multiplicador de límite basado en Credit Health Score.
+ * Reemplaza el sistema de cascada (que generaba efectos cliff severos).
+ *
+ * Tabla de multiplicadores:
+ *  health 90+ → ×1.30  (+30% — cliente ejemplar, merece aumento)
+ *  health 75  → ×1.15  (+15% — buen pagador)
+ *  health 60  → ×1.00  (neutral)
+ *  health 45  → ×0.80  (-20% — alerta, reducción suave)
+ *  health 30  → ×0.60  (-40% — riesgo, reducción moderada)
+ *  health 15  → ×0.35  (-65% — crítico, permite compras pequeñas)
+ *  health  0  → ×0.10  (near-freeze — solo deuda, no bloqueo total)
+ */
+function calcularMultiplicadorLimite(pprData, acuerdos, diasInactivo, saldoActual, streakData = null, ppr30Data = null) {
+  const health = calcularCreditHealthScore({ pprData, ppr30Data, streakData, acuerdos, diasInactivo, saldoActual });
 
-function calcularMultiplicadorLimite(pprData, acuerdos, diasInactivo, saldoActual) {
-  let mult = 1.0;
+  let mult;
+  if      (health >= 90) mult = 1.30;
+  else if (health >= 75) mult = 1.15;
+  else if (health >= 60) mult = 1.00;
+  else if (health >= 45) mult = 0.80;
+  else if (health >= 30) mult = 0.60;
+  else if (health >= 15) mult = 0.35;
+  else                   mult = 0.10; // near-freeze: límite mínimo, no cero
 
-  // PPR multiplicador
-  switch (pprData.clasificacion) {
-    case "excelente": mult *= CONFIG.LIMITE_MULT_EXCELENTE; break;
-    case "bueno": mult *= CONFIG.LIMITE_MULT_BUENO; break;
-    case "estable": mult *= CONFIG.LIMITE_MULT_ESTABLE; break;
-    case "alerta": mult *= CONFIG.LIMITE_MULT_ALERTA; break;
-    case "peligro": mult *= CONFIG.LIMITE_MULT_PELIGRO; break;
+  // Bonus extra si PPR > 1.0 Y tiene racha → paga sobre el mínimo constantemente
+  const pagoSobreMinimo = (ppr30Data?.ppr30 ?? pprData?.ppr ?? 0) >= 1.0 && streakData?.pagoUltimos7;
+  if (pagoSobreMinimo && mult < 1.30) {
+    mult = Math.min(1.30, mult + 0.05); // +5% bonus por pagar más del mínimo con constancia
   }
 
-  // Penalización por acuerdos rotos
-  const rotos = acuerdos?.acuerdos_rotos || 0;
-  if (rotos > 0) {
-    mult *= Math.max(0.25, 1 - (rotos * CONFIG.PEN_ACUERDO_ROTO));
-  }
-
-  // Penalización por cuotas vencidas
-  const cuotasVencidas = acuerdos?.cuotas_vencidas_total || 0;
-  if (cuotasVencidas > 0) {
-    mult *= Math.max(0.5, 1 - (cuotasVencidas * CONFIG.PEN_CUOTA_VENCIDA));
-  }
-
-  // Penalización por inactividad con deuda
-  if (diasInactivo >= CONFIG.DIAS_INACTIVO_TRIGGER && saldoActual > 0) {
-    mult *= (1 - CONFIG.PEN_INACTIVO_CON_DEUDA);
-  }
-
-  // Bonus por tendencia mejorando
-  if (pprData.tendencia === "mejorando") {
-    mult *= 1.05; // +5% bonus
-  }
-
-  return r2(Math.max(0, Math.min(1.5, mult)));
+  return { mult: r2(mult), healthScore: health };
 }
 
 
@@ -237,24 +278,49 @@ export function evaluarReglasCredito({
   const pprData = calcularPPR(ventasDetalle, pagosDetalle);
   reglas.push(`PPR: ${pprData.ppr.toFixed(2)} (${pprData.clasificacion}) — ${pprData.visitas} visits`);
 
+  // ==================== CALCULAR STREAK Y PPR30 INTERNAMENTE ====================
+  // Usamos los pagosDetalle/ventasDetalle ya disponibles para no requerir nuevos params
+  const streakInterna = calcularPaymentStreakInterno(pagosDetalle);
+  const ppr30Interna  = calcularPPR30DiasInterno(ventasDetalle, pagosDetalle);
+
   // ==================== R4: CONGELAMIENTO ====================
-  if (acuerdosRotos >= CONFIG.MAX_ACUERDOS_ROTOS_CONGELAR) {
+  // Congelar solo cuando hay señales claras de abandono, no por un solo error.
+  // Objetivo: mantener al cliente viniendo y pagando, no bloquearlo totalmente.
+  const debePorAcuerdos  = acuerdosRotos >= CONFIG.MAX_ACUERDOS_ROTOS_CONGELAR; // 3+
+  const debePorInactividad = (
+    diasInactivo >= CONFIG.DIAS_SIN_PAGO_CONGELAR &&
+    saldoActual > CONFIG.TOLERANCIA &&
+    ppr30Interna.ppr30 < CONFIG.PPR_CONGELAR &&
+    !streakInterna.pagoUltimos7  // si pagó esta semana, no congelar
+  );
+  const debeCongelar = debePorAcuerdos || debePorInactividad;
+
+  if (debeCongelar) {
+    const motivoCongela = debePorAcuerdos
+      ? `${acuerdosRotos} acuerdos rotos (máx: ${CONFIG.MAX_ACUERDOS_ROTOS_CONGELAR})`
+      : `${diasInactivo} días sin pago con deuda activa (PPR: ${ppr30Interna.ppr30})`;
     return {
       permitido: false,
       nivel: "congelado",
       ppr: pprData,
+      ppr30: ppr30Interna,
+      streak: streakInterna,
       pagoMinimoVenta: montoVenta,
       pagoMinimoDeudaVieja: saldoActual,
       pagoMinimoTotal: r2(montoVenta + saldoActual),
       limiteEfectivo: 0,
       disponibleEfectivo: 0,
       multiplicadorLimite: 0,
+      healthScore: 0,
       penalizacionPct: 100,
-      reglas: [...reglas, `R4: FROZEN (${acuerdosRotos} broken agreements)`],
-      advertencias: ["🔒 CREDIT FROZEN — Cash only until all debt is paid"],
+      reglas: [...reglas, `R4: CONGELADO — ${motivoCongela}`],
+      advertencias: [
+        `🔒 CRÉDITO CONGELADO — ${motivoCongela}`,
+        "Solo pago de contado hasta liquidar deuda.",
+      ],
       acuerdoSugerido: null,
       requiereExcepcion: true,
-      motivoBloqueo: `Credit FROZEN: ${acuerdosRotos} broken agreements`,
+      motivoBloqueo: `Crédito congelado: ${motivoCongela}`,
       montoMaximo: 0,
     };
   }
@@ -288,15 +354,22 @@ export function evaluarReglasCredito({
   reglas.push(`Pago mínimo total: $${pagoMinimoTotal.toFixed(2)} (venta: $${pagoMinimoVenta.toFixed(2)} + deuda: $${pagoMinimoDeudaFinal.toFixed(2)})`);
 
   // ==================== CALCULAR LÍMITE DINÁMICO ====================
-  const multiplicador = calcularMultiplicadorLimite(pprData, acuerdos, diasInactivo, saldoActual);
-  const limiteEfectivo = r2(limiteBase * multiplicador);
+  const { mult: multiplicador, healthScore } = calcularMultiplicadorLimite(
+    pprData, acuerdos, diasInactivo, saldoActual, streakInterna, ppr30Interna
+  );
+  const limiteEfectivo     = r2(limiteBase * multiplicador);
   const disponibleEfectivo = r2(Math.max(0, limiteEfectivo - saldoActual));
-  const penalizacionPct = r2((1 - multiplicador) * 100);
+  const penalizacionPct    = r2((1 - multiplicador) * 100);
 
-  reglas.push(`Limit: $${limiteBase.toFixed(2)} × ${multiplicador} = $${limiteEfectivo.toFixed(2)} (available: $${disponibleEfectivo.toFixed(2)})`);
+  reglas.push(`Health: ${healthScore}/100 → ×${multiplicador} | Límite: $${limiteBase.toFixed(2)} → $${limiteEfectivo.toFixed(2)} (disponible: $${disponibleEfectivo.toFixed(2)})`);
 
-  if (penalizacionPct > 0) {
-    advertencias.push(`📉 Credit limit reduced ${penalizacionPct.toFixed(0)}% (PPR: ${pprData.ppr.toFixed(2)}, ${pprData.clasificacion})`);
+  // Mensajes según dirección del límite
+  if (multiplicador > 1.0) {
+    advertencias.push(`⬆️ Límite aumentado ${((multiplicador - 1) * 100).toFixed(0)}% — cliente paga bien (Health: ${healthScore}/100)`);
+  } else if (penalizacionPct >= 40) {
+    advertencias.push(`📉 Límite reducido ${penalizacionPct.toFixed(0)}% — cliente retrasado en pagos (Health: ${healthScore}/100)`);
+  } else if (penalizacionPct > 0) {
+    advertencias.push(`⚠️ Límite reducido ${penalizacionPct.toFixed(0)}% (Health: ${healthScore}/100)`);
   }
 
   // ==================== CUOTAS VENCIDAS ====================
@@ -342,6 +415,9 @@ export function evaluarReglasCredito({
     permitido,
     nivel,
     ppr: pprData,
+    ppr30: ppr30Interna,
+    streak: streakInterna,
+    healthScore,                       // 0-100 Credit Health Score
     pagoMinimoVenta,
     pagoMinimoDeudaVieja: pagoMinimoDeudaFinal,
     pagoMinimoTotal,
@@ -547,6 +623,39 @@ export function calcularLimiteSugerido(ventas = [], pprData = null, streak = nul
   };
 }
 
+
+// ========================= HELPERS INTERNOS =========================
+// Versiones internas (no exportadas) que computan desde arrays crudos
+// para no duplicar lógica con las funciones exportadas
+
+function calcularPaymentStreakInterno(pagos = []) {
+  if (!pagos.length) return { streakDias: 0, pagoUltimos7: false, pagoUltimos3: false, totalPagadoUltimos7: 0, score: 0 };
+  const ahora = Date.now();
+  const MS = 86400000;
+  const u7 = pagos.filter(p => { const ms = ahora - new Date(p.fecha).getTime(); return ms >= 0 && ms <= 7 * MS; });
+  const u3 = pagos.filter(p => { const ms = ahora - new Date(p.fecha).getTime(); return ms >= 0 && ms <= 3 * MS; });
+  const diasSet = new Set(pagos.filter(p => (ahora - new Date(p.fecha).getTime()) <= 14 * MS).map(p => new Date(p.fecha).toDateString()));
+  return {
+    streakDias: diasSet.size,
+    pagoUltimos7: u7.length > 0,
+    pagoUltimos3: u3.length > 0,
+    totalPagadoUltimos7: r2(u7.reduce((s, p) => s + Number(p.monto_pagado || 0), 0)),
+    score: u3.length > 0 ? 15 : u7.length > 0 ? 10 : 0,
+  };
+}
+
+function calcularPPR30DiasInterno(ventas = [], pagos = []) {
+  const ahora = Date.now();
+  const VENTANA = 30 * 86400000;
+  const v30 = ventas.filter(v => { const ms = ahora - new Date(v.fecha).getTime(); return ms >= 0 && ms <= VENTANA; });
+  const p30 = pagos.filter(p => { const ms = ahora - new Date(p.fecha).getTime(); return ms >= 0 && ms <= VENTANA; });
+  const comprado = v30.reduce((s, v) => s + Number(v.total || 0), 0);
+  const pagado   = p30.reduce((s, p) => s + Number(p.monto_pagado || 0), 0);
+  if (comprado === 0) return { ppr30: 1.0, clasificacion: "nuevo" };
+  const ppr30 = r2(Math.min(pagado / comprado, 3.0));
+  const clas = ppr30 >= 1.2 ? "excelente" : ppr30 >= 1.0 ? "bueno" : ppr30 >= 0.8 ? "estable" : ppr30 >= 0.5 ? "alerta" : "peligro";
+  return { ppr30, clasificacion: clas };
+}
 
 // ========================= HELPERS =========================
 
