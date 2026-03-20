@@ -425,6 +425,129 @@ export function buildPaymentAgreementSMS({ clientName, montoVenta, montoPagado, 
 }
 
 
+// ========================= PAYMENT STREAK =========================
+/**
+ * Premia a clientes que pagan con frecuencia aunque sean montos pequeños.
+ * Clave para van-based POS donde los clientes pagan deuda en partes distintos días.
+ */
+export function calcularPaymentStreak(pagos = []) {
+  if (!pagos.length) {
+    return { streakDias: 0, pagoUltimos7: false, pagoUltimos3: false, totalPagadoUltimos7: 0, score: 0 };
+  }
+
+  const ahora = Date.now();
+  const MS_DIA = 86400000;
+
+  const pagosOrdenados = [...pagos].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+
+  const ultimos7 = pagosOrdenados.filter(p => {
+    const ms = ahora - new Date(p.fecha).getTime();
+    return ms >= 0 && ms <= 7 * MS_DIA;
+  });
+  const ultimos3 = pagosOrdenados.filter(p => {
+    const ms = ahora - new Date(p.fecha).getTime();
+    return ms >= 0 && ms <= 3 * MS_DIA;
+  });
+
+  // Días únicos con pago en últimas 2 semanas
+  const diasUnicos = new Set(
+    pagosOrdenados
+      .filter(p => (ahora - new Date(p.fecha).getTime()) <= 14 * MS_DIA)
+      .map(p => new Date(p.fecha).toDateString())
+  );
+
+  const totalPagadoUltimos7 = ultimos7.reduce((s, p) => s + Number(p.monto_pagado || 0), 0);
+
+  // +10 si hizo algún pago en últimos 7 días, +5 adicionales si fue en últimos 3
+  let score = 0;
+  if (ultimos7.length > 0) score += 10;
+  if (ultimos3.length > 0) score += 5;
+
+  return {
+    streakDias: diasUnicos.size,        // días únicos con pago en 14d
+    pagoUltimos7: ultimos7.length > 0,
+    pagoUltimos3: ultimos3.length > 0,
+    totalPagadoUltimos7: r2(totalPagadoUltimos7),
+    score,                               // 0, 10 o 15 pts
+  };
+}
+
+
+// ========================= PPR 30 DÍAS =========================
+/**
+ * PPR basado en ventana de 30 días corridos (no por visitas).
+ * Complementa calcularPPR() para detectar si el cliente está pagando
+ * su deuda activamente entre visitas (pagos parciales frecuentes).
+ */
+export function calcularPPR30Dias(ventas = [], pagos = []) {
+  const ahora = Date.now();
+  const VENTANA = 30 * 86400000; // 30 días en ms
+
+  const ventas30 = ventas.filter(v => {
+    const ms = ahora - new Date(v.fecha).getTime();
+    return ms >= 0 && ms <= VENTANA;
+  });
+  const pagos30 = pagos.filter(p => {
+    const ms = ahora - new Date(p.fecha).getTime();
+    return ms >= 0 && ms <= VENTANA;
+  });
+
+  const totalComprado = ventas30.reduce((s, v) => s + Number(v.total || 0), 0);
+  const totalPagado   = pagos30.reduce((s, p)  => s + Number(p.monto_pagado || 0), 0);
+
+  if (totalComprado === 0) {
+    return { ppr30: 1.0, clasificacion: "nuevo", totalComprado: 0, totalPagado: r2(totalPagado) };
+  }
+
+  const ppr30 = r2(Math.min(totalPagado / totalComprado, 3.0));
+
+  let clasificacion;
+  if      (ppr30 >= CONFIG.PPR_EXCELENTE) clasificacion = "excelente";
+  else if (ppr30 >= CONFIG.PPR_BUENO)     clasificacion = "bueno";
+  else if (ppr30 >= CONFIG.PPR_ESTABLE)   clasificacion = "estable";
+  else if (ppr30 >= CONFIG.PPR_ALERTA)    clasificacion = "alerta";
+  else                                     clasificacion = "peligro";
+
+  return { ppr30, clasificacion, totalComprado: r2(totalComprado), totalPagado: r2(totalPagado) };
+}
+
+
+// ========================= LÍMITE SUGERIDO DINÁMICO =========================
+/**
+ * Sugiere un límite basado en el comportamiento real de compra.
+ * NO reemplaza limite_manual ni limite_politica.
+ * Sirve como referencia para el admin al ajustar manualmente.
+ *
+ * Fórmula: promedio_compra × 3 × mult_ppr × mult_racha
+ */
+export function calcularLimiteSugerido(ventas = [], pprData = null, streak = null) {
+  if (!ventas.length) return { limiteSugerido: 0, base: 0, motivo: "Sin historial de compras" };
+
+  const recientes = ventas.slice(0, 10);
+  const promedioCompra = recientes.reduce((s, v) => s + Number(v.total || 0), 0) / recientes.length;
+
+  // Base = 3 compras típicas a crédito
+  const base = r2(promedioCompra * 3);
+
+  // Multiplicador por PPR (no toca la regla del 50%)
+  const multPPR = { excelente: 1.2, bueno: 1.0, estable: 0.8, alerta: 0.6, peligro: 0.4, nuevo: 1.0 }[pprData?.clasificacion ?? "nuevo"] ?? 1.0;
+
+  // Bonus por racha de pagos recientes
+  const multStreak = streak?.pagoUltimos3 ? 1.1 : streak?.pagoUltimos7 ? 1.05 : 1.0;
+
+  const limiteSugerido = r2(Math.max(0, base * multPPR * multStreak));
+
+  return {
+    limiteSugerido,
+    base,
+    multPPR,
+    multStreak,
+    promedioCompra: r2(promedioCompra),
+    motivo: `Prom $${r2(promedioCompra)} × 3 × PPR(${multPPR}) × Racha(${multStreak})`,
+  };
+}
+
+
 // ========================= HELPERS =========================
 
 function r2(n) { return Math.round(Number(n || 0) * 100) / 100; }
