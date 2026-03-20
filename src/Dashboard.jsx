@@ -1206,8 +1206,48 @@ function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo,
 }
 
 /* ---------- KPI Detail Modal ---------- */
-function KpiDetailModal({ type, ventas, ventasSerie, metricas, rangeDays, historialBackups, onClose, getNombreCliente }) {
-  if (!type) return null;
+// Wrapper: evita renderizar el inner cuando type es null (permite usar hooks sin violar reglas)
+function KpiDetailModal(props) {
+  if (!props.type) return null;
+  return <KpiDetailModalInner {...props} />;
+}
+
+function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, historialBackups, onClose, getNombreCliente }) {
+
+  // ── Deuda real desde Supabase (solo cuando el panel de deuda está abierto) ──
+  const [deudaReal, setDeudaReal] = useState({ top: [], total: 0, count: 0, loading: false });
+
+  useEffect(() => {
+    if (type !== "debt") return;
+    let cancelled = false;
+    setDeudaReal({ top: [], total: 0, count: 0, loading: true });
+
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("v_cxc_cliente_detalle_ext")
+          .select("cliente_id, cliente_nombre, saldo, limite_politica")
+          .gt("saldo", 0.01)
+          .order("saldo", { ascending: false })
+          .limit(10);
+
+        if (cancelled) return;
+
+        const top = (data || []).map(d => ({
+          nombre: d.cliente_nombre || "Cliente",
+          deuda:  Number(d.saldo          || 0),
+          limite: Number(d.limite_politica || 0),
+        }));
+        const total = top.reduce((s, d) => s + d.deuda, 0);
+        const count = top.length;
+        setDeudaReal({ top, total, count, loading: false });
+      } catch {
+        if (!cancelled) setDeudaReal({ top: [], total: 0, count: 0, loading: false });
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [type]);
 
   // --- Shared derived data ---
   const totalRevenue  = metricas.totalVentas;
@@ -1442,70 +1482,86 @@ function KpiDetailModal({ type, ventas, ventasSerie, metricas, rangeDays, histor
             </div>
           </>}
 
-          {/* DEBT content */}
+          {/* DEBT content — datos reales desde Supabase */}
           {type === "debt" && <>
-            {metricas.totalDeuda === 0 ? (
+            {deudaReal.loading ? (
+              <div className="text-center py-12">
+                <div className="text-4xl mb-3 animate-spin">⏳</div>
+                <div className="text-gray-500 text-sm">Cargando deudas reales…</div>
+              </div>
+            ) : deudaReal.top.length === 0 ? (
               <div className="text-center py-10">
                 <div className="text-6xl mb-3">🎉</div>
-                <div className="font-bold text-gray-700 text-xl">No outstanding debt!</div>
-                <div className="text-gray-500 text-sm mt-1">All clients are up to date with payments</div>
+                <div className="font-bold text-gray-700 text-xl">¡Sin deudas pendientes!</div>
+                <div className="text-gray-500 text-sm mt-1">Todos los clientes están al corriente</div>
               </div>
             ) : (
               <>
-                {topDeudores.length > 0 && (
-                  <div className="bg-gray-50 rounded-2xl p-4">
-                    <h4 className="font-bold text-gray-700 mb-3 text-sm">🔴 Top Debtors</h4>
-                    <div className="space-y-3">
-                      {topDeudores.map((d, i) => {
-                        const pct = metricas.totalDeuda > 0 ? (d.deuda / metricas.totalDeuda) * 100 : 0;
-                        return (
-                          <div key={i}>
-                            <div className="flex items-center justify-between mb-1">
-                              <div className="flex items-center gap-2">
-                                <span className="w-5 h-5 bg-orange-100 text-orange-700 rounded-full text-[10px] font-bold flex items-center justify-center">{i+1}</span>
-                                <span className="text-sm font-semibold text-gray-800 truncate max-w-[140px]">{d.nombre}</span>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-sm font-bold text-red-600">{fmtMoney(d.deuda)}</span>
-                                <span className="text-xs text-gray-400 ml-1">{pct.toFixed(0)}%</span>
-                              </div>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                              <div className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full" style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
+                {/* Totales reales */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-orange-50 rounded-2xl p-4 border border-orange-200">
-                    <div className="text-xs text-orange-600 font-bold uppercase mb-1">Total Owed</div>
-                    <div className="text-2xl font-bold text-orange-700">{fmtMoney(metricas.totalDeuda)}</div>
+                    <div className="text-xs text-orange-600 font-bold uppercase mb-1">Total Adeudado</div>
+                    <div className="text-2xl font-bold text-orange-700">{fmtMoney(deudaReal.total)}</div>
                   </div>
                   <div className="bg-red-50 rounded-2xl p-4 border border-red-200">
-                    <div className="text-xs text-red-600 font-bold uppercase mb-1">Clients w/ Debt</div>
-                    <div className="text-2xl font-bold text-red-700">{metricas.clientesConDeuda}</div>
+                    <div className="text-xs text-red-600 font-bold uppercase mb-1">Clientes con Deuda</div>
+                    <div className="text-2xl font-bold text-red-700">{deudaReal.count}+</div>
                   </div>
                 </div>
 
-                {topDeudores.length > 0 && (
-                  <div className="bg-gray-50 rounded-2xl p-4">
-                    <h4 className="font-bold text-gray-700 mb-3 text-sm">📊 Debt Distribution</h4>
-                    <div className="h-40">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={topDeudores.slice(0, 5)} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} layout="vertical">
-                          <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v.toFixed(0)}`} />
-                          <YAxis type="category" dataKey="nombre" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} width={80} />
-                          <Tooltip formatter={(v) => [fmtMoney(v), "Debt"]} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
-                          <Bar dataKey="deuda" fill="#f97316" radius={[0, 6, 6, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                {/* Top deudores con barras proporcionales */}
+                <div className="bg-gray-50 rounded-2xl p-4">
+                  <h4 className="font-bold text-gray-700 mb-3 text-sm">🔴 Mayores Deudores</h4>
+                  <div className="space-y-3">
+                    {deudaReal.top.map((d, i) => {
+                      const pct = deudaReal.total > 0 ? (d.deuda / deudaReal.total) * 100 : 0;
+                      return (
+                        <div key={i}>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 bg-orange-100 text-orange-700 rounded-full text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i+1}</span>
+                              <span className="text-sm font-semibold text-gray-800 truncate max-w-[140px]">{d.nombre}</span>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <span className="text-sm font-bold text-red-600">{fmtMoney(d.deuda)}</span>
+                              <span className="text-xs text-gray-400 ml-1">{pct.toFixed(0)}%</span>
+                            </div>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full transition-all duration-500" style={{ width: `${Math.min(pct, 100)}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                )}
+                </div>
+
+                {/* Gráfica de distribución */}
+                <div className="bg-gray-50 rounded-2xl p-4">
+                  <h4 className="font-bold text-gray-700 mb-3 text-sm">📊 Distribución de Deuda</h4>
+                  <div style={{ height: Math.max(160, deudaReal.top.slice(0,5).length * 36) }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={deudaReal.top.slice(0, 5).map(d => ({ ...d, nombre: d.nombre.split(" ")[0] }))}
+                        margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+                        layout="vertical"
+                      >
+                        <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v >= 1000 ? (v/1000).toFixed(1)+"k" : v.toFixed(0)}`} />
+                        <YAxis type="category" dataKey="nombre" tick={{ fontSize: 11, fill: '#374151', fontWeight: 500 }} axisLine={false} tickLine={false} width={70} />
+                        <Tooltip
+                          formatter={(v) => [fmtMoney(v), "Deuda"]}
+                          contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }}
+                        />
+                        <Bar dataKey="deuda" fill="#f97316" radius={[0, 6, 6, 0]}>
+                          {deudaReal.top.slice(0,5).map((_, idx) => {
+                            const colors = ["#dc2626","#ea580c","#f97316","#fb923c","#fdba74"];
+                            return <Cell key={idx} fill={colors[idx] || "#f97316"} />;
+                          })}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </>
             )}
           </>}
