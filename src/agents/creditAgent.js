@@ -10,6 +10,9 @@ import {
   buildPaymentAgreementSMS,
   CREDIT_RULES_CONFIG,
   calcularPPR,
+  calcularPaymentStreak,
+  calcularPPR30Dias,
+  calcularLimiteSugerido,
 } from "../lib/creditRulesEngine";
 import {
   getAcuerdosResumen,
@@ -230,6 +233,9 @@ export function evaluateCredit({
   deudas = [], deudasVencidas = [],
   acuerdosResumen = null, reglasCredito = null,
   pprData = null,
+  streakData = null,   // nuevo: racha de pagos recientes
+  ppr30Data = null,    // nuevo: PPR últimos 30 días corridos
+  limiteSugeridoData = null, // nuevo: límite dinámico sugerido
 }) {
   let score = 50; // base más neutro
   const disponible = Math.max(0, limite - saldo);
@@ -246,16 +252,29 @@ export function evaluateCredit({
 
   // ==================== SCORING v3 ====================
 
-  // 1. PPR (30 puntos)
+  // 1. PPR por visitas (30 puntos) — sin cambio
   if (pprData) {
     const ppr = pprData.ppr;
     if (ppr >= 1.2) score += 30;
     else if (ppr >= 1.0) score += 22;
     else if (ppr >= 0.8) score += 15;
     else if (ppr >= 0.5) score += 5;
-    else score -= 10; // PPR < 0.5 penaliza
+    else score -= 10;
   } else {
-    score += 15; // sin datos = neutro
+    score += 15;
+  }
+
+  // 1b. PAYMENT STREAK — hasta +15 pts
+  // Premia clientes que pagan frecuente aunque sea poco (van-based POS)
+  if (streakData) {
+    score += streakData.score; // 0, +10 o +15
+
+    // Si el PPR por visitas dice "peligro" pero el PPR 30 días dice "estable/bueno",
+    // significa que el cliente está pagando entre visitas — suavizar la penalización
+    if (pprData?.clasificacion === "peligro" && ppr30Data &&
+        (ppr30Data.clasificacion === "estable" || ppr30Data.clasificacion === "bueno" || ppr30Data.clasificacion === "excelente")) {
+      score += 8; // corrección por contexto: PPR-visitas penalizó de más
+    }
   }
 
   // 2. Cumplimiento de cuotas (25 puntos)
@@ -409,8 +428,13 @@ export function evaluateCredit({
     ratio, promedioVentas, diasInactivo, diasRetraso, montoVenta,
     patronPago, tendenciaConsumo, frecuencia, analisisDeudas, tendenciaBalance,
     recomendaciones,
-    // PPR data
+    // PPR
     ppr: pprData,
+    ppr30: ppr30Data,
+    // Racha de pagos
+    streak: streakData,
+    // Límite sugerido para admin
+    limiteSugerido: limiteSugeridoData,
     // Acuerdos
     acuerdosResumen, reglasCredito,
     // Alias for CreditRiskPanel
@@ -435,9 +459,14 @@ export async function runCreditAgent(clienteId, montoVenta = 0, montoPagadoAhora
       if (cli?.limite_manual != null) limite = Number(cli.limite_manual);
     } catch { /* defaults */ }
 
-    // PPR
+    // PPR por visitas (original — sin cambio)
     const pprData = calcularPPR(historial.ventasDetalles, historial.pagosDetalles);
     const diasInactivo = calcDiasInactivo(historial.lastSaleDate, historial.ventasDetalles);
+
+    // NUEVO: PPR 30 días corridos y racha de pagos
+    const ppr30Data   = calcularPPR30Dias(historial.ventasDetalles, historial.pagosDetalles);
+    const streakData  = calcularPaymentStreak(historial.pagosDetalles);
+    const limiteSugeridoData = calcularLimiteSugerido(historial.ventasDetalles, pprData, streakData);
 
     // Acuerdos
     let acuerdosResumen = null, diasDeuda = 0, reglasCredito = null;
@@ -456,6 +485,34 @@ export async function runCreditAgent(clienteId, montoVenta = 0, montoPagadoAhora
         pagosDetalle: historial.pagosDetalles,
         diasInactivo,
       });
+
+      // ====== RUTA DE REHABILITACIÓN ======
+      // Si está congelado (2+ acuerdos rotos) PERO ha pagado en los últimos 7 días
+      // y el PPR30 muestra señales de recuperación → modo PROBATORIO (50% del límite)
+      // El 50% de compra nueva NUNCA cambia — solo afecta el límite disponible
+      if (
+        reglasCredito?.nivel === "congelado" &&
+        streakData.pagoUltimos7 &&
+        ppr30Data.clasificacion !== "peligro"
+      ) {
+        const limiteProba = Math.round(limite * 0.5 * 100) / 100;
+        const disponibleProba = Math.max(0, Math.round((limiteProba - saldo) * 100) / 100);
+
+        reglasCredito = {
+          ...reglasCredito,
+          nivel: "probatorio",
+          limiteEfectivo: limiteProba,
+          disponibleEfectivo: disponibleProba,
+          montoMaximo: disponibleProba,
+          permitido: true,
+          requiereExcepcion: true, // sigue requiriendo excepción pero no bloquea
+          advertencias: [
+            "🟡 MODO PROBATORIO — Crédito congelado pero cliente está pagando activamente.",
+            `Límite reducido al 50%: $${limiteProba.toFixed(2)}. Regla 50% compra nueva se mantiene.`,
+            "Para rehabilitación completa: liquidar deuda total.",
+          ],
+        };
+      }
     }
 
     const resultado = evaluateCredit({
@@ -465,6 +522,7 @@ export async function runCreditAgent(clienteId, montoVenta = 0, montoPagadoAhora
       lastSaleDate: historial.lastSaleDate,
       deudas: historial.deudas, deudasVencidas: historial.deudasVencidas,
       acuerdosResumen, reglasCredito, pprData,
+      streakData, ppr30Data, limiteSugeridoData,
     });
 
     return resultado;
