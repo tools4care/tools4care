@@ -43,8 +43,61 @@ export default function Inventory() {
   const [hasMore, setHasMore]               = useState(true);
   const [isSearchingDB, setIsSearchingDB]   = useState(false);
   const [dbSearchResults, setDbSearchResults] = useState(null);
+  const [editingQty, setEditingQty]         = useState(null); // { producto_id, value }
+  const [savingQtyIds, setSavingQtyIds]     = useState(new Set());
+  const editQtyInputRef                     = useRef(null);
   const searchTimerRef = useRef(null);
   const offset = page * PAGE_SIZE;
+
+  // ── Guardar conteo físico (SET, no incremento) ───────────
+  async function handleSetQty(producto_id, rawValue) {
+    const newQty = Math.max(0, parseInt(rawValue, 10));
+    if (!Number.isFinite(newQty)) { setEditingQty(null); return; }
+
+    setSavingQtyIds((s) => new Set(s).add(producto_id));
+    setEditingQty(null);
+
+    try {
+      if (selected.tipo === "van" && selected.id) {
+        const { data: existing } = await supabase
+          .from("stock_van").select("id").eq("van_id", selected.id).eq("producto_id", producto_id).maybeSingle();
+        if (existing) {
+          await supabase.from("stock_van").update({ cantidad: newQty }).eq("id", existing.id);
+        } else {
+          await supabase.from("stock_van").insert({ van_id: selected.id, producto_id, cantidad: newQty });
+        }
+      } else {
+        // warehouse
+        const { data: existing } = await supabase
+          .from("stock_almacen").select("id").eq("producto_id", producto_id).maybeSingle();
+        if (existing) {
+          await supabase.from("stock_almacen").update({ cantidad: newQty }).eq("id", existing.id);
+        } else {
+          await supabase.from("stock_almacen").insert({ producto_id, cantidad: newQty });
+        }
+      }
+      // Actualizar local sin recargar toda la lista
+      setInventory((prev) => prev.map((item) =>
+        item.producto_id === producto_id ? { ...item, cantidad: newQty } : item
+      ));
+    } catch (err) {
+      setError("Error al guardar: " + err.message);
+    } finally {
+      setSavingQtyIds((s) => { const n = new Set(s); n.delete(producto_id); return n; });
+    }
+  }
+
+  // ── Auto-focus inline qty input ──────────────────────────
+  useEffect(() => {
+    if (editingQty) {
+      setTimeout(() => {
+        const el = editQtyInputRef.current;
+        if (!el) return;
+        el.focus();
+        el.select();
+      }, 50);
+    }
+  }, [editingQty?.producto_id]);
 
   // ── Load locations ────────────────────────────────────────
   useEffect(() => {
@@ -372,6 +425,10 @@ export default function Inventory() {
           </div>
         ) : (
           <>
+            {/* Hint de conteo físico */}
+            <p className="text-xs text-slate-400 text-center mb-2">
+              Toca el número de cualquier producto para corregir el conteo real
+            </p>
             {/* ── Mobile: card list ── */}
             <div className="sm:hidden space-y-2">
               {filteredInventory.map((item) => {
@@ -394,9 +451,42 @@ export default function Inventory() {
                         )}
                       </div>
                     </div>
-                    <div className={`flex-shrink-0 min-w-[3.5rem] text-center px-3 py-1.5 rounded-xl border font-bold text-lg ${stockBadge(item.cantidad)}`}>
-                      {item.cantidad}
-                    </div>
+                    {/* Cantidad editable — toca para corregir conteo */}
+                    {editingQty?.producto_id === item.producto_id ? (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <input
+                          ref={editQtyInputRef}
+                          type="number"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          min="0"
+                          autoFocus
+                          className="w-16 h-9 text-center border-2 border-blue-500 rounded-xl font-bold text-base focus:outline-none"
+                          value={editingQty.value}
+                          onChange={(e) => setEditingQty((q) => ({ ...q, value: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSetQty(item.producto_id, editingQty.value);
+                            if (e.key === "Escape") setEditingQty(null);
+                          }}
+                          onBlur={() => handleSetQty(item.producto_id, editingQty.value)}
+                        />
+                      </div>
+                    ) : savingQtyIds.has(item.producto_id) ? (
+                      <div className="flex-shrink-0 w-12 h-9 flex items-center justify-center">
+                        <svg className="animate-spin w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                        </svg>
+                      </div>
+                    ) : (
+                      <button
+                        className={`flex-shrink-0 min-w-[3.5rem] text-center px-3 py-1.5 rounded-xl border font-bold text-lg active:scale-95 transition-all ${stockBadge(item.cantidad)}`}
+                        onClick={() => setEditingQty({ producto_id: item.producto_id, value: String(item.cantidad) })}
+                        title="Toca para corregir cantidad"
+                      >
+                        {item.cantidad}
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -426,9 +516,37 @@ export default function Inventory() {
                         <td className="px-4 py-3 text-gray-600">{p.marca || "—"}</td>
                         <td className="px-4 py-3 text-gray-500 text-xs">{p.size || "—"}</td>
                         <td className="px-4 py-3 text-right">
-                          <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2.5 py-1 rounded-lg border font-bold text-sm ${stockBadge(item.cantidad)}`}>
-                            {item.cantidad}
-                          </span>
+                          {editingQty?.producto_id === item.producto_id ? (
+                            <input
+                              ref={editQtyInputRef}
+                              type="number"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              min="0"
+                              autoFocus
+                              className="w-20 h-8 text-center border-2 border-blue-500 rounded-lg font-bold text-sm focus:outline-none"
+                              value={editingQty.value}
+                              onChange={(e) => setEditingQty((q) => ({ ...q, value: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSetQty(item.producto_id, editingQty.value);
+                                if (e.key === "Escape") setEditingQty(null);
+                              }}
+                              onBlur={() => handleSetQty(item.producto_id, editingQty.value)}
+                            />
+                          ) : savingQtyIds.has(item.producto_id) ? (
+                            <svg className="animate-spin w-4 h-4 text-blue-500 inline" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                            </svg>
+                          ) : (
+                            <button
+                              className={`inline-flex items-center justify-center min-w-[2.5rem] px-2.5 py-1 rounded-lg border font-bold text-sm hover:ring-2 hover:ring-blue-400 active:scale-95 transition-all cursor-pointer ${stockBadge(item.cantidad)}`}
+                              onClick={() => setEditingQty({ producto_id: item.producto_id, value: String(item.cantidad) })}
+                              title="Clic para corregir cantidad"
+                            >
+                              {item.cantidad}
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
