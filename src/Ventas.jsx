@@ -688,6 +688,8 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState("");
   const [noProductFound, setNoProductFound] = useState("");
+  const [productExistsNotInVan, setProductExistsNotInVan] = useState("");
+  const [pendingStockIssues, setPendingStockIssues] = useState([]); // items del pendiente con stock insuficiente
   const [discountTarget, setDiscountTarget] = useState(null); // producto_id with open discount input
   const [discountInputVal, setDiscountInputVal] = useState("");
 
@@ -1692,6 +1694,7 @@ useEffect(() => {
   if (!searchActive) {
     setProducts(topProducts.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0));
     setNoProductFound("");
+    setProductExistsNotInVan("");
     return;
   }
 
@@ -1715,6 +1718,7 @@ useEffect(() => {
 
     setProducts(results);
     setNoProductFound(results.length === 0 ? filter : "");
+    setProductExistsNotInVan("");
     return;
   }
 
@@ -1801,12 +1805,14 @@ useEffect(() => {
 
             setProducts(results);
             setNoProductFound(results.length === 0 ? filter : "");
+            setProductExistsNotInVan("");
             return;
           }
         }
-        
+
         setProducts([]);
         setNoProductFound(filter);
+        setProductExistsNotInVan("");
         return;
       }
 
@@ -1823,14 +1829,32 @@ useEffect(() => {
 
         setProducts(results);
         setNoProductFound("");
+        setProductExistsNotInVan("");
       } else {
+        // No está en el inventario de la van — verificar si el producto existe en BD
         setProducts([]);
-        setNoProductFound(filter);
+        const codigoConditionsCheck = filterVariants.map(v => `codigo.ilike.%${v}%`).join(',');
+        const { data: prodCheck } = await supabase
+          .from("productos")
+          .select("id")
+          .or(`nombre.ilike.%${filter}%,${codigoConditionsCheck},marca.ilike.%${filter}%`)
+          .limit(1);
+
+        if (prodCheck && prodCheck.length > 0) {
+          // Existe en BD pero no en esta van (o sin stock)
+          setProductExistsNotInVan(filter);
+          setNoProductFound("");
+        } else {
+          // Realmente no existe
+          setNoProductFound(filter);
+          setProductExistsNotInVan("");
+        }
       }
     } catch (err) {
       console.error("Error en búsqueda:", err);
       setProducts([]);
       setNoProductFound(filter);
+      setProductExistsNotInVan("");
     } finally {
       setSearchingInDB(false);
     }
@@ -2244,6 +2268,7 @@ function clearSale() {
   
   // Limpiar cart
   setCart([]);
+  setPendingStockIssues([]);
     // 🆕 DEVOLUCIONES: Resetear modo
   setAppMode('venta');
   setClientSalesHistory([]);
@@ -2385,6 +2410,51 @@ function clearSale() {
     setTimeout(() => productSearchRef.current?.focus(), 150);
   }, []); // productSearchRef es estable (useRef)
 
+ // Verifica si los productos del pendiente tienen stock suficiente en la van
+  async function checkPendingCartStock(cartItems, vanId) {
+    if (!cartItems?.length || !vanId) return;
+    const ids = cartItems.map(i => i.producto_id).filter(Boolean);
+    if (!ids.length) return;
+
+    const { data, error } = await supabase
+      .from("stock_van")
+      .select("producto_id, cantidad")
+      .eq("van_id", vanId)
+      .in("producto_id", ids);
+
+    if (error || !data) return;
+
+    const stockMap = new Map(data.map(r => [r.producto_id, Number(r.cantidad || 0)]));
+
+    const issues = cartItems
+      .filter(item => Number(item.cantidad || 1) > (stockMap.get(item.producto_id) ?? 0))
+      .map(item => ({
+        producto_id: item.producto_id,
+        nombre: item.nombre,
+        requested: Number(item.cantidad || 1),
+        available: stockMap.get(item.producto_id) ?? 0,
+      }));
+
+    if (issues.length > 0) setPendingStockIssues(issues);
+  }
+
+  // Ajusta automáticamente el carrito al stock disponible
+  function autoAdjustCart() {
+    setCart(prev =>
+      (Array.isArray(prev) ? prev : [])
+        .filter(item => {
+          const issue = pendingStockIssues.find(i => i.producto_id === item.producto_id);
+          return !issue || issue.available > 0; // eliminar items sin stock
+        })
+        .map(item => {
+          const issue = pendingStockIssues.find(i => i.producto_id === item.producto_id);
+          if (!issue) return item;
+          return { ...item, cantidad: issue.available }; // reducir al disponible
+        })
+    );
+    setPendingStockIssues([]);
+  }
+
  async function handleSelectPendingSale(sale) {
     // Si es una pending sale de la nube
     if (sale.id && sale.cliente_data) {
@@ -2403,7 +2473,9 @@ function clearSale() {
         id: sale.cliente_id || clientData.id,
       });
       
-      setCart(Array.isArray(sale.cart) ? sale.cart : []);
+      const restoredCart = Array.isArray(sale.cart) ? sale.cart : [];
+      setCart(restoredCart);
+      setPendingStockIssues([]); // limpiar advertencias anteriores
       setPayments(
         Array.isArray(sale.payments) && sale.payments.length > 0
           ? sale.payments
@@ -2412,7 +2484,10 @@ function clearSale() {
       setNotes(sale.notes || '');
       setStep(sale.step || 1);
       setCurrentCloudPendingId(sale.id);
-      
+
+      // Verificar stock en tiempo real (no bloquea la UI)
+      if (van?.id) checkPendingCartStock(restoredCart, van.id);
+
       // Ejecutar agente de crédito si tiene cliente
       if (sale.cliente_id) {
         runCreditAgent(sale.cliente_id);
@@ -2451,7 +2526,9 @@ function clearSale() {
         id: updatedSale.cliente_id || clientData.id,
       });
       
-      setCart(Array.isArray(updatedSale.cart) ? updatedSale.cart : []);
+      const restoredCart2 = Array.isArray(updatedSale.cart) ? updatedSale.cart : [];
+      setCart(restoredCart2);
+      setPendingStockIssues([]);
       setPayments(
         Array.isArray(updatedSale.payments) && updatedSale.payments.length > 0
           ? updatedSale.payments
@@ -2460,7 +2537,10 @@ function clearSale() {
       setNotes(updatedSale.notes || '');
       setStep(updatedSale.step || 1);
       setCurrentCloudPendingId(updatedSale.id);
-      
+
+      // Verificar stock en tiempo real
+      if (van?.id) checkPendingCartStock(restoredCart2, van.id);
+
       // Ejecutar agente de crédito si tiene cliente
       if (updatedSale.cliente_id) {
         runCreditAgent(updatedSale.cliente_id);
@@ -4463,6 +4543,48 @@ function renderStepProducts() {
         </div>
       )}
 
+      {/* ── STOCK WARNING (pendiente retomado con stock insuficiente) ── */}
+      {pendingStockIssues.length > 0 && (
+        <div className="bg-orange-50 border border-orange-300 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-orange-600 text-lg">⚠️</span>
+            <span className="font-bold text-orange-800 text-sm">
+              Stock insuficiente para {pendingStockIssues.length} producto{pendingStockIssues.length > 1 ? "s" : ""} de este pendiente
+            </span>
+          </div>
+          <ul className="space-y-1">
+            {pendingStockIssues.map(issue => (
+              <li key={issue.producto_id} className="flex items-center justify-between text-sm">
+                <span className="text-orange-900 font-medium truncate flex-1 mr-2">{issue.nombre}</span>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                  issue.available === 0
+                    ? "bg-red-100 text-red-700"
+                    : "bg-orange-100 text-orange-700"
+                }`}>
+                  {issue.available === 0
+                    ? "Sin stock"
+                    : `Pedido ${issue.requested} · Disponible ${issue.available}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex gap-2 pt-1">
+            <button
+              className="flex-1 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold py-2 rounded-xl active:scale-95 transition-all"
+              onClick={autoAdjustCart}
+            >
+              Ajustar cantidades automáticamente
+            </button>
+            <button
+              className="px-4 py-2 text-sm text-orange-700 hover:text-orange-900 font-medium transition-colors"
+              onClick={() => setPendingStockIssues([])}
+            >
+              Ignorar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── SEARCH BAR ───────────────────────────────── */}
       <div className="flex gap-2">
         <input
@@ -4498,12 +4620,21 @@ function renderStepProducts() {
       {noProductFound && (
         <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex items-start justify-between gap-3">
           <span className="text-yellow-800 text-sm">
-            ❌ "<b>{noProductFound}</b>" not found in van inventory
+            ❌ "<b>{noProductFound}</b>" no existe en el sistema
           </span>
           <button
             className="bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg px-3 py-1.5 text-sm font-semibold shadow-md hover:shadow-lg transition-all whitespace-nowrap"
             onClick={() => navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)}
-          >✨ Create</button>
+          >✨ Crear</button>
+        </div>
+      )}
+
+      {/* ── EXISTS BUT NOT IN VAN ────────────────────── */}
+      {productExistsNotInVan && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-400 p-4 rounded-lg flex items-start justify-between gap-3">
+          <span className="text-blue-800 text-sm">
+            📦 "<b>{productExistsNotInVan}</b>" existe en el sistema pero no tiene stock en esta van
+          </span>
         </div>
       )}
 

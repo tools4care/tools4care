@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useNavigate } from "react-router-dom";
+import { BarcodeScanner } from "./BarcodeScanner";
 
 /* ===================== Helpers de búsqueda (fast-path escáner) ===================== */
 const isLikelyScan = (s) => !!s && s.length >= 6 && !/\s/.test(s);
@@ -22,6 +23,7 @@ export default function AgregarStockModal({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modo, setModo] = useState("auto");
+  const [showScanner, setShowScanner] = useState(false);
 
   const timerRef = useRef();
   const busquedaInputRef = useRef(null);
@@ -296,41 +298,52 @@ export default function AgregarStockModal({
             ))}
           </div>
 
-          {/* ── Search input ── */}
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-base select-none pointer-events-none">
-              ▌▌▌
-            </span>
-            <input
-              ref={busquedaInputRef}
-              className="w-full border-2 border-slate-200 rounded-xl pl-9 pr-9 py-2.5 font-mono text-sm focus:border-blue-500 focus:outline-none transition-colors"
-              placeholder={placeholder}
-              value={busqueda}
-              onChange={(e) => {
-                setBusqueda(e.target.value);
-                setSeleccion(null);
-                setMensaje("");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  const term = norm(busqueda);
-                  if (!term) return;
-                  if ((modo === "auto" || modo === "codigo") && isLikelyScan(term))
-                    buscarExactoPorCodigo(term);
-                  else buscarOpciones(term, modo);
-                }
-              }}
-            />
-            {busqueda && (
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm"
-                onClick={() => { setBusqueda(""); setOpciones([]); setSeleccion(null); setMensaje(""); }}
-              >
-                ✕
-              </button>
-            )}
+          {/* ── Search input + camera button (mobile/tablet only) ── */}
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-base select-none pointer-events-none">
+                ▌▌▌
+              </span>
+              <input
+                ref={busquedaInputRef}
+                className="w-full border-2 border-slate-200 rounded-xl pl-9 pr-9 py-2.5 font-mono text-sm focus:border-blue-500 focus:outline-none transition-colors"
+                placeholder={placeholder}
+                value={busqueda}
+                onChange={(e) => {
+                  setBusqueda(e.target.value);
+                  setSeleccion(null);
+                  setMensaje("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const term = norm(busqueda);
+                    if (!term) return;
+                    if ((modo === "auto" || modo === "codigo") && isLikelyScan(term))
+                      buscarExactoPorCodigo(term);
+                    else buscarOpciones(term, modo);
+                  }
+                }}
+              />
+              {busqueda && (
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm"
+                  onClick={() => { setBusqueda(""); setOpciones([]); setSeleccion(null); setMensaje(""); }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {/* Camera button — only on mobile/tablet */}
+            <button
+              type="button"
+              className="md:hidden w-11 h-11 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center justify-center text-lg shadow-md active:scale-95 transition-all flex-shrink-0"
+              onClick={() => setShowScanner(true)}
+              title="Scan barcode with camera"
+            >
+              📷
+            </button>
           </div>
 
           {/* ── Loading spinner ── */}
@@ -509,6 +522,21 @@ export default function AgregarStockModal({
           </div>
         )}
       </form>
+
+      {/* ── Camera barcode scanner (mobile/tablet) ── */}
+      {showScanner && (
+        <BarcodeScanner
+          isActive={showScanner}
+          onScan={(code) => {
+            setBusqueda(code.trim());
+            setSeleccion(null);
+            setMensaje("");
+            setShowScanner(false);
+            setTimeout(() => busquedaInputRef.current?.focus(), 150);
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
     </div>
   );
 }
