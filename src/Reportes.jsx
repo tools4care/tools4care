@@ -1,5 +1,5 @@
 // src/Reportes.jsx - Custom Reports Hub (Fixed)
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
