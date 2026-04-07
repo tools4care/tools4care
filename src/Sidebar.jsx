@@ -134,7 +134,7 @@ export default function Sidebar() {
             onClick={() => {
               setVan(null);
               localStorage.removeItem("van");
-              window.location.href = "/vanselector";
+              window.location.href = "/van";
             }}
             className="w-full bg-yellow-400 hover:bg-yellow-500 text-black py-2 px-3 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
           >
