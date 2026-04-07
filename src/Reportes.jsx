@@ -121,21 +121,30 @@ function ErrorBox({ msg }) {
 
 /* ========================= 1. VENTAS REPORT ========================= */
 function VentasReport({ van, usuario }) {
+  const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
   const [from, setFrom] = useState(get30DaysAgo());
   const [to, setTo]     = useState(getToday());
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const [searched, setSearched] = useState(false);
+  const [usuarios, setUsuarios] = useState([]);
+  const [filtroUsuario, setFiltroUsuario] = useState(""); // admin only
+
+  // Admin: cargar lista de vendedores de la van
+  useEffect(() => {
+    if (!isAdmin || !van?.id) return;
+    supabase.from("usuarios").select("id, nombre, email, rol").eq("activo", true)
+      .then(({ data }) => setUsuarios(data || []));
+  }, [isAdmin, van?.id]);
 
   const search = async () => {
     if (!van?.id) return;
     setLoading(true); setError(null);
     try {
       const { start, end } = dateRangeBounds(from, to);
-      // Try with usuarios join first; fall back without if FK not configured in PostgREST
       let rows = [];
-      const { data: r1, error: e1 } = await supabase
+      let q = supabase
         .from("ventas")
         .select(`
           id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
@@ -146,19 +155,26 @@ function VentasReport({ van, usuario }) {
         .gte("created_at", start)
         .lte("created_at", end)
         .order("created_at", { ascending: false });
+
+      // Vendedores solo ven sus propias ventas
+      if (!isAdmin) q = q.eq("usuario_id", usuario.id);
+      // Admin con filtro específico de vendedor
+      else if (filtroUsuario) q = q.eq("usuario_id", filtroUsuario);
+
+      const { data: r1, error: e1 } = await q;
       if (!e1) {
         rows = r1 || [];
       } else {
-        const { data: r2, error: e2 } = await supabase
+        let q2 = supabase
           .from("ventas")
-          .select(`
-            id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
-            cliente_id, clientes:cliente_id(nombre)
-          `)
+          .select(`id, created_at, total_venta, total_pagado, estado_pago, metodo_pago, cliente_id, clientes:cliente_id(nombre)`)
           .eq("van_id", van.id)
           .gte("created_at", start)
           .lte("created_at", end)
           .order("created_at", { ascending: false });
+        if (!isAdmin) q2 = q2.eq("usuario_id", usuario.id);
+        else if (filtroUsuario) q2 = q2.eq("usuario_id", filtroUsuario);
+        const { data: r2, error: e2 } = await q2;
         if (e2) throw e2;
         rows = r2 || [];
       }
@@ -208,7 +224,42 @@ function VentasReport({ van, usuario }) {
 
   return (
     <div>
-      <DateFilterBar from={from} to={to} onFrom={setFrom} onTo={setTo} onSearch={search} loading={loading} />
+      <div className="flex flex-wrap items-end gap-3 mb-6">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+        </div>
+        {isAdmin && usuarios.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Vendedor</label>
+            <select value={filtroUsuario} onChange={(e) => setFiltroUsuario(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+              <option value="">Todos los vendedores</option>
+              {usuarios.map(u => (
+                <option key={u.id} value={u.id}>{u.nombre || u.email}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!isAdmin && (
+          <div className="flex items-end pb-0.5">
+            <span className="text-xs bg-blue-50 border border-blue-200 text-blue-700 px-3 py-2 rounded-lg font-medium">
+              👤 Mis ventas
+            </span>
+          </div>
+        )}
+        <button onClick={search} disabled={loading}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50 transition-colors">
+          {loading ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+          Search
+        </button>
+      </div>
       <ErrorBox msg={error} />
       {searched && (<>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -287,7 +338,7 @@ function VentasReport({ van, usuario }) {
 }
 
 /* ========================= 2. DEVOLUCIONES REPORT (FIXED) ========================= */
-function DevolucionesReport({ van }) {
+function DevolucionesReport({ van, usuario }) {
   const [from, setFrom] = useState(get30DaysAgo());
   const [to, setTo]     = useState(getToday());
   const [data, setData] = useState([]);
@@ -318,8 +369,9 @@ function DevolucionesReport({ van }) {
         return;
       }
 
+      const isAdminDev = usuario?.rol === "admin" || usuario?.rol === "supervisor";
       // ── Fallback: ventas con estado_pago = 'devolucion' ──
-      const { data: ventas, error: vErr } = await supabase
+      let qVentas = supabase
         .from("ventas")
         .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), observaciones")
         .eq("van_id", van.id)
@@ -327,6 +379,8 @@ function DevolucionesReport({ van }) {
         .gte("created_at", start)
         .lte("created_at", end)
         .order("created_at", { ascending: false });
+      if (!isAdminDev && usuario?.id) qVentas = qVentas.eq("usuario_id", usuario.id);
+      const { data: ventas, error: vErr } = await qVentas;
 
       if (!vErr) {
         setData((ventas || []).map(v => ({ ...v, monto: v.total_venta, motivo: v.observaciones || "Return" })));
@@ -336,7 +390,7 @@ function DevolucionesReport({ van }) {
       }
 
       // ── Fallback 2: ventas con total negativo ──
-      const { data: neg, error: nErr } = await supabase
+      let qNeg = supabase
         .from("ventas")
         .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), observaciones")
         .eq("van_id", van.id)
@@ -344,6 +398,8 @@ function DevolucionesReport({ van }) {
         .gte("created_at", start)
         .lte("created_at", end)
         .order("created_at", { ascending: false });
+      if (!isAdminDev && usuario?.id) qNeg = qNeg.eq("usuario_id", usuario.id);
+      const { data: neg, error: nErr } = await qNeg;
 
       if (!nErr) {
         setData((neg || []).map(v => ({ ...v, monto: Math.abs(v.total_venta), motivo: v.observaciones || "Return" })));
@@ -734,7 +790,8 @@ function TopClientesReport({ van }) {
 }
 
 /* ========================= 5. PRODUCTOS MÁS VENDIDOS (FIXED) ========================= */
-function ProductosReport({ van }) {
+function ProductosReport({ van, usuario }) {
+  const isAdminProd = usuario?.rol === "admin" || usuario?.rol === "supervisor";
   const [from, setFrom] = useState(get30DaysAgo());
   const [to, setTo]     = useState(getToday());
   const [data, setData] = useState([]);
@@ -749,12 +806,12 @@ function ProductosReport({ van }) {
       const { start, end } = dateRangeBounds(from, to);
 
       // ── Step 1: get venta IDs for this van + date range ──
-      const { data: ventasData, error: vErr } = await supabase
-        .from("ventas")
-        .select("id")
+      let qProd = supabase.from("ventas").select("id")
         .eq("van_id", van.id)
         .gte("created_at", start)
         .lte("created_at", end);
+      if (!isAdminProd && usuario?.id) qProd = qProd.eq("usuario_id", usuario.id);
+      const { data: ventasData, error: vErr } = await qProd;
       if (vErr) throw vErr;
 
       const ventaIds = (ventasData || []).map(v => v.id);
@@ -872,7 +929,8 @@ function ProductosReport({ van }) {
 }
 
 /* ========================= 6. GANANCIAS (FIXED) ========================= */
-function GananciasReport({ van }) {
+function GananciasReport({ van, usuario }) {
+  const isAdminGan = usuario?.rol === "admin" || usuario?.rol === "supervisor";
   const [from, setFrom] = useState(get30DaysAgo());
   const [to, setTo]     = useState(getToday());
   const [data, setData] = useState([]);
@@ -888,12 +946,12 @@ function GananciasReport({ van }) {
       const { start, end } = dateRangeBounds(from, to);
 
       // ── Step 1: get venta IDs ──
-      const { data: ventasData, error: vErr } = await supabase
-        .from("ventas")
-        .select("id")
+      let qGan = supabase.from("ventas").select("id")
         .eq("van_id", van.id)
         .gte("created_at", start)
         .lte("created_at", end);
+      if (!isAdminGan && usuario?.id) qGan = qGan.eq("usuario_id", usuario.id);
+      const { data: ventasData, error: vErr } = await qGan;
       if (vErr) throw vErr;
 
       const ventaIds = (ventasData || []).map(v => v.id);
@@ -1085,11 +1143,11 @@ export default function Reportes() {
             {(() => { const t=TABS.find(x=>x.id===activeTab); const I=t?.icon; return (<>{I&&<I size={20} className={t?.color}/>}<h2 className="text-lg font-bold text-gray-800">{t?.label}</h2></>); })()}
           </div>
           {activeTab==="ventas"          && <VentasReport         van={van} usuario={usuario}/>}
-          {activeTab==="devoluciones"    && <DevolucionesReport    van={van}/>}
-          {activeTab==="pagos_atrasados" && <PagosAtrasadosReport  van={van}/>}
-          {activeTab==="top_clientes"    && <TopClientesReport     van={van}/>}
-          {activeTab==="productos"       && <ProductosReport       van={van}/>}
-          {activeTab==="ganancias"       && <GananciasReport       van={van}/>}
+          {activeTab==="devoluciones"    && <DevolucionesReport    van={van} usuario={usuario}/>}
+          {activeTab==="pagos_atrasados" && <PagosAtrasadosReport  van={van} usuario={usuario}/>}
+          {activeTab==="top_clientes"    && <TopClientesReport     van={van} usuario={usuario}/>}
+          {activeTab==="productos"       && <ProductosReport       van={van} usuario={usuario}/>}
+          {activeTab==="ganancias"       && <GananciasReport       van={van} usuario={usuario}/>}
         </div>
       </div>
     </div>
