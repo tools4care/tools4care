@@ -2133,14 +2133,20 @@ export default function Dashboard() {
   async function cargarDatos(vanId, days) {
     setLoading(true);
     const desde = dayjs().subtract(days - 1, "day").startOf("day").format("YYYY-MM-DD");
+    const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
 
-    const { data: ventasData, error: errVentas } = await supabase
+    let ventasQuery = supabase
       .from("ventas")
       .select("id,fecha,total,total_pagado,estado_pago,metodo_pago,cliente_id,notas,van_id")
       .eq("van_id", vanId)
       .gte("fecha", desde)
       .order("fecha", { ascending: false })
-      .limit(2000);  // tope defensivo — 2k ventas por período es más que suficiente
+      .limit(2000);
+
+    // Vendedores solo ven sus propias ventas
+    if (!isAdmin && usuario?.id) ventasQuery = ventasQuery.eq("usuario_id", usuario.id);
+
+    const { data: ventasData, error: errVentas } = await ventasQuery;
 
     if (errVentas) {
       setVentas([]);
@@ -2166,11 +2172,13 @@ export default function Dashboard() {
 
     // Top 10 productos
     const desde30 = dayjs().subtract(30, "day").startOf("day").format("YYYY-MM-DD");
-    const { data: ventasIds } = await supabase
+    let topIdsQuery = supabase
       .from("ventas")
       .select("id")
       .eq("van_id", vanId)
       .gte("fecha", desde30);
+    if (!isAdmin && usuario?.id) topIdsQuery = topIdsQuery.eq("usuario_id", usuario.id);
+    const { data: ventasIds } = await topIdsQuery;
 
     const ids = (ventasIds || []).map((x) => x.id);
     let det = [];

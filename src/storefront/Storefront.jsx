@@ -301,18 +301,46 @@ function CartDrawer({ open, onClose }) {
 function ProductDetailModal({ p, onAdd, onClose }) {
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
+  const [images, setImages] = useState(p.main_image_url ? [p.main_image_url] : []);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [loadingImgs, setLoadingImgs] = useState(false);
+
   const price = Number(p.price_online ?? p.price_base ?? 0);
   const hasOffer =
     p.price_online != null &&
     p.price_base != null &&
     Number(p.price_online) < Number(p.price_base);
 
-  // Cerrar con Escape
+  // Cargar todas las imágenes del producto
   useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    if (!p.id) return;
+    setLoadingImgs(true);
+    supabase
+      .from("product_images")
+      .select("url, is_primary, sort_order")
+      .eq("producto_id", p.id)
+      .order("is_primary", { ascending: false })
+      .order("sort_order", { ascending: true })
+      .then(({ data }) => {
+        const urls = (data || []).map(r => r.url).filter(Boolean);
+        if (urls.length > 0) {
+          setImages(urls);
+          setActiveIdx(0);
+        }
+        setLoadingImgs(false);
+      });
+  }, [p.id]);
+
+  // Cerrar con Escape / swipe navigation con teclado
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowRight") setActiveIdx(i => Math.min(i + 1, images.length - 1));
+      if (e.key === "ArrowLeft")  setActiveIdx(i => Math.max(i - 1, 0));
+    };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, [onClose, images.length]);
 
   // Bloquear scroll del body
   useEffect(() => {
@@ -337,16 +365,58 @@ function ProductDetailModal({ p, onAdd, onClose }) {
           </button>
         </div>
 
-        {/* Imagen grande */}
-        <div className="flex-shrink-0 bg-gray-50 mx-4 rounded-xl overflow-hidden aspect-square flex items-center justify-center">
-          {p.main_image_url ? (
-            <img
-              src={p.main_image_url}
-              alt={p.nombre}
-              className="w-full h-full object-contain p-4"
-            />
-          ) : (
-            <span className="text-gray-300 text-6xl">📦</span>
+        {/* Imagen principal (carrusel) */}
+        <div className="flex-shrink-0 mx-4">
+          <div className="relative bg-gray-50 rounded-xl overflow-hidden aspect-square flex items-center justify-center">
+            {loadingImgs ? (
+              <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            ) : images.length > 0 ? (
+              <img
+                key={images[activeIdx]}
+                src={images[activeIdx]}
+                alt={p.nombre}
+                className="w-full h-full object-contain p-4"
+              />
+            ) : (
+              <span className="text-gray-300 text-6xl">📦</span>
+            )}
+
+            {/* Flechas de navegación */}
+            {images.length > 1 && (
+              <>
+                <button
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/80 hover:bg-white rounded-full shadow flex items-center justify-center text-gray-700 disabled:opacity-30 transition-all"
+                  onClick={() => setActiveIdx(i => Math.max(i - 1, 0))}
+                  disabled={activeIdx === 0}
+                >‹</button>
+                <button
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/80 hover:bg-white rounded-full shadow flex items-center justify-center text-gray-700 disabled:opacity-30 transition-all"
+                  onClick={() => setActiveIdx(i => Math.min(i + 1, images.length - 1))}
+                  disabled={activeIdx === images.length - 1}
+                >›</button>
+                {/* Contador */}
+                <span className="absolute bottom-2 right-2 text-xs bg-black/40 text-white px-2 py-0.5 rounded-full">
+                  {activeIdx + 1} / {images.length}
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Miniaturas */}
+          {images.length > 1 && (
+            <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+              {images.map((url, i) => (
+                <button
+                  key={i}
+                  onClick={() => setActiveIdx(i)}
+                  className={`flex-shrink-0 w-14 h-14 rounded-lg border-2 overflow-hidden transition-all ${
+                    i === activeIdx ? "border-blue-500 shadow-md" : "border-gray-200 opacity-60 hover:opacity-100"
+                  }`}
+                >
+                  <img src={url} alt="" className="w-full h-full object-contain p-1" />
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
