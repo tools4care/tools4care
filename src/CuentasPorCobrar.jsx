@@ -1437,6 +1437,91 @@ export default function CuentasPorCobrar() {
     customerId: "",
   });
 
+  // ── Credit Limit Review ──
+  const [openCreditReview, setOpenCreditReview] = useState(false);
+  const [creditReviewData, setCreditReviewData] = useState([]);
+  const [creditReviewLoading, setCreditReviewLoading] = useState(false);
+  const [approvingId, setApprovingId] = useState(null);
+
+  async function loadCreditReview() {
+    setCreditReviewLoading(true);
+    setCreditReviewData([]);
+    try {
+      // Clientes con score alto
+      const { data: candidates } = await supabase
+        .from("v_cxc_cliente_detalle_ext")
+        .select("cliente_id, cliente_nombre, score_base, limite_politica, limite_manual")
+        .gte("score_base", 650)
+        .order("score_base", { ascending: false })
+        .limit(150);
+
+      if (!candidates?.length) { setCreditReviewData([]); return; }
+
+      // Traer ventas de todos en una sola query
+      const ids = candidates.map(c => c.cliente_id);
+      const { data: allVentas } = await supabase
+        .from("ventas")
+        .select("cliente_id, total_venta, created_at")
+        .in("cliente_id", ids)
+        .order("created_at", { ascending: false });
+
+      // Agrupar y calcular promedio (últimas 10)
+      const byClient = {};
+      (allVentas || []).forEach(v => {
+        if (!byClient[v.cliente_id]) byClient[v.cliente_id] = [];
+        if (byClient[v.cliente_id].length < 10)
+          byClient[v.cliente_id].push(Number(v.total_venta || 0));
+      });
+
+      const results = candidates
+        .map(c => {
+          const ventas = byClient[c.cliente_id] || [];
+          if (ventas.length < 2) return null; // muy poco historial
+          const avg = ventas.reduce((s, v) => s + v, 0) / ventas.length;
+          const currentLimit = Number(c.limite_manual ?? c.limite_politica ?? 0);
+          const scoreMult = c.score_base >= 750 ? 1.3 : 1.1;
+          // Sugerir 3 compras promedio ajustado por score, mínimo +25% del actual
+          const rawSuggested = Math.max(avg * 3 * scoreMult, currentLimit * 1.25);
+          const suggested = Math.round(rawSuggested / 5) * 5; // redondear a múltiplo de 5
+          if (suggested <= currentLimit * 1.14) return null; // menos de 15% de aumento, no vale
+          return {
+            cliente_id: c.cliente_id,
+            nombre: c.cliente_nombre,
+            score: c.score_base,
+            currentLimit,
+            suggested,
+            avgCompra: Math.round(avg * 100) / 100,
+            compras: ventas.length,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.score - a.score);
+
+      setCreditReviewData(results);
+    } catch (e) {
+      alert("Error loading review: " + e.message);
+    } finally {
+      setCreditReviewLoading(false);
+    }
+  }
+
+  async function approveLimitIncrease(clienteId, newLimit) {
+    setApprovingId(clienteId);
+    try {
+      const { error } = await supabase
+        .from("clientes")
+        .update({ limite_manual: newLimit })
+        .eq("id", clienteId);
+      if (error) throw error;
+      setCreditReviewData(prev => prev.filter(c => c.cliente_id !== clienteId));
+      setReloadTick(t => t + 1);
+    } catch (e) {
+      alert("Error: " + e.message);
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
   function tryUnlockBySecret(value) {
     const typed = (value || "").trim();
     if (typed === CXC_SECRET) {
@@ -1654,6 +1739,12 @@ export default function CuentasPorCobrar() {
                   className="px-3 sm:px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg font-semibold shadow-lg text-sm flex-shrink-0"
                 >
                   📈 Simulate Credit
+                </button>
+                <button
+                  onClick={() => { setOpenCreditReview(true); loadCreditReview(); }}
+                  className="px-3 sm:px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-lg font-semibold shadow-lg text-sm flex-shrink-0"
+                >
+                  ⬆️ Credit Review
                 </button>
               </div>
             </div>
@@ -1999,6 +2090,112 @@ export default function CuentasPorCobrar() {
           customerName={simInit.customerName}
           customerId={simInit.customerId}
         />
+      )}
+
+      {/* ── Credit Limit Review Modal ── */}
+      {openCreditReview && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center overflow-hidden">
+          <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[90vh] sm:m-4">
+            {/* Header */}
+            <div className="flex-shrink-0 bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-5 py-4 sm:rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-xl">⬆️ Credit Limit Review</div>
+                  <div className="text-sm text-emerald-100 mt-0.5">
+                    Clientes que califican para un aumento de límite
+                  </div>
+                </div>
+                <button
+                  onClick={() => setOpenCreditReview(false)}
+                  className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white text-xl font-bold"
+                >✕</button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {creditReviewLoading && (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-emerald-600 mb-4" />
+                  <div className="text-gray-500 font-semibold">Analizando historial de clientes...</div>
+                </div>
+              )}
+
+              {!creditReviewLoading && creditReviewData.length === 0 && (
+                <div className="text-center py-16">
+                  <div className="text-5xl mb-3">✅</div>
+                  <div className="font-bold text-gray-700 text-lg">Todos los límites están al día</div>
+                  <div className="text-sm text-gray-400 mt-1">No hay clientes que califiquen para aumento en este momento.</div>
+                </div>
+              )}
+
+              {!creditReviewLoading && creditReviewData.map(c => {
+                const increase = Math.round((c.suggested / c.currentLimit - 1) * 100);
+                const scoreBadge = c.score >= 750
+                  ? { label: "Excelente", cls: "bg-emerald-100 text-emerald-700" }
+                  : { label: "Bueno", cls: "bg-blue-100 text-blue-700" };
+
+                return (
+                  <div key={c.cliente_id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-gray-900 text-base truncate">{c.nombre}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${scoreBadge.cls}`}>
+                            Score {c.score} — {scoreBadge.label}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            Prom. compra: {fmt(c.avgCompra)} ({c.compras} visitas)
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => approveLimitIncrease(c.cliente_id, c.suggested)}
+                        disabled={approvingId === c.cliente_id}
+                        className="flex-shrink-0 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-xl shadow transition-all"
+                      >
+                        {approvingId === c.cliente_id ? "..." : "✓ Aprobar"}
+                      </button>
+                    </div>
+
+                    {/* Límite actual → sugerido */}
+                    <div className="mt-3 flex items-center gap-3">
+                      <div className="flex-1 bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-center">
+                        <div className="text-xs text-gray-400 font-medium uppercase">Actual</div>
+                        <div className="text-lg font-bold text-gray-700">{fmt(c.currentLimit)}</div>
+                      </div>
+                      <div className="text-gray-400 text-xl font-light">→</div>
+                      <div className="flex-1 bg-emerald-50 border border-emerald-300 rounded-lg p-2.5 text-center">
+                        <div className="text-xs text-emerald-600 font-medium uppercase">Sugerido</div>
+                        <div className="text-lg font-bold text-emerald-700">{fmt(c.suggested)}</div>
+                      </div>
+                      <div className="flex-shrink-0 bg-emerald-100 text-emerald-700 font-bold text-sm px-2.5 py-1 rounded-full">
+                        +{increase}%
+                      </div>
+                    </div>
+
+                    {/* Dismiss */}
+                    <button
+                      onClick={() => setCreditReviewData(prev => prev.filter(x => x.cliente_id !== c.cliente_id))}
+                      className="mt-2 text-xs text-gray-400 hover:text-gray-600 underline"
+                    >
+                      Ignorar este cliente
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            {!creditReviewLoading && creditReviewData.length > 0 && (
+              <div className="flex-shrink-0 border-t border-gray-200 px-4 py-3 bg-gray-50 sm:rounded-b-2xl">
+                <div className="text-sm text-gray-500 text-center">
+                  {creditReviewData.length} cliente{creditReviewData.length !== 1 ? "s" : ""} califican — aprueba o ignora individualmente
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
