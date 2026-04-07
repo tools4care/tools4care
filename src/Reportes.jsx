@@ -475,7 +475,7 @@ function DevolucionesReport({ van, usuario }) {
 }
 
 /* ========================= 3. PAGOS ATRASADOS (FIXED) ========================= */
-function PagosAtrasadosReport({ van }) {
+function PagosAtrasadosReport({ van, usuario }) {
   const [data, setData]     = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState(null);
@@ -650,7 +650,8 @@ function PagosAtrasadosReport({ van }) {
 }
 
 /* ========================= 4. TOP CLIENTES ========================= */
-function TopClientesReport({ van }) {
+function TopClientesReport({ van, usuario }) {
+  const isAdminTop = usuario?.rol === "admin" || usuario?.rol === "supervisor";
   const [from, setFrom] = useState(get30DaysAgo());
   const [to, setTo]     = useState(getToday());
   const [data, setData] = useState([]);
@@ -664,12 +665,14 @@ function TopClientesReport({ van }) {
     setLoading(true); setError(null);
     try {
       const { start, end } = dateRangeBounds(from, to);
-      const { data: ventas, error: err } = await supabase
+      let qTop = supabase
         .from("ventas")
         .select(`total_venta, total_pagado, estado_pago, created_at, cliente_id, clientes:cliente_id(id, nombre, telefono)`)
         .eq("van_id", van.id)
         .gte("created_at", start)
         .lte("created_at", end);
+      if (!isAdminTop && usuario?.id) qTop = qTop.eq("usuario_id", usuario.id);
+      const { data: ventas, error: err } = await qTop;
       if (err) throw err;
 
       const map = {};
