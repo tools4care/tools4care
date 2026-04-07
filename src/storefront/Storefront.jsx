@@ -297,10 +297,112 @@ function CartDrawer({ open, onClose }) {
   );
 }
 
+/* -------------------- Product Detail Modal -------------------- */
+function ProductDetailModal({ p, onAdd, onClose }) {
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState(false);
+  const price = Number(p.price_online ?? p.price_base ?? 0);
+  const hasOffer =
+    p.price_online != null &&
+    p.price_base != null &&
+    Number(p.price_online) < Number(p.price_base);
+
+  // Cerrar con Escape
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  // Bloquear scroll del body
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/70 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
+          <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto sm:hidden" />
+          <button
+            onClick={onClose}
+            className="ml-auto w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Imagen grande */}
+        <div className="flex-shrink-0 bg-gray-50 mx-4 rounded-xl overflow-hidden aspect-square flex items-center justify-center">
+          {p.main_image_url ? (
+            <img
+              src={p.main_image_url}
+              alt={p.nombre}
+              className="w-full h-full object-contain p-4"
+            />
+          ) : (
+            <span className="text-gray-300 text-6xl">📦</span>
+          )}
+        </div>
+
+        {/* Detalle scrollable */}
+        <div className="overflow-y-auto px-4 py-3 space-y-2 flex-1">
+          {(hasOffer || p.is_deal) && (
+            <span className="inline-block text-xs px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+              {p.deal_badge || "Deal"}
+            </span>
+          )}
+          <h2 className="text-lg font-bold text-gray-900 leading-snug">{p.nombre}</h2>
+          {p.marca && <p className="text-sm text-gray-500">{p.marca}</p>}
+          {p.descripcion && (
+            <p className="text-sm text-gray-700 leading-relaxed">{p.descripcion}</p>
+          )}
+          <div className="flex items-baseline gap-2 pt-1">
+            <span className="text-2xl font-bold text-gray-900"><Price value={price} /></span>
+            {hasOffer && (
+              <span className="text-sm text-gray-400 line-through"><Price value={p.price_base} /></span>
+            )}
+          </div>
+        </div>
+
+        {/* Botón Add to cart */}
+        <div className="px-4 pb-6 pt-2 flex-shrink-0">
+          <button
+            className={`w-full py-3 rounded-xl font-semibold text-base transition-all ${
+              added
+                ? "bg-green-500 text-white"
+                : "bg-blue-600 hover:bg-blue-700 text-white"
+            } disabled:opacity-50`}
+            disabled={adding}
+            onClick={async () => {
+              try {
+                setAdding(true);
+                await onAdd(p);
+                setAdded(true);
+                setTimeout(() => { setAdded(false); onClose(); }, 800);
+              } finally {
+                setAdding(false);
+              }
+            }}
+          >
+            {adding ? "Adding…" : added ? "✓ Added!" : "Add to cart"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* -------------------- Product Card -------------------- */
 // Definida FUERA de Storefront para tener identidad estable y no violar Rules of Hooks
 function ProductCard({ p, onAdd }) {
   const [adding, setAdding] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
   const price = Number(p.price_online ?? p.price_base ?? 0);
   const hasOffer =
     p.price_online != null &&
@@ -308,45 +410,131 @@ function ProductCard({ p, onAdd }) {
     Number(p.price_online) < Number(p.price_base);
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-      <div className="p-3">
-        <div className="relative">
-          <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
-            {p.main_image_url ? (
-              <img
-                src={p.main_image_url}
-                alt={p.nombre}
-                className="w-full h-full object-contain p-2"
-                loading="lazy"
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                }}
-              />
-            ) : (
-              <span className="text-xs text-gray-400">no image</span>
+    <>
+      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+        <div className="p-3">
+          <div className="relative">
+            <div
+              className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center cursor-pointer"
+              onClick={() => setShowDetail(true)}
+            >
+              {p.main_image_url ? (
+                <img
+                  src={p.main_image_url}
+                  alt={p.nombre}
+                  className="w-full h-full object-contain p-2"
+                  loading="lazy"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              ) : (
+                <span className="text-xs text-gray-400">no image</span>
+              )}
+              {/* Hint de zoom */}
+              <span className="absolute bottom-1.5 right-1.5 bg-black/30 text-white text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none">
+                🔍
+              </span>
+            </div>
+            {(hasOffer || p.is_deal) && (
+              <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+                {p.deal_badge || "Deal"}
+              </span>
             )}
           </div>
-          {(hasOffer || p.is_deal) && (
-            <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-              {p.deal_badge || "Deal"}
-            </span>
-          )}
-        </div>
 
-        <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px]">
+          <div
+            className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px] cursor-pointer hover:text-blue-600 transition-colors"
+            onClick={() => setShowDetail(true)}
+          >
+            {p.nombre}
+          </div>
+          <div className="text-xs text-gray-500">{p.marca || "—"}</div>
+
+          {p.descripcion ? (
+            <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">
+              {p.descripcion}
+            </div>
+          ) : (
+            <div className="mt-1 text-xs text-gray-400 min-h-[32px]"> </div>
+          )}
+
+          <div className="mt-2 font-semibold">
+            <Price value={price} />
+            {hasOffer ? (
+              <span className="ml-2 text-xs text-gray-500 line-through">
+                <Price value={p.price_base} />
+              </span>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            disabled={adding}
+            onClick={async () => {
+              try {
+                setAdding(true);
+                await onAdd(p);
+              } finally {
+                setAdding(false);
+              }
+            }}
+          >
+            {adding ? "Adding…" : "Add to cart"}
+          </button>
+        </div>
+      </div>
+
+      {showDetail && (
+        <ProductDetailModal p={p} onAdd={onAdd} onClose={() => setShowDetail(false)} />
+      )}
+    </>
+  );
+}
+
+/* -------------------- Mini Deal Card (hero) -------------------- */
+function DealCardMini({ p, onAdd }) {
+  const [adding, setAdding] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
+  const price = Number(p.price_online ?? p.price_base ?? 0);
+  const hasOffer =
+    p.price_online != null &&
+    p.price_base != null &&
+    Number(p.price_online) < Number(p.price_base);
+  return (
+    <>
+      <div className="bg-white rounded-xl p-3 border hover:shadow-sm transition text-gray-900">
+        <div
+          className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center cursor-pointer relative"
+          onClick={() => setShowDetail(true)}
+        >
+          {p.main_image_url ? (
+            <img
+              src={p.main_image_url}
+              alt={p.nombre}
+              className="w-full h-full object-contain p-2"
+              loading="lazy"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+          ) : (
+            <span className="text-xs text-gray-400">no image</span>
+          )}
+          <span className="absolute bottom-1.5 right-1.5 bg-black/30 text-white text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none">
+            🔍
+          </span>
+        </div>
+        <div
+          className="mt-2 font-semibold line-clamp-1 text-gray-900 cursor-pointer hover:text-blue-600 transition-colors"
+          onClick={() => setShowDetail(true)}
+        >
           {p.nombre}
         </div>
-        <div className="text-xs text-gray-500">{p.marca || "—"}</div>
-
+        <div className="text-xs text-gray-600 line-clamp-1">{p.marca || "—"}</div>
         {p.descripcion ? (
-          <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">
-            {p.descripcion}
-          </div>
-        ) : (
-          <div className="mt-1 text-xs text-gray-400 min-h-[32px]"> </div>
-        )}
-
-        <div className="mt-2 font-semibold">
+          <div className="text-xs text-gray-700 mt-1 line-clamp-2">{p.descripcion}</div>
+        ) : null}
+        <div className="mt-2 font-semibold text-gray-900">
           <Price value={price} />
           {hasOffer ? (
             <span className="ml-2 text-xs text-gray-500 line-through">
@@ -354,10 +542,8 @@ function ProductCard({ p, onAdd }) {
             </span>
           ) : null}
         </div>
-
         <button
-          type="button"
-          className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50"
           disabled={adding}
           onClick={async () => {
             try {
@@ -371,62 +557,11 @@ function ProductCard({ p, onAdd }) {
           {adding ? "Adding…" : "Add to cart"}
         </button>
       </div>
-    </div>
-  );
-}
 
-/* -------------------- Mini Deal Card (hero) -------------------- */
-function DealCardMini({ p, onAdd }) {
-  const [adding, setAdding] = useState(false);
-  const price = Number(p.price_online ?? p.price_base ?? 0);
-  const hasOffer =
-    p.price_online != null &&
-    p.price_base != null &&
-    Number(p.price_online) < Number(p.price_base);
-  return (
-    // Fondo blanco + texto oscuro para legibilidad
-    <div className="bg-white rounded-xl p-3 border hover:shadow-sm transition text-gray-900">
-      <div className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center">
-        {p.main_image_url ? (
-          <img
-            src={p.main_image_url}
-            alt={p.nombre}
-            className="w-full h-full object-contain p-2"
-            loading="lazy"
-            onError={(e) => (e.currentTarget.style.display = "none")}
-          />
-        ) : (
-          <span className="text-xs text-gray-400">no image</span>
-        )}
-      </div>
-      <div className="mt-2 font-semibold line-clamp-1 text-gray-900">{p.nombre}</div>
-      <div className="text-xs text-gray-600 line-clamp-1">{p.marca || "—"}</div>
-      {p.descripcion ? (
-        <div className="text-xs text-gray-700 mt-1 line-clamp-2">{p.descripcion}</div>
-      ) : null}
-      <div className="mt-2 font-semibold text-gray-900">
-        <Price value={price} />
-        {hasOffer ? (
-          <span className="ml-2 text-xs text-gray-500 line-through">
-            <Price value={p.price_base} />
-          </span>
-        ) : null}
-      </div>
-      <button
-        className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50"
-        disabled={adding}
-        onClick={async () => {
-          try {
-            setAdding(true);
-            await onAdd(p);
-          } finally {
-            setAdding(false);
-          }
-        }}
-      >
-        {adding ? "Adding…" : "Add to cart"}
-      </button>
-    </div>
+      {showDetail && (
+        <ProductDetailModal p={p} onAdd={onAdd} onClose={() => setShowDetail(false)} />
+      )}
+    </>
   );
 }
 
