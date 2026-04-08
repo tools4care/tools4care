@@ -1447,55 +1447,79 @@ export default function CuentasPorCobrar() {
     setCreditReviewLoading(true);
     setCreditReviewData([]);
     try {
-      // Clientes con score alto
-      const { data: candidates } = await supabase
-        .from("v_cxc_cliente_detalle_ext")
-        .select("cliente_id, cliente_nombre, score_base, limite_politica, limite_manual")
-        .gte("score_base", 650)
-        .order("score_base", { ascending: false })
-        .limit(150);
+      // 1. Ventas de los últimos 90 días — incluye clientes cash y crédito
+      const since = new Date();
+      since.setDate(since.getDate() - 90);
+      const sinceIso = since.toISOString();
 
-      if (!candidates?.length) { setCreditReviewData([]); return; }
-
-      // Traer ventas de todos en una sola query
-      const ids = candidates.map(c => c.cliente_id);
-      const { data: allVentas } = await supabase
+      const { data: ventasRecientes, error: errV } = await supabase
         .from("ventas")
-        .select("cliente_id, total_venta, created_at")
-        .in("cliente_id", ids)
-        .order("created_at", { ascending: false });
+        .select("cliente_id, total_venta, total_pagado, created_at")
+        .gte("created_at", sinceIso)
+        .not("cliente_id", "is", null);
 
-      // Agrupar y calcular promedio (últimas 10)
+      if (errV) throw errV;
+      if (!ventasRecientes?.length) { setCreditReviewData([]); return; }
+
+      // 2. Agrupar por cliente
       const byClient = {};
-      (allVentas || []).forEach(v => {
-        if (!byClient[v.cliente_id]) byClient[v.cliente_id] = [];
-        if (byClient[v.cliente_id].length < 10)
-          byClient[v.cliente_id].push(Number(v.total_venta || 0));
+      ventasRecientes.forEach(v => {
+        const id = v.cliente_id;
+        if (!byClient[id]) byClient[id] = { totalComprado: 0, totalPagado: 0, ventas: [] };
+        byClient[id].totalComprado += Number(v.total_venta || 0);
+        byClient[id].totalPagado  += Number(v.total_pagado || 0);
+        byClient[id].ventas.push(Number(v.total_venta || 0));
       });
 
-      const results = candidates
-        .map(c => {
-          const ventas = byClient[c.cliente_id] || [];
-          if (ventas.length < 2) return null; // muy poco historial
-          const avg = ventas.reduce((s, v) => s + v, 0) / ventas.length;
-          const currentLimit = Number(c.limite_manual ?? c.limite_politica ?? 0);
-          const scoreMult = c.score_base >= 750 ? 1.3 : 1.1;
-          // Sugerir 3 compras promedio ajustado por score, mínimo +25% del actual
-          const rawSuggested = Math.max(avg * 3 * scoreMult, currentLimit * 1.25);
-          const suggested = Math.round(rawSuggested / 5) * 5; // redondear a múltiplo de 5
-          if (suggested <= currentLimit * 1.14) return null; // menos de 15% de aumento, no vale
+      // 3. Filtrar: mínimo 3 compras Y pagan bien (≥85%)
+      const candidateIds = Object.keys(byClient).filter(id => {
+        const c = byClient[id];
+        const ppr = c.totalComprado > 0 ? c.totalPagado / c.totalComprado : 0;
+        return c.ventas.length >= 3 && ppr >= 0.85;
+      });
+
+      if (!candidateIds.length) { setCreditReviewData([]); return; }
+
+      // 4. Traer info actual de límite desde clientes
+      const { data: clientesData } = await supabase
+        .from("clientes")
+        .select("id, nombre, limite_credito, limite_manual")
+        .in("id", candidateIds);
+
+      const clienteMap = {};
+      (clientesData || []).forEach(c => { clienteMap[c.id] = c; });
+
+      // 5. Calcular sugerencia y filtrar los que realmente califican
+      const results = candidateIds
+        .map(id => {
+          const c = byClient[id];
+          const cliente = clienteMap[id];
+          if (!cliente) return null;
+
+          const avg = c.totalComprado / c.ventas.length;
+          const ppr = c.totalComprado > 0 ? c.totalPagado / c.totalComprado : 1;
+          const currentLimit = Number(cliente.limite_manual ?? cliente.limite_credito ?? 0);
+
+          // Multiplicador por qué tan bien paga
+          const pprMult = ppr >= 1.0 ? 1.3 : ppr >= 0.95 ? 1.2 : ppr >= 0.9 ? 1.1 : 1.0;
+          // Sugerido = 3 compras promedio × mult, mínimo +25% del actual
+          const rawSuggested = Math.max(avg * 3 * pprMult, currentLimit * 1.25);
+          const suggested = Math.round(rawSuggested / 5) * 5;
+
+          if (suggested <= currentLimit * 1.14) return null; // aumento menor al 15%, skip
+
           return {
-            cliente_id: c.cliente_id,
-            nombre: c.cliente_nombre,
-            score: c.score_base,
+            cliente_id: id,
+            nombre: cliente.nombre,
+            ppr: Math.round(ppr * 100),
             currentLimit,
             suggested,
             avgCompra: Math.round(avg * 100) / 100,
-            compras: ventas.length,
+            compras: c.ventas.length,
           };
         })
         .filter(Boolean)
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => b.ppr - a.ppr); // mejores pagadores primero
 
       setCreditReviewData(results);
     } catch (e) {
@@ -2131,9 +2155,11 @@ export default function CuentasPorCobrar() {
 
               {!creditReviewLoading && creditReviewData.map(c => {
                 const increase = Math.round((c.suggested / c.currentLimit - 1) * 100);
-                const scoreBadge = c.score >= 750
-                  ? { label: "Excelente", cls: "bg-emerald-100 text-emerald-700" }
-                  : { label: "Bueno", cls: "bg-blue-100 text-blue-700" };
+                const pprBadge = c.ppr >= 100
+                  ? { label: `Paga ${c.ppr}% — Excelente`, cls: "bg-emerald-100 text-emerald-700" }
+                  : c.ppr >= 95
+                  ? { label: `Paga ${c.ppr}% — Muy bueno`, cls: "bg-blue-100 text-blue-700" }
+                  : { label: `Paga ${c.ppr}% — Bueno`, cls: "bg-amber-100 text-amber-700" };
 
                 return (
                   <div key={c.cliente_id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 transition-colors">
@@ -2141,11 +2167,11 @@ export default function CuentasPorCobrar() {
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-gray-900 text-base truncate">{c.nombre}</div>
                         <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${scoreBadge.cls}`}>
-                            Score {c.score} — {scoreBadge.label}
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pprBadge.cls}`}>
+                            {pprBadge.label}
                           </span>
                           <span className="text-xs text-gray-400">
-                            Prom. compra: {fmt(c.avgCompra)} ({c.compras} visitas)
+                            Prom. compra: {fmt(c.avgCompra)} · {c.compras} visitas (últimos 90 días)
                           </span>
                         </div>
                       </div>
