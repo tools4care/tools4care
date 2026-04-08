@@ -1480,14 +1480,31 @@ export default function CuentasPorCobrar() {
 
       if (!candidateIds.length) { setCreditReviewData([]); return; }
 
-      // 4. Traer info actual de límite desde clientes
-      const { data: clientesData } = await supabase
-        .from("clientes")
-        .select("id, nombre, limite_credito, limite_manual")
-        .in("id", candidateIds);
+      // 4. Traer límite actual desde la vista CXC (tiene limite_politica calculado)
+      const { data: cxcData } = await supabase
+        .from("v_cxc_cliente_detalle_ext")
+        .select("cliente_id, cliente_nombre, limite_politica, limite_manual")
+        .in("cliente_id", candidateIds);
+
+      // Fallback: clientes que no estén en la vista CXC (ej. sin deuda nunca)
+      const cxcIds = new Set((cxcData || []).map(c => c.cliente_id));
+      const missingIds = candidateIds.filter(id => !cxcIds.has(id));
+      let extraClientes = [];
+      if (missingIds.length) {
+        const { data } = await supabase
+          .from("clientes")
+          .select("id, nombre, limite_manual")
+          .in("id", missingIds);
+        extraClientes = (data || []).map(c => ({
+          cliente_id: c.id,
+          cliente_nombre: c.nombre,
+          limite_politica: 150, // default base si nunca estuvo en CXC
+          limite_manual: c.limite_manual,
+        }));
+      }
 
       const clienteMap = {};
-      (clientesData || []).forEach(c => { clienteMap[c.id] = c; });
+      [...(cxcData || []), ...extraClientes].forEach(c => { clienteMap[c.cliente_id] = c; });
 
       // 5. Calcular sugerencia y filtrar los que realmente califican
       const results = candidateIds
@@ -1498,7 +1515,7 @@ export default function CuentasPorCobrar() {
 
           const avg = c.totalComprado / c.ventas.length;
           const ppr = c.totalComprado > 0 ? c.totalPagado / c.totalComprado : 1;
-          const currentLimit = Number(cliente.limite_manual ?? cliente.limite_credito ?? 0);
+          const currentLimit = Number(cliente.limite_manual ?? cliente.limite_politica ?? 0);
 
           // Multiplicador por qué tan bien paga
           const pprMult = ppr >= 1.0 ? 1.3 : ppr >= 0.95 ? 1.2 : ppr >= 0.9 ? 1.1 : 1.0;
@@ -1510,7 +1527,7 @@ export default function CuentasPorCobrar() {
 
           return {
             cliente_id: id,
-            nombre: cliente.nombre,
+            nombre: cliente.cliente_nombre,
             ppr: Math.round(ppr * 100),
             currentLimit,
             suggested,
@@ -2126,7 +2143,7 @@ export default function CuentasPorCobrar() {
                 <div>
                   <div className="font-bold text-xl">⬆️ Credit Limit Review</div>
                   <div className="text-sm text-emerald-100 mt-0.5">
-                    Clientes que califican para un aumento de límite
+                    Customers who qualify for a credit limit increase
                   </div>
                 </div>
                 <button
@@ -2141,25 +2158,25 @@ export default function CuentasPorCobrar() {
               {creditReviewLoading && (
                 <div className="flex flex-col items-center justify-center py-16">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-emerald-600 mb-4" />
-                  <div className="text-gray-500 font-semibold">Analizando historial de clientes...</div>
+                  <div className="text-gray-500 font-semibold">Analyzing customer purchase history...</div>
                 </div>
               )}
 
               {!creditReviewLoading && creditReviewData.length === 0 && (
                 <div className="text-center py-16">
                   <div className="text-5xl mb-3">✅</div>
-                  <div className="font-bold text-gray-700 text-lg">Todos los límites están al día</div>
-                  <div className="text-sm text-gray-400 mt-1">No hay clientes que califiquen para aumento en este momento.</div>
+                  <div className="font-bold text-gray-700 text-lg">All limits are up to date</div>
+                  <div className="text-sm text-gray-400 mt-1">No customers qualify for a limit increase at this time.</div>
                 </div>
               )}
 
               {!creditReviewLoading && creditReviewData.map(c => {
-                const increase = Math.round((c.suggested / c.currentLimit - 1) * 100);
+                const increase = c.currentLimit > 0 ? Math.round((c.suggested / c.currentLimit - 1) * 100) : 100;
                 const pprBadge = c.ppr >= 100
-                  ? { label: `Paga ${c.ppr}% — Excelente`, cls: "bg-emerald-100 text-emerald-700" }
+                  ? { label: `Pays ${c.ppr}% — Excellent`, cls: "bg-emerald-100 text-emerald-700" }
                   : c.ppr >= 95
-                  ? { label: `Paga ${c.ppr}% — Muy bueno`, cls: "bg-blue-100 text-blue-700" }
-                  : { label: `Paga ${c.ppr}% — Bueno`, cls: "bg-amber-100 text-amber-700" };
+                  ? { label: `Pays ${c.ppr}% — Very good`, cls: "bg-blue-100 text-blue-700" }
+                  : { label: `Pays ${c.ppr}% — Good`, cls: "bg-amber-100 text-amber-700" };
 
                 return (
                   <div key={c.cliente_id} className="bg-white border-2 border-gray-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 transition-colors">
@@ -2171,7 +2188,7 @@ export default function CuentasPorCobrar() {
                             {pprBadge.label}
                           </span>
                           <span className="text-xs text-gray-400">
-                            Prom. compra: {fmt(c.avgCompra)} · {c.compras} visitas (últimos 90 días)
+                            Avg purchase: {fmt(c.avgCompra)} · {c.compras} visits (last 90 days)
                           </span>
                         </div>
                       </div>
@@ -2180,19 +2197,18 @@ export default function CuentasPorCobrar() {
                         disabled={approvingId === c.cliente_id}
                         className="flex-shrink-0 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-xl shadow transition-all"
                       >
-                        {approvingId === c.cliente_id ? "..." : "✓ Aprobar"}
+                        {approvingId === c.cliente_id ? "..." : "✓ Approve"}
                       </button>
                     </div>
 
-                    {/* Límite actual → sugerido */}
                     <div className="mt-3 flex items-center gap-3">
                       <div className="flex-1 bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-center">
-                        <div className="text-xs text-gray-400 font-medium uppercase">Actual</div>
+                        <div className="text-xs text-gray-400 font-medium uppercase">Current</div>
                         <div className="text-lg font-bold text-gray-700">{fmt(c.currentLimit)}</div>
                       </div>
                       <div className="text-gray-400 text-xl font-light">→</div>
                       <div className="flex-1 bg-emerald-50 border border-emerald-300 rounded-lg p-2.5 text-center">
-                        <div className="text-xs text-emerald-600 font-medium uppercase">Sugerido</div>
+                        <div className="text-xs text-emerald-600 font-medium uppercase">Suggested</div>
                         <div className="text-lg font-bold text-emerald-700">{fmt(c.suggested)}</div>
                       </div>
                       <div className="flex-shrink-0 bg-emerald-100 text-emerald-700 font-bold text-sm px-2.5 py-1 rounded-full">
@@ -2200,12 +2216,11 @@ export default function CuentasPorCobrar() {
                       </div>
                     </div>
 
-                    {/* Dismiss */}
                     <button
                       onClick={() => setCreditReviewData(prev => prev.filter(x => x.cliente_id !== c.cliente_id))}
                       className="mt-2 text-xs text-gray-400 hover:text-gray-600 underline"
                     >
-                      Ignorar este cliente
+                      Skip this customer
                     </button>
                   </div>
                 );
@@ -2216,7 +2231,7 @@ export default function CuentasPorCobrar() {
             {!creditReviewLoading && creditReviewData.length > 0 && (
               <div className="flex-shrink-0 border-t border-gray-200 px-4 py-3 bg-gray-50 sm:rounded-b-2xl">
                 <div className="text-sm text-gray-500 text-center">
-                  {creditReviewData.length} cliente{creditReviewData.length !== 1 ? "s" : ""} califican — aprueba o ignora individualmente
+                  {creditReviewData.length} customer{creditReviewData.length !== 1 ? "s" : ""} qualify — approve or skip individually
                 </div>
               </div>
             )}
