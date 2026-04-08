@@ -370,7 +370,7 @@ export default function Inventory() {
             >
               <span className="text-base">🔁</span> Transfer
             </button>
-            {puedeAgregarAlmacen && selected?.tipo === "warehouse" && (
+            {puedeAgregarAlmacen && (
               <button
                 onClick={() => setInvoiceImporterOpen(true)}
                 disabled={!isOnline}
