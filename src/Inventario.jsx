@@ -4,6 +4,7 @@ import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import AgregarStockModal from "./AgregarStockModal";
 import ModalTraspasoStock from "./ModalTraspasoStock";
+import InvoiceImporter from "./InvoiceImporter";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { useOffline } from "./hooks/useOffline";
 import { guardarInventarioVan, obtenerInventarioVan } from "./utils/offlineDB";
@@ -37,6 +38,7 @@ export default function Inventory() {
   const [error, setError]                   = useState("");
   const [modalOpen, setModalOpen]           = useState(false);
   const [modalTransferOpen, setModalTransferOpen] = useState(false);
+  const [invoiceImporterOpen, setInvoiceImporterOpen] = useState(false);
   const [refresh, setRefresh]               = useState(0);
   const [showScanner, setShowScanner]       = useState(false);
   const [page, setPage]                     = useState(0);
@@ -368,6 +370,15 @@ export default function Inventory() {
             >
               <span className="text-base">🔁</span> Transfer
             </button>
+            {puedeAgregarAlmacen && selected?.tipo === "warehouse" && (
+              <button
+                onClick={() => setInvoiceImporterOpen(true)}
+                disabled={!isOnline}
+                className="flex-1 flex items-center justify-center gap-2 bg-violet-600 text-white py-2.5 rounded-xl font-semibold text-sm shadow disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-700 active:scale-95 transition-all"
+              >
+                <span className="text-base">📄</span> Import Invoice
+              </button>
+            )}
           </div>
 
           {/* Extended search notice */}
@@ -598,6 +609,11 @@ export default function Inventory() {
           onScan={handleBarcodeScanned}
           onClose={() => setShowScanner(false)}
           isActive={showScanner}
+        />
+      )}
+      {invoiceImporterOpen && (
+        <InvoiceImporter
+          onClose={() => { setInvoiceImporterOpen(false); setPage(0); setRefresh((r) => r + 1); }}
         />
       )}
     </div>
