@@ -16,30 +16,51 @@ function parseInvoiceText(rawText) {
     // Skip header/noise lines
     if (/^\*\*\*|^INV|^WHS|^SKU|^Ship|^Bill|^ATTN|^Ph:|^Page|^Sub-?Total|^TOTAL|^Balance|^Tender|^Cust|^SHIPPED|^ORDER DATE/i.test(line)) continue;
 
-    // Match: SKU (5-15 alphanumeric chars) followed by description + numbers
-    // Handles both 12-digit barcodes (074108426369) and short codes (SC901W)
+    // Capelli format: SKU  DESCRIPTION  QTY(ends in .00)  Price  [Net Price]  Total
+    // Key insight: QTY is always a whole number shown as X.00 (6.00, 18.00, 50.00)
+    // Price is never .00 (79.99, 18.99, 0.59)
+    // This lets us reliably split qty vs price
+
+    // Primary pattern: strict — qty ends in .00
     const m = line.match(
-      /^([A-Z0-9]{5,15})\s{2,}(.+?)\s{2,}(\d+\.\d{2})\s+(\d+\.\d{2})(?:\s+[\d.]*\s+(\d+\.\d{2}))?\s+(\d+\.\d{2})\s*$/
+      /^([A-Z0-9]{5,15})\s{2,}(.+?)\s{2,}(\d{1,4}\.00)\s+(\d+\.\d{2})(?:\s+\d*\.?\d*\s+(\d+\.\d{2}))?\s+(\d+\.\d{2})\s*$/
     );
 
-    if (!m) {
-      // Try looser pattern for OCR noise
-      const m2 = line.match(/^([A-Z0-9]{5,15})\s+(.{5,40})\s+(\d{1,3}\.\d{2})\s+(\d+\.\d{2})\s+(\d+\.\d{2})$/);
-      if (!m2) continue;
-      const [, sku, desc, qty, price, total] = m2;
-      if (isNaN(parseFloat(qty)) || parseFloat(qty) <= 0) continue;
-      results.push({ sku: sku.trim(), nombre: desc.trim().replace(/\*\*/g, "").trim(), cantidad: parseFloat(qty), costo: parseFloat(price), total: parseFloat(total) });
+    if (m) {
+      const [, sku, desc, qty, price, netPrice, total] = m;
+      const cantidad = parseFloat(qty);
+      if (!cantidad || cantidad <= 0) continue;
+      results.push({
+        sku: sku.trim(),
+        nombre: desc.trim().replace(/\*\*/g, "").trim(),
+        cantidad,
+        costo: parseFloat(netPrice || price),
+        total: parseFloat(total),
+      });
       continue;
     }
 
-    const [, sku, desc, qty, price, netPrice, total] = m;
-    if (isNaN(parseFloat(qty)) || parseFloat(qty) <= 0) continue;
+    // Fallback: extract all numbers from line, first one ending .00 = qty
+    const skuMatch = line.match(/^([A-Z0-9]{5,15})\s+(.+?)\s+([\d.]+(?:\s+[\d.]+){2,})\s*$/);
+    if (!skuMatch) continue;
+    const [, sku, desc, numStr] = skuMatch;
+    const nums = numStr.trim().split(/\s+/).map(Number).filter(n => !isNaN(n) && n > 0);
+    if (nums.length < 3) continue;
+
+    // Find qty: first number that is a whole integer (ends in .0 or is integer)
+    const qtyIdx = nums.findIndex(n => Number.isInteger(n) || String(n).endsWith(".0") || (n * 100) % 100 === 0);
+    if (qtyIdx === -1) continue;
+    const cantidad = nums[qtyIdx];
+    const costo = nums[qtyIdx + 1] || nums[nums.length - 2];
+    const total = nums[nums.length - 1];
+    if (!cantidad || !costo) continue;
+
     results.push({
       sku: sku.trim(),
       nombre: desc.trim().replace(/\*\*/g, "").trim(),
-      cantidad: parseFloat(qty),
-      costo: parseFloat(netPrice || price),
-      total: parseFloat(total),
+      cantidad,
+      costo,
+      total,
     });
   }
 
