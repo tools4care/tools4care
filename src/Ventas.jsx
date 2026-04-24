@@ -457,6 +457,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
   return { ok: false, reason: "mailto_failed" };
 }
 
+// Legacy — replaced by openChannelModal inside the component
 async function askChannel({ hasPhone, hasEmail }) {
   if (!hasPhone && !hasEmail) return null;
   if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
@@ -527,6 +528,115 @@ function composeReceiptMessageEN(payload) {
   lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
   return lines.join("\n");
 }// src/Ventas.jsx - PARTE 2 DE 3 (Componente Principal, Estados y useEffects)
+
+/* ── Sale Block / Override Modal ── */
+function SaleBlockModal({ type, message, onOverride, onCancel }) {
+  const [note, setNote] = useState("");
+  const isHard = type === "high_risk" || type === "credit_limit";
+  const icon = type === "high_risk" ? "⛔" : type === "credit_limit" ? "🚫" : "⚠️";
+  const color = isHard ? "red" : "amber";
+  const headerBg = isHard ? "bg-red-700" : "bg-amber-600";
+  const btnColor = isHard
+    ? "bg-red-600 hover:bg-red-700 focus:ring-red-500"
+    : "bg-amber-500 hover:bg-amber-600 focus:ring-amber-400";
+
+  return (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+        <div className={`${headerBg} text-white px-6 py-4`}>
+          <div className="text-2xl mb-1">{icon} Sale Blocked</div>
+          <div className="text-sm opacity-90 whitespace-pre-line">{message}</div>
+        </div>
+        <div className="p-6">
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            Override reason <span className="text-red-500">*</span>
+          </label>
+          <textarea
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Enter reason for approving this exception..."
+            rows={3}
+            autoFocus
+            className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-red-400 focus:border-transparent outline-none resize-none"
+          />
+          <div className="flex gap-3 mt-4">
+            <button
+              onClick={() => note.trim() && onOverride(note.trim())}
+              disabled={!note.trim()}
+              className={`flex-1 ${btnColor} text-white font-bold py-3 rounded-xl transition-colors disabled:opacity-40 focus:outline-none focus:ring-2`}
+            >
+              Approve Exception
+            </button>
+            <button
+              onClick={onCancel}
+              className="px-5 py-3 border border-gray-200 hover:border-gray-300 text-gray-600 hover:text-gray-800 font-semibold rounded-xl transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Guest Contact Modal ── */
+function GuestContactModal({ onConfirm, onSkip }) {
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const canSend = phone.trim().length >= 7 || email.trim().includes("@");
+
+  return (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs mx-4">
+        <h3 className="text-lg font-bold text-gray-800 mb-1">Send Receipt</h3>
+        <p className="text-sm text-gray-500 mb-5">
+          No client on file. Enter the customer's contact to send them the receipt.
+        </p>
+        <div className="space-y-3 mb-5">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Phone (SMS)</label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              placeholder="(978) 000-0000"
+              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="customer@email.com"
+              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              onKeyDown={e => e.key === "Enter" && canSend && onConfirm({ telefono: phone.trim() || null, email: email.trim() || null })}
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => onConfirm({ telefono: phone.trim() || null, email: email.trim() || null })}
+            disabled={!canSend}
+            className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-40"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+            Continue
+          </button>
+          <button
+            onClick={onSkip}
+            className="text-gray-500 hover:text-gray-700 font-semibold py-2 rounded-xl transition-colors border border-gray-200 hover:border-gray-300 text-sm"
+          >
+            Skip — don&apos;t send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ========================= Componente Principal ========================= */
 export default function Sales() {
@@ -761,6 +871,8 @@ const [processingReturn, setProcessingReturn] = useState(false);
   const autoSaveTimerRef = useRef(null);
   // Ref para el input de búsqueda de productos (focus management)
   const productSearchRef = useRef(null);
+  // Ref para nota de excepción (override de bloqueo de venta)
+  const saleOverrideRef = useRef(null);
   // 🆕 ESTADOS PARA FEE DE TARJETA
   const [applyCardFee, setApplyCardFee] = useState({});
   const [cardFeePercentage, setCardFeePercentage] = useState(3);
@@ -776,6 +888,15 @@ const [agreementException, setAgreementException] = useState(false);
 const [agreementExceptionNote, setAgreementExceptionNote] = useState("");
 const [agreementSystemReady, setAgreementSystemReady] = useState(false);
 const [pendingAgreementData, setPendingAgreementData] = useState(null);
+
+  // ---- CHANNEL SELECTION MODAL (receipt send)
+  const [channelModal, setChannelModal] = useState(null); // { hasPhone, hasEmail, resolve }
+
+  // ---- GUEST CONTACT MODAL (venta sin cliente)
+  const [guestContactModal, setGuestContactModal] = useState(null); // { resolve }
+
+  // ---- SALE BLOCK / OVERRIDE MODAL
+  const [saleBlockModal, setSaleBlockModal] = useState(null); // { type, message, resolve }
 
   // ---- DASHBOARD Y CLIENTES RECIENTES
   const [recentClients, setRecentClients] = useState([]);
@@ -2265,6 +2386,9 @@ function clearSale() {
   setAgreementException(false);
   setAgreementExceptionNote("");
   setPendingAgreementData(null);
+
+  // Limpiar override de excepción
+  saleOverrideRef.current = null;
   
   // Limpiar cart
   setCart([]);
@@ -2277,24 +2401,49 @@ function clearSale() {
   setReturnReason("");
 }
 
-  async function requestAndSendNotifications({ client, payload }) {
-    if (!client) return;
+  function openChannelModal({ hasPhone, hasEmail }) {
+    return new Promise((resolve) => {
+      if (!hasPhone && !hasEmail) return resolve(null);
+      setChannelModal({ hasPhone, hasEmail, resolve });
+    });
+  }
 
-    const hasPhone = !!client.telefono;
-    const hasEmail = !!client.email;
+  function openGuestContactModal() {
+    return new Promise((resolve) => {
+      setGuestContactModal({ resolve });
+    });
+  }
+
+  function openSaleBlockModal(type, message) {
+    return new Promise((resolve) => {
+      setSaleBlockModal({ type, message, resolve });
+    });
+  }
+
+  async function requestAndSendNotifications({ client, payload }) {
+    let effectiveClient = client;
+
+    if (!effectiveClient) {
+      const guestContact = await openGuestContactModal();
+      if (!guestContact) return; // user skipped
+      effectiveClient = { telefono: guestContact.telefono || null, email: guestContact.email || null };
+    }
+
+    const hasPhone = !!effectiveClient.telefono;
+    const hasEmail = !!effectiveClient.email;
 
     const subject = `${COMPANY_NAME} — Receipt ${new Date().toLocaleDateString()}`;
     const text = composeReceiptMessageEN(payload);
     const html = text;
 
-    const wants = await askChannel({ hasPhone, hasEmail });
+    const wants = await openChannelModal({ hasPhone, hasEmail });
     if (!wants) return;
 
     try {
       if (wants === "sms" && hasPhone) {
-        await sendSmsIfPossible({ phone: client.telefono, text });
+        await sendSmsIfPossible({ phone: effectiveClient.telefono, text });
       } else if (wants === "email" && hasEmail) {
-        await sendEmailSmart({ to: client.email, subject, html, text });
+        await sendEmailSmart({ to: effectiveClient.email, subject, html, text });
       }
     } catch (e) {
       console.warn("Receipt send error:", e?.message || e);
@@ -2874,22 +3023,28 @@ if (selectedClient?.id) {
 
   // Esperar carga
   if (clientRisk) {
-    // 🔴 Riesgo ALTO → bloquear
+    // 🔴 Riesgo ALTO → override modal
     if (clientRisk.nivel === "alto") {
       setSaving(false);
-      alert("⛔ This client has HIGH RISK.\nSale blocked by Credit Agent.\n\nRecommendation:\n- Request partial payment\n- Reduce amount\n- Clear old debt first");
-      return;
+      const note = await openSaleBlockModal(
+        "high_risk",
+        `Credit Agent detected HIGH RISK for this client.\n\nRecommendation: request partial payment, reduce amount, or clear old debt first.`
+      );
+      if (!note) return;
+      saleOverrideRef.current = `[EXCEPTION: HIGH RISK OVERRIDE] ${note}`;
+      setSaving(true);
     }
 
-    // 🟡 Riesgo MEDIO → advertir
+    // 🟡 Riesgo MEDIO → override modal (soft)
     if (clientRisk.nivel === "medio") {
-      const ok = window.confirm(
-        "⚠️ Warning: This client has MEDIUM RISK.\n\nDo you want to continue the sale?"
+      setSaving(false);
+      const note = await openSaleBlockModal(
+        "medium_risk",
+        `Credit Agent detected MEDIUM RISK for this client.\n\nYou can still approve the sale with a reason.`
       );
-      if (!ok) {
-        setSaving(false);
-        return;
-      }
+      if (!note) return;
+      saleOverrideRef.current = `[OVERRIDE: MEDIUM RISK] ${note}`;
+      setSaving(true);
     }
   }
 }
@@ -2903,10 +3058,14 @@ if (selectedClient?.id) {
       if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
       if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
-        setPaymentError(
-          `❌ Credit exceeded: you need ${fmt(amountToCredit)}, but only ${fmt(creditAvailable)} is available.`
+        setSaving(false);
+        const note = await openSaleBlockModal(
+          "credit_limit",
+          `Credit limit exceeded by ${fmt(amountToCredit - creditAvailable)}.\n\nNeeded: ${fmt(amountToCredit)}  ·  Available: ${fmt(creditAvailable)}`
         );
-        return;
+        if (!note) return;
+        saleOverrideRef.current = `[EXCEPTION: CREDIT LIMIT +${fmt(amountToCredit - creditAvailable)}] ${note}`;
+        setSaving(true);
       }
 
       // ============== MODO OFFLINE ==============
@@ -2953,7 +3112,7 @@ if (selectedClient?.id) {
               aplicado_venta: Number(paidForSale_offline.toFixed(2)),
               aplicado_deuda: Number(payOldDebt_offline.toFixed(2)),
             },
-            notas: `${notes || ""} [OFFLINE]`.trim(),
+            notas: [notes, saleOverrideRef.current, "[OFFLINE]"].filter(Boolean).join(" ").trim(),
             // Items con campos de descuento compatibles con detalle_ventas
             items: cartSafe.map((p) => {
               const meta = p._pricing || { base: p.precio_unitario, pct: 0 };
@@ -3134,7 +3293,7 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
           pago_transferencia: pagoTransf,
           pago_otro: pagoOtro,
           metodo_pago: metodoPrincipal,
-          notas: notes || null,
+          notas: [notes, saleOverrideRef.current].filter(Boolean).join("\n") || null,
         }])
         .select('id')
         .single();
@@ -5552,6 +5711,76 @@ function renderStepPayment() {
   {savingAdjust ? "💾 Guardando..." : "Save"} {/* 🆕 TEXTO DINÁMICO */}
 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sale block / override modal ── */}
+      {saleBlockModal && (
+        <SaleBlockModal
+          type={saleBlockModal.type}
+          message={saleBlockModal.message}
+          onOverride={(note) => {
+            const r = saleBlockModal.resolve;
+            setSaleBlockModal(null);
+            r(note);
+          }}
+          onCancel={() => {
+            const r = saleBlockModal.resolve;
+            setSaleBlockModal(null);
+            r(null);
+          }}
+        />
+      )}
+
+      {/* ── Guest contact modal (venta sin cliente) ── */}
+      {guestContactModal && (
+        <GuestContactModal
+          onConfirm={(contact) => {
+            const r = guestContactModal.resolve;
+            setGuestContactModal(null);
+            r(contact);
+          }}
+          onSkip={() => {
+            const r = guestContactModal.resolve;
+            setGuestContactModal(null);
+            r(null);
+          }}
+        />
+      )}
+
+      {/* ── Channel selection modal ── */}
+      {channelModal && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs mx-4">
+            <h3 className="text-lg font-bold text-gray-800 mb-1">Send Receipt</h3>
+            <p className="text-sm text-gray-500 mb-5">How would you like to send the receipt?</p>
+            <div className="flex flex-col gap-3">
+              {channelModal.hasPhone && (
+                <button
+                  onClick={() => { const r = channelModal.resolve; setChannelModal(null); r("sms"); }}
+                  className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+                  Send by SMS
+                </button>
+              )}
+              {channelModal.hasEmail && (
+                <button
+                  onClick={() => { const r = channelModal.resolve; setChannelModal(null); r("email"); }}
+                  className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                  Send by Email
+                </button>
+              )}
+              <button
+                onClick={() => { const r = channelModal.resolve; setChannelModal(null); r(null); }}
+                className="text-gray-500 hover:text-gray-700 font-semibold py-2 rounded-xl transition-colors border border-gray-200 hover:border-gray-300"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
