@@ -3018,7 +3018,8 @@ if (esCreditoSignificativo && agreementSystemReady && !pendingAgreementData) {
   const transactionId = uuidv4();
   console.log('💳 Transaction ID generado:', transactionId);
 /* ========== AGENTE DE CRÉDITO: VALIDACIÓN PREVIA A GUARDAR ========== */
-if (selectedClient?.id) {
+// Si la venta actual se paga completa (no se extiende crédito nuevo), omitir alertas de riesgo
+if (selectedClient?.id && amountToCreditCheck > 0.0001) {
   // Ejecutar agente contra el total actual
   await runCreditAgent(selectedClient.id, saleTotal);
 
