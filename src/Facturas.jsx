@@ -67,6 +67,18 @@ const IconClock = () => (
   </svg>
 );
 
+const IconMail = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+  </svg>
+);
+
+const IconSend = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+  </svg>
+);
+
 /* ===================== Utilities ===================== */
 function formatAddress(dir) {
   if (!dir) return "-";
@@ -342,6 +354,12 @@ export default function Facturas() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [isSelectAll, setIsSelectAll] = useState(false);
 
+  // Estado para envío masivo por email
+  const [showBulkEmailModal, setShowBulkEmailModal] = useState(false);
+  const [bulkEmailTarget, setBulkEmailTarget] = useState("");
+  const [sendingBulkEmail, setSendingBulkEmail] = useState(false);
+  const [bulkEmailSent, setBulkEmailSent] = useState(false);
+
   // Pagination
   const [pagina, setPagina] = useState(1);
   const [porPagina, setPorPagina] = useState(20);
@@ -536,6 +554,78 @@ export default function Facturas() {
     }
 
     setLoading(false);
+  };
+
+  const handleBulkEmail = async () => {
+    const selected = facturas.filter(f => selectedIds.has(f.id));
+    if (!selected.length || !bulkEmailTarget.trim()) return;
+    setSendingBulkEmail(true);
+    try {
+      const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
+      const rows = selected.map(f => `
+        <tr style="border-bottom:1px solid #e5e7eb;">
+          <td style="padding:8px 12px;font-family:monospace;color:#2563eb;">${f.numero_factura || f.id?.slice(0, 8)}</td>
+          <td style="padding:8px 12px;">${f.fecha ? new Date(f.fecha + "T00:00:00").toLocaleDateString("en-US") : "-"}</td>
+          <td style="padding:8px 12px;">${f.cliente_nombre_c || "-"}</td>
+          <td style="padding:8px 12px;text-align:right;font-weight:600;">${fmt(f.total)}</td>
+          <td style="padding:8px 12px;">
+            <span style="background:${f.estado_pago === "pagado" ? "#d1fae5" : "#fef3c7"};color:${f.estado_pago === "pagado" ? "#065f46" : "#92400e"};padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600;">
+              ${f.estado_pago === "pagado" ? "Paid" : "Pending"}
+            </span>
+          </td>
+        </tr>`).join("");
+      const total = selected.reduce((s, f) => s + Number(f.total || 0), 0);
+      const html = `
+        <div style="font-family:sans-serif;max-width:700px;margin:0 auto;">
+          <div style="background:#0b4a6f;color:white;padding:20px 24px;border-radius:12px 12px 0 0;">
+            <div style="font-size:22px;font-weight:bold;">TOOLS4CARE</div>
+            <div style="font-size:14px;margin-top:4px;opacity:.85;">Invoice Summary — ${selected.length} invoice${selected.length !== 1 ? "s" : ""}</div>
+          </div>
+          <div style="background:white;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;padding:24px;">
+            <table style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr style="background:#f3f4f6;">
+                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Invoice #</th>
+                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Date</th>
+                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Client</th>
+                  <th style="padding:8px 12px;text-align:right;font-size:12px;color:#6b7280;">Total</th>
+                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Status</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+              <tfoot>
+                <tr style="background:#f8fafc;">
+                  <td colspan="3" style="padding:10px 12px;font-weight:bold;text-align:right;">Grand Total</td>
+                  <td style="padding:10px 12px;font-weight:bold;text-align:right;font-size:15px;color:#0b4a6f;">${fmt(total)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+            <div style="margin-top:16px;font-size:11px;color:#9ca3af;text-align:center;">
+              Generated ${new Date().toLocaleString()} &nbsp;·&nbsp; Tools4Care Financial System
+            </div>
+          </div>
+        </div>`;
+      const resp = await fetch(
+        "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/send-order-email",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: bulkEmailTarget.trim(),
+            subject: `Tools4Care — ${selected.length} Invoice${selected.length !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
+            html,
+          }),
+        }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Failed to send email");
+      setBulkEmailSent(true);
+    } catch (e) {
+      alert("Error sending email: " + e.message);
+    } finally {
+      setSendingBulkEmail(false);
+    }
   };
 
   const totalPaginas = Math.ceil(totalVentas / porPagina) || 1;
@@ -742,7 +832,7 @@ export default function Facturas() {
               <div className="h-8 w-px bg-gray-700 hidden sm:block"></div>
 
               <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                <button 
+                <button
                   onClick={handleBulkDownload}
                   disabled={loading}
                   className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-xl font-semibold transition-colors disabled:opacity-50 flex-1 sm:flex-none"
@@ -751,7 +841,16 @@ export default function Facturas() {
                   <span className="hidden sm:inline">Download All</span>
                   <span className="sm:hidden">Download</span>
                 </button>
-                <button 
+                <button
+                  onClick={() => { setBulkEmailSent(false); setBulkEmailTarget(""); setShowBulkEmailModal(true); }}
+                  disabled={loading}
+                  className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-xl font-semibold transition-colors disabled:opacity-50 flex-1 sm:flex-none"
+                >
+                  <IconMail />
+                  <span className="hidden sm:inline">Send by Email</span>
+                  <span className="sm:hidden">Email</span>
+                </button>
+                <button
                   onClick={() => { setSelectedIds(new Set()); setIsSelectAll(false); }}
                   className="text-gray-400 hover:text-white font-semibold px-3"
                 >
@@ -1124,6 +1223,74 @@ export default function Facturas() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk email modal ── */}
+      {showBulkEmailModal && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-emerald-100 p-2 rounded-full">
+                <IconMail />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Send Invoices by Email</h3>
+                <p className="text-sm text-gray-500">{selectedIds.size} invoice{selectedIds.size !== 1 ? "s" : ""} selected</p>
+              </div>
+            </div>
+
+            {bulkEmailSent ? (
+              <div className="flex flex-col items-center gap-3 py-4">
+                <div className="bg-emerald-100 rounded-full p-3">
+                  <svg className="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                </div>
+                <p className="font-semibold text-emerald-700">Email sent successfully!</p>
+                <p className="text-sm text-gray-500">{bulkEmailTarget}</p>
+                <button
+                  onClick={() => { setShowBulkEmailModal(false); setBulkEmailSent(false); setBulkEmailTarget(""); }}
+                  className="mt-2 bg-gray-900 hover:bg-black text-white px-6 py-2 rounded-xl font-semibold transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Recipient email</label>
+                  <input
+                    type="email"
+                    value={bulkEmailTarget}
+                    onChange={e => setBulkEmailTarget(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleBulkEmail()}
+                    placeholder="admin@example.com"
+                    className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleBulkEmail}
+                    disabled={sendingBulkEmail || !bulkEmailTarget.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl transition-colors disabled:opacity-50"
+                  >
+                    {sendingBulkEmail ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <IconSend />
+                    )}
+                    {sendingBulkEmail ? "Sending..." : "Send"}
+                  </button>
+                  <button
+                    onClick={() => setShowBulkEmailModal(false)}
+                    className="px-5 py-2.5 border border-gray-200 hover:border-gray-300 text-gray-600 hover:text-gray-800 font-semibold rounded-xl transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
