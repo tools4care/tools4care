@@ -741,20 +741,15 @@ export default function Facturas() {
         .join('<div style="page-break-after:always;height:24px;"></div>');
 
       const count = withDetail.length;
-      const resp = await fetch(
-        "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/send-order-email",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: bulkEmailTarget.trim(),
-            subject: `Tools4Care — ${count} Invoice${count !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
-            html,
-          }),
-        }
-      );
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Failed to send email");
+      const { data, error } = await supabase.functions.invoke("send-order-email", {
+        body: {
+          to: bulkEmailTarget.trim(),
+          subject: `Tools4Care — ${count} Invoice${count !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
+          html,
+        },
+      });
+      if (error) throw new Error(error.message || "Failed to send email");
+      if (!data?.ok) throw new Error(data?.error || "Failed to send email");
       setBulkEmailSent(true);
     } catch (e) {
       alert("Error sending email: " + e.message);
@@ -784,20 +779,15 @@ export default function Facturas() {
 
       const html = buildFullInvoiceHTML(f);
 
-      const resp = await fetch(
-        "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/send-order-email",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: singleEmailTarget.trim(),
-            subject: `Tools4Care Invoice ${f.numero_factura || f.id?.slice(0, 8)} — ${f.cliente_nombre_c || ""}`,
-            html,
-          }),
-        }
-      );
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Failed to send");
+      const { data, error } = await supabase.functions.invoke("send-order-email", {
+        body: {
+          to: singleEmailTarget.trim(),
+          subject: `Tools4Care Invoice ${f.numero_factura || f.id?.slice(0, 8)} — ${f.cliente_nombre_c || ""}`,
+          html,
+        },
+      });
+      if (error) throw new Error(error.message || "Failed to send");
+      if (!data?.ok) throw new Error(data?.error || "Failed to send");
       setSingleEmailSent(true);
     } catch (e) {
       alert("Error sending: " + e.message);
