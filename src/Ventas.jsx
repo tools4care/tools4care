@@ -2423,7 +2423,8 @@ function clearSale() {
   async function requestAndSendNotifications({ client, payload }) {
     let effectiveClient = client;
 
-    if (!effectiveClient) {
+    // Quick Sale sets client to { id: null, nombre: "Quick sale" } — treat as no-client
+    if (!effectiveClient?.id) {
       const guestContact = await openGuestContactModal();
       if (!guestContact) return; // user skipped
       effectiveClient = { telefono: guestContact.telefono || null, email: guestContact.email || null };
