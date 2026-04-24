@@ -349,7 +349,147 @@ function descargarPDFFactura(factura) {
 function getPDFBase64(factura) {
   const doc = buildFacturaPDF(factura);
   const dataUri = doc.output("datauristring");
-  return dataUri.split(",")[1]; // pure base64 without the data URI prefix
+  return dataUri.split(",")[1];
+}
+
+/* Build a complete styled HTML invoice — same data as the PDF */
+function buildFullInvoiceHTML(factura) {
+  const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const empresa = {
+    nombre: "TOOLS4CARE",
+    direccion: "108 Lafayette St, Salem, MA 01970",
+    telefono: "(978) 594-1624",
+    email: "soporte@tools4care.com",
+  };
+
+  const fecha = factura.fecha
+    ? new Date(factura.fecha + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "-";
+  const invoiceNum = factura.numero_factura || factura.id?.slice(0, 8) || "-";
+  const cliente = factura.cliente_nombre_c || "Quick Sale";
+  const direccion = factura.cliente_direccion
+    ? (typeof factura.cliente_direccion === "string"
+        ? factura.cliente_direccion
+        : [factura.cliente_direccion.calle, factura.cliente_direccion.ciudad, factura.cliente_direccion.estado].filter(Boolean).join(", "))
+    : "-";
+  const telefono = factura.cliente_telefono || "-";
+  const emailCliente = factura.cliente_email || "-";
+
+  const items = (factura.detalle_ventas || []);
+  let subtotal = 0;
+  const itemRows = items.length
+    ? items.map(d => {
+        const codigo = d.productos?.codigo || "N/A";
+        const nombre = d.productos?.nombre || d.producto_nombre || "-";
+        const qty = Number(d.cantidad || 1);
+        const unit = Number(d.precio_unitario ?? d.precio_unit ?? 0);
+        const sub = qty * unit;
+        subtotal += sub;
+        return `
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:13px;">${codigo}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:13px;font-weight:500;">${nombre}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:center;font-size:13px;">${qty}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:right;font-size:13px;">${fmt(unit)}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:right;font-size:13px;font-weight:600;">${fmt(sub)}</td>
+          </tr>`;
+      }).join("")
+    : `<tr><td colspan="5" style="padding:16px;text-align:center;color:#9ca3af;">No items</td></tr>`;
+
+  const totalFactura = Number(factura.total || subtotal);
+  const estadoPago = factura.estado_pago;
+  const statusColor = estadoPago === "pagado" ? "#065f46" : estadoPago === "parcial" ? "#1e40af" : "#92400e";
+  const statusBg = estadoPago === "pagado" ? "#d1fae5" : estadoPago === "parcial" ? "#dbeafe" : "#fef3c7";
+  const statusLabel = estadoPago === "pagado" ? "PAID" : estadoPago === "parcial" ? "PARTIAL" : "PENDING";
+  const balanceDue = estadoPago === "pagado" ? 0 : totalFactura;
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
+<div style="max-width:680px;margin:32px auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- Header -->
+  <div style="background:#0b4a6f;padding:28px 32px;display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <div style="color:white;font-size:26px;font-weight:bold;letter-spacing:1px;">${empresa.nombre}</div>
+      <div style="color:rgba(255,255,255,0.75);font-size:12px;margin-top:4px;">${empresa.direccion}</div>
+      <div style="color:rgba(255,255,255,0.75);font-size:12px;">${empresa.telefono} · ${empresa.email}</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="color:white;font-size:22px;font-weight:bold;">INVOICE</div>
+      <div style="color:rgba(255,255,255,0.8);font-size:13px;margin-top:4px;">#${invoiceNum}</div>
+      <div style="background:${statusBg};color:${statusColor};font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;margin-top:8px;display:inline-block;letter-spacing:.5px;">${statusLabel}</div>
+    </div>
+  </div>
+
+  <!-- Invoice meta + Client -->
+  <div style="display:flex;gap:0;border-bottom:2px solid #f3f4f6;">
+    <div style="flex:1;padding:24px 32px;border-right:1px solid #f3f4f6;">
+      <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Invoice Date</div>
+      <div style="font-size:14px;font-weight:600;color:#111;">${fecha}</div>
+    </div>
+    <div style="flex:1;padding:24px 32px;border-right:1px solid #f3f4f6;">
+      <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Invoice #</div>
+      <div style="font-size:14px;font-weight:600;color:#111;font-family:monospace;">${invoiceNum}</div>
+    </div>
+    <div style="flex:1;padding:24px 32px;">
+      <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Bill To</div>
+      <div style="font-size:14px;font-weight:700;color:#111;">${cliente}</div>
+      <div style="font-size:12px;color:#6b7280;margin-top:2px;">${direccion}</div>
+      <div style="font-size:12px;color:#6b7280;">${telefono}</div>
+      <div style="font-size:12px;color:#6b7280;">${emailCliente}</div>
+    </div>
+  </div>
+
+  <!-- Items table -->
+  <table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr style="background:#f8fafc;">
+        <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Code</th>
+        <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Product / Service</th>
+        <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Qty</th>
+        <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Unit Price</th>
+        <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Subtotal</th>
+      </tr>
+    </thead>
+    <tbody>${itemRows}</tbody>
+  </table>
+
+  <!-- Totals -->
+  <div style="padding:20px 32px;border-top:2px solid #f3f4f6;">
+    <table style="width:100%;border-collapse:collapse;">
+      <tr>
+        <td style="padding:4px 0;color:#6b7280;font-size:13px;">Subtotal</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;">${fmt(subtotal)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:#6b7280;font-size:13px;">Tax</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;">$0.00</td>
+      </tr>
+      <tr>
+        <td style="padding:12px 0 4px;font-size:16px;font-weight:800;color:#0b4a6f;border-top:2px solid #e5e7eb;">TOTAL</td>
+        <td style="padding:12px 0 4px;text-align:right;font-size:16px;font-weight:800;color:#0b4a6f;border-top:2px solid #e5e7eb;">${fmt(totalFactura)}</td>
+      </tr>
+      ${balanceDue > 0 ? `
+      <tr>
+        <td style="padding:4px 0;color:#d97706;font-size:13px;font-weight:600;">Balance Due</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;font-weight:600;color:#d97706;">${fmt(balanceDue)}</td>
+      </tr>` : `
+      <tr>
+        <td colspan="2" style="padding:4px 0;color:#059669;font-size:13px;font-weight:600;">✅ Paid in full</td>
+      </tr>`}
+    </table>
+  </div>
+
+  <!-- Footer -->
+  <div style="background:#f8fafc;padding:20px 32px;border-top:1px solid #e5e7eb;text-align:center;">
+    <div style="font-size:12px;color:#374151;font-weight:600;">Thank you for your business!</div>
+    <div style="font-size:11px;color:#9ca3af;margin-top:4px;">Payment is due within 30 days · ${empresa.nombre} · ${empresa.direccion}</div>
+    <div style="font-size:10px;color:#d1d5db;margin-top:8px;">Generated ${new Date().toLocaleString("en-US")} · Tools4Care Financial System</div>
+  </div>
+</div>
+</body></html>`;
 }
 
 /* ===================== MAIN ===================== */
@@ -595,63 +735,12 @@ export default function Facturas() {
         return { ...f, detalle_ventas: normalizeDetalleRows(rows) };
       }));
 
-      // 2. Generate a PDF base64 for each invoice
-      const attachments = withDetail.map(f => ({
-        filename: `Invoice_${f.numero_factura || f.id?.slice(0, 8)}.pdf`,
-        base64: getPDFBase64(f),
-      }));
+      // 2. Build one full-invoice HTML per selected invoice, concatenated with page breaks
+      const html = withDetail
+        .map(f => buildFullInvoiceHTML(f))
+        .join('<div style="page-break-after:always;height:24px;"></div>');
 
-      // 3. Build a compact summary HTML body for the email body
-      const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
-      const total = selected.reduce((s, f) => s + Number(f.total || 0), 0);
-      const summaryRows = withDetail.map(f => `
-        <tr style="border-bottom:1px solid #e5e7eb;">
-          <td style="padding:8px 12px;font-family:monospace;color:#2563eb;">${f.numero_factura || f.id?.slice(0, 8)}</td>
-          <td style="padding:8px 12px;">${f.fecha ? new Date(f.fecha + "T00:00:00").toLocaleDateString("en-US") : "-"}</td>
-          <td style="padding:8px 12px;">${f.cliente_nombre_c || "Quick sale"}</td>
-          <td style="padding:8px 12px;text-align:right;font-weight:600;">${fmt(f.total)}</td>
-          <td style="padding:8px 12px;">
-            <span style="background:${f.estado_pago === "pagado" ? "#d1fae5" : "#fef3c7"};color:${f.estado_pago === "pagado" ? "#065f46" : "#92400e"};padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600;">
-              ${f.estado_pago === "pagado" ? "Paid" : "Pending"}
-            </span>
-          </td>
-        </tr>`).join("");
-
-      const html = `
-        <div style="font-family:sans-serif;max-width:700px;margin:0 auto;">
-          <div style="background:#0b4a6f;color:white;padding:20px 24px;border-radius:12px 12px 0 0;">
-            <div style="font-size:22px;font-weight:bold;">TOOLS4CARE</div>
-            <div style="font-size:14px;margin-top:4px;opacity:.85;">
-              ${attachments.length} Invoice PDF${attachments.length !== 1 ? "s" : ""} attached — ${new Date().toLocaleDateString("en-US")}
-            </div>
-          </div>
-          <div style="background:white;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;padding:24px;">
-            <p style="color:#374151;margin:0 0 16px;">Please find the attached invoice PDF${attachments.length !== 1 ? "s" : ""} from Tools4Care.</p>
-            <table style="width:100%;border-collapse:collapse;">
-              <thead>
-                <tr style="background:#f3f4f6;">
-                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Invoice #</th>
-                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Date</th>
-                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Client</th>
-                  <th style="padding:8px 12px;text-align:right;font-size:12px;color:#6b7280;">Total</th>
-                  <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280;">Status</th>
-                </tr>
-              </thead>
-              <tbody>${summaryRows}</tbody>
-              <tfoot>
-                <tr style="background:#f8fafc;font-weight:bold;">
-                  <td colspan="3" style="padding:10px 12px;text-align:right;color:#374151;">Grand Total</td>
-                  <td style="padding:10px 12px;text-align:right;font-size:15px;color:#0b4a6f;">${fmt(total)}</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-            <div style="margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;border-top:1px solid #f3f4f6;padding-top:16px;">
-              Generated ${new Date().toLocaleString()} &nbsp;·&nbsp; Tools4Care · 108 Lafayette St, Salem MA 01970 · (978) 594-1624
-            </div>
-          </div>
-        </div>`;
-
+      const count = withDetail.length;
       const resp = await fetch(
         "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/send-order-email",
         {
@@ -659,9 +748,8 @@ export default function Facturas() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: bulkEmailTarget.trim(),
-            subject: `Tools4Care — ${attachments.length} Invoice${attachments.length !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
+            subject: `Tools4Care — ${count} Invoice${count !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
             html,
-            attachments,
           }),
         }
       );
@@ -694,27 +782,7 @@ export default function Facturas() {
         f = { ...f, detalle_ventas: normalizeDetalleRows(rows) };
       }
 
-      const base64 = getPDFBase64(f);
-      const attachment = { filename: `Invoice_${f.numero_factura || f.id?.slice(0, 8)}.pdf`, base64 };
-      const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
-      const html = `
-        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
-          <div style="background:#0b4a6f;color:white;padding:20px 24px;border-radius:12px 12px 0 0;">
-            <div style="font-size:20px;font-weight:bold;">TOOLS4CARE</div>
-            <div style="font-size:13px;margin-top:4px;opacity:.85;">Invoice ${f.numero_factura || f.id?.slice(0, 8)} · ${f.fecha ? new Date(f.fecha + "T00:00:00").toLocaleDateString("en-US") : ""}</div>
-          </div>
-          <div style="background:white;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;padding:24px;">
-            <p style="color:#374151;margin:0 0 12px;">Please find attached your invoice PDF from Tools4Care.</p>
-            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
-              <tr><td style="color:#6b7280;font-size:13px;padding:4px 0;">Client:</td><td style="font-weight:600;font-size:13px;">${f.cliente_nombre_c || "Quick sale"}</td></tr>
-              <tr><td style="color:#6b7280;font-size:13px;padding:4px 0;">Total:</td><td style="font-weight:700;font-size:15px;color:#0b4a6f;">${fmt(f.total)}</td></tr>
-              <tr><td style="color:#6b7280;font-size:13px;padding:4px 0;">Status:</td><td style="font-weight:600;font-size:13px;">${f.estado_pago === "pagado" ? "✅ Paid" : f.estado_pago === "parcial" ? "◐ Partial" : "⏳ Pending"}</td></tr>
-            </table>
-            <div style="font-size:11px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:12px;">
-              Tools4Care · 108 Lafayette St, Salem MA 01970 · (978) 594-1624
-            </div>
-          </div>
-        </div>`;
+      const html = buildFullInvoiceHTML(f);
 
       const resp = await fetch(
         "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/send-order-email",
@@ -725,7 +793,6 @@ export default function Facturas() {
             to: singleEmailTarget.trim(),
             subject: `Tools4Care Invoice ${f.numero_factura || f.id?.slice(0, 8)} — ${f.cliente_nombre_c || ""}`,
             html,
-            attachments: [attachment],
           }),
         }
       );
