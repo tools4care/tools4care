@@ -548,7 +548,7 @@ export default function Facturas() {
   // Cargar lista de vans para el selector de admin
   useEffect(() => {
     if (usuario?.rol !== "admin") return;
-    supabase.from("vans").select("id,nombre").order("nombre").then(({ data }) => setVans(data || []));
+    supabase.from("vans").select("id,nombre_van").order("nombre_van").then(({ data }) => setVans(data || []));
   }, [usuario?.rol]);
 
   useEffect(() => {
@@ -994,7 +994,7 @@ export default function Facturas() {
               >
                 <option value="">All VANs</option>
                 {vans.map(v => (
-                  <option key={v.id} value={v.id}>{v.nombre}</option>
+                  <option key={v.id} value={v.id}>{v.nombre_van}</option>
                 ))}
               </select>
             )}
