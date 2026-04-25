@@ -373,7 +373,7 @@ function DevolucionesReport({ van, usuario }) {
       // ── Fallback: ventas con estado_pago = 'devolucion' ──
       let qVentas = supabase
         .from("ventas")
-        .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), observaciones")
+        .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), notas")
         .eq("van_id", van.id)
         .eq("estado_pago", "devolucion")
         .gte("created_at", start)
@@ -383,7 +383,7 @@ function DevolucionesReport({ van, usuario }) {
       const { data: ventas, error: vErr } = await qVentas;
 
       if (!vErr) {
-        setData((ventas || []).map(v => ({ ...v, monto: v.total_venta, motivo: v.observaciones || "Return" })));
+        setData((ventas || []).map(v => ({ ...v, monto: v.total_venta, motivo: v.notas || "Return" })));
         setSource("ventas");
         setSearched(true);
         return;
@@ -392,7 +392,7 @@ function DevolucionesReport({ van, usuario }) {
       // ── Fallback 2: ventas con total negativo ──
       let qNeg = supabase
         .from("ventas")
-        .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), observaciones")
+        .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), notas")
         .eq("van_id", van.id)
         .lt("total_venta", 0)
         .gte("created_at", start)
@@ -402,7 +402,7 @@ function DevolucionesReport({ van, usuario }) {
       const { data: neg, error: nErr } = await qNeg;
 
       if (!nErr) {
-        setData((neg || []).map(v => ({ ...v, monto: Math.abs(v.total_venta), motivo: v.observaciones || "Return" })));
+        setData((neg || []).map(v => ({ ...v, monto: Math.abs(v.total_venta), motivo: v.notas || "Return" })));
         setSource("ventas");
       } else {
         throw new Error(nErr.message);
@@ -480,6 +480,8 @@ function PagosAtrasadosReport({ van, usuario }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState(null);
   const [searched, setSearched] = useState(false);
+
+  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
 
   const search = async () => {
     if (!van?.id) return;
@@ -581,11 +583,11 @@ function PagosAtrasadosReport({ van, usuario }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <p className="text-sm text-gray-600">Shows all overdue installments from payment agreements</p>
+        <p className="text-sm text-gray-600">All overdue installments from payment agreements</p>
         <button onClick={search} disabled={loading}
           className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
-          {loading ? <RefreshCw size={14} className="animate-spin"/> : <Search size={14}/>}
-          Load Late Payments
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""}/>
+          Refresh
         </button>
       </div>
       <ErrorBox msg={error} />
@@ -659,6 +661,8 @@ function TopClientesReport({ van, usuario }) {
   const [error, setError]     = useState(null);
   const [searched, setSearched] = useState(false);
   const [sortBy, setSortBy]   = useState("total");
+
+  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
 
   const search = async () => {
     if (!van?.id) return;
@@ -801,6 +805,8 @@ function ProductosReport({ van, usuario }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const [searched, setSearched] = useState(false);
+
+  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
 
   const search = async () => {
     if (!van?.id) return;
