@@ -1,8 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
-import { Package, Users, Plus, X, ChevronDown, ChevronUp, CheckCircle, Clock, AlertCircle, RefreshCw, Truck } from "lucide-react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import { Package, Users, Plus, X, ChevronDown, ChevronUp, CheckCircle, Clock, AlertCircle, RefreshCw, Truck, CreditCard } from "lucide-react";
+
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
 const fmtDate = (iso) => {
@@ -235,6 +239,171 @@ function PlanesTab({ van, usuario }) {
 /* ═══════════════════════════════════════════════
    TAB 2 — SUSCRIPTORES (enrolled clients)
 ═══════════════════════════════════════════════ */
+/* ─── Stripe Enroll Form ─── */
+function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setClientSearch, saving, onSave, onCancel }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [stripeError, setStripeError] = useState("");
+  const [cardReady, setCardReady] = useState(false);
+  const [processingCard, setProcessingCard] = useState(false);
+  const [cardSaved, setCardSaved] = useState(null); // { customerId, paymentMethodId, last4, brand }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.cliente_id || !form.plan_id) return;
+
+    // If card element has input, capture it
+    if (cardReady && stripe && elements && !cardSaved) {
+      setProcessingCard(true);
+      setStripeError("");
+      try {
+        // 1. Get client info
+        const { data: cliente } = await supabase.from("clientes").select("nombre,email,telefono").eq("id", form.cliente_id).single();
+        // 2. Create Stripe customer
+        const { data: custData } = await supabase.functions.invoke("stripe-subscriptions", {
+          body: { action: "create_customer", name: cliente?.nombre, email: cliente?.email, phone: cliente?.telefono,
+            metadata: { supabase_cliente_id: form.cliente_id } },
+        });
+        if (!custData?.ok) throw new Error(custData?.error || "Could not create customer");
+        const customerId = custData.customer_id;
+        // 3. Create setup intent
+        const { data: siData } = await supabase.functions.invoke("stripe-subscriptions", {
+          body: { action: "create_setup_intent", customer_id: customerId },
+        });
+        if (!siData?.ok) throw new Error(siData?.error || "Could not create setup intent");
+        // 4. Confirm card setup
+        const cardElement = elements.getElement(CardElement);
+        const { setupIntent, error } = await stripe.confirmCardSetup(siData.client_secret, {
+          payment_method: { card: cardElement, billing_details: { name: cliente?.nombre || "" } },
+        });
+        if (error) throw new Error(error.message);
+        const pm = setupIntent.payment_method;
+        // 5. Get card details
+        const { data: pmList } = await supabase.functions.invoke("stripe-subscriptions", {
+          body: { action: "list_payment_methods", customer_id: customerId },
+        });
+        const card = pmList?.payment_methods?.find(p => p.id === pm) || pmList?.payment_methods?.[0];
+        setCardSaved({ customerId, paymentMethodId: pm, last4: card?.last4, brand: card?.brand });
+        setProcessingCard(false);
+        onSave({ customerId, paymentMethodId: pm, last4: card?.last4, brand: card?.brand });
+      } catch (err) {
+        setStripeError(err.message);
+        setProcessingCard(false);
+      }
+    } else {
+      onSave(cardSaved || null);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-green-50 border border-green-200 rounded-2xl p-5 mb-5 space-y-4">
+      <h3 className="font-bold text-green-800">Enroll Client in Subscription</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-semibold text-gray-600 mb-1 block">Client *</label>
+          <input placeholder="Search client…" value={clientSearch} onChange={e=>setClientSearch(e.target.value)}
+            className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm mb-1" />
+          <select required value={form.cliente_id} onChange={e=>setForm(f=>({...f,cliente_id:e.target.value}))}
+            className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm bg-white" size={4}>
+            <option value="">— select client —</option>
+            {filteredClients.slice(0,50).map(c=>(
+              <option key={c.id} value={c.id}>{c.nombre}{c.telefono ? ` · ${c.telefono}` : ""}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-600 mb-1 block">Subscription Plan *</label>
+            <select required value={form.plan_id} onChange={e=>setForm(f=>({...f,plan_id:e.target.value}))}
+              className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm bg-white">
+              <option value="">— select plan —</option>
+              {planes.map(p=>(
+                <option key={p.id} value={p.id}>{p.nombre} · {fmt(p.precio)}/{p.ciclo}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-600 mb-1 block">Start Date</label>
+            <input type="date" value={form.fecha_inicio} onChange={e=>setForm(f=>({...f,fecha_inicio:e.target.value}))}
+              className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm" />
+          </div>
+        </div>
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-600 mb-1 block">Notes</label>
+        <input value={form.nota} onChange={e=>setForm(f=>({...f,nota:e.target.value}))}
+          className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm"
+          placeholder="e.g. Priority access, special notes…" />
+      </div>
+
+      {/* Stripe card input */}
+      <div className="bg-white border border-green-200 rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <CreditCard size={16} className="text-blue-600"/>
+          <p className="text-sm font-semibold text-gray-700">Card for recurring charges <span className="text-gray-400 font-normal">(optional)</span></p>
+        </div>
+        <div className="border border-gray-200 rounded-lg px-3 py-3 bg-gray-50">
+          <CardElement onChange={e=>setCardReady(e.complete)}
+            options={{ style: { base: { fontSize:"15px", color:"#374151", "::placeholder":{ color:"#9ca3af" } } } }} />
+        </div>
+        {stripeError && <p className="text-xs text-red-600 mt-2">{stripeError}</p>}
+        <p className="text-xs text-gray-400 mt-2">Card will be securely saved in Stripe for monthly charges. Skip if client pays cash.</p>
+      </div>
+
+      <div className="flex gap-3">
+        <button type="submit" disabled={saving || processingCard}
+          className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-50 flex items-center gap-2">
+          {(saving || processingCard) && <RefreshCw size={13} className="animate-spin"/>}
+          {processingCard ? "Saving card…" : saving ? "Enrolling…" : "Enroll Client"}
+        </button>
+        <button type="button" onClick={onCancel} className="px-5 py-2 rounded-xl text-sm font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50">Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+/* ─── Charge button (off-session) ─── */
+function ChargeButton({ sub, onDone }) {
+  const [charging, setCharging] = useState(false);
+  const [result, setResult] = useState(null);
+
+  async function charge() {
+    if (!confirm(`Charge ${fmt(sub.subscription_planes?.precio)} to card ···· ${sub.card_last4}?`)) return;
+    setCharging(true);
+    setResult(null);
+    try {
+      const { data } = await supabase.functions.invoke("stripe-subscriptions", {
+        body: {
+          action: "charge_subscription",
+          customer_id: sub.stripe_customer_id,
+          payment_method_id: sub.stripe_payment_method_id,
+          amount_cents: Math.round(Number(sub.subscription_planes?.precio || 0) * 100),
+          description: `${sub.subscription_planes?.nombre} — ${sub.clientes?.nombre}`,
+        },
+      });
+      if (!data?.ok) throw new Error(data?.error || "Charge failed");
+      setResult({ ok: true, msg: `Charged ${fmt(sub.subscription_planes?.precio)} ✓` });
+      onDone();
+    } catch (err) {
+      setResult({ ok: false, msg: err.message });
+    } finally {
+      setCharging(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <button onClick={charge} disabled={charging}
+        className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50">
+        <CreditCard size={11}/> {charging ? "Charging…" : "Charge Now"}
+      </button>
+      {result && (
+        <span className={`text-xs font-semibold ${result.ok ? "text-green-600" : "text-red-500"}`}>{result.msg}</span>
+      )}
+    </div>
+  );
+}
+
 function SuscriptoresTab({ van, usuario }) {
   const isAdmin = usuario?.rol === "admin";
   const [subs, setSubs] = useState([]);
@@ -253,13 +422,19 @@ function SuscriptoresTab({ van, usuario }) {
 
   async function loadAll() {
     setLoading(true);
+    const isAdmin = usuario?.rol === "admin";
+    let subsQ = supabase.from("subscription_clientes")
+      .select("*, subscription_planes(nombre,precio,ciclo,productos), clientes(nombre,telefono,email)")
+      .order("created_at", { ascending: false });
+    if (!isAdmin && van?.id) subsQ = subsQ.eq("van_id", van.id);
+
+    let clientesQ = supabase.from("clientes").select("id,nombre,telefono").order("nombre").limit(500);
+    if (!isAdmin && van?.id) clientesQ = clientesQ.eq("van_id", van.id);
+
     const [{ data: s }, { data: p }, { data: c }] = await Promise.all([
-      supabase.from("subscription_clientes")
-        .select("*, subscription_planes(nombre,precio,ciclo,productos), clientes(nombre,telefono,email)")
-        .eq("van_id", van?.id)
-        .order("created_at", { ascending: false }),
+      subsQ,
       supabase.from("subscription_planes").select("id,nombre,precio,ciclo").eq("activo", true),
-      supabase.from("clientes").select("id,nombre,telefono").eq("van_id", van?.id).order("nombre"),
+      clientesQ,
     ]);
     setSubs(s || []);
     setPlanes(p || []);
@@ -267,10 +442,8 @@ function SuscriptoresTab({ van, usuario }) {
     setLoading(false);
   }
 
-  async function enroll(e) {
-    e.preventDefault();
+  async function enroll(stripeInfo) {
     setSaving(true);
-    const plan = planes.find(p => p.id === form.plan_id);
     const today = new Date();
     const nextBilling = new Date(today);
     nextBilling.setMonth(nextBilling.getMonth() + 1);
@@ -282,6 +455,10 @@ function SuscriptoresTab({ van, usuario }) {
       fecha_inicio: form.fecha_inicio || today.toISOString().slice(0,10),
       proxima_entrega: nextBilling.toISOString().slice(0,10),
       nota: form.nota,
+      stripe_customer_id: stripeInfo?.customerId || null,
+      stripe_payment_method_id: stripeInfo?.paymentMethodId || null,
+      card_last4: stripeInfo?.last4 || null,
+      card_brand: stripeInfo?.brand || null,
     });
     setSaving(false);
     setShowForm(false);
@@ -348,51 +525,17 @@ function SuscriptoresTab({ van, usuario }) {
 
       {/* Enroll form */}
       {showForm && (
-        <form onSubmit={enroll} className="bg-green-50 border border-green-200 rounded-2xl p-5 mb-5 space-y-4">
-          <h3 className="font-bold text-green-800">Enroll Client in Subscription</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-semibold text-gray-600 mb-1 block">Client *</label>
-              <input placeholder="Search client…" value={clientSearch} onChange={e=>setClientSearch(e.target.value)}
-                className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm mb-1" />
-              <select required value={form.cliente_id} onChange={e=>setForm(f=>({...f,cliente_id:e.target.value}))}
-                className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm bg-white" size={3}>
-                <option value="">— select —</option>
-                {filteredClients.slice(0,30).map(c=>(
-                  <option key={c.id} value={c.id}>{c.nombre} {c.telefono ? `· ${c.telefono}` : ""}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-600 mb-1 block">Subscription Plan *</label>
-              <select required value={form.plan_id} onChange={e=>setForm(f=>({...f,plan_id:e.target.value}))}
-                className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm bg-white">
-                <option value="">— select plan —</option>
-                {planes.map(p=>(
-                  <option key={p.id} value={p.id}>{p.nombre} · {fmt(p.precio)}/{p.ciclo}</option>
-                ))}
-              </select>
-              <div className="mt-3">
-                <label className="text-xs font-semibold text-gray-600 mb-1 block">Start Date</label>
-                <input type="date" value={form.fecha_inicio} onChange={e=>setForm(f=>({...f,fecha_inicio:e.target.value}))}
-                  className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm" />
-              </div>
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-600 mb-1 block">Notes (payment method, card info, etc.)</label>
-            <input value={form.nota} onChange={e=>setForm(f=>({...f,nota:e.target.value}))}
-              className="w-full border border-green-200 rounded-xl px-3 py-2 text-sm"
-              placeholder="e.g. Card on file ending 4242, priority access agreed" />
-          </div>
-          <div className="flex gap-3">
-            <button type="submit" disabled={saving}
-              className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-50">
-              {saving ? "Saving…" : "Enroll"}
-            </button>
-            <button type="button" onClick={()=>setShowForm(false)} className="px-5 py-2 rounded-xl text-sm font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50">Cancel</button>
-          </div>
-        </form>
+        <Elements stripe={stripePromise}>
+          <EnrollForm
+            form={form} setForm={setForm}
+            planes={planes}
+            filteredClients={filteredClients}
+            clientSearch={clientSearch} setClientSearch={setClientSearch}
+            saving={saving}
+            onSave={enroll}
+            onCancel={()=>setShowForm(false)}
+          />
+        </Elements>
       )}
 
       {/* Subscribers list */}
@@ -412,6 +555,11 @@ function SuscriptoresTab({ van, usuario }) {
                     <p className="text-xs text-gray-500">{s.clientes?.telefono || ""} {s.clientes?.email ? `· ${s.clientes.email}` : ""}</p>
                     <p className="text-sm text-blue-700 font-semibold mt-0.5">{s.subscription_planes?.nombre} · {fmt(s.subscription_planes?.precio)}/mo</p>
                     {s.nota && <p className="text-xs text-gray-400 mt-0.5">📝 {s.nota}</p>}
+                    {s.card_last4 && (
+                      <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+                        <CreditCard size={11}/> {s.card_brand || "Card"} ···· {s.card_last4}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1.5">
@@ -427,6 +575,9 @@ function SuscriptoresTab({ van, usuario }) {
                       className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5">
                       <Truck size={12}/> Mark Delivered
                     </button>
+                    {s.stripe_customer_id && s.stripe_payment_method_id && (
+                      <ChargeButton sub={s} onDone={loadAll} />
+                    )}
                     <button onClick={()=>changeStatus(s.id,"pausada")}
                       className="border border-amber-300 text-amber-700 hover:bg-amber-50 px-3 py-1.5 rounded-lg text-xs font-semibold">
                       Pause
