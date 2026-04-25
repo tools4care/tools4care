@@ -50,8 +50,12 @@ import ComisionesPage from './pages/ComisionesPage';
 // 📊 Reportes (NUEVO)
 import Reportes from './Reportes';
 
+// 📦 Suscripciones
+import Suscripciones from './Suscripciones';
+
 // 🧾 Tax / Impuestos
-import TaxConfig from './pages/TaxConfig';
+import TaxConfig from './pages/TaxConfig'
+import CreateTenantManual from './admin/CreateTenantManual';
 
 // Componente de carga profesional
 const LoadingScreen = () => {
@@ -348,8 +352,14 @@ export default function App() {
             {/* 📊 REPORTES (NUEVO) */}
             <Route path="reportes" element={<Reportes />} />
 
+            {/* 📦 SUSCRIPCIONES */}
+            <Route path="suscripciones" element={<Suscripciones />} />
+
             {/* 🧾 TAX / IMPUESTOS */}
             <Route path="tax" element={<AdminRoute><TaxConfig /></AdminRoute>} />
+
+            {/* 🏢 NUEVO TENANT (ADMIN) */}
+            <Route path="admin/new-client" element={<AdminRoute><CreateTenantManual /></AdminRoute>} />
 
             <Route path="*" element={<Navigate to="/" />} />
           </Route>

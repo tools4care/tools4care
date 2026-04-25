@@ -40,8 +40,9 @@ const MORE_ITEMS = [
   { path: "/facturas",   label: "Invoicing",    icon: FileText,      iconColor: "#9333ea", bg: "bg-purple-50",  ring: "ring-purple-200" },
   { path: "/cierres",    label: "Van Closeout", icon: Truck,         iconColor: "#059669", bg: "bg-emerald-50", ring: "ring-emerald-200" },
   { path: "/suplidores", label: "Suppliers",    icon: UserCircle2,   iconColor: "#4f46e5", bg: "bg-blue-50",    ring: "ring-blue-200"   },
-  { path: "/reportes",   label: "Reports",      icon: BarChart2,     iconColor: "#e11d48", bg: "bg-rose-50",    ring: "ring-rose-200"   },
-  { path: "/van",        label: "Change VAN",   icon: RefreshCcw,    iconColor: "#b45309", bg: "bg-amber-50",   ring: "ring-amber-200"  },
+  { path: "/reportes",       label: "Reports",       icon: BarChart2,     iconColor: "#e11d48", bg: "bg-rose-50",    ring: "ring-rose-200"   },
+  { path: "/suscripciones", label: "Subscriptions", icon: RefreshCcw,    iconColor: "#7c3aed", bg: "bg-violet-50",  ring: "ring-violet-200" },
+  { path: "/van",            label: "Change VAN",    icon: RefreshCcw,    iconColor: "#b45309", bg: "bg-amber-50",   ring: "ring-amber-200"  },
 ];
 
 export default function BottomNav() {
