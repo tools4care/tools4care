@@ -12,16 +12,20 @@ create table if not exists subscription_planes (
 
 -- Client subscriptions
 create table if not exists subscription_clientes (
-  id                uuid primary key default gen_random_uuid(),
-  cliente_id        uuid references clientes(id) on delete cascade,
-  plan_id           uuid references subscription_planes(id) on delete restrict,
-  van_id            uuid references vans(id) on delete cascade,
-  estado            text not null default 'activa', -- activa | pausada | cancelada
-  fecha_inicio      date not null default current_date,
-  proxima_entrega   date,
-  ultima_entrega    date,
-  nota              text,
-  created_at        timestamptz not null default now()
+  id                       uuid primary key default gen_random_uuid(),
+  cliente_id               uuid references clientes(id) on delete cascade,
+  plan_id                  uuid references subscription_planes(id) on delete restrict,
+  van_id                   uuid references vans(id) on delete cascade,
+  estado                   text not null default 'activa', -- activa | pausada | cancelada
+  fecha_inicio             date not null default current_date,
+  proxima_entrega          date,
+  ultima_entrega           date,
+  nota                     text,
+  stripe_customer_id       text,
+  stripe_payment_method_id text,
+  card_last4               text,
+  card_brand               text,
+  created_at               timestamptz not null default now()
 );
 
 -- Delivery log
