@@ -531,6 +531,10 @@ export default function Facturas() {
   // Período para estadísticas (7, 30, 90 días o "all")
   const [periodoStats, setPeriodoStats] = useState(30);
 
+  // Admin: filtro por VAN ("" = todas)
+  const [vans, setVans] = useState([]);
+  const [vanFiltro, setVanFiltro] = useState("");
+
   // Estadísticas
   const [estadisticas, setEstadisticas] = useState({
     totalGeneral: 0,
@@ -541,11 +545,17 @@ export default function Facturas() {
     cantidadPendientes: 0,
   });
 
+  // Cargar lista de vans para el selector de admin
+  useEffect(() => {
+    if (usuario?.rol !== "admin") return;
+    supabase.from("vans").select("id,nombre").order("nombre").then(({ data }) => setVans(data || []));
+  }, [usuario?.rol]);
+
   useEffect(() => {
     cargarFacturas();
     cargarEstadisticas();
     // eslint-disable-next-line
-  }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda, periodoStats]);
+  }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda, periodoStats, vanFiltro]);
 
   // Resetear selección cuando cambian los filtros o pagina
   useEffect(() => {
@@ -556,7 +566,9 @@ export default function Facturas() {
   async function cargarEstadisticas() {
     let query = supabase.from("facturas_ext").select("total, estado_pago");
 
-    if (usuario?.rol !== "admin" && van?.id) {
+    if (usuario?.rol === "admin") {
+      if (vanFiltro) query = query.eq("van_id", vanFiltro);
+    } else if (van?.id) {
       query = query.eq("van_id", van.id);
     }
 
@@ -591,7 +603,9 @@ export default function Facturas() {
     setLoading(true);
     let query = supabase.from("facturas_ext").select("*", { count: "exact" });
 
-    if (usuario?.rol !== "admin" && van?.id) {
+    if (usuario?.rol === "admin") {
+      if (vanFiltro) query = query.eq("van_id", vanFiltro);
+    } else if (van?.id) {
       query = query.eq("van_id", van.id);
     }
 
@@ -803,8 +817,8 @@ export default function Facturas() {
     setFechaInicio("");
     setFechaFin("");
     setEstadoFiltro("all");
+    setVanFiltro("");
     setPagina(1);
-    // No reseteamos periodoStats porque es independiente de los filtros de búsqueda
   }
 
   function handleBusquedaChange(value) {
@@ -971,6 +985,19 @@ export default function Facturas() {
               <option value="parcial">Partial</option>
               <option value="pendiente">Pending</option>
             </select>
+
+            {usuario?.rol === "admin" && (
+              <select
+                className="border-2 border-blue-300 rounded-xl px-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all bg-blue-50 text-blue-800 font-medium"
+                value={vanFiltro}
+                onChange={(e) => { setVanFiltro(e.target.value); setPagina(1); }}
+              >
+                <option value="">All VANs</option>
+                {vans.map(v => (
+                  <option key={v.id} value={v.id}>{v.nombre}</option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 
