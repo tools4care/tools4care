@@ -345,7 +345,9 @@ function DevolucionesReport({ van, usuario }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const [searched, setSearched] = useState(false);
-  const [source, setSource] = useState(""); // which table was used
+  const [source, setSource] = useState("");
+
+  useEffect(() => { search(); }, [van?.id, from, to]); // eslint-disable-line
 
   const search = async () => {
     if (!van?.id) return;
