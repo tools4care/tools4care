@@ -1580,10 +1580,16 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone, todayCharge }) {
 
           {/* Action buttons */}
           <div className="flex gap-2 pt-1">
-            <button onClick={() => onDeliver(d)}
-              className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all">
-              <Truck size={14}/> Mark Delivered
-            </button>
+            {(!hasCard && !cashPaid) ? (
+              <p className="flex-1 text-center text-xs text-amber-600 font-semibold py-3 bg-amber-50 border border-amber-200 rounded-xl">
+                Collect payment first to unlock delivery
+              </p>
+            ) : (
+              <button onClick={() => onDeliver(d)}
+                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all">
+                <Truck size={14}/> Mark Delivered
+              </button>
+            )}
             {hasCard && <ChargeButton sub={d} onDone={onChargeDone}/>}
           </div>
         </div>
