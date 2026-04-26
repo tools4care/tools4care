@@ -239,6 +239,188 @@ function PlanesTab({ van, usuario }) {
 /* ═══════════════════════════════════════════════
    TAB 2 — SUSCRIPTORES (enrolled clients)
 ═══════════════════════════════════════════════ */
+/* ─── Subscriber Card ─── */
+function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus }) {
+  const [expanded, setExpanded] = useState(false);
+  const [entregas, setEntregas] = useState([]);
+  const [loadingEntregas, setLoadingEntregas] = useState(false);
+  const isOverdue = s.proxima_entrega && s.proxima_entrega <= new Date().toISOString().slice(0,10) && s.estado === "activa";
+  const hasCard = s.stripe_customer_id && s.stripe_payment_method_id;
+  const productos = s.subscription_planes?.productos || [];
+
+  async function toggleExpand() {
+    if (!expanded) {
+      setLoadingEntregas(true);
+      const { data } = await supabase.from("subscription_entregas")
+        .select("id, fecha, estado, notas")
+        .eq("suscripcion_id", s.id)
+        .order("fecha", { ascending: false })
+        .limit(10);
+      setEntregas(data || []);
+      setLoadingEntregas(false);
+    }
+    setExpanded(e => !e);
+  }
+
+  // Days until next delivery
+  const today = new Date().toISOString().slice(0,10);
+  const daysUntil = s.proxima_entrega
+    ? Math.ceil((new Date(s.proxima_entrega) - new Date(today)) / 86400000)
+    : null;
+
+  return (
+    <div className={`bg-white rounded-2xl shadow-sm overflow-hidden border-2 transition-all ${isOverdue ? "border-amber-400" : hasCard ? "border-blue-200" : "border-gray-100"}`}>
+
+      {/* ── Top banner: next delivery ── */}
+      <div className={`px-5 py-3 flex items-center justify-between ${isOverdue ? "bg-amber-500" : "bg-gradient-to-r from-blue-600 to-indigo-600"}`}>
+        <div className="flex items-center gap-2">
+          <Truck size={16} className="text-white"/>
+          <div>
+            <p className="text-white/70 text-xs font-medium">Next Delivery</p>
+            <p className="text-white font-bold text-base leading-tight">{fmtDate(s.proxima_entrega)}</p>
+          </div>
+        </div>
+        <div className="text-right">
+          {daysUntil !== null && (
+            <p className={`text-lg font-black ${isOverdue ? "text-white" : "text-white"}`}>
+              {isOverdue ? `${Math.abs(daysUntil)}d overdue` : daysUntil === 0 ? "Today!" : `in ${daysUntil}d`}
+            </p>
+          )}
+          {s.ultima_entrega && <p className="text-white/60 text-xs">Last: {fmtDate(s.ultima_entrega)}</p>}
+        </div>
+      </div>
+
+      {/* ── Client + plan info ── */}
+      <div className="px-5 pt-4 pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-base flex-shrink-0">
+              {(s.clientes?.nombre || "?").charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <p className="font-bold text-gray-900 text-base">{s.clientes?.nombre || "—"}</p>
+              {s.clientes?.telefono && <p className="text-xs text-gray-500">📞 {s.clientes.telefono}</p>}
+              {s.clientes?.email    && <p className="text-xs text-gray-500">✉️ {s.clientes.email}</p>}
+              {s.nota && <p className="text-xs text-gray-400 mt-0.5">📝 {s.nota}</p>}
+            </div>
+          </div>
+          <StatusBadge status={s.estado}/>
+        </div>
+
+        {/* Plan + price */}
+        <div className="mt-3 bg-indigo-50 rounded-xl px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Package size={16} className="text-indigo-600"/>
+            <div>
+              <p className="text-xs text-indigo-500 font-medium">Subscription Plan</p>
+              <p className="font-bold text-indigo-900 text-sm">{s.subscription_planes?.nombre || "—"}</p>
+            </div>
+          </div>
+          <p className="text-xl font-black text-indigo-700">{fmt(s.subscription_planes?.precio)}<span className="text-xs font-normal text-indigo-400">/mo</span></p>
+        </div>
+
+        {/* Payment method */}
+        <div className={`mt-2 rounded-xl px-4 py-2.5 flex items-center justify-between ${hasCard ? "bg-slate-800" : "bg-gray-100"}`}>
+          {hasCard ? (
+            <>
+              <div className="flex items-center gap-2">
+                <CreditCard size={16} className="text-slate-300"/>
+                <div>
+                  <p className="text-slate-400 text-xs">Card on file</p>
+                  <p className="text-white font-bold text-sm capitalize">{s.card_brand || "Card"} ···· {s.card_last4}</p>
+                </div>
+              </div>
+              <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-semibold">Auto-charge</span>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <AlertCircle size={15} className="text-amber-500"/>
+                <p className="text-xs text-gray-600 font-medium">No card on file — cash payment</p>
+              </div>
+              <span className="text-xs bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-semibold">Manual</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Products included ── */}
+      {productos.length > 0 && (
+        <div className="px-5 pb-3">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Box Contents</p>
+          <div className="flex flex-wrap gap-1.5">
+            {productos.map((p, i) => (
+              <span key={i} className="bg-blue-50 text-blue-700 text-xs font-medium px-2.5 py-1 rounded-full border border-blue-100">
+                {p.nombre}{p.nota ? ` · ${p.nota}` : ""}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Action buttons ── */}
+      <div className="px-5 pb-4 flex flex-wrap gap-2">
+        {s.estado === "activa" && (
+          <>
+            <button onClick={() => onMarkDelivered(s.id)}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm">
+              <Truck size={13}/> Mark Delivered
+            </button>
+            {hasCard && <ChargeButton sub={s} onDone={onChargeDone}/>}
+            <button onClick={() => onChangeStatus(s.id, "pausada")}
+              className="border-2 border-amber-300 text-amber-700 hover:bg-amber-50 px-3 py-2 rounded-xl text-xs font-bold">
+              Pause
+            </button>
+            <button onClick={() => onChangeStatus(s.id, "cancelada")}
+              className="border-2 border-red-200 text-red-600 hover:bg-red-50 px-3 py-2 rounded-xl text-xs font-bold">
+              Cancel
+            </button>
+          </>
+        )}
+        {s.estado === "pausada" && (
+          <button onClick={() => onChangeStatus(s.id, "activa")}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl text-xs font-bold">
+            Reactivate
+          </button>
+        )}
+        {s.estado === "cancelada" && (
+          <button onClick={() => onChangeStatus(s.id, "activa")}
+            className="border-2 border-green-300 text-green-700 hover:bg-green-50 px-4 py-2 rounded-xl text-xs font-bold">
+            Re-enroll
+          </button>
+        )}
+        {/* Expand deliveries */}
+        <button onClick={toggleExpand}
+          className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-blue-600 font-semibold">
+          {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+          Delivery history
+        </button>
+      </div>
+
+      {/* ── Delivery history ── */}
+      {expanded && (
+        <div className="border-t border-gray-100 px-5 py-4 bg-gray-50">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Recent Deliveries</p>
+          {loadingEntregas && <p className="text-xs text-gray-400">Loading…</p>}
+          {!loadingEntregas && entregas.length === 0 && (
+            <p className="text-xs text-gray-400 italic">No deliveries recorded yet.</p>
+          )}
+          <div className="space-y-2">
+            {entregas.map(e => (
+              <div key={e.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2 border border-gray-100">
+                <CheckCircle size={14} className="text-green-500 flex-shrink-0"/>
+                <p className="text-sm font-medium text-gray-700 flex-1">{fmtDate(e.fecha)}</p>
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">{e.estado}</span>
+                {e.notas && <p className="text-xs text-gray-400">{e.notas}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Stripe Enroll Form ─── */
 function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setClientSearch, saving, onSave, onCancel }) {
   const stripe = useStripe();
@@ -702,71 +884,9 @@ create policy "auth" on subscription_entregas for all using (auth.role()='authen
       )}
 
       {/* Subscribers list */}
-      <div className="space-y-3">
+      <div className="space-y-4">
         {filtered.length===0 && <p className="text-center py-12 text-gray-400">No subscribers with status "{filterStatus}"</p>}
-        {filtered.map(s => {
-          const isOverdue = s.proxima_entrega && s.proxima_entrega <= new Date().toISOString().slice(0,10) && s.estado==="activa";
-          return (
-            <div key={s.id} className={`bg-white border-2 rounded-2xl p-4 ${isOverdue?"border-amber-300":"border-gray-100"}`}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isOverdue?"bg-amber-500":"bg-green-600"}`}>
-                    <Users size={18} className="text-white"/>
-                  </div>
-                  <div>
-                    <p className="font-bold text-gray-900">{s.clientes?.nombre || "—"}</p>
-                    <p className="text-xs text-gray-500">{s.clientes?.telefono || ""} {s.clientes?.email ? `· ${s.clientes.email}` : ""}</p>
-                    <p className="text-sm text-blue-700 font-semibold mt-0.5">{s.subscription_planes?.nombre} · {fmt(s.subscription_planes?.precio)}/mo</p>
-                    {s.nota && <p className="text-xs text-gray-400 mt-0.5">📝 {s.nota}</p>}
-                    {s.card_last4 && (
-                      <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
-                        <CreditCard size={11}/> {s.card_brand || "Card"} ···· {s.card_last4}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-1.5">
-                  <StatusBadge status={s.estado} />
-                  <p className="text-xs text-gray-400">Next delivery: <span className={`font-semibold ${isOverdue?"text-amber-600":"text-gray-700"}`}>{fmtDate(s.proxima_entrega)}</span></p>
-                  {s.ultima_entrega && <p className="text-xs text-gray-400">Last: {fmtDate(s.ultima_entrega)}</p>}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
-                {s.estado==="activa" && (
-                  <>
-                    <button onClick={()=>markDelivered(s.id)}
-                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5">
-                      <Truck size={12}/> Mark Delivered
-                    </button>
-                    {s.stripe_customer_id && s.stripe_payment_method_id && (
-                      <ChargeButton sub={s} onDone={loadAll} />
-                    )}
-                    <button onClick={()=>changeStatus(s.id,"pausada")}
-                      className="border border-amber-300 text-amber-700 hover:bg-amber-50 px-3 py-1.5 rounded-lg text-xs font-semibold">
-                      Pause
-                    </button>
-                    <button onClick={()=>changeStatus(s.id,"cancelada")}
-                      className="border border-red-300 text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg text-xs font-semibold">
-                      Cancel
-                    </button>
-                  </>
-                )}
-                {s.estado==="pausada" && (
-                  <button onClick={()=>changeStatus(s.id,"activa")}
-                    className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">
-                    Reactivate
-                  </button>
-                )}
-                {s.estado==="cancelada" && (
-                  <button onClick={()=>changeStatus(s.id,"activa")}
-                    className="border border-green-300 text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-lg text-xs font-semibold">
-                    Re-enroll
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {filtered.map(s => <SubscriberCard key={s.id} s={s} onMarkDelivered={markDelivered} onChargeDone={loadAll} onChangeStatus={changeStatus} />)}
       </div>
     </div>
   );
