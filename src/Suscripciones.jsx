@@ -1273,7 +1273,7 @@ function EntregasTab({ van }) {
    TAB 4 — RUTA (Delivery Dashboard)
 ═══════════════════════════════════════════════ */
 
-function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
+function DeliveryRouteCard({ d, onDeliver, onChargeDone, todayCharge }) {
   const [open, setOpen] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
   const daysUntil = d.proxima_entrega
@@ -1283,6 +1283,8 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
   const isToday   = daysUntil === 0;
   const hasCard   = !!(d.stripe_customer_id && d.stripe_payment_method_id);
   const productos = d.subscription_planes?.productos || [];
+  const chargeOk  = todayCharge?.estado === "cobrado";
+  const chargeFail= todayCharge?.estado === "cobro_fallido";
 
   const leftBorder = isOverdue ? "border-l-red-500"   : isToday ? "border-l-green-500" : daysUntil <= 7 ? "border-l-blue-400" : "border-l-gray-200";
   const dateBg     = isOverdue ? "bg-red-500"          : isToday ? "bg-green-500"        : "bg-blue-500";
@@ -1309,12 +1311,22 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <p className="font-bold text-gray-900 text-sm truncate">{d.clientes?.nombre || "—"}</p>
-            {hasCard
+            {chargeOk && (
+              <span className="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 flex items-center gap-0.5">
+                <CheckCircle size={9}/> Paid
+              </span>
+            )}
+            {chargeFail && (
+              <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 flex items-center gap-0.5">
+                <AlertCircle size={9}/> Failed
+              </span>
+            )}
+            {!todayCharge && (hasCard
               ? <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">Card</span>
               : <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">Cash</span>
-            }
+            )}
           </div>
           {addrStr
             ? <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5"><MapPin size={10}/> {addrStr}</p>
@@ -1417,6 +1429,36 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
             </p>
           )}
 
+          {/* ── Today's charge status banner ── */}
+          {chargeOk && (
+            <div className="bg-green-50 border-2 border-green-400 rounded-2xl px-4 py-3 flex items-center gap-3">
+              <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle size={18} className="text-white"/>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-green-800 text-sm">Payment charged ✓</p>
+                <p className="text-xs text-green-600 truncate">{todayCharge.notas}</p>
+              </div>
+              <span className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex-shrink-0">
+                Ready to deliver
+              </span>
+            </div>
+          )}
+          {chargeFail && (
+            <div className="bg-red-50 border-2 border-red-400 rounded-2xl px-4 py-3 flex items-center gap-3">
+              <div className="w-9 h-9 bg-red-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertCircle size={18} className="text-white"/>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-red-800 text-sm">Payment failed</p>
+                <p className="text-xs text-red-500 truncate">{todayCharge.notas}</p>
+              </div>
+              <span className="bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex-shrink-0">
+                Collect cash
+              </span>
+            </div>
+          )}
+
           {/* Action buttons */}
           <div className="flex gap-2 pt-1">
             <button onClick={() => onDeliver(d)}
@@ -1449,6 +1491,7 @@ function RouteSection({ title, count, colorDot, colorBadge, children }) {
 function RutaTab({ van, usuario }) {
   const isAdmin = usuario?.rol === "admin";
   const [deliveries, setDeliveries] = useState([]);
+  const [chargeMap, setChargeMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [deliverTarget, setDeliverTarget] = useState(null);
 
@@ -1465,8 +1508,19 @@ function RutaTab({ van, usuario }) {
       .eq("estado", "activa")
       .order("proxima_entrega", { ascending: true });
     if (!isAdmin && van?.id) q = q.eq("van_id", van.id);
-    const { data } = await q;
+
+    // Also fetch today's charge results to show on each card
+    const chargesQ = supabase
+      .from("subscription_entregas")
+      .select("suscripcion_id, estado, notas")
+      .eq("fecha", todayStr)
+      .in("estado", ["cobrado", "cobro_fallido"]);
+
+    const [{ data }, { data: charges }] = await Promise.all([q, chargesQ]);
     setDeliveries(data || []);
+    const map = {};
+    for (const c of (charges || [])) map[c.suscripcion_id] = c;
+    setChargeMap(map);
     setLoading(false);
   }
 
@@ -1488,16 +1542,18 @@ function RutaTab({ van, usuario }) {
   const thisWeek = deliveries.filter(d => d.proxima_entrega && d.proxima_entrega > todayStr && d.proxima_entrega <= weekEndStr);
   const later    = deliveries.filter(d => !d.proxima_entrega || d.proxima_entrega > weekEndStr);
 
-  const cashDueNow = [...overdue, ...today]
+  const cashDueNow  = [...overdue, ...today]
     .filter(d => !d.stripe_payment_method_id)
     .reduce((t, d) => t + Number(d.subscription_planes?.precio || 0), 0);
+  const chargedToday = Object.values(chargeMap).filter(c => c.estado === "cobrado").length;
+  const failedToday  = Object.values(chargeMap).filter(c => c.estado === "cobro_fallido").length;
 
   if (loading) return <div className="py-16 text-center text-gray-400">Loading delivery route…</div>;
 
   return (
     <div>
       {/* Summary stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
           <p className="text-2xl font-black text-red-600">{overdue.length}</p>
           <p className="text-xs text-red-500 font-semibold mt-0.5">Overdue</p>
@@ -1516,6 +1572,34 @@ function RutaTab({ van, usuario }) {
         </div>
       </div>
 
+      {/* Today's payment status banner */}
+      {(chargedToday > 0 || failedToday > 0) && (
+        <div className="flex gap-3 mb-5">
+          {chargedToday > 0 && (
+            <div className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl px-4 py-3 flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CreditCard size={18} className="text-white"/>
+              </div>
+              <div>
+                <p className="text-white font-black text-xl leading-none">{chargedToday}</p>
+                <p className="text-green-100 text-xs font-semibold">Charged today — ready to deliver</p>
+              </div>
+            </div>
+          )}
+          {failedToday > 0 && (
+            <div className="flex-1 bg-gradient-to-r from-red-600 to-rose-600 rounded-2xl px-4 py-3 flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertCircle size={18} className="text-white"/>
+              </div>
+              <div>
+                <p className="text-white font-black text-xl leading-none">{failedToday}</p>
+                <p className="text-red-100 text-xs font-semibold">Payment failed — collect cash</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-5">
         <p className="text-sm text-gray-400">{deliveries.length} active subscription{deliveries.length !== 1 ? "s" : ""}</p>
         <button onClick={load} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-blue-600 font-medium transition-colors">
@@ -1528,19 +1612,19 @@ function RutaTab({ van, usuario }) {
       )}
 
       <RouteSection title="Overdue" count={overdue.length} colorDot="bg-red-500" colorBadge="bg-red-100 text-red-700">
-        {overdue.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+        {overdue.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load} todayCharge={chargeMap[d.id]}/>)}
       </RouteSection>
 
       <RouteSection title="Today" count={today.length} colorDot="bg-green-500" colorBadge="bg-green-100 text-green-700">
-        {today.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+        {today.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load} todayCharge={chargeMap[d.id]}/>)}
       </RouteSection>
 
       <RouteSection title="This Week" count={thisWeek.length} colorDot="bg-blue-500" colorBadge="bg-blue-100 text-blue-700">
-        {thisWeek.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+        {thisWeek.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load} todayCharge={chargeMap[d.id]}/>)}
       </RouteSection>
 
       <RouteSection title="Later" count={later.length} colorDot="bg-gray-300" colorBadge="bg-gray-100 text-gray-500">
-        {later.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+        {later.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load} todayCharge={chargeMap[d.id]}/>)}
       </RouteSection>
 
       {deliverTarget && (
