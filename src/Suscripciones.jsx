@@ -14,6 +14,17 @@ const fmtDate = (iso) => {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
 };
+// Normalizes address whether stored as JSON obj, JSON string, or plain text
+function fmtAddr(raw) {
+  if (!raw) return null;
+  try {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (typeof obj === "object" && obj !== null) {
+      return [obj.calle, obj.ciudad, obj.estado, obj.zip].filter(Boolean).join(", ");
+    }
+  } catch {}
+  return String(raw);
+}
 
 /* ─── Status badge ─── */
 function StatusBadge({ status }) {
@@ -765,7 +776,7 @@ function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setC
                 <p className="font-bold text-blue-900">{selectedClient.nombre}</p>
                 {selectedClient.telefono && <p className="text-xs text-blue-600">📞 {selectedClient.telefono}</p>}
                 {selectedClient.email   && <p className="text-xs text-blue-600">✉️ {selectedClient.email}</p>}
-                {selectedClient.direccion && <p className="text-xs text-gray-500">📍 {selectedClient.direccion}</p>}
+                {selectedClient.direccion && <p className="text-xs text-gray-500">📍 {fmtAddr(selectedClient.direccion)}</p>}
               </div>
               <button type="button" onClick={()=>{ setForm(f=>({...f,cliente_id:""})); setClientSearch(""); }}
                 className="text-blue-400 hover:text-red-500 flex-shrink-0">
@@ -1211,8 +1222,9 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
   const dayLabel   = isOverdue ? `${Math.abs(daysUntil)}d late` : isToday ? "Today" : daysUntil !== null ? `in ${daysUntil}d` : "—";
   const dayColor   = isOverdue ? "text-red-500"        : isToday ? "text-green-600"      : "text-blue-500";
 
-  const mapsUrl = d.clientes?.direccion
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(d.clientes.direccion)}`
+  const addrStr = fmtAddr(d.clientes?.direccion);
+  const mapsUrl = addrStr
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addrStr)}`
     : null;
 
   return (
@@ -1237,8 +1249,8 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
               : <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">Cash</span>
             }
           </div>
-          {d.clientes?.direccion
-            ? <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5"><MapPin size={10}/> {d.clientes.direccion}</p>
+          {addrStr
+            ? <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5"><MapPin size={10}/> {addrStr}</p>
             : <p className="text-xs text-gray-300 italic mt-0.5">No address on file</p>
           }
         </div>
@@ -1275,10 +1287,10 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
           </div>
 
           {/* Full address block */}
-          {d.clientes?.direccion && (
+          {addrStr && (
             <div className="bg-gray-50 rounded-xl px-3 py-2.5 flex items-start gap-2">
               <MapPin size={14} className="text-gray-400 mt-0.5 flex-shrink-0"/>
-              <p className="text-sm text-gray-700 leading-snug">{d.clientes.direccion}</p>
+              <p className="text-sm text-gray-700 leading-snug">{addrStr}</p>
             </div>
           )}
 
