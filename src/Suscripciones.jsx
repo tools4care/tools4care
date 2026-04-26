@@ -14,6 +14,27 @@ const fmtDate = (iso) => {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
 };
+// Advance a date string by plan cycle (mirrors calcNext in the edge function)
+function addCycle(dateStr, ciclo) {
+  const d = new Date((dateStr || new Date().toISOString().slice(0, 10)) + "T00:00:00");
+  switch (ciclo) {
+    case "semana":     d.setDate(d.getDate() + 7);   break;
+    case "quincena":   d.setDate(d.getDate() + 15);  break;
+    case "bimestral":  d.setMonth(d.getMonth() + 2); break;
+    case "trimestral": d.setMonth(d.getMonth() + 3); break;
+    default:           d.setMonth(d.getMonth() + 1); // mensual
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+const CICLO_LABEL = {
+  semana:     "Weekly",
+  quincena:   "Bi-weekly (15d)",
+  mensual:    "Monthly",
+  bimestral:  "Bi-monthly",
+  trimestral: "Quarterly",
+};
+
 // Normalizes address whether stored as JSON obj, JSON string, or plain text
 function fmtAddr(raw) {
   if (!raw) return null;
@@ -311,6 +332,8 @@ function PlanesTab({ van, usuario }) {
                 <label className="text-xs font-semibold text-gray-600 mb-1 block">Cycle</label>
                 <select value={form.ciclo} onChange={e=>setForm(f=>({...f,ciclo:e.target.value}))}
                   className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm bg-white">
+                  <option value="semana">Weekly</option>
+                  <option value="quincena">Bi-weekly (15d)</option>
                   <option value="mensual">Monthly</option>
                   <option value="bimestral">Bi-monthly</option>
                   <option value="trimestral">Quarterly</option>
@@ -359,7 +382,7 @@ function PlanesTab({ van, usuario }) {
               <div className="flex items-center gap-3">
                 <div className="text-right">
                   <p className="font-bold text-blue-700 text-lg">{fmt(p.precio)}</p>
-                  <p className="text-xs text-gray-400 capitalize">{p.ciclo}</p>
+                  <p className="text-xs text-gray-400">{CICLO_LABEL[p.ciclo] || p.ciclo}</p>
                 </div>
                 {expanded===p.id ? <ChevronUp size={16} className="text-gray-400"/> : <ChevronDown size={16} className="text-gray-400"/>}
               </div>
@@ -584,14 +607,22 @@ function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus, onDe
             <p className="text-xs text-gray-400 italic">No deliveries recorded yet.</p>
           )}
           <div className="space-y-2">
-            {entregas.map(e => (
-              <div key={e.id} className={`bg-white rounded-xl px-3 py-2 border flex items-center gap-2 ${e.estado === "devuelto" ? "border-orange-200 opacity-70" : "border-gray-100"}`}>
-                {e.estado === "devuelto"
-                  ? <RotateCcw size={13} className="text-orange-400 flex-shrink-0"/>
-                  : <CheckCircle size={13} className="text-green-500 flex-shrink-0"/>
-                }
+            {entregas.map(e => {
+              const isFailed  = e.estado === "cobro_fallido";
+              const isCharged = e.estado === "cobrado";
+              const isReturn  = e.estado === "devuelto";
+              const rowBorder = isFailed ? "border-red-200 opacity-80" : isReturn ? "border-orange-200 opacity-70" : "border-gray-100";
+              const badgeCls  = isFailed  ? "bg-red-100 text-red-700"
+                              : isCharged ? "bg-blue-100 text-blue-700"
+                              : isReturn  ? "bg-orange-100 text-orange-700"
+                                          : "bg-green-100 text-green-700";
+              const RowIcon   = isFailed ? AlertCircle : isReturn ? RotateCcw : isCharged ? CreditCard : CheckCircle;
+              const iconCls   = isFailed ? "text-red-400" : isReturn ? "text-orange-400" : isCharged ? "text-blue-500" : "text-green-500";
+              return (
+              <div key={e.id} className={`bg-white rounded-xl px-3 py-2 border flex items-center gap-2 ${rowBorder}`}>
+                <RowIcon size={13} className={`${iconCls} flex-shrink-0`}/>
                 <p className="text-sm font-medium text-gray-700 w-24 flex-shrink-0">{fmtDate(e.fecha)}</p>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${e.estado === "devuelto" ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"}`}>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${badgeCls}`}>
                   {e.estado}
                 </span>
                 {e.notas && <p className="text-xs text-gray-400 flex-1 truncate">{e.notas}</p>}
@@ -613,7 +644,8 @@ function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus, onDe
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -794,7 +826,7 @@ function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setC
               className="border-2 border-gray-200 focus:border-blue-400 rounded-xl px-4 py-3 text-sm bg-white outline-none transition-all">
               <option value="">— select plan —</option>
               {planes.map(p=>(
-                <option key={p.id} value={p.id}>{p.nombre} · {fmt(p.precio)}/{p.ciclo}</option>
+                <option key={p.id} value={p.id}>{p.nombre} · {fmt(p.precio)} / {CICLO_LABEL[p.ciclo] || p.ciclo}</option>
               ))}
             </select>
             <input type="date" value={form.fecha_inicio} onChange={e=>setForm(f=>({...f,fecha_inicio:e.target.value}))}
@@ -807,7 +839,7 @@ function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setC
               <Package size={20} className="text-indigo-600 flex-shrink-0"/>
               <div>
                 <p className="font-bold text-indigo-900">{selectedPlan.nombre}</p>
-                <p className="text-xs text-indigo-600 font-semibold">{fmt(selectedPlan.precio)} / {selectedPlan.ciclo} · charged monthly</p>
+                <p className="text-xs text-indigo-600 font-semibold">{fmt(selectedPlan.precio)} / {CICLO_LABEL[selectedPlan.ciclo] || selectedPlan.ciclo} · auto-charged</p>
               </div>
             </div>
           )}
@@ -974,16 +1006,17 @@ function SuscriptoresTab({ van, usuario }) {
 
   async function enroll(stripeInfo) {
     setSaving(true);
-    const today = new Date();
-    const nextBilling = new Date(today);
-    nextBilling.setMonth(nextBilling.getMonth() + 1);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const selectedPlan = planes.find(p => p.id === form.plan_id);
+    const startDate = form.fecha_inicio || todayStr;
+    const proxima = addCycle(startDate, selectedPlan?.ciclo || "mensual");
     const { error } = await supabase.from("subscription_clientes").insert({
       cliente_id: form.cliente_id,
       plan_id: form.plan_id,
       van_id: van?.id || null,
       estado: "activa",
-      fecha_inicio: form.fecha_inicio || today.toISOString().slice(0,10),
-      proxima_entrega: nextBilling.toISOString().slice(0,10),
+      fecha_inicio: startDate,
+      proxima_entrega: proxima,
       nota: form.nota || null,
       stripe_customer_id: stripeInfo?.customerId || null,
       stripe_payment_method_id: stripeInfo?.paymentMethodId || null,
@@ -1008,11 +1041,11 @@ function SuscriptoresTab({ van, usuario }) {
   async function markDelivered(id, { note, firma } = {}) {
     const sub = subs.find(s => s.id === id);
     if (!sub) return;
-    const next = new Date(sub.proxima_entrega || new Date());
-    next.setMonth(next.getMonth() + 1);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const nextDate = addCycle(sub.proxima_entrega, sub.subscription_planes?.ciclo);
     await supabase.from("subscription_clientes").update({
-      ultima_entrega: new Date().toISOString().slice(0,10),
-      proxima_entrega: next.toISOString().slice(0,10),
+      ultima_entrega:  todayStr,
+      proxima_entrega: nextDate,
     }).eq("id", id);
     const entregaPayload = {
       suscripcion_id: id,
@@ -1189,8 +1222,12 @@ function EntregasTab({ van }) {
                 <td className="px-4 py-2.5">{e.subscription_clientes?.clientes?.nombre || "—"}</td>
                 <td className="px-4 py-2.5 text-blue-700">{e.subscription_clientes?.subscription_planes?.nombre || "—"}</td>
                 <td className="px-4 py-2.5">
-                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                    {e.estado}
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    e.estado === "cobrado"       ? "bg-blue-100 text-blue-700"
+                  : e.estado === "cobro_fallido" ? "bg-red-100 text-red-700"
+                  : e.estado === "devuelto"      ? "bg-orange-100 text-orange-700"
+                  : "bg-green-100 text-green-700"}`}>
+                    {e.estado === "cobrado" ? "charged" : e.estado === "cobro_fallido" ? "charge failed" : e.estado}
                   </span>
                 </td>
               </tr>
@@ -1404,11 +1441,10 @@ function RutaTab({ van, usuario }) {
   }
 
   async function handleMarkDelivered(sub, { note, firma } = {}) {
-    const next = new Date(sub.proxima_entrega || new Date());
-    next.setMonth(next.getMonth() + 1);
+    const nextDate = addCycle(sub.proxima_entrega, sub.subscription_planes?.ciclo);
     await supabase.from("subscription_clientes").update({
-      ultima_entrega: todayStr,
-      proxima_entrega: next.toISOString().slice(0, 10),
+      ultima_entrega:  todayStr,
+      proxima_entrega: nextDate,
     }).eq("id", sub.id);
     const payload = { suscripcion_id: sub.id, fecha: todayStr, estado: "entregado", notas: note || null };
     const { error: e1 } = await supabase.from("subscription_entregas").insert({ ...payload, firma: firma || null });
