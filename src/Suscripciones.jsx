@@ -518,6 +518,7 @@ function SuscriptoresTab({ van, usuario }) {
   const [planes, setPlanes] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("activa");
   const [form, setForm] = useState({ cliente_id:"", plan_id:"", fecha_inicio:"", nota:"" });
@@ -530,20 +531,27 @@ function SuscriptoresTab({ van, usuario }) {
 
   async function loadAll() {
     setLoading(true);
+    setDbError(null);
     const isAdmin = usuario?.rol === "admin";
     let subsQ = supabase.from("subscription_clientes")
       .select("*, subscription_planes(nombre,precio,ciclo,productos), clientes(nombre,telefono,email)")
       .order("created_at", { ascending: false });
     if (!isAdmin && van?.id) subsQ = subsQ.eq("van_id", van.id);
 
-    let clientesQ = supabase.from("clientes").select("id,nombre,telefono").order("nombre").limit(500);
+    let clientesQ = supabase.from("clientes").select("id,nombre,telefono,email").order("nombre").limit(500);
     if (!isAdmin && van?.id) clientesQ = clientesQ.eq("van_id", van.id);
 
-    const [{ data: s }, { data: p }, { data: c }] = await Promise.all([
+    const [{ data: s, error: sErr }, { data: p }, { data: c }] = await Promise.all([
       subsQ,
       supabase.from("subscription_planes").select("id,nombre,precio,ciclo").eq("activo", true),
       clientesQ,
     ]);
+
+    if (sErr) {
+      setDbError(sErr.message.includes("does not exist")
+        ? "Tables not created yet. Run the SQL migration in your Supabase dashboard first."
+        : sErr.message);
+    }
     setSubs(s || []);
     setPlanes(p || []);
     setClientes(c || []);
@@ -555,20 +563,24 @@ function SuscriptoresTab({ van, usuario }) {
     const today = new Date();
     const nextBilling = new Date(today);
     nextBilling.setMonth(nextBilling.getMonth() + 1);
-    await supabase.from("subscription_clientes").insert({
+    const { error } = await supabase.from("subscription_clientes").insert({
       cliente_id: form.cliente_id,
       plan_id: form.plan_id,
-      van_id: van?.id,
+      van_id: van?.id || null,
       estado: "activa",
       fecha_inicio: form.fecha_inicio || today.toISOString().slice(0,10),
       proxima_entrega: nextBilling.toISOString().slice(0,10),
-      nota: form.nota,
+      nota: form.nota || null,
       stripe_customer_id: stripeInfo?.customerId || null,
       stripe_payment_method_id: stripeInfo?.paymentMethodId || null,
       card_last4: stripeInfo?.last4 || null,
       card_brand: stripeInfo?.brand || null,
     });
     setSaving(false);
+    if (error) {
+      alert("Error enrolling: " + error.message);
+      return;
+    }
     setShowForm(false);
     setForm({ cliente_id:"", plan_id:"", fecha_inicio:"", nota:"" });
     loadAll();
@@ -606,6 +618,49 @@ function SuscriptoresTab({ van, usuario }) {
   };
 
   if (loading) return <div className="py-16 text-center text-gray-400">Loading subscribers…</div>;
+
+  if (dbError) return (
+    <div className="bg-red-50 border border-red-200 rounded-2xl p-5">
+      <p className="font-bold text-red-700 mb-1">Database setup required</p>
+      <p className="text-sm text-red-600 mb-4">{dbError}</p>
+      <details className="text-xs text-gray-500">
+        <summary className="cursor-pointer font-semibold mb-2">Show migration SQL</summary>
+        <pre className="bg-gray-900 text-green-300 p-4 rounded-xl overflow-x-auto text-xs">{`create table if not exists subscription_planes (
+  id uuid primary key default gen_random_uuid(),
+  nombre text not null, descripcion text,
+  precio numeric(10,2) not null default 0,
+  ciclo text not null default 'mensual',
+  productos jsonb default '[]', activo boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create table if not exists subscription_clientes (
+  id uuid primary key default gen_random_uuid(),
+  cliente_id uuid references clientes(id) on delete cascade,
+  plan_id uuid references subscription_planes(id) on delete restrict,
+  van_id uuid references vans(id) on delete cascade,
+  estado text not null default 'activa',
+  fecha_inicio date not null default current_date,
+  proxima_entrega date, ultima_entrega date, nota text,
+  stripe_customer_id text, stripe_payment_method_id text,
+  card_last4 text, card_brand text,
+  created_at timestamptz not null default now()
+);
+create table if not exists subscription_entregas (
+  id uuid primary key default gen_random_uuid(),
+  suscripcion_id uuid references subscription_clientes(id) on delete cascade,
+  fecha date not null default current_date,
+  estado text not null default 'entregado', notas text,
+  created_at timestamptz not null default now()
+);
+alter table subscription_planes enable row level security;
+alter table subscription_clientes enable row level security;
+alter table subscription_entregas enable row level security;
+create policy "auth" on subscription_planes for all using (auth.role()='authenticated');
+create policy "auth" on subscription_clientes for all using (auth.role()='authenticated');
+create policy "auth" on subscription_entregas for all using (auth.role()='authenticated');`}</pre>
+      </details>
+    </div>
+  );
 
   return (
     <div>
