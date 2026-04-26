@@ -4,7 +4,7 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { Package, Users, Plus, X, ChevronDown, ChevronUp, CheckCircle, Clock, AlertCircle, RefreshCw, Truck, CreditCard, Trash2, RotateCcw, PenTool, MapPin, Phone, Navigation2 } from "lucide-react";
+import { Package, Users, Plus, X, ChevronDown, ChevronUp, ChevronRight, CheckCircle, Clock, AlertCircle, RefreshCw, Truck, CreditCard, DollarSign, Trash2, RotateCcw, PenTool, MapPin, Phone, Navigation2 } from "lucide-react";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
@@ -1269,22 +1269,121 @@ function EntregasTab({ van }) {
   );
 }
 
+/* ── Cash Payment Modal ── */
+function CashPaymentModal({ sub, onClose, onPaid }) {
+  const precio     = Number(sub.subscription_planes?.precio ?? 0);
+  const [received, setReceived] = useState("");
+  const [saving,   setSaving]   = useState(false);
+  const [err,      setErr]      = useState("");
+
+  const receivedNum = parseFloat(received) || 0;
+  const change      = receivedNum - precio;
+
+  async function handleConfirm() {
+    if (receivedNum < precio) { setErr(`Must receive at least ${fmt(precio)}`); return; }
+    setSaving(true);
+    try {
+      const today    = new Date().toISOString().slice(0, 10);
+      const nextDate = addCycle(sub.proxima_entrega, sub.subscription_planes?.ciclo);
+      await supabase.from("subscription_clientes").update({
+        ultima_entrega:  today,
+        proxima_entrega: nextDate,
+      }).eq("id", sub.id);
+      await supabase.from("subscription_entregas").insert({
+        suscripcion_id: sub.id,
+        fecha:          today,
+        estado:         "cobrado_cash",
+        notas:          `Cash received $${receivedNum.toFixed(2)} · change $${Math.max(0, change).toFixed(2)} · next ${nextDate}`,
+      });
+      onPaid();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-5 py-4 text-white">
+          <p className="text-[10px] font-bold uppercase tracking-widest opacity-75 mb-0.5">Cash Collection</p>
+          <p className="font-black text-xl leading-tight">{sub.clientes?.nombre}</p>
+          <p className="text-sm opacity-80 mt-0.5">{sub.subscription_planes?.nombre}</p>
+        </div>
+
+        <div className="px-5 py-5 space-y-4">
+          {/* Amount due */}
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl px-4 py-3 flex items-center justify-between">
+            <span className="text-amber-800 font-semibold text-sm">Amount due</span>
+            <span className="text-amber-900 font-black text-2xl">{fmt(precio)}</span>
+          </div>
+
+          {/* Amount received */}
+          <div>
+            <label className="text-xs font-semibold text-gray-500 mb-1.5 block">Amount received ($)</label>
+            <input
+              type="number"
+              min={precio}
+              step="0.01"
+              value={received}
+              onChange={e => { setReceived(e.target.value); setErr(""); }}
+              placeholder={precio.toFixed(2)}
+              className="w-full border-2 border-gray-200 focus:border-amber-400 rounded-xl px-4 py-3 text-2xl font-bold text-gray-900 outline-none transition-colors"
+              autoFocus
+            />
+          </div>
+
+          {/* Change */}
+          {receivedNum > 0 && (
+            <div className={`rounded-xl px-4 py-2.5 flex items-center justify-between ${change >= 0 ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
+              <span className={`text-sm font-semibold ${change >= 0 ? "text-green-700" : "text-red-700"}`}>
+                {change >= 0 ? "Change to return" : "Still owed"}
+              </span>
+              <span className={`font-black text-lg ${change >= 0 ? "text-green-700" : "text-red-700"}`}>
+                {fmt(Math.abs(change))}
+              </span>
+            </div>
+          )}
+
+          {err && <p className="text-red-500 text-xs font-semibold">{err}</p>}
+
+          <div className="flex gap-2 pt-1">
+            <button onClick={onClose}
+              className="flex-1 py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-semibold text-sm">
+              Cancel
+            </button>
+            <button onClick={handleConfirm}
+              disabled={saving || receivedNum < precio}
+              className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold text-sm disabled:opacity-50 transition-all">
+              {saving ? "Saving…" : "Confirm Payment"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════
    TAB 4 — RUTA (Delivery Dashboard)
 ═══════════════════════════════════════════════ */
 
 function DeliveryRouteCard({ d, onDeliver, onChargeDone, todayCharge }) {
-  const [open, setOpen] = useState(false);
+  const [open,          setOpen]          = useState(false);
+  const [showCashModal, setShowCashModal] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
   const daysUntil = d.proxima_entrega
     ? Math.ceil((new Date(d.proxima_entrega) - new Date(today)) / 86400000)
     : null;
-  const isOverdue = daysUntil !== null && daysUntil < 0;
-  const isToday   = daysUntil === 0;
-  const hasCard   = !!(d.stripe_customer_id && d.stripe_payment_method_id);
-  const productos = d.subscription_planes?.productos || [];
-  const chargeOk  = todayCharge?.estado === "cobrado";
-  const chargeFail= todayCharge?.estado === "cobro_fallido";
+  const isOverdue  = daysUntil !== null && daysUntil < 0;
+  const isToday    = daysUntil === 0;
+  const hasCard    = !!(d.stripe_customer_id && d.stripe_payment_method_id);
+  const productos  = d.subscription_planes?.productos || [];
+  const chargeOk   = todayCharge?.estado === "cobrado";
+  const chargeFail = todayCharge?.estado === "cobro_fallido";
+  const cashPaid   = todayCharge?.estado === "cobrado_cash";
 
   const leftBorder = isOverdue ? "border-l-red-500"   : isToday ? "border-l-green-500" : daysUntil <= 7 ? "border-l-blue-400" : "border-l-gray-200";
   const dateBg     = isOverdue ? "bg-red-500"          : isToday ? "bg-green-500"        : "bg-blue-500";
@@ -1313,9 +1412,9 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone, todayCharge }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <p className="font-bold text-gray-900 text-sm truncate">{d.clientes?.nombre || "—"}</p>
-            {chargeOk && (
+            {(chargeOk || cashPaid) && (
               <span className="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 flex items-center gap-0.5">
-                <CheckCircle size={9}/> Paid
+                <CheckCircle size={9}/> Paid{cashPaid ? " (Cash)" : ""}
               </span>
             )}
             {chargeFail && (
@@ -1395,24 +1494,44 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone, todayCharge }) {
           </div>
 
           {/* Payment method */}
-          <div className={`rounded-xl px-3 py-2.5 flex items-center justify-between ${hasCard ? "bg-slate-800" : "bg-amber-50 border border-amber-200"}`}>
-            {hasCard ? (
-              <>
-                <div className="flex items-center gap-2">
-                  <CreditCard size={14} className="text-slate-300"/>
-                  <div>
-                    <p className="text-slate-400 text-[10px]">Card on file</p>
-                    <p className="text-white font-bold text-sm capitalize">{d.card_brand || "Card"} ···· {d.card_last4}</p>
-                  </div>
+          {hasCard ? (
+            <div className="rounded-xl px-3 py-2.5 flex items-center justify-between bg-slate-800">
+              <div className="flex items-center gap-2">
+                <CreditCard size={14} className="text-slate-300"/>
+                <div>
+                  <p className="text-slate-400 text-[10px]">Card on file</p>
+                  <p className="text-white font-bold text-sm capitalize">{d.card_brand || "Card"} ···· {d.card_last4}</p>
                 </div>
-                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-semibold">Auto-charge</span>
-              </>
-            ) : (
-              <p className="text-amber-700 text-sm font-semibold flex items-center gap-2">
-                <AlertCircle size={14}/> Collect cash — {fmt(d.subscription_planes?.precio)}
-              </p>
-            )}
-          </div>
+              </div>
+              <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-semibold">Auto-charge</span>
+            </div>
+          ) : cashPaid ? (
+            <div className="bg-green-50 border-2 border-green-400 rounded-2xl px-4 py-3 flex items-center gap-3">
+              <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle size={18} className="text-white"/>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-green-800 text-sm">Cash collected ✓</p>
+                <p className="text-xs text-green-600 truncate">{todayCharge.notas}</p>
+              </div>
+              <span className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex-shrink-0">
+                Ready to deliver
+              </span>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowCashModal(true)}
+              className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-all">
+              <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                <DollarSign size={18} className="text-white"/>
+              </div>
+              <div className="text-left flex-1">
+                <p className="font-bold text-sm">Collect Cash Payment</p>
+                <p className="text-amber-100 text-xs">Amount due: {fmt(d.subscription_planes?.precio)}</p>
+              </div>
+              <ChevronRight size={16} className="text-white/70 flex-shrink-0"/>
+            </button>
+          )}
 
           {/* Special delivery note */}
           {d.nota && (
@@ -1469,6 +1588,15 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone, todayCharge }) {
           </div>
         </div>
       )}
+
+      {/* Cash payment modal */}
+      {showCashModal && (
+        <CashPaymentModal
+          sub={d}
+          onClose={() => setShowCashModal(false)}
+          onPaid={() => { setShowCashModal(false); onChargeDone(); }}
+        />
+      )}
     </div>
   );
 }
@@ -1514,7 +1642,7 @@ function RutaTab({ van, usuario }) {
       .from("subscription_entregas")
       .select("suscripcion_id, estado, notas")
       .eq("fecha", todayStr)
-      .in("estado", ["cobrado", "cobro_fallido"]);
+      .in("estado", ["cobrado", "cobro_fallido", "cobrado_cash"]);
 
     const [{ data }, { data: charges }] = await Promise.all([q, chargesQ]);
     setDeliveries(data || []);
