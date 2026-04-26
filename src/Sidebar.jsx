@@ -21,6 +21,7 @@ import {
   Globe,
   Star,
   Receipt,
+  CalendarCheck,
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -63,9 +64,10 @@ export default function Sidebar() {
     { key: "inventario", to: "/inventario",icon: <Boxes           size={ICON_SIZE} className="text-teal-500" />,    text: "Inventory" },
     { key: "cierres",    to: "/cierres",   icon: <Repeat          size={ICON_SIZE} className="text-cyan-600" />,    text: "Van Closeout" },
     { key: "cxc",        to: "/cxc",       icon: <CreditCard      size={ICON_SIZE} className="text-orange-400" />,  text: "Accounts Receivable" },
-    { key: "reportes",   to: "/reportes",  icon: <BarChart2       size={ICON_SIZE} className="text-rose-400" />,    text: "Reports" },
-    { key: "suplidores", to: "/suplidores",icon: <UserCircle2     size={ICON_SIZE} className="text-indigo-400" />,  text: "Suppliers" },
-    { key: "comisiones", to: "/comisiones",icon: <DollarSign      size={ICON_SIZE} className="text-emerald-400" />, text: "Commissions" },
+    { key: "reportes",       to: "/reportes",      icon: <BarChart2      size={ICON_SIZE} className="text-rose-400" />,    text: "Reports" },
+    { key: "suscripciones", to: "/suscripciones", icon: <CalendarCheck  size={ICON_SIZE} className="text-violet-400" />, text: "Subscriptions" },
+    { key: "suplidores",    to: "/suplidores",    icon: <UserCircle2    size={ICON_SIZE} className="text-indigo-400" />,  text: "Suppliers" },
+    { key: "comisiones",    to: "/comisiones",    icon: <DollarSign     size={ICON_SIZE} className="text-emerald-400" />, text: "Commissions" },
   ];
 
   const menuBase = allMenuItems.filter(item => puedeVerModulo(item.key));
