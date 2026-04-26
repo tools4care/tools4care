@@ -1594,7 +1594,7 @@ function DeliveryRouteCard({ d, onDeliver, onChargeDone, todayCharge }) {
         <CashPaymentModal
           sub={d}
           onClose={() => setShowCashModal(false)}
-          onPaid={() => { setShowCashModal(false); onChargeDone(); }}
+          onPaid={() => { setShowCashModal(false); onDeliver(d); }}
         />
       )}
     </div>
