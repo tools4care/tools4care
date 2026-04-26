@@ -686,23 +686,56 @@ function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus, onDe
 }
 
 /* ─── Stripe Enroll Form ─── */
-function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setClientSearch, saving, onSave, onCancel }) {
+function EnrollForm({ form, setForm, planes, van, isAdmin, saving, onSave, onCancel }) {
   const stripe = useStripe();
   const elements = useElements();
   const [stripeError, setStripeError] = useState("");
   const [cardReady, setCardReady] = useState(false);
   const [processingCard, setProcessingCard] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [pickedClient, setPickedClient] = useState(null);
   const searchRef = useRef(null);
 
-  // Derived: selected client object
-  const selectedClient = filteredClients.find(c => c.id === form.cliente_id) || null;
+  // Server-side debounced search — name OR phone, full DB, no limit issues
+  useEffect(() => {
+    if (form.cliente_id) return;
+    const term = clientSearch.trim();
+    if (!term) { setSearchResults([]); setShowDropdown(false); return; }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      let q = supabase
+        .from("clientes")
+        .select("id, nombre, telefono, email, direccion")
+        .or(`nombre.ilike.%${term}%,telefono.ilike.%${term}%`)
+        .order("nombre")
+        .limit(25);
+      if (!isAdmin && van?.id) q = q.eq("van_id", van.id);
+      const { data } = await q;
+      setSearchResults(data || []);
+      setShowDropdown(true);
+      setSearching(false);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [clientSearch, form.cliente_id]);
+
+  const selectedClient = pickedClient?.id === form.cliente_id ? pickedClient : null;
   const selectedPlan   = planes.find(p => p.id === form.plan_id) || null;
 
   function pickClient(c) {
+    setPickedClient(c);
     setForm(f => ({ ...f, cliente_id: c.id }));
     setClientSearch(c.nombre);
     setShowDropdown(false);
+  }
+
+  function clearClient() {
+    setPickedClient(null);
+    setForm(f => ({ ...f, cliente_id: "" }));
+    setClientSearch("");
+    setSearchResults([]);
   }
 
   async function handleSubmit(e) {
@@ -774,16 +807,21 @@ function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setC
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2 block">1. Select Client</label>
           <div className="relative" ref={searchRef}>
-            <input
-              value={clientSearch}
-              onChange={e => { setClientSearch(e.target.value); setShowDropdown(true); setForm(f=>({...f,cliente_id:""})); }}
-              onFocus={() => setShowDropdown(true)}
-              placeholder="Type to search by name or phone…"
-              className="w-full border-2 border-gray-200 focus:border-blue-400 rounded-xl px-4 py-3 text-sm outline-none transition-all"
-            />
-            {showDropdown && filteredClients.length > 0 && !form.cliente_id && (
+            <div className="relative">
+              <input
+                value={clientSearch}
+                onChange={e => { setClientSearch(e.target.value); setForm(f=>({...f,cliente_id:""})); setPickedClient(null); }}
+                onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
+                placeholder="Type name or phone to search…"
+                className="w-full border-2 border-gray-200 focus:border-blue-400 rounded-xl px-4 py-3 text-sm outline-none transition-all pr-10"
+              />
+              {searching && (
+                <RefreshCw size={14} className="animate-spin text-blue-400 absolute right-3 top-1/2 -translate-y-1/2"/>
+              )}
+            </div>
+            {showDropdown && searchResults.length > 0 && !form.cliente_id && (
               <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto">
-                {filteredClients.slice(0,30).map(c => (
+                {searchResults.map(c => (
                   <button key={c.id} type="button"
                     onMouseDown={() => pickClient(c)}
                     className="w-full text-left px-4 py-2.5 hover:bg-blue-50 text-sm flex justify-between items-center border-b border-gray-50 last:border-0">
@@ -791,10 +829,10 @@ function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setC
                     <span className="text-xs text-gray-400">{c.telefono || ""}</span>
                   </button>
                 ))}
-                {filteredClients.length === 0 && (
-                  <p className="px-4 py-3 text-sm text-gray-400">No clients found</p>
-                )}
               </div>
+            )}
+            {showDropdown && !searching && clientSearch.trim().length >= 1 && searchResults.length === 0 && !form.cliente_id && (
+              <p className="text-xs text-gray-400 mt-1 px-1">No clients found for "{clientSearch}"</p>
             )}
           </div>
 
@@ -810,7 +848,7 @@ function EnrollForm({ form, setForm, planes, filteredClients, clientSearch, setC
                 {selectedClient.email   && <p className="text-xs text-blue-600">✉️ {selectedClient.email}</p>}
                 {selectedClient.direccion && <p className="text-xs text-gray-500">📍 {fmtAddr(selectedClient.direccion)}</p>}
               </div>
-              <button type="button" onClick={()=>{ setForm(f=>({...f,cliente_id:""})); setClientSearch(""); }}
+              <button type="button" onClick={clearClient}
                 className="text-blue-400 hover:text-red-500 flex-shrink-0">
                 <X size={14}/>
               </button>
@@ -962,14 +1000,12 @@ function SuscriptoresTab({ van, usuario }) {
   const isAdmin = usuario?.rol === "admin";
   const [subs, setSubs] = useState([]);
   const [planes, setPlanes] = useState([]);
-  const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dbError, setDbError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("activa");
   const [form, setForm] = useState({ cliente_id:"", plan_id:"", fecha_inicio:"", nota:"" });
   const [saving, setSaving] = useState(false);
-  const [clientSearch, setClientSearch] = useState("");
 
   useEffect(() => {
     loadAll();
@@ -984,13 +1020,9 @@ function SuscriptoresTab({ van, usuario }) {
       .order("created_at", { ascending: false });
     if (!isAdmin && van?.id) subsQ = subsQ.eq("van_id", van.id);
 
-    let clientesQ = supabase.from("clientes").select("id,nombre,telefono,email").order("nombre").limit(500);
-    if (!isAdmin && van?.id) clientesQ = clientesQ.eq("van_id", van.id);
-
-    const [{ data: s, error: sErr }, { data: p }, { data: c }] = await Promise.all([
+    const [{ data: s, error: sErr }, { data: p }] = await Promise.all([
       subsQ,
       supabase.from("subscription_planes").select("id,nombre,precio,ciclo").eq("activo", true),
-      clientesQ,
     ]);
 
     if (sErr) {
@@ -1000,7 +1032,6 @@ function SuscriptoresTab({ van, usuario }) {
     }
     setSubs(s || []);
     setPlanes(p || []);
-    setClientes(c || []);
     setLoading(false);
   }
 
@@ -1065,7 +1096,6 @@ function SuscriptoresTab({ van, usuario }) {
   }
 
   const filtered = subs.filter(s => filterStatus === "all" || s.estado === filterStatus);
-  const filteredClients = clientes.filter(c => c.nombre.toLowerCase().includes(clientSearch.toLowerCase()));
 
   const summary = {
     activas: subs.filter(s => s.estado === "activa").length,
@@ -1148,8 +1178,8 @@ create policy "auth" on subscription_entregas for all using (auth.role()='authen
           <EnrollForm
             form={form} setForm={setForm}
             planes={planes}
-            filteredClients={filteredClients}
-            clientSearch={clientSearch} setClientSearch={setClientSearch}
+            van={van}
+            isAdmin={isAdmin}
             saving={saving}
             onSave={enroll}
             onCancel={()=>setShowForm(false)}
