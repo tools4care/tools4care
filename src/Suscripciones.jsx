@@ -4,7 +4,7 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { Package, Users, Plus, X, ChevronDown, ChevronUp, CheckCircle, Clock, AlertCircle, RefreshCw, Truck, CreditCard, Trash2, RotateCcw, PenTool } from "lucide-react";
+import { Package, Users, Plus, X, ChevronDown, ChevronUp, CheckCircle, Clock, AlertCircle, RefreshCw, Truck, CreditCard, Trash2, RotateCcw, PenTool, MapPin, Phone, Navigation2 } from "lucide-react";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
@@ -1192,30 +1192,316 @@ function EntregasTab({ van }) {
 }
 
 /* ═══════════════════════════════════════════════
+   TAB 4 — RUTA (Delivery Dashboard)
+═══════════════════════════════════════════════ */
+
+function DeliveryRouteCard({ d, onDeliver, onChargeDone }) {
+  const [open, setOpen] = useState(false);
+  const today = new Date().toISOString().slice(0, 10);
+  const daysUntil = d.proxima_entrega
+    ? Math.ceil((new Date(d.proxima_entrega) - new Date(today)) / 86400000)
+    : null;
+  const isOverdue = daysUntil !== null && daysUntil < 0;
+  const isToday   = daysUntil === 0;
+  const hasCard   = !!(d.stripe_customer_id && d.stripe_payment_method_id);
+  const productos = d.subscription_planes?.productos || [];
+
+  const leftBorder = isOverdue ? "border-l-red-500"   : isToday ? "border-l-green-500" : daysUntil <= 7 ? "border-l-blue-400" : "border-l-gray-200";
+  const dateBg     = isOverdue ? "bg-red-500"          : isToday ? "bg-green-500"        : "bg-blue-500";
+  const dayLabel   = isOverdue ? `${Math.abs(daysUntil)}d late` : isToday ? "Today" : daysUntil !== null ? `in ${daysUntil}d` : "—";
+  const dayColor   = isOverdue ? "text-red-500"        : isToday ? "text-green-600"      : "text-blue-500";
+
+  const mapsUrl = d.clientes?.direccion
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(d.clientes.direccion)}`
+    : null;
+
+  return (
+    <div className={`bg-white rounded-2xl border-l-4 ${leftBorder} border border-gray-100 shadow-sm overflow-hidden`}>
+
+      {/* ── Collapsed row ── */}
+      <button onClick={() => setOpen(o => !o)} className="w-full text-left px-4 py-3 flex items-center gap-3">
+        <div className={`${dateBg} rounded-xl px-2.5 py-1.5 text-center flex-shrink-0 min-w-[52px]`}>
+          <p className="text-white/80 text-[10px] font-bold leading-none uppercase">
+            {d.proxima_entrega ? new Date(d.proxima_entrega + "T00:00:00").toLocaleDateString("en-US", { month: "short" }) : "—"}
+          </p>
+          <p className="text-white text-xl font-black leading-none">
+            {d.proxima_entrega ? d.proxima_entrega.slice(8) : ""}
+          </p>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-bold text-gray-900 text-sm truncate">{d.clientes?.nombre || "—"}</p>
+            {hasCard
+              ? <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">Card</span>
+              : <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">Cash</span>
+            }
+          </div>
+          {d.clientes?.direccion
+            ? <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5"><MapPin size={10}/> {d.clientes.direccion}</p>
+            : <p className="text-xs text-gray-300 italic mt-0.5">No address on file</p>
+          }
+        </div>
+
+        <div className="flex-shrink-0 text-right">
+          <p className={`text-xs font-black ${dayColor}`}>{dayLabel}</p>
+          {open ? <ChevronUp size={14} className="text-gray-300 mt-1 ml-auto"/> : <ChevronDown size={14} className="text-gray-300 mt-1 ml-auto"/>}
+        </div>
+      </button>
+
+      {/* ── Expanded detail ── */}
+      {open && (
+        <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-3">
+
+          {/* Quick contact actions */}
+          <div className="flex flex-wrap gap-2">
+            {d.clientes?.telefono && (
+              <a href={`tel:${d.clientes.telefono}`}
+                className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-2 rounded-xl text-xs font-bold hover:bg-emerald-100 transition-colors">
+                <Phone size={13}/> {d.clientes.telefono}
+              </a>
+            )}
+            {mapsUrl && (
+              <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 px-3 py-2 rounded-xl text-xs font-bold hover:bg-blue-100 transition-colors">
+                <Navigation2 size={13}/> Navigate
+              </a>
+            )}
+            {d.clientes?.email && (
+              <span className="flex items-center gap-1 text-xs text-gray-400 py-2">
+                ✉️ {d.clientes.email}
+              </span>
+            )}
+          </div>
+
+          {/* Full address block */}
+          {d.clientes?.direccion && (
+            <div className="bg-gray-50 rounded-xl px-3 py-2.5 flex items-start gap-2">
+              <MapPin size={14} className="text-gray-400 mt-0.5 flex-shrink-0"/>
+              <p className="text-sm text-gray-700 leading-snug">{d.clientes.direccion}</p>
+            </div>
+          )}
+
+          {/* Plan + box contents */}
+          <div className="bg-indigo-50 rounded-xl px-3 py-2.5">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-bold text-indigo-700 flex items-center gap-1.5">
+                <Package size={12}/> {d.subscription_planes?.nombre || "—"}
+              </p>
+              <p className="font-bold text-indigo-700">{fmt(d.subscription_planes?.precio)}</p>
+            </div>
+            {productos.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {productos.map((p, i) => (
+                  <span key={i} className="bg-white text-indigo-600 text-xs font-medium px-2 py-0.5 rounded-full border border-indigo-100">
+                    {p.nombre}{p.nota ? ` · ${p.nota}` : ""}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-indigo-400 italic">No product list for this plan</p>
+            )}
+          </div>
+
+          {/* Payment method */}
+          <div className={`rounded-xl px-3 py-2.5 flex items-center justify-between ${hasCard ? "bg-slate-800" : "bg-amber-50 border border-amber-200"}`}>
+            {hasCard ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <CreditCard size={14} className="text-slate-300"/>
+                  <div>
+                    <p className="text-slate-400 text-[10px]">Card on file</p>
+                    <p className="text-white font-bold text-sm capitalize">{d.card_brand || "Card"} ···· {d.card_last4}</p>
+                  </div>
+                </div>
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-semibold">Auto-charge</span>
+              </>
+            ) : (
+              <p className="text-amber-700 text-sm font-semibold flex items-center gap-2">
+                <AlertCircle size={14}/> Collect cash — {fmt(d.subscription_planes?.precio)}
+              </p>
+            )}
+          </div>
+
+          {/* Special delivery note */}
+          {d.nota && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2.5 flex items-start gap-2">
+              <span className="text-yellow-500 flex-shrink-0">📝</span>
+              <p className="text-xs text-yellow-800 leading-snug">{d.nota}</p>
+            </div>
+          )}
+
+          {/* Last delivery info */}
+          {d.ultima_entrega && (
+            <p className="text-xs text-gray-400 flex items-center gap-1">
+              <CheckCircle size={11}/> Last delivered: {fmtDate(d.ultima_entrega)}
+            </p>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => onDeliver(d)}
+              className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all">
+              <Truck size={14}/> Mark Delivered
+            </button>
+            {hasCard && <ChargeButton sub={d} onDone={onChargeDone}/>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Group section header ── */
+function RouteSection({ title, count, colorDot, colorBadge, children }) {
+  if (count === 0) return null;
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`w-2 h-2 rounded-full ${colorDot}`}/>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">{title}</p>
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ml-1 ${colorBadge}`}>{count}</span>
+      </div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function RutaTab({ van, usuario }) {
+  const isAdmin = usuario?.rol === "admin";
+  const [deliveries, setDeliveries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [deliverTarget, setDeliverTarget] = useState(null);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const weekEndStr = (() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
+
+  useEffect(() => { load(); }, [van?.id]);
+
+  async function load() {
+    setLoading(true);
+    let q = supabase
+      .from("subscription_clientes")
+      .select("*, subscription_planes(nombre,precio,ciclo,productos), clientes(nombre,telefono,email,direccion)")
+      .eq("estado", "activa")
+      .order("proxima_entrega", { ascending: true });
+    if (!isAdmin && van?.id) q = q.eq("van_id", van.id);
+    const { data } = await q;
+    setDeliveries(data || []);
+    setLoading(false);
+  }
+
+  async function handleMarkDelivered(sub, { note, firma } = {}) {
+    const next = new Date(sub.proxima_entrega || new Date());
+    next.setMonth(next.getMonth() + 1);
+    await supabase.from("subscription_clientes").update({
+      ultima_entrega: todayStr,
+      proxima_entrega: next.toISOString().slice(0, 10),
+    }).eq("id", sub.id);
+    const payload = { suscripcion_id: sub.id, fecha: todayStr, estado: "entregado", notas: note || null };
+    const { error: e1 } = await supabase.from("subscription_entregas").insert({ ...payload, firma: firma || null });
+    if (e1) await supabase.from("subscription_entregas").insert(payload);
+    setDeliverTarget(null);
+    load();
+  }
+
+  const overdue  = deliveries.filter(d => d.proxima_entrega && d.proxima_entrega < todayStr);
+  const today    = deliveries.filter(d => d.proxima_entrega === todayStr);
+  const thisWeek = deliveries.filter(d => d.proxima_entrega && d.proxima_entrega > todayStr && d.proxima_entrega <= weekEndStr);
+  const later    = deliveries.filter(d => !d.proxima_entrega || d.proxima_entrega > weekEndStr);
+
+  const cashDueNow = [...overdue, ...today]
+    .filter(d => !d.stripe_payment_method_id)
+    .reduce((t, d) => t + Number(d.subscription_planes?.precio || 0), 0);
+
+  if (loading) return <div className="py-16 text-center text-gray-400">Loading delivery route…</div>;
+
+  return (
+    <div>
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
+          <p className="text-2xl font-black text-red-600">{overdue.length}</p>
+          <p className="text-xs text-red-500 font-semibold mt-0.5">Overdue</p>
+        </div>
+        <div className="bg-green-50 border border-green-100 rounded-xl p-3 text-center">
+          <p className="text-2xl font-black text-green-600">{today.length}</p>
+          <p className="text-xs text-green-500 font-semibold mt-0.5">Today</p>
+        </div>
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-center">
+          <p className="text-2xl font-black text-blue-600">{thisWeek.length}</p>
+          <p className="text-xs text-blue-500 font-semibold mt-0.5">This Week</p>
+        </div>
+        <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-center">
+          <p className="text-xl font-black text-amber-700">{fmt(cashDueNow)}</p>
+          <p className="text-xs text-amber-600 font-semibold mt-0.5">Cash to Collect</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mb-5">
+        <p className="text-sm text-gray-400">{deliveries.length} active subscription{deliveries.length !== 1 ? "s" : ""}</p>
+        <button onClick={load} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-blue-600 font-medium transition-colors">
+          <RefreshCw size={13}/> Refresh
+        </button>
+      </div>
+
+      {deliveries.length === 0 && (
+        <p className="text-center py-12 text-gray-400">No active subscriptions.</p>
+      )}
+
+      <RouteSection title="Overdue" count={overdue.length} colorDot="bg-red-500" colorBadge="bg-red-100 text-red-700">
+        {overdue.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+      </RouteSection>
+
+      <RouteSection title="Today" count={today.length} colorDot="bg-green-500" colorBadge="bg-green-100 text-green-700">
+        {today.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+      </RouteSection>
+
+      <RouteSection title="This Week" count={thisWeek.length} colorDot="bg-blue-500" colorBadge="bg-blue-100 text-blue-700">
+        {thisWeek.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+      </RouteSection>
+
+      <RouteSection title="Later" count={later.length} colorDot="bg-gray-300" colorBadge="bg-gray-100 text-gray-500">
+        {later.map(d => <DeliveryRouteCard key={d.id} d={d} onDeliver={setDeliverTarget} onChargeDone={load}/>)}
+      </RouteSection>
+
+      {deliverTarget && (
+        <DeliveryConfirmModal
+          sub={deliverTarget}
+          onConfirm={(data) => handleMarkDelivered(deliverTarget, data)}
+          onCancel={() => setDeliverTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════ */
 const TABS = [
-  { id: "planes",       label: "Box Plans",    icon: Package },
-  { id: "suscriptores", label: "Subscribers",  icon: Users },
-  { id: "entregas",     label: "Deliveries",   icon: Truck },
+  { id: "ruta",          label: "Route",        icon: Navigation2 },
+  { id: "suscriptores",  label: "Subscribers",  icon: Users },
+  { id: "entregas",      label: "Deliveries",   icon: Truck },
+  { id: "planes",        label: "Box Plans",    icon: Package },
 ];
 
 export default function Suscripciones() {
   const { usuario } = useUsuario();
   const { van } = useVan();
-  const [activeTab, setActiveTab] = useState("suscriptores");
+  const [activeTab, setActiveTab] = useState("ruta");
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 pb-24">
-      <div className="max-w-3xl mx-auto px-4 pt-6">
+      <div className="max-w-4xl mx-auto px-4 pt-6">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
-            <Package size={22} className="text-white"/>
+            <Navigation2 size={22} className="text-white"/>
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Subscriptions</h1>
-            <p className="text-sm text-gray-500">Monthly box plans & recurring clients</p>
+            <p className="text-sm text-gray-500">Delivery route & recurring clients</p>
           </div>
         </div>
 
@@ -1226,13 +1512,13 @@ export default function Suscripciones() {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-1 bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm">
+        <div className="flex gap-1 bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm overflow-x-auto">
           {TABS.map(t => {
             const Icon = t.icon;
             return (
-              <button key={t.id} onClick={()=>setActiveTab(t.id)}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab===t.id?"bg-blue-600 text-white shadow":"text-gray-500 hover:text-gray-800"}`}>
-                <Icon size={15}/> {t.label}
+              <button key={t.id} onClick={() => setActiveTab(t.id)}
+                className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${activeTab === t.id ? "bg-blue-600 text-white shadow" : "text-gray-500 hover:text-gray-800"}`}>
+                <Icon size={14}/> {t.label}
               </button>
             );
           })}
@@ -1240,9 +1526,13 @@ export default function Suscripciones() {
 
         {/* Content */}
         <div className="bg-white rounded-3xl shadow-xl p-5">
-          {activeTab==="planes"       && <PlanesTab       van={van} usuario={usuario}/>}
-          {activeTab==="suscriptores" && van?.id && <SuscriptoresTab van={van} usuario={usuario}/>}
-          {activeTab==="entregas"     && van?.id && <EntregasTab     van={van}/>}
+          {activeTab === "ruta"         && van?.id  && <RutaTab         van={van} usuario={usuario}/>}
+          {activeTab === "planes"                   && <PlanesTab       van={van} usuario={usuario}/>}
+          {activeTab === "suscriptores" && van?.id  && <SuscriptoresTab van={van} usuario={usuario}/>}
+          {activeTab === "entregas"     && van?.id  && <EntregasTab     van={van}/>}
+          {!van?.id && activeTab !== "planes" && (
+            <p className="py-12 text-center text-gray-400">Select a VAN to view this tab.</p>
+          )}
         </div>
       </div>
     </div>
