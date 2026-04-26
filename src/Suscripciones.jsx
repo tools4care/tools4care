@@ -4,7 +4,7 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { Package, Users, Plus, X, ChevronDown, ChevronUp, CheckCircle, Clock, AlertCircle, RefreshCw, Truck, CreditCard } from "lucide-react";
+import { Package, Users, Plus, X, ChevronDown, ChevronUp, CheckCircle, Clock, AlertCircle, RefreshCw, Truck, CreditCard, Trash2, RotateCcw, PenTool } from "lucide-react";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
@@ -45,6 +45,152 @@ function Card({ label, value, sub, color = "blue" }) {
       <p className="text-xs font-medium opacity-70 mb-1">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
       {sub && <p className="text-xs opacity-60 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+/* ─── Signature pad ─── */
+function SignaturePad({ onSignature }) {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const lastPos = useRef({ x: 0, y: 0 });
+  const [hasContent, setHasContent] = useState(false);
+
+  function getPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const src = e.touches ? e.touches[0] : e;
+    return { x: (src.clientX - rect.left) * scaleX, y: (src.clientY - rect.top) * scaleY };
+  }
+
+  function startDraw(e) {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const pos = getPos(e, canvas);
+    drawing.current = true;
+    lastPos.current = pos;
+    const ctx = canvas.getContext("2d");
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#1e293b";
+    ctx.fill();
+    setHasContent(true);
+  }
+
+  function drawMove(e) {
+    e.preventDefault();
+    if (!drawing.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const pos = getPos(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(lastPos.current.x, lastPos.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.strokeStyle = "#1e293b";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+    lastPos.current = pos;
+    const dataUrl = canvas.toDataURL("image/png");
+    onSignature(dataUrl);
+    setHasContent(true);
+  }
+
+  function endDraw(e) { e.preventDefault(); drawing.current = false; }
+
+  function clear() {
+    const canvas = canvasRef.current;
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    setHasContent(false);
+    onSignature(null);
+  }
+
+  return (
+    <div>
+      <div className="relative border-2 border-dashed border-gray-300 rounded-xl overflow-hidden bg-white">
+        <canvas
+          ref={canvasRef}
+          width={500}
+          height={150}
+          className="w-full touch-none"
+          style={{ cursor: "crosshair", display: "block" }}
+          onMouseDown={startDraw}
+          onMouseMove={drawMove}
+          onMouseUp={endDraw}
+          onMouseLeave={endDraw}
+          onTouchStart={startDraw}
+          onTouchMove={drawMove}
+          onTouchEnd={endDraw}
+        />
+        {!hasContent && (
+          <p className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none select-none">
+            Sign here
+          </p>
+        )}
+      </div>
+      {hasContent && (
+        <button type="button" onClick={clear}
+          className="text-xs text-red-400 hover:text-red-600 mt-1 flex items-center gap-1">
+          <RotateCcw size={10}/> Clear signature
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ─── Delivery confirm modal ─── */
+function DeliveryConfirmModal({ sub, onConfirm, onCancel }) {
+  const [note, setNote] = useState("");
+  const [firma, setFirma] = useState(null);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-5 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Truck size={18} className="text-white"/>
+            <div>
+              <p className="text-white font-bold">Confirm Delivery</p>
+              <p className="text-green-100 text-xs">{sub.clientes?.nombre}</p>
+            </div>
+          </div>
+          <button onClick={onCancel} className="text-white/70 hover:text-white"><X size={20}/></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-gray-50 rounded-xl px-4 py-2.5 flex items-center gap-3">
+            <Package size={15} className="text-blue-600"/>
+            <div>
+              <p className="text-xs text-gray-500">Delivering</p>
+              <p className="font-semibold text-gray-800 text-sm">{sub.subscription_planes?.nombre}</p>
+            </div>
+            <p className="ml-auto font-bold text-blue-700">{fmt(sub.subscription_planes?.precio)}</p>
+          </div>
+          <div>
+            <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Delivery Note</label>
+            <input value={note} onChange={e => setNote(e.target.value)}
+              className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-green-400"
+              placeholder="e.g. Left at door, client was home…" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-1.5 block">
+              <PenTool size={11}/> Client Signature (optional)
+            </label>
+            <SignaturePad onSignature={setFirma} />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => onConfirm({ note: note || null, firma })}
+              className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2">
+              <CheckCircle size={15}/> Confirm Delivery
+            </button>
+            <button onClick={onCancel}
+              className="px-5 py-3 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-600 hover:bg-gray-50">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -240,26 +386,42 @@ function PlanesTab({ van, usuario }) {
    TAB 2 — SUSCRIPTORES (enrolled clients)
 ═══════════════════════════════════════════════ */
 /* ─── Subscriber Card ─── */
-function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus }) {
+function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [entregas, setEntregas] = useState([]);
   const [loadingEntregas, setLoadingEntregas] = useState(false);
+  const [showDeliverModal, setShowDeliverModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isOverdue = s.proxima_entrega && s.proxima_entrega <= new Date().toISOString().slice(0,10) && s.estado === "activa";
   const hasCard = s.stripe_customer_id && s.stripe_payment_method_id;
   const productos = s.subscription_planes?.productos || [];
 
+  async function loadEntregas() {
+    setLoadingEntregas(true);
+    const { data } = await supabase.from("subscription_entregas")
+      .select("id, fecha, estado, notas, firma")
+      .eq("suscripcion_id", s.id)
+      .order("fecha", { ascending: false })
+      .limit(10);
+    setEntregas(data || []);
+    setLoadingEntregas(false);
+  }
+
   async function toggleExpand() {
-    if (!expanded) {
-      setLoadingEntregas(true);
-      const { data } = await supabase.from("subscription_entregas")
-        .select("id, fecha, estado, notas")
-        .eq("suscripcion_id", s.id)
-        .order("fecha", { ascending: false })
-        .limit(10);
-      setEntregas(data || []);
-      setLoadingEntregas(false);
-    }
+    if (!expanded) await loadEntregas();
     setExpanded(e => !e);
+  }
+
+  async function deleteEntrega(entregaId) {
+    if (!confirm("Delete this delivery record permanently?")) return;
+    await supabase.from("subscription_entregas").delete().eq("id", entregaId);
+    loadEntregas();
+  }
+
+  async function returnEntrega(entregaId) {
+    if (!confirm("Mark this delivery as returned?")) return;
+    await supabase.from("subscription_entregas").update({ estado: "devuelto" }).eq("id", entregaId);
+    loadEntregas();
   }
 
   // Days until next delivery
@@ -362,7 +524,7 @@ function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus }) {
       <div className="px-5 pb-4 flex flex-wrap gap-2">
         {s.estado === "activa" && (
           <>
-            <button onClick={() => onMarkDelivered(s.id)}
+            <button onClick={() => setShowDeliverModal(true)}
               className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm">
               <Truck size={13}/> Mark Delivered
             </button>
@@ -389,6 +551,11 @@ function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus }) {
             Re-enroll
           </button>
         )}
+        {/* Delete subscriber */}
+        <button onClick={() => setShowDeleteConfirm(true)}
+          className="border-2 border-red-100 text-red-400 hover:bg-red-50 hover:border-red-300 hover:text-red-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors">
+          <Trash2 size={12}/> Delete
+        </button>
         {/* Expand deliveries */}
         <button onClick={toggleExpand}
           className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-blue-600 font-semibold">
@@ -407,13 +574,67 @@ function SubscriberCard({ s, onMarkDelivered, onChargeDone, onChangeStatus }) {
           )}
           <div className="space-y-2">
             {entregas.map(e => (
-              <div key={e.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2 border border-gray-100">
-                <CheckCircle size={14} className="text-green-500 flex-shrink-0"/>
-                <p className="text-sm font-medium text-gray-700 flex-1">{fmtDate(e.fecha)}</p>
-                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">{e.estado}</span>
-                {e.notas && <p className="text-xs text-gray-400">{e.notas}</p>}
+              <div key={e.id} className={`bg-white rounded-xl px-3 py-2 border flex items-center gap-2 ${e.estado === "devuelto" ? "border-orange-200 opacity-70" : "border-gray-100"}`}>
+                {e.estado === "devuelto"
+                  ? <RotateCcw size={13} className="text-orange-400 flex-shrink-0"/>
+                  : <CheckCircle size={13} className="text-green-500 flex-shrink-0"/>
+                }
+                <p className="text-sm font-medium text-gray-700 w-24 flex-shrink-0">{fmtDate(e.fecha)}</p>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${e.estado === "devuelto" ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"}`}>
+                  {e.estado}
+                </span>
+                {e.notas && <p className="text-xs text-gray-400 flex-1 truncate">{e.notas}</p>}
+                {e.firma && (
+                  <span className="text-xs text-violet-500 font-semibold flex-shrink-0 flex items-center gap-0.5">
+                    <PenTool size={10}/> Signed
+                  </span>
+                )}
+                <div className="flex gap-1 ml-auto flex-shrink-0">
+                  {e.estado !== "devuelto" && (
+                    <button onClick={() => returnEntrega(e.id)} title="Mark as returned"
+                      className="p-1 text-orange-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors">
+                      <RotateCcw size={13}/>
+                    </button>
+                  )}
+                  <button onClick={() => deleteEntrega(e.id)} title="Delete record"
+                    className="p-1 text-red-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                    <Trash2 size={13}/>
+                  </button>
+                </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Modals ── */}
+      {showDeliverModal && (
+        <DeliveryConfirmModal
+          sub={s}
+          onConfirm={(data) => { setShowDeliverModal(false); onMarkDelivered(s.id, data); }}
+          onCancel={() => setShowDeliverModal(false)}
+        />
+      )}
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
+            <div className="w-14 h-14 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={24} className="text-red-500"/>
+            </div>
+            <h3 className="font-bold text-gray-900 text-lg mb-1">Delete Subscriber?</h3>
+            <p className="text-gray-500 text-sm mb-1">{s.clientes?.nombre}</p>
+            <p className="text-gray-400 text-xs mb-5">This will permanently delete the subscription and all delivery history.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 border-2 border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                Cancel
+              </button>
+              <button onClick={() => { setShowDeleteConfirm(false); onDelete(s.id); }}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-bold">
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -773,7 +994,7 @@ function SuscriptoresTab({ van, usuario }) {
     loadAll();
   }
 
-  async function markDelivered(id) {
+  async function markDelivered(id, { note, firma } = {}) {
     const sub = subs.find(s => s.id === id);
     if (!sub) return;
     const next = new Date(sub.proxima_entrega || new Date());
@@ -782,11 +1003,20 @@ function SuscriptoresTab({ van, usuario }) {
       ultima_entrega: new Date().toISOString().slice(0,10),
       proxima_entrega: next.toISOString().slice(0,10),
     }).eq("id", id);
-    await supabase.from("subscription_entregas").insert({
+    const entregaPayload = {
       suscripcion_id: id,
       fecha: new Date().toISOString().slice(0,10),
       estado: "entregado",
-    });
+      notas: note || null,
+    };
+    // Try with firma column; silently fall back if migration not yet run
+    const { error: e1 } = await supabase.from("subscription_entregas").insert({ ...entregaPayload, firma: firma || null });
+    if (e1) await supabase.from("subscription_entregas").insert(entregaPayload);
+    loadAll();
+  }
+
+  async function deleteSubscriber(id) {
+    await supabase.from("subscription_clientes").delete().eq("id", id);
     loadAll();
   }
 
@@ -886,7 +1116,7 @@ create policy "auth" on subscription_entregas for all using (auth.role()='authen
       {/* Subscribers list */}
       <div className="space-y-4">
         {filtered.length===0 && <p className="text-center py-12 text-gray-400">No subscribers with status "{filterStatus}"</p>}
-        {filtered.map(s => <SubscriberCard key={s.id} s={s} onMarkDelivered={markDelivered} onChargeDone={loadAll} onChangeStatus={changeStatus} />)}
+        {filtered.map(s => <SubscriberCard key={s.id} s={s} onMarkDelivered={markDelivered} onChargeDone={loadAll} onChangeStatus={changeStatus} onDelete={deleteSubscriber} />)}
       </div>
     </div>
   );
