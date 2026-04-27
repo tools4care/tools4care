@@ -8,8 +8,7 @@ export default defineConfig({
   base: '/',                  // absolute paths — required for Vercel SPA routing (relative ./ breaks deep URLs)
   plugins: [react()],
   server: {
-    port: 5173,
-    strictPort: true,
+    port: parseInt(process.env.PORT) || 5173,
     proxy: {
       '/cxc':         { target: API_TARGET, changeOrigin: true },
       '/health':      { target: API_TARGET, changeOrigin: true },
