@@ -2,35 +2,28 @@
 // Global toast + confirm dialog system
 // Usage:
 //   const { toast, confirm } = useToast();
-//   toast.success("Guardado");
-//   const ok = await confirm("¿Eliminar este registro?");
+//   toast.success("Saved");
+//   const ok = await confirm("Delete this record?");
 
 import { createContext, useContext, useState, useCallback, useRef } from "react";
+import { CheckCircle, XCircle, AlertTriangle, Info, RefreshCw, X } from "lucide-react";
 
 const ToastContext = createContext(null);
 
-const ICONS = {
-  success: "✅",
-  error:   "❌",
-  warning: "⚠️",
-  info:    "ℹ️",
-  return:  "🔄",
-};
-
-const COLORS = {
-  success: { bg: "linear-gradient(135deg,#16a34a,#15803d)", border: "#15803d" },
-  error:   { bg: "linear-gradient(135deg,#dc2626,#b91c1c)", border: "#b91c1c" },
-  warning: { bg: "linear-gradient(135deg,#d97706,#b45309)", border: "#b45309" },
-  info:    { bg: "linear-gradient(135deg,#2563eb,#1d4ed8)", border: "#1d4ed8" },
-  return:  { bg: "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "#6d28d9" },
+const CONFIG = {
+  success: { Icon: CheckCircle, bg: "bg-gradient-to-r from-green-600 to-emerald-600", bar: "bg-green-300" },
+  error:   { Icon: XCircle,     bg: "bg-gradient-to-r from-red-600 to-rose-600",      bar: "bg-red-300"   },
+  warning: { Icon: AlertTriangle,bg:"bg-gradient-to-r from-amber-500 to-orange-500",  bar: "bg-amber-300" },
+  info:    { Icon: Info,        bg: "bg-gradient-to-r from-blue-600 to-indigo-600",   bar: "bg-blue-300"  },
+  return:  { Icon: RefreshCw,   bg: "bg-gradient-to-r from-violet-600 to-purple-600", bar: "bg-violet-300"},
 };
 
 let _idCounter = 0;
 
 export function ToastProvider({ children }) {
-  const [toasts, setToasts]     = useState([]);
-  const [confirm, setConfirm]   = useState(null); // { message, resolve }
-  const resolveRef               = useRef(null);
+  const [toasts, setToasts]   = useState([]);
+  const [confirmState, setConfirmState] = useState(null);
+  const resolveRef = useRef(null);
 
   const dismiss = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -38,10 +31,8 @@ export function ToastProvider({ children }) {
 
   const addToast = useCallback((type, message, durationMs = 4000) => {
     const id = ++_idCounter;
-    setToasts((prev) => [...prev.slice(-4), { id, type, message }]);
-    if (durationMs > 0) {
-      setTimeout(() => dismiss(id), durationMs);
-    }
+    setToasts((prev) => [...prev.slice(-4), { id, type, message, durationMs }]);
+    if (durationMs > 0) setTimeout(() => dismiss(id), durationMs);
     return id;
   }, [dismiss]);
 
@@ -53,114 +44,83 @@ export function ToastProvider({ children }) {
     return:  (msg, ms)  => addToast("return",  msg, ms),
   };
 
-  const showConfirm = useCallback((message) => {
+  const showConfirm = useCallback((message, opts = {}) => {
     return new Promise((resolve) => {
       resolveRef.current = resolve;
-      setConfirm({ message });
+      setConfirmState({ message, ...opts });
     });
   }, []);
 
   const handleConfirm = (result) => {
-    setConfirm(null);
-    if (resolveRef.current) resolveRef.current(result);
+    setConfirmState(null);
+    resolveRef.current?.(result);
   };
 
   return (
     <ToastContext.Provider value={{ toast, confirm: showConfirm }}>
       {children}
 
-      {/* ── Toast container ── */}
-      <div style={{
-        position: "fixed",
-        bottom: 88,
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 99999,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        maxWidth: 360,
-        width: "calc(100% - 32px)",
-        pointerEvents: "none",
-      }}>
+      {/* ── Toast stack ─────────────────────────────── */}
+      <div className="fixed bottom-24 lg:bottom-6 left-1/2 -translate-x-1/2 z-[99999] flex flex-col gap-2 w-[calc(100%-2rem)] max-w-sm pointer-events-none">
         {toasts.map((t) => {
-          const c = COLORS[t.type] || COLORS.info;
+          const { Icon, bg, bar } = CONFIG[t.type] || CONFIG.info;
           return (
             <div
               key={t.id}
               onClick={() => dismiss(t.id)}
-              style={{
-                background: c.bg,
-                border: `1px solid ${c.border}`,
-                color: "white",
-                borderRadius: 14,
-                padding: "13px 16px",
-                boxShadow: "0 6px 24px rgba(0,0,0,0.25)",
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 10,
-                cursor: "pointer",
-                pointerEvents: "auto",
-                animation: "slideUp 0.2s ease-out",
-              }}
+              className={`${bg} text-white rounded-2xl shadow-2xl overflow-hidden pointer-events-auto cursor-pointer`}
+              style={{ animation: "toast-in 0.22s ease-out" }}
             >
-              <span style={{ fontSize: 20, flexShrink: 0, lineHeight: 1.2 }}>
-                {ICONS[t.type] || ICONS.info}
-              </span>
-              <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4 }}>
-                {t.message}
-              </span>
+              <div className="flex items-start gap-3 px-4 py-3.5">
+                <Icon size={20} className="shrink-0 mt-0.5" />
+                <span className="text-sm font-semibold leading-snug flex-1">{t.message}</span>
+                <X size={15} className="shrink-0 opacity-60 mt-0.5" />
+              </div>
+              {/* Progress bar — shrinks over durationMs */}
+              {t.durationMs > 0 && (
+                <div className={`h-1 ${bar} opacity-60`}
+                  style={{ animation: `toast-shrink ${t.durationMs}ms linear forwards` }} />
+              )}
             </div>
           );
         })}
       </div>
 
-      {/* ── Confirm dialog ── */}
-      {confirm && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 100000,
-          background: "rgba(0,0,0,0.55)",
-          display: "flex", alignItems: "flex-end", justifyContent: "center",
-          padding: "0 16px 24px",
-        }}>
-          <div style={{
-            background: "white",
-            borderRadius: 20,
-            padding: "24px 20px 20px",
-            width: "100%",
-            maxWidth: 400,
-            boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-          }}>
-            <p style={{
-              fontSize: 15, fontWeight: 600, color: "#111827",
-              lineHeight: 1.5, marginBottom: 20, textAlign: "center",
-              whiteSpace: "pre-line",
-            }}>
-              {confirm.message}
-            </p>
-            <div style={{ display: "flex", gap: 10 }}>
+      {/* ── Confirm bottom-sheet ─────────────────────── */}
+      {confirmState && (
+        <div
+          className="fixed inset-0 z-[100000] bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
+          onClick={() => handleConfirm(false)}
+        >
+          <div
+            className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Icon header */}
+            <div className="flex flex-col items-center pt-6 pb-4 px-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mb-3">
+                <AlertTriangle size={26} className="text-amber-500" />
+              </div>
+              <p className="text-gray-900 font-bold text-base leading-snug whitespace-pre-line">
+                {confirmState.message}
+              </p>
+              {confirmState.detail && (
+                <p className="text-gray-500 text-sm mt-1.5">{confirmState.detail}</p>
+              )}
+            </div>
+            {/* Buttons */}
+            <div className="flex gap-2 px-4 pb-5">
               <button
                 onClick={() => handleConfirm(false)}
-                style={{
-                  flex: 1, padding: "13px", borderRadius: 12,
-                  border: "2px solid #e5e7eb", background: "white",
-                  fontSize: 15, fontWeight: 700, color: "#374151",
-                  cursor: "pointer",
-                }}
+                className="flex-1 py-3 rounded-2xl border-2 border-gray-200 text-gray-700 font-bold text-sm hover:bg-gray-50 transition-colors"
               >
-                Cancelar
+                {confirmState.cancelLabel || "Cancel"}
               </button>
               <button
                 onClick={() => handleConfirm(true)}
-                style={{
-                  flex: 1, padding: "13px", borderRadius: 12,
-                  border: "none",
-                  background: "linear-gradient(135deg,#2563eb,#1d4ed8)",
-                  fontSize: 15, fontWeight: 700, color: "white",
-                  cursor: "pointer",
-                }}
+                className={`flex-1 py-3 rounded-2xl text-white font-bold text-sm transition-all ${confirmState.danger ? "bg-gradient-to-r from-red-600 to-rose-600" : "bg-gradient-to-r from-blue-600 to-indigo-600"}`}
               >
-                Confirmar
+                {confirmState.confirmLabel || "Confirm"}
               </button>
             </div>
           </div>
@@ -168,9 +128,13 @@ export function ToastProvider({ children }) {
       )}
 
       <style>{`
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(12px); }
-          to   { opacity: 1; transform: translateY(0); }
+        @keyframes toast-in {
+          from { opacity: 0; transform: translateY(14px) scale(0.96); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        @keyframes toast-shrink {
+          from { width: 100%; }
+          to   { width: 0%; }
         }
       `}</style>
     </ToastContext.Provider>

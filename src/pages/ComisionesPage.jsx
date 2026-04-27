@@ -1,30 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useUsuario } from '../UsuarioContext';
 import { ComisionesService } from '../lib/comisiones-service';
+import { useToast } from '../hooks/useToast';
 
 export default function ComisionesPage() {
   const { usuario } = useUsuario();
+  const { toast, confirm } = useToast();
   const [vans, setVans] = useState([]);
   const [vendedores, setVendedores] = useState([]);
-  
+
   const [vanSeleccionada, setVanSeleccionada] = useState('');
   const [vendedorSeleccionado, setVendedorSeleccionado] = useState('');
   const [fechaInicio, setFechaInicio] = useState(new Date().toISOString().split('T')[0]);
   const [fechaFin, setFechaFin] = useState(new Date().toISOString().split('T')[0]);
-  
+
   const [configuracion, setConfiguracion] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [cargando, setCargando] = useState(false);
-  const [mensaje, setMensaje] = useState('');
 
   const [ajustesManuales, setAjustesManuales] = useState({
     descuentos: {},
   });
-
-  const showMsg = useCallback((msg, ms = 3500) => {
-    setMensaje(msg);
-    setTimeout(() => setMensaje(''), ms);
-  }, []);
 
   useEffect(() => {
     cargarDatosIniciales();
@@ -81,7 +77,7 @@ export default function ComisionesPage() {
 
   const cargarDatos = async () => {
     if (!vanSeleccionada || !vendedorSeleccionado) {
-      showMsg('❌ Selecciona una van y un vendedor');
+      toast.warning('Select a van and a salesperson first');
       return;
     }
 
@@ -103,9 +99,9 @@ export default function ComisionesPage() {
       );
       if (calcError) throw calcError;
       setResultado(comision);
-      showMsg('✅ Datos cargados exitosamente');
+      toast.success('Data loaded successfully');
     } catch (error) {
-      showMsg('❌ Error: ' + error.message, 5000);
+      toast.error('Error: ' + error.message);
     } finally {
       setCargando(false);
     }
@@ -136,14 +132,15 @@ export default function ComisionesPage() {
         configuracion
       );
       if (error) throw error;
-      showMsg('✅ Configuración guardada exitosamente');
+      toast.success('Configuration saved');
     } catch (error) {
-      showMsg('❌ Error al guardar: ' + error.message, 5000);
+      toast.error('Error saving: ' + error.message);
     }
   };
 
   const aprobarPago = async () => {
-    if (!window.confirm('¿Estás seguro de aprobar este pago?')) return;
+    const ok = await confirm('Approve this commission payment?', { confirmLabel: 'Approve', danger: false });
+    if (!ok) return;
 
     try {
       if (!resultado.id) {
@@ -163,9 +160,9 @@ export default function ComisionesPage() {
         if (error) throw error;
         setResultado((prev) => ({ ...prev, estado: 'aprobado' }));
       }
-      showMsg('✅ Pago aprobado exitosamente');
+      toast.success('Payment approved');
     } catch (error) {
-      showMsg('❌ Error al aprobar: ' + error.message, 5000);
+      toast.error('Error approving: ' + error.message);
     }
   };
 
@@ -416,15 +413,6 @@ export default function ComisionesPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto bg-gray-50 min-h-screen">
-      {mensaje && (
-        <div className={`mb-4 p-4 rounded-lg font-medium ${
-          mensaje.includes('❌')
-            ? 'bg-red-100 text-red-700 border border-red-300'
-            : 'bg-green-100 text-green-700 border border-green-300'
-        }`}>
-          {mensaje}
-        </div>
-      )}
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h1 className="text-3xl font-bold mb-6 text-gray-800">
           🎯 Commission Configuration
