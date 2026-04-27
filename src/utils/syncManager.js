@@ -78,31 +78,23 @@ export async function sincronizarVentasPendientes() {
             );
 
           if (itemsError) {
-            console.warn(`⚠️ Error insertando detalle de venta ${venta._offline_id}:`, itemsError);
-            // No lanzar error — la venta principal ya se insertó
+            // Roll back the orphaned venta so it stays in the pending queue and retries next sync
+            await supabase.from('ventas').delete().eq('id', ventaId);
+            throw new Error(`detalle_ventas insert failed: ${itemsError.message}`);
           }
         }
 
-        // ── Actualizar stock en Supabase ──
+        // ── Actualizar stock — single atomic UPDATE (no read-modify-write race) ──
         for (const item of venta.items || []) {
           try {
-            const { data: stockData } = await supabase
-              .from('stock_van')
-              .select('cantidad')
-              .eq('van_id', venta.van_id)
-              .eq('producto_id', item.producto_id)
-              .single();
-
-            if (stockData) {
-              const nuevaCantidad = Math.max(0, stockData.cantidad - item.cantidad);
-              await supabase
-                .from('stock_van')
-                .update({ cantidad: nuevaCantidad })
-                .eq('van_id', venta.van_id)
-                .eq('producto_id', item.producto_id);
-            }
+            await supabase.rpc('decrementar_stock_van', {
+              p_van_id:      venta.van_id,
+              p_producto_id: item.producto_id,
+              p_cantidad:    item.cantidad,
+            });
           } catch (stockErr) {
-            console.warn(`⚠️ Error actualizando stock producto ${item.producto_id}:`, stockErr);
+            // Stock update failure is non-fatal — sale is already saved; admin can reconcile
+            console.error(`Stock update failed producto ${item.producto_id}:`, stockErr?.message);
           }
         }
 

@@ -4146,10 +4146,13 @@ function renderStepClient() {
                 <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wide">Available</div>
                 <div className="text-lg font-bold text-emerald-800 mt-1">{fmt(creditAvailable)}</div>
               </div>
-              <div className={`text-center border rounded-xl p-3 ${creditAvailableAfter >= 0 ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-300"}`}>
-                <div className={`text-[10px] font-bold uppercase tracking-wide ${creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"}`}>After Sale</div>
-                <div className={`text-lg font-bold mt-1 ${creditAvailableAfter >= 0 ? "text-emerald-800" : "text-red-700"}`}>{fmt(creditAvailableAfter)}</div>
-              </div>
+              {/* "After Sale" only differs from "Available" once products are in the cart */}
+              {saleTotal > 0 && (
+                <div className={`text-center border rounded-xl p-3 ${creditAvailableAfter >= 0 ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-300"}`}>
+                  <div className={`text-[10px] font-bold uppercase tracking-wide ${creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"}`}>After Sale</div>
+                  <div className={`text-lg font-bold mt-1 ${creditAvailableAfter >= 0 ? "text-emerald-800" : "text-red-700"}`}>{fmt(creditAvailableAfter)}</div>
+                </div>
+              )}
               {balanceBefore > 0 ? (
                 <div className="text-center bg-red-50 border-2 border-red-300 rounded-xl p-3">
                   <div className="text-[10px] text-red-600 font-bold uppercase tracking-wide">⚠ Balance Due</div>
@@ -5104,8 +5107,8 @@ function renderStepPayment() {
         )}
       </div>
 
-      {/* ── FIFO BREAKDOWN (only when prior debt exists) ─── */}
-      {oldDebt > 0 && (
+      {/* ── FIFO BREAKDOWN — only when there IS a payment being applied ─── */}
+      {oldDebt > 0 && paid > 0 && (
         <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm overflow-hidden">
           <button
             className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
