@@ -36,20 +36,21 @@ export default function CreditRiskPanel({ clientRisk, creditProfile, reglasCredi
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-3 divide-x divide-gray-100 bg-white">
-        <div className="p-3 text-center">
-          <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">Available</div>
-          <div className="text-lg font-black text-emerald-600">{fmt(cxcAvailable || 0)}</div>
+      {/* Usage bar — compact, no duplicate of the 4 boxes above */}
+      {cxcLimit > 0 && (
+        <div className="bg-white px-4 py-2 flex items-center gap-3 border-t border-gray-100">
+          <span className="text-[10px] text-gray-500 font-bold uppercase shrink-0">Usage</span>
+          <div className="flex-1 bg-gray-100 rounded-full h-2">
+            <div
+              className={`h-2 rounded-full transition-all ${cxcBalance / cxcLimit > 0.7 ? "bg-red-500" : "bg-emerald-500"}`}
+              style={{ width: `${Math.min(100, Math.round((cxcBalance / cxcLimit) * 100))}%` }}
+            />
+          </div>
+          <span className={`text-[11px] font-black shrink-0 ${cxcBalance / cxcLimit > 0.7 ? "text-red-600" : "text-blue-600"}`}>
+            {Math.round((cxcBalance / cxcLimit) * 100)}%
+          </span>
         </div>
-        <div className="p-3 text-center">
-          <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">Limit</div>
-          <div className="text-lg font-black text-gray-700">{fmt(cxcLimit || 0)}</div>
-        </div>
-        <div className="p-3 text-center">
-          <div className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">Usage</div>
-          <div className={"text-lg font-black " + (cxcLimit > 0 && cxcBalance / cxcLimit > 0.7 ? "text-red-600" : "text-blue-600")}>{cxcLimit > 0 ? Math.round((cxcBalance / cxcLimit) * 100) : 0}%</div>
-        </div>
-      </div>
+      )}
       <div className="px-4 py-3 bg-gray-50 space-y-2">
         {reglasCredito?.montoMaximo > 0 && (
           <div className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-gray-200">

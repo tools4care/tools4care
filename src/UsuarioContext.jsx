@@ -42,7 +42,7 @@ export function UsuarioProvider({ children }) {
 
   async function cargarUsuarioActual(session, source = "unknown") {
     if (!session?.user) {
-      console.log(`[UsuarioContext] (${source}) Sin sesión → logout`);
+      // no session → logout
       setUsuario(null);
       guardarUsuarioCache(null);
       setCargando(false);
@@ -54,7 +54,7 @@ export function UsuarioProvider({ children }) {
     // 🆕 Evitar llamadas duplicadas con la misma sesión
     const sessionFingerprint = `${userAuth.id}-${session.access_token?.slice(-10)}`;
     if (loadingRef.current && lastSessionIdRef.current === sessionFingerprint) {
-      console.log(`[UsuarioContext] (${source}) Ya cargando esta sesión, skip`);
+      // already loading this session, skip
       return;
     }
     loadingRef.current = true;
@@ -66,12 +66,12 @@ export function UsuarioProvider({ children }) {
       // Mostrar usuario cacheado inmediatamente (sin esperar red)
       setUsuario(cachedUser);
       setCargando(false);
-      console.log(`[UsuarioContext] (${source}) Usuario desde caché (id: ${userAuth.id})`);
+      // loaded from cache
     }
 
     // 🆕 Si no hay conexión, quedarse con el caché
     if (!navigator.onLine) {
-      console.log(`[UsuarioContext] (${source}) 📵 Offline → usando caché`);
+      // offline — using cache
       if (!cachedUser || cachedUser.id !== userAuth.id) {
         // Sin caché válido y sin red → no podemos hacer nada
         setUsuario(null);
@@ -109,7 +109,7 @@ export function UsuarioProvider({ children }) {
           // Usar caché como fallback — NO hacer signOut
           if (cachedUser && cachedUser.id === userAuth.id) {
             setUsuario(cachedUser);
-            console.log(`[UsuarioContext] (${source}) ✅ Fallback a caché por error de red`);
+            // network error — falling back to cache
           }
           setCargando(false);
           loadingRef.current = false;
@@ -142,7 +142,7 @@ export function UsuarioProvider({ children }) {
 
         setUsuario(userRow);
         guardarUsuarioCache(userRow);
-        console.log(`[UsuarioContext] (${source}) ✅ Usuario desde DB:`, userRow.nombre || userRow.email);
+        // user loaded from DB
         setCargando(false);
         loadingRef.current = false;
         return;
@@ -208,7 +208,7 @@ export function UsuarioProvider({ children }) {
         if (retry) {
           setUsuario(retry);
           guardarUsuarioCache(retry);
-          console.log(`[UsuarioContext] (${source}) ✅ Usuario encontrado en retry`);
+          // found on retry
           setCargando(false);
           loadingRef.current = false;
           return;
@@ -226,14 +226,14 @@ export function UsuarioProvider({ children }) {
 
       setUsuario(nuevoUsuario);
       guardarUsuarioCache(nuevoUsuario);
-      console.log(`[UsuarioContext] (${source}) ✅ Usuario NUEVO creado:`, nuevoUsuario.email);
+      // new user created
 
     } catch (err) {
       // 🆕 Catch general — NUNCA hacer signOut por errores inesperados
       console.error(`[UsuarioContext] (${source}) Error inesperado:`, err);
       if (cachedUser && cachedUser.id === userAuth.id) {
         setUsuario(cachedUser);
-        console.log(`[UsuarioContext] (${source}) ✅ Fallback a caché por error inesperado`);
+        // unexpected error — falling back to cache
       }
     } finally {
       setCargando(false);
@@ -248,7 +248,7 @@ export function UsuarioProvider({ children }) {
     const cachedUser = obtenerUsuarioCache();
     if (cachedUser) {
       setUsuario(cachedUser);
-      console.log("[UsuarioContext] 🚀 Mostrando usuario cacheado mientras verifica sesión");
+      // showing cached user while session verifies
     }
 
     // 1. Cargar sesión inicial
@@ -261,7 +261,7 @@ export function UsuarioProvider({ children }) {
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
 
-      console.log(`[UsuarioContext] Auth event: ${event}`);
+      // auth event: ${event}
 
       // SIGNED_OUT → limpiar todo
       if (event === "SIGNED_OUT") {
@@ -274,7 +274,7 @@ export function UsuarioProvider({ children }) {
       // 🆕 Para TOKEN_REFRESHED, solo actualizar si ya tenemos usuario
       // No re-consultar la DB innecesariamente
       if (event === "TOKEN_REFRESHED") {
-        console.log("[UsuarioContext] Token refreshed — sesión sigue activa");
+        // token refreshed — session still active
         // Si ya tenemos usuario en state, no hacer nada
         // El token se refrescó automáticamente, la sesión sigue válida
         return;
@@ -289,7 +289,7 @@ export function UsuarioProvider({ children }) {
     // 🆕 Listener para cuando la app vuelve del background
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        console.log("[UsuarioContext] 📱 App resumed — verificando sesión");
+        // app resumed — checking session
         // Solo refrescar la sesión, no recargar usuario completo
         supabase.auth.getSession().then(({ data: { session } }) => {
           if (!mounted) return;
@@ -312,10 +312,7 @@ export function UsuarioProvider({ children }) {
     };
   }, []);
 
-  // Log de depuración
-  useEffect(() => {
-    console.log("[UsuarioContext] usuario:", usuario, "cargando:", cargando);
-  }, [usuario, cargando]);
+  // (debug log removed from production)
 
   return (
     <UsuarioContext.Provider value={{ usuario, setUsuario, cargando }}>

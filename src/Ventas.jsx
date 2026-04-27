@@ -54,7 +54,7 @@ const TRANSFER_SUBS = [
 ];
 
 const STORAGE_KEY = "pending_sales";
-const SECRET_CODE = "#ajuste2025";
+// Migration mode is toggled via the admin-only button — no secret code needed
 
 // ============ CRÉDITO ROTATIVO — PAGO MÍNIMO ============
 const PAGO_MINIMO_PCT   = 0.20;   // 20% del balance anterior
@@ -307,14 +307,8 @@ function writePendingLS(arr) {
 
 function removePendingFromLSById(id) {
   const cur = readPendingLS();
-  console.log(`🗑️ Intentando eliminar venta pendiente: ${id}`);
-  console.log(`📋 Ventas pendientes actuales:`, cur.map(v => v.id));
-  
   const filtered = id ? cur.filter((x) => x.id !== id) : cur;
   writePendingLS(filtered);
-  
-  console.log(`✅ Ventas pendientes después de eliminar:`, filtered.map(v => v.id));
-  
   return filtered;
 }
 
@@ -642,7 +636,7 @@ function GuestContactModal({ onConfirm, onSkip }) {
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
-  const { maxDescuentoPct, puedeCancelarVentas } = usePermisos();
+  const { maxDescuentoPct, puedeCancelarVentas, isAdmin } = usePermisos();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast, confirm: confirmDialog } = useToast();
@@ -4244,13 +4238,19 @@ function renderStepClient() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => { setMigrationMode(v => !v); toast.info(`Migration mode ${!migrationMode ? "ON" : "OFF"}`); }}
+              className={`text-xs px-3 py-1.5 rounded-lg font-semibold border transition-all ${migrationMode ? "bg-purple-600 text-white border-purple-600" : "bg-white text-purple-700 border-purple-300 hover:bg-purple-50"}`}
+            >🔒 Migration</button>
+          )}
           <button
             className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
             onClick={() => setModalPendingSales(true)}
             type="button"
           >
             📂 Pending ({pendingStats.total})
-
           </button>
           <button
             onClick={() => navigate("/clientes/nuevo", { replace: false })}
@@ -4350,13 +4350,6 @@ function renderStepClient() {
     setClientSearch(value);
   }}
           onKeyDown={(e) => {
-            // Secret migration mode code
-            if (e.key === "Enter" && clientSearch.trim() === SECRET_CODE) {
-              setMigrationMode((v) => !v);
-              setClientSearch("");
-              toast.info(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
-              return;
-            }
             // ↓ Move focus down the list
             if (e.key === "ArrowDown") {
               e.preventDefault();
@@ -4956,27 +4949,22 @@ function renderStepProducts() {
         />
       </div>
 
-      {/* ── CREDIT SUMMARY ───────────────────────────── */}
-      {selectedClient && selectedClient.id && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* Credit quick-bar: shows only when cart has items and client has a balance — concise, no duplication */}
+      {selectedClient?.id && (balanceBefore > 0 || amountToCredit > 0) && cartSafe.length > 0 && (
+        <div className="flex flex-wrap gap-2 text-xs">
           {balanceBefore > 0 && (
-            <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 text-center">
-              <div className="text-xs text-red-600 uppercase font-semibold tracking-wide">Outstanding Balance</div>
-              <div className="text-xl font-bold text-red-700 mt-1">{fmt(balanceBefore)}</div>
-            </div>
+            <span className="bg-red-50 border border-red-200 text-red-700 font-semibold px-3 py-1.5 rounded-lg">
+              ⚠ Balance: {fmt(balanceBefore)}
+            </span>
           )}
-          <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-3 text-center">
-            <div className="text-xs text-orange-600 uppercase font-semibold tracking-wide">Goes to A/R</div>
-            <div className={`text-xl font-bold mt-1 ${amountToCredit > 0 ? "text-orange-700" : "text-emerald-700"}`}>
-              {fmt(amountToCredit)}
-            </div>
-          </div>
-          <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3 text-center">
-            <div className="text-xs text-emerald-600 uppercase font-semibold tracking-wide">Credit Available After</div>
-            <div className={`text-xl font-bold mt-1 ${creditAvailableAfter >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-              {fmt(creditAvailableAfter)}
-            </div>
-          </div>
+          {amountToCredit > 0 && (
+            <span className="bg-amber-50 border border-amber-200 text-amber-700 font-semibold px-3 py-1.5 rounded-lg">
+              → A/R: {fmt(amountToCredit)}
+            </span>
+          )}
+          <span className={`border font-semibold px-3 py-1.5 rounded-lg ${creditAvailableAfter >= 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-red-50 border-red-200 text-red-700"}`}>
+            Available after: {fmt(creditAvailableAfter)}
+          </span>
         </div>
       )}
 
@@ -5151,58 +5139,16 @@ function renderStepPayment() {
         </div>
       )}
 
-      {/* ── ACCOUNT BALANCE SUMMARY (client-facing) ──── */}
+      {/* New balance highlight — replaces the full summary block (detail is in the Show to Client modal) */}
       {selectedClient?.id && (
-        <div className="rounded-xl overflow-hidden border-2 border-indigo-200 shadow-sm">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-slate-800 to-indigo-900 px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📊</span>
-              <span className="text-white font-bold text-sm">Account Balance Summary</span>
+        <div className={`rounded-xl px-5 py-4 flex items-center justify-between border-2 ${balanceAfter === 0 ? "bg-emerald-50 border-emerald-300" : "bg-gray-50 border-gray-200"}`}>
+          <span className="font-bold text-gray-700 text-sm">New Balance</span>
+          <div className="text-right">
+            <div className={`text-3xl font-extrabold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-600"}`}>
+              {fmt(balanceAfter)}
             </div>
+            {balanceAfter === 0 && <div className="text-xs text-emerald-600 font-semibold mt-0.5">🎉 Account fully paid!</div>}
           </div>
-          {/* Rows */}
-          <div className="bg-white divide-y divide-gray-100">
-            {balanceBefore > 0 && (
-              <div className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-sm text-gray-600">Prior Balance</span>
-                <span className="font-bold text-red-700">{fmt(balanceBefore)}</span>
-              </div>
-            )}
-            <div className="flex items-center justify-between px-4 py-2.5">
-              <span className="text-sm text-gray-600">+ Today's Sale</span>
-              <span className="font-bold text-blue-700">+ {fmt(saleTotal)}</span>
-            </div>
-            {balanceBefore > 0 && (
-              <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50">
-                <span className="text-sm font-semibold text-gray-700">= Total</span>
-                <span className="font-bold text-gray-900">{fmt(balanceBefore + saleTotal)}</span>
-              </div>
-            )}
-            {paid > 0 && (
-              <div className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-sm text-gray-600">− Payment Today</span>
-                <span className="font-bold text-emerald-700">− {fmt(paid)}</span>
-              </div>
-            )}
-            {change > 0 && (
-              <div className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-sm text-gray-600">Change returned</span>
-                <span className="font-bold text-gray-500">+ {fmt(change)}</span>
-              </div>
-            )}
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-50">
-              <span className="font-bold text-gray-800">New Balance</span>
-              <span className={`text-2xl font-extrabold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-600"}`}>
-                {fmt(balanceAfter)}
-              </span>
-            </div>
-          </div>
-          {balanceAfter === 0 && (
-            <div className="bg-emerald-50 border-t border-emerald-200 px-4 py-2 text-center text-emerald-700 text-sm font-bold">
-              🎉 Account fully paid!
-            </div>
-          )}
         </div>
       )}
 

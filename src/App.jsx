@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import {} from "react";
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import UsuariosAdmin from "./pages/UsuariosAdmin";
 import Sidebar from "./Sidebar";
@@ -199,10 +199,8 @@ function PrivateRouteWithVan({ children }) {
   if (!usuario) return <Navigate to="/login" />;
   if (!van) return <Navigate to="/van" />;
 
-  try {
-    const raw = JSON.stringify(van).toLowerCase();
-    if (raw.includes("online")) return <Navigate to="/online" replace />;
-  } catch {}
+  // Only redirect if the van has an explicit tipo === "online" field — never match by name
+  if (van?.tipo === "online") return <Navigate to="/online" replace />;
   return children;
 }
 
@@ -256,21 +254,6 @@ function LayoutPrivado() {
 }
 
 export default function App() {
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Simula la carga inicial de la aplicación
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 2500); // 2.5 segundos de carga inicial
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  if (isLoading) {
-    return <LoadingScreen />;
-  }
-
   return (
     <ToastProvider>
     <UsuarioProvider>
