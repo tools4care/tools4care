@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, useRef } from "react";
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
+import { useToast } from "./hooks/useToast";
 
 const UsuarioContext = createContext();
 
@@ -35,8 +36,9 @@ function obtenerUsuarioCache() {
 export function UsuarioProvider({ children }) {
   const [usuario, setUsuario] = useState(null);
   const [cargando, setCargando] = useState(true);
+  const { toast } = useToast();
 
-  // 🆕 Ref para evitar llamadas duplicadas (getSession + onAuthStateChange)
+  // Ref para evitar llamadas duplicadas (getSession + onAuthStateChange)
   const loadingRef = useRef(false);
   const lastSessionIdRef = useRef(null);
 
@@ -135,7 +137,7 @@ export function UsuarioProvider({ children }) {
           guardarUsuarioCache(null);
           setCargando(false);
           loadingRef.current = false;
-          alert("Tu cuenta ha sido desactivada. Contacta a tu administrador.");
+          toast.error("Your account has been deactivated. Contact your administrator.", 0);
           await supabase.auth.signOut();
           return;
         }
@@ -174,7 +176,7 @@ export function UsuarioProvider({ children }) {
         guardarUsuarioCache(null);
         setCargando(false);
         loadingRef.current = false;
-        alert("El correo ya existe con otro usuario. Haz logout y contacta al administrador.");
+        toast.error("This email is linked to another account. Log out and contact support.", 0);
         await supabase.auth.signOut();
         return;
       }
@@ -219,7 +221,7 @@ export function UsuarioProvider({ children }) {
         guardarUsuarioCache(null);
         setCargando(false);
         loadingRef.current = false;
-        alert("Error creando el usuario en la base. Contacta soporte.");
+        toast.error("Error creating your user profile. Contact support.", 0);
         await supabase.auth.signOut();
         return;
       }

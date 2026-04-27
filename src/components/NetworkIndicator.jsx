@@ -1,76 +1,53 @@
 // src/components/NetworkIndicator.jsx
-import React, { useState } from "react";
+import { useState } from "react";
+import { WifiOff, CheckCircle, AlertCircle, RefreshCw, Clock, Upload, ChevronUp, ChevronDown } from "lucide-react";
 import { useOffline } from "../hooks/useOffline";
 
-export function NetworkIndicator({
-  syncing = false,
-  ventasPendientes = 0,
-  lastSync = null,
-  syncError = null,
-  onSyncNow = null,
-}) {
+function fmtSync(ts) {
+  if (!ts) return "Never";
+  const d = new Date(ts);
+  const now = new Date();
+  const diffMin = Math.round((now - d) / 60000);
+  if (diffMin < 1)  return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+export function NetworkIndicator({ syncing = false, ventasPendientes = 0, lastSync = null, syncError = null, onSyncNow = null }) {
   const { isOnline } = useOffline();
   const [expanded, setExpanded] = useState(false);
 
-  // Formatear fecha del último sync
-  function fmtSync(ts) {
-    if (!ts) return 'Nunca';
-    const d = new Date(ts);
-    return d.toLocaleString('es', {
-      month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    });
-  }
-
-  // ── Sin conexión ──────────────────────────────────────────────
+  // ── Offline ──────────────────────────────────────
   if (!isOnline) {
     return (
-      <div
-        style={{
-          position: 'fixed',
-          bottom: 16,
-          right: 16,
-          zIndex: 9999,
-          maxWidth: 300,
-        }}
-      >
+      <div className="fixed bottom-20 lg:bottom-4 right-4 z-[9999] max-w-[280px]">
         <div
-          style={{
-            backgroundColor: '#dc2626',
-            color: 'white',
-            borderRadius: 12,
-            padding: '10px 14px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-            cursor: 'pointer',
-          }}
+          className="bg-red-600 text-white rounded-2xl px-4 py-2.5 shadow-2xl cursor-pointer select-none"
           onClick={() => setExpanded(e => !e)}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700 }}>
-            <span style={{ fontSize: 18 }}>📵</span>
-            <span>Sin conexión</span>
+          <div className="flex items-center gap-2 font-bold text-sm">
+            <WifiOff size={16} className="shrink-0" />
+            <span>No connection</span>
             {ventasPendientes > 0 && (
-              <span style={{
-                backgroundColor: 'white', color: '#dc2626',
-                borderRadius: 99, padding: '1px 8px', fontSize: 12, fontWeight: 800
-              }}>
+              <span className="bg-white text-red-600 text-xs font-black px-2 py-0.5 rounded-full ml-auto">
                 {ventasPendientes}
               </span>
             )}
+            {expanded ? <ChevronDown size={14} className="ml-1" /> : <ChevronUp size={14} className="ml-1" />}
           </div>
-
           {expanded && (
-            <div style={{ marginTop: 8, fontSize: 13, borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: 8 }}>
-              {ventasPendientes > 0 ? (
-                <div>⏳ {ventasPendientes} venta{ventasPendientes !== 1 ? 's' : ''} pendiente{ventasPendientes !== 1 ? 's' : ''} de sync</div>
-              ) : (
-                <div>✅ No hay ventas pendientes</div>
-              )}
-              <div style={{ marginTop: 4, opacity: 0.85 }}>
-                🕐 Último sync: {fmtSync(lastSync)}
+            <div className="mt-2.5 pt-2.5 border-t border-white/25 space-y-1.5 text-xs">
+              <div className="flex items-center gap-1.5">
+                <Upload size={12} />
+                {ventasPendientes > 0
+                  ? `${ventasPendientes} sale${ventasPendientes !== 1 ? "s" : ""} waiting to sync`
+                  : "No pending sales"}
               </div>
-              <div style={{ marginTop: 4, opacity: 0.85 }}>
-                Los datos del cache están disponibles
+              <div className="flex items-center gap-1.5 opacity-80">
+                <Clock size={12} />
+                Last sync: {fmtSync(lastSync)}
               </div>
+              <p className="opacity-70 text-[11px] pt-0.5">Cached data available offline</p>
             </div>
           )}
         </div>
@@ -78,79 +55,52 @@ export function NetworkIndicator({
     );
   }
 
-  // ── Con conexión: solo mostrar si hay sync activo, pendientes o error ──
-  const tieneAlgo = syncing || ventasPendientes > 0 || syncError;
-  if (!tieneAlgo && !expanded) return null;
+  // ── Online: only show when something to report ──
+  const hasStatus = syncing || ventasPendientes > 0 || syncError;
+  if (!hasStatus && !expanded) return null;
+
+  const statusBg  = syncError ? "bg-red-600" : syncing ? "bg-blue-600" : "bg-emerald-600";
+  const StatusIcon = syncError ? AlertCircle : syncing ? RefreshCw : ventasPendientes > 0 ? Upload : CheckCircle;
+  const statusText = syncError ? "Sync error"
+    : syncing ? "Syncing…"
+    : ventasPendientes > 0 ? `${ventasPendientes} pending`
+    : "Synced";
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        bottom: 16,
-        right: 16,
-        zIndex: 9999,
-        maxWidth: 320,
-      }}
-    >
+    <div className="fixed bottom-20 lg:bottom-4 right-4 z-[9999] max-w-[280px]">
       <div
-        style={{
-          backgroundColor: syncError ? '#dc2626' : syncing ? '#2563eb' : '#16a34a',
-          color: 'white',
-          borderRadius: 12,
-          padding: '10px 14px',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
-          cursor: 'pointer',
-          transition: 'background-color 0.3s',
-        }}
+        className={`${statusBg} text-white rounded-2xl px-4 py-2.5 shadow-2xl cursor-pointer select-none transition-colors duration-300`}
         onClick={() => setExpanded(e => !e)}
       >
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700 }}>
-          <span style={{ fontSize: 18 }}>
-            {syncError ? '❌' : syncing ? '🔄' : ventasPendientes > 0 ? '⏳' : '✅'}
-          </span>
-          <span>
-            {syncError ? 'Error de sync'
-              : syncing ? 'Sincronizando...'
-              : ventasPendientes > 0 ? `${ventasPendientes} pendiente${ventasPendientes !== 1 ? 's' : ''}`
-              : 'Sincronizado'}
-          </span>
+        <div className="flex items-center gap-2 font-bold text-sm">
+          <StatusIcon size={16} className={`shrink-0 ${syncing ? "animate-spin" : ""}`} />
+          <span>{statusText}</span>
           {ventasPendientes > 0 && !syncing && (
-            <span style={{
-              backgroundColor: 'white', color: '#16a34a',
-              borderRadius: 99, padding: '1px 8px', fontSize: 12, fontWeight: 800
-            }}>
+            <span className="bg-white/20 text-white text-xs font-black px-2 py-0.5 rounded-full ml-auto">
               {ventasPendientes}
             </span>
           )}
+          {expanded ? <ChevronDown size={14} className="ml-1 opacity-70" /> : <ChevronUp size={14} className="ml-1 opacity-70" />}
         </div>
 
-        {/* Detalles expandibles */}
         {expanded && (
-          <div style={{ marginTop: 8, fontSize: 13, borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: 8 }}>
+          <div className="mt-2.5 pt-2.5 border-t border-white/25 space-y-1.5 text-xs">
             {syncError && (
-              <div style={{ marginBottom: 6 }}>⚠️ {syncError}</div>
+              <div className="flex items-start gap-1.5 text-red-100">
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                <span>{syncError}</span>
+              </div>
             )}
-            <div>🕐 Último sync: {fmtSync(lastSync)}</div>
-            <div style={{ marginTop: 4 }}>📅 Próximo sync: hoy a las 8:00pm</div>
-
+            <div className="flex items-center gap-1.5 opacity-80">
+              <Clock size={12} />
+              Last sync: {fmtSync(lastSync)}
+            </div>
             {onSyncNow && !syncing && (
               <button
                 onClick={(e) => { e.stopPropagation(); onSyncNow(); }}
-                style={{
-                  marginTop: 10,
-                  width: '100%',
-                  backgroundColor: 'rgba(255,255,255,0.25)',
-                  border: '1px solid rgba(255,255,255,0.5)',
-                  color: 'white',
-                  borderRadius: 8,
-                  padding: '6px 12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  fontSize: 13,
-                }}
+                className="w-full mt-2 bg-white/20 hover:bg-white/30 border border-white/40 text-white rounded-xl py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5"
               >
-                🔄 Sincronizar ahora
+                <RefreshCw size={12} /> Sync now
               </button>
             )}
           </div>
