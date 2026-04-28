@@ -22,7 +22,7 @@ import {
 } from "recharts";
 
 const PAGE_SIZE_DEFAULT = 25;
-const CXC_SECRET = "#cxcadmin2025";
+const CXC_SECRET = import.meta.env.VITE_CXC_SECRET || "#cxcadmin2025";
 
 // Lazy load credit simulator
 const SimuladorCredito = lazy(() => import("./CreditoSimulador"));
