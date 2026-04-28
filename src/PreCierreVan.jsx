@@ -12,6 +12,7 @@ import {
   Calculator, Calendar, TrendingUp, AlertTriangle, X, Plus, Minus, Send, MoreHorizontal, CreditCard,
   Search, History, Eye, Printer, ChevronLeft, ChevronRight
 } from "lucide-react";
+import { useToast } from "./hooks/useToast";
 
 /* ========================= Constants ========================= */
 const EXPENSE_CATEGORIES_VAN = [
@@ -255,7 +256,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       setNewGasto({ fecha: fechas[0] || "", categoria: "combustible", descripcion: "", monto: "" });
       setShowAddGasto(false);
     } catch (e) {
-      alert("Error saving expense: " + e.message);
+      toast.error("Error saving expense: " + e.message);
     } finally {
       setSavingGasto(false);
     }
@@ -267,7 +268,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       if (error) throw error;
       setLocalGastos((prev) => prev.filter((g) => g.id !== id));
     } catch (e) {
-      alert("Error deleting expense: " + e.message);
+      toast.error("Error deleting expense: " + e.message);
     }
   };
 
@@ -428,7 +429,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       if (!data?.ok) throw new Error(data?.error || "Failed to send");
       setEmailSent(true);
     } catch (e) {
-      alert("Error sending email: " + e.message);
+      toast.error("Error sending email: " + e.message);
     } finally {
       setSendingEmail(false);
     }
@@ -1273,6 +1274,7 @@ export default function PreCierreVan() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
+  const { toast } = useToast();
   
   // Tab state
   const [activeTab, setActiveTab] = useState("pending");

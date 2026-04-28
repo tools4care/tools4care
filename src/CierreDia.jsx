@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
+import { useToast } from "./hooks/useToast";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -338,6 +339,7 @@ function catLabel(v) {
 
 /* ======================= VISTA CIERRE DETALLADO ======================= */
 function VistaCierreDetallado({ datos, onConfirmar, onCancelar }) {
+  const { toast } = useToast();
   const [montosReales, setMontosReales] = useState({
     cash: '',
     card: '',
@@ -404,7 +406,7 @@ function VistaCierreDetallado({ datos, onConfirmar, onCancelar }) {
     e.preventDefault();
 
     if (!montosReales.cash && !montosReales.card && !montosReales.transfer) {
-      alert('⚠️ Debes ingresar al menos un monto real contado');
+      toast.warning("Enter at least one real counted amount before confirming.");
       return;
     }
 
@@ -887,6 +889,7 @@ function useFechasPendientes(van_id) {
 
 function PreCierre({ onCerrar, onCancelar }) {
   const { van } = useVan();
+  const { toast } = useToast();
   const fechas = useFechasPendientes(van?.id);
   const [selFecha, setSelFecha] = useState("");
   const [cuentas, setCuentas] = useState({});
@@ -947,7 +950,7 @@ function PreCierre({ onCerrar, onCancelar }) {
       localStorage.setItem('datos_cierre', JSON.stringify(datosCierre));
       onCerrar?.({ fecha: selFecha, datos: datosCierre });
     } catch (error) {
-      alert('❌ Error calculando cierre: ' + error.message);
+      toast.error("Error calculating closure: " + error.message);
       console.error(error);
     } finally {
       setCalculando(false);

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
 

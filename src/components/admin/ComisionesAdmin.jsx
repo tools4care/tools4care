@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ComisionesService } from '../../lib/comisiones-service';
+import { useToast } from '../../hooks/useToast';
 
 function ComisionesAdmin() {
+  const { confirm } = useToast();
   const [vans, setVans] = useState([]);
   const [vendedores, setVendedores] = useState([]);
   
@@ -132,7 +134,8 @@ function ComisionesAdmin() {
       return;
     }
 
-    if (!window.confirm('¿Estás seguro de aprobar este pago?')) return;
+    const ok = await confirm('Approve this commission payment?', { confirmLabel: 'Approve' });
+    if (!ok) return;
     
     try {
       const { error } = await ComisionesService.aprobarPago(resultado.id);

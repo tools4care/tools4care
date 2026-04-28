@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
+import { useToast } from "./hooks/useToast";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { loadStripe } from "@stripe/stripe-js";
@@ -997,6 +998,7 @@ function ChargeButton({ sub, onDone }) {
 }
 
 function SuscriptoresTab({ van, usuario }) {
+  const { toast } = useToast();
   const isAdmin = usuario?.rol === "admin";
   const [subs, setSubs] = useState([]);
   const [planes, setPlanes] = useState([]);
@@ -1056,7 +1058,7 @@ function SuscriptoresTab({ van, usuario }) {
     });
     setSaving(false);
     if (error) {
-      alert("Error enrolling: " + error.message);
+      toast.error("Error enrolling: " + error.message);
       return;
     }
     setShowForm(false);

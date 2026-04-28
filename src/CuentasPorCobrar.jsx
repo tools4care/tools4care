@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, lazy, Suspense, useCallback } from "react";
 import { useSyncGlobal } from "./hooks/SyncContext";
+import { useToast } from "./hooks/useToast";
 import { supabase } from "./supabaseClient";
 import dayjs from "dayjs";
 import {
@@ -143,9 +144,12 @@ const normalizePhone = (raw) => {
   if (digits.length === 10) return `+1${digits}`;
   return digits.startsWith("+") ? digits : `+${digits}`;
 };
-const openWhatsAppWith = (telefono, texto) => {
+const openWhatsAppWith = (telefono, texto, onInvalidPhone) => {
   const to = normalizePhone(telefono);
-  if (!to) { alert("This customer doesn't have a valid phone number."); return; }
+  if (!to) {
+    onInvalidPhone?.("This customer doesn't have a valid phone number.");
+    return;
+  }
   const url = `https://wa.me/${to.replace("+","")}?text=${encodeURIComponent(texto || "")}`;
   window.open(url, "_blank");
 };
@@ -1175,7 +1179,7 @@ function DetalleClienteModal({ cliente, onClose }) {
     saveUserTemplates(user);
     setTemplates([...DEFAULT_TEMPLATES, ...user]);
     setTplKey(item.key);
-    alert("Template saved ✅");
+    toast.success("Template saved");
   };
 
   return (
@@ -1262,11 +1266,11 @@ function DetalleClienteModal({ cliente, onClose }) {
                   <div className="flex flex-col sm:flex-row gap-3">
                     <button 
                       onClick={async () => {
-                        try { 
-                          await navigator.clipboard.writeText(mensaje || ""); 
-                          alert("✅ Message copied"); 
-                        } catch { 
-                          alert("Could not copy"); 
+                        try {
+                          await navigator.clipboard.writeText(mensaje || "");
+                          toast.success("Message copied");
+                        } catch {
+                          toast.error("Could not copy message");
                         }
                       }}
                       className="flex-1 bg-gray-800 hover:bg-gray-900 active:bg-black text-white px-4 py-4 rounded-xl font-semibold shadow-lg text-base min-h-[56px] flex items-center justify-center gap-2"
@@ -1275,7 +1279,7 @@ function DetalleClienteModal({ cliente, onClose }) {
                       <span>Copy</span>
                     </button>
                     <button 
-                      onClick={() => openWhatsAppWith(tel, mensaje)}
+                      onClick={() => openWhatsAppWith(tel, mensaje, (msg) => toast.warning(msg))}
                       className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 active:from-green-800 active:to-emerald-800 text-white px-4 py-4 rounded-xl font-semibold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed text-base min-h-[56px] flex items-center justify-center gap-2"
                       disabled={!tel}
                     >
@@ -1383,6 +1387,7 @@ function SimuladorCreditoModal({ onClose, initialAmount, initialMonths, customer
 
 /* ====================== Main Component ====================== */
 export default function CuentasPorCobrar() {
+  const { toast } = useToast();
   const [q, setQ] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1540,7 +1545,7 @@ export default function CuentasPorCobrar() {
 
       setCreditReviewData(results);
     } catch (e) {
-      alert("Error loading review: " + e.message);
+      toast.error("Error loading review: " + e.message);
     } finally {
       setCreditReviewLoading(false);
     }
@@ -1557,7 +1562,7 @@ export default function CuentasPorCobrar() {
       setCreditReviewData(prev => prev.filter(c => c.cliente_id !== clienteId));
       setReloadTick(t => t + 1);
     } catch (e) {
-      alert("Error: " + e.message);
+      toast.error("Error: " + e.message);
     } finally {
       setApprovingId(null);
     }
@@ -1567,7 +1572,7 @@ export default function CuentasPorCobrar() {
     const typed = (value || "").trim();
     if (typed === CXC_SECRET) {
       setAdminMode((v) => !v);
-      alert(`Admin mode ${!adminMode ? "activated" : "deactivated"}`);
+      toast.info(`Admin mode ${!adminMode ? "activated" : "deactivated"}`);
       setQ("");
     }
   }
@@ -1589,7 +1594,7 @@ export default function CuentasPorCobrar() {
     const value = trimmed === "" ? null : Number(trimmed);
 
     if (value !== null && (!Number.isFinite(value) || value < 0)) {
-      alert("Invalid amount");
+      toast.warning("Invalid amount — enter a positive number.");
       return;
     }
 
@@ -1599,7 +1604,7 @@ export default function CuentasPorCobrar() {
       .eq("id", edit.id);
 
     if (error) {
-      alert("Error saving: " + error.message);
+      toast.error("Error saving: " + error.message);
       return;
     }
 
@@ -1635,7 +1640,7 @@ export default function CuentasPorCobrar() {
         if (!ignore) {
           if (result.error) {
             console.error("Error loading A/R:", result.error);
-            alert("Error loading data: " + result.error.message);
+            toast.error("Error loading data: " + result.error.message);
             setRows([]);
             setTotal(0);
           } else {
@@ -1658,7 +1663,7 @@ export default function CuentasPorCobrar() {
       } catch (e) {
         if (!ignore) {
           console.error("Error in load:", e);
-          alert("Unexpected error: " + e.message);
+          toast.error("Unexpected error: " + e.message);
           setRows([]);
           setTotal(0);
         }

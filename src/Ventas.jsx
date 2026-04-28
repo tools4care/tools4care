@@ -395,8 +395,7 @@ async function sendSmsIfPossible({ phone, text }) {
   } catch {
     try {
       await navigator.clipboard.writeText(text);
-      alert("SMS preparado. Abre tu app de Mensajes y pega el texto.");
-      return { ok: true, copied: true };
+      return { ok: true, copied: true }; // caller shows toast
     } catch {
       return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
     }
@@ -442,8 +441,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
   if (text) {
     try {
       await navigator.clipboard.writeText(text);
-      alert("Email copiado. Abre tu correo y pega el contenido.");
-      return { ok: true, via: "mailto-copy" };
+      return { ok: true, via: "mailto-copy" }; // caller shows toast
     } catch {
       return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
     }
@@ -451,16 +449,6 @@ async function sendEmailSmart({ to, subject, html, text }) {
   return { ok: false, reason: "mailto_failed" };
 }
 
-// Legacy — replaced by openChannelModal inside the component
-async function askChannel({ hasPhone, hasEmail }) {
-  if (!hasPhone && !hasEmail) return null;
-  if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
-  if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
-  const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "").trim().toLowerCase();
-  if (ans === "sms" && hasPhone) return "sms";
-  if (ans === "email" && hasEmail) return "email";
-  return null;
-}
 
 async function getStockMapForVan(vanId, ids = []) {
   const map = new Map();
@@ -2167,7 +2155,7 @@ useEffect(() => {
     let amount = Number(payment.monto);
 
     if (!amount || amount <= 0) {
-      alert("⚠️ Ingresa un monto válido antes de generar el QR");
+      toast.warning("Enter a valid amount before generating the QR code.");
       return;
     }
 
@@ -2181,12 +2169,10 @@ useEffect(() => {
 
     // Mostrar confirmación si hay fee
     if (shouldApplyFee) {
-      const confirmed = window.confirm(
-        `💳 Card Fee Applied:\n\n` +
-        `Base amount: ${fmt(amount)}\n` +
-        `Card fee (${cardFeePercentage}%): ${fmt(feeAmount)}\n` +
-        `Total to charge: ${fmt(totalAmount)}\n\n` +
-        `Continue?`
+      const confirmed = await confirmDialog(
+        `Card fee of ${cardFeePercentage}% will be applied.\n` +
+        `Base: ${fmt(amount)} + Fee: ${fmt(feeAmount)} = Total: ${fmt(totalAmount)}`,
+        { confirmLabel: "Continue", detail: "The card processing fee is added to the total." }
       );
       if (!confirmed) return;
     }
@@ -2203,14 +2189,14 @@ useEffect(() => {
       checkoutUrl = created.url;
       sessionId = created.sessionId;
     } catch (e) {
-      alert(`❌ Error generando checkout: ${e.message || e}`);
+      toast.error(`Error generating checkout: ${e.message || e}`);
       return;
     }
 
     // 2️⃣ Generar el código QR
     const qrData = await generateQRCode(checkoutUrl);
     if (!qrData) {
-      alert("❌ Error generando código QR");
+      toast.error("Error generating QR code. Try again.");
       return;
     }
 
@@ -2240,7 +2226,7 @@ useEffect(() => {
         qrPollingIntervalRef.current = null;
         setQRPollingActive(false);
         setShowQRModal(false);
-        alert("⏰ Payment timeout. Please verify manually.");
+        toast.warning("Payment timeout. Please verify manually.");
       }
     }, 5 * 60 * 1000);
 
@@ -2257,7 +2243,7 @@ useEffect(() => {
             qrPollingIntervalRef.current = null;
             setQRPollingActive(false);
             setShowQRModal(false);
-            alert("❌ Connection error with Stripe. Please verify your configuration.");
+            toast.error("Connection error with Stripe. Please verify your configuration.");
           }
           return;
         }
@@ -2287,13 +2273,7 @@ useEffect(() => {
           }
 
           setShowQRModal(false);
-
-          alert(
-            "✅ Payment confirmed with Stripe!\n\n" +
-            `💰 Amount charged: ${fmt(paidAmount)}\n` +
-            (hasFee ? `📊 Base amount: ${fmt(baseAmount)}\n💳 Card fee (${cardFeePercentage}%): ${fmt(feeAmount)}\n\n` : "") +
-            "👉 Review the details and click 'Save Sale' to complete."
-          );
+          toast.success(`Payment confirmed with Stripe — ${fmt(paidAmount)} charged. Click 'Save Sale' to complete.`);
 
           setTimeout(() => {
             const saveButton = document.querySelector('button[type="button"]')?.closest('button:has-text("Save Sale")') 
@@ -2311,7 +2291,7 @@ useEffect(() => {
           clearTimeout(timeoutId);
           qrPollingIntervalRef.current = null;
           setQRPollingActive(false);
-          alert("❌ Payment session expired.");
+          toast.warning("Payment session expired. Create a new QR to try again.");
           setShowQRModal(false);
           return;
         }
@@ -2325,7 +2305,7 @@ useEffect(() => {
           qrPollingIntervalRef.current = null;
           setQRPollingActive(false);
           setShowQRModal(false);
-          alert("❌ Critical error. Please verify your connection and Stripe configuration.");
+          toast.error("Critical error. Please verify your connection and Stripe configuration.");
         }
       }
     }, 3000);
@@ -2436,9 +2416,12 @@ function clearSale() {
 
     try {
       if (wants === "sms" && hasPhone) {
-        await sendSmsIfPossible({ phone: effectiveClient.telefono, text });
+        const res = await sendSmsIfPossible({ phone: effectiveClient.telefono, text });
+        if (res.copied) toast.info("Text copied — open your Messages app and paste.");
       } else if (wants === "email" && hasEmail) {
-        await sendEmailSmart({ to: effectiveClient.email, subject, html, text });
+        const res = await sendEmailSmart({ to: effectiveClient.email, subject, html, text });
+        if (res?.via === "mailto-copy") toast.info("Email content copied — open your email app and paste.");
+        else if (res?.ok) toast.success("Receipt sent successfully.");
       }
     } catch (e) {
       console.warn("Receipt send error:", e?.message || e);
@@ -2500,7 +2483,7 @@ function clearSale() {
   const handleSetDescuento = useCallback((producto_id, pct) => {
     const rawPct = Number(pct) || 0;
     if (rawPct > maxDescuentoPct) {
-      alert(`Max discount allowed: ${maxDescuentoPct}%. Contact an admin for larger discounts.`);
+      toast.warning(`Max discount allowed: ${maxDescuentoPct}%. Contact an admin for a higher discount.`);
       setDiscountInputVal(String(maxDescuentoPct));
       return;
     }
@@ -2606,7 +2589,7 @@ function clearSale() {
         // Intentar "tomar" la venta (lock)
         await takePendingSale(sale.id);
       } catch (err) {
-        alert('⚠️ ' + (err.message || 'Could not take this sale. It may be in use by another device.'));
+        toast.warning(err.message || 'Could not take this sale. It may be in use by another device.');
         return;
       }
       
@@ -2651,12 +2634,14 @@ function clearSale() {
   }
 
     async function handleForceUnlockAndTake(sale) {
-    const confirmed = window.confirm(
-      `⚠️ Esta venta está bloqueada en otro dispositivo.\n\n` +
-      `¿Deseas DESBLOQUEARLA y continuar en este equipo?\n\n` +
-      `El otro dispositivo podría perder el control si sigue abierto.`
+    const confirmed = await confirmDialog(
+      "This sale is locked on another device.",
+      {
+        detail: "Unlock it and continue on this device? The other device may lose control.",
+        confirmLabel: "Unlock & Take",
+        danger: true,
+      }
     );
-    
     if (!confirmed) return;
 
     try {
@@ -2694,7 +2679,7 @@ function clearSale() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (err) {
-      alert('❌ Error al intentar desbloquear: ' + err.message);
+      toast.error('Error unlocking sale: ' + err.message);
     }
   }
 
@@ -2921,16 +2906,9 @@ if (rpcResult.requiere_reembolso_efectivo) {
         // No bloquear — la devolución ya se procesó
       }
 
-      alert(
-        `✅ Devolución procesada.\n` +
-        `📋 Deuda reducida en ${fmt(totalRefund)}.`
-      );
+      toast.return(`Return processed — debt reduced by ${fmt(totalRefund)}.`);
     } else {
-      // Si fue pagado al contado
-      alert(
-        `✅ Devolución procesada.\n` +
-        `💵 Entregar ${fmt(totalRefund)} al cliente en efectivo.`
-      );
+      toast.return(`Return processed — give ${fmt(totalRefund)} cash back to the client.`);
     }
 
     // Resetear UI
@@ -2945,15 +2923,17 @@ if (rpcResult.requiere_reembolso_efectivo) {
 
   } catch (err) {
     console.error("Error en devolución:", err);
-    alert("❌ Error procesando devolución:\n\n" + err.message);
+    toast.error("Error processing return: " + err.message);
   } finally {
     setProcessingReturn(false);
   }
 }
 async function handleDeletePendingSale(id) {
-    const confirmed = window.confirm(
-      "¿Estás seguro de eliminar esta venta pendiente?\n\nEsta acción no se puede deshacer."
-    );
+    const confirmed = await confirmDialog("Delete this pending sale?", {
+      detail: "This action cannot be undone.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
     if (!confirmed) return;
     
     try {
@@ -3133,12 +3113,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
             console.log(`📦 Producto ${item.nombre} descontado localmente`);
           }
 
-          alert(
-            `📵 VENTA GUARDADA OFFLINE\n\n` +
-            `Total: ${fmt(saleTotal)}\n` +
-            `Cliente: ${selectedClient?.nombre || 'Venta rápida'}\n\n` +
-            `✅ Se sincronizará automáticamente cuando vuelva la conexión.`
-          );
+          toast.info(`Sale saved offline — ${fmt(saleTotal)} for ${selectedClient?.nombre || 'Quick Sale'}. Will sync automatically when connection is restored.`, 6000);
 
           if (currentPendingId) {
   const updated = removePendingFromLSById(currentPendingId);
@@ -3156,14 +3131,14 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
       // ============== FIN MODO OFFLINE ==============
 
       if (amountToCredit > 0) {
-        const ok = window.confirm(
-          `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).\n` +
-            (selectedClient
-              ? `Credit limit: ${fmt(creditLimit)}\nAvailable before: ${fmt(
-                  creditAvailable
-                )}\nAvailable after: ${fmt(creditAvailableAfter)}\n\n`
-              : `\n(No credit history yet)\n\n`) +
-            `Do you want to continue?`
+        const ok = await confirmDialog(
+          `This sale will leave ${fmt(amountToCredit)} on the customer's account (credit).`,
+          {
+            detail: selectedClient
+              ? `Limit: ${fmt(creditLimit)} · Before: ${fmt(creditAvailable)} · After: ${fmt(creditAvailableAfter)}`
+              : "No credit history yet.",
+            confirmLabel: "Save Sale",
+          }
         );
         if (!ok) return;
       }
@@ -3178,13 +3153,13 @@ const changeNow          = Math.max(0, paid - totalAPagarNow);
 // ✅ Validar pago mínimo antes de guardar
 const pagoMinimoReq = calcularPagoMinimo(oldDebtNow);
 if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
-  const ok = window.confirm(
-    `⚠️ Pago Mínimo Requerido\n\n` +
-    `Balance anterior: ${fmt(oldDebtNow)}\n` +
-    `Pago mínimo (20%): ${fmt(pagoMinimoReq)}\n` +
-    `Cliente paga hoy: ${fmt(paid)}\n` +
-    `Faltan: ${fmt(pagoMinimoReq - paid)}\n\n` +
-    `¿Autorizar excepción y continuar?`
+  const ok = await confirmDialog(
+    `Minimum payment required: ${fmt(pagoMinimoReq)}`,
+    {
+      detail: `Balance: ${fmt(oldDebtNow)} · Client pays: ${fmt(paid)} · Short by: ${fmt(pagoMinimoReq - paid)}. Authorize exception?`,
+      confirmLabel: "Authorize & Save",
+      danger: true,
+    }
   );
   if (!ok) { setSaving(false); return; }
 }
@@ -3687,7 +3662,7 @@ function renderClientInvoiceList() {
               key={sale.id}
               onClick={() => {
                 if (fullReturned || allItemsReturned) {
-                  alert('⚠️ Esta venta ya fue completamente devuelta.');
+                  toast.warning('This sale has already been fully returned.');
                   return;
                 }
                 setSelectedInvoice(sale);
@@ -5611,12 +5586,12 @@ function renderStepPayment() {
     const { id: uid } = usuario || {};
     
     if (!selectedClient?.id) {
-      alert("No hay cliente seleccionado");
+      toast.warning("No client selected.");
       return;
     }
-    
+
     if (!amt || isNaN(amt) || amt <= 0) {
-      alert("Monto inválido");
+      toast.warning("Invalid amount — enter a positive number.");
       return;
     }
 
@@ -5650,10 +5625,10 @@ function renderStepPayment() {
       setShowAdjustModal(false);
       setAdjustAmount("");
       setAdjustNote("Saldo viejo importado");
-      alert("✅ Opening balance saved");
-      
+      toast.success("Opening balance saved.");
+
     } catch (error) {
-      alert("❌ Error: " + (error.message || error));
+      toast.error("Error: " + (error.message || error));
     } finally {
       setSavingAdjust(false); // 🆕 REHABILITAR BOTÓN
     }

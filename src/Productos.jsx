@@ -551,7 +551,7 @@ async function addStockSeleccionado(productoId, productoActual) {
 
 export default function Productos() {
   const { puedeCrearProductos, puedeEditarProductos, puedeEliminarProductos } = usePermisos();
-  const { toast } = useToast();
+  const { toast, confirm } = useToast();
   const PAGE_SIZE = 20; // Reducido para móviles
   const [productos, setProductos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
@@ -888,9 +888,9 @@ export default function Productos() {
     };
 
     if (dataProducto.bulk_unit_price != null && dataProducto.costo != null && dataProducto.bulk_unit_price < dataProducto.costo) {
-      const ok = window.confirm("⚠️ The bulk unit price is below cost. Do you still want to save?");
+      const ok = await confirm("The bulk unit price is below cost. Save anyway?", { confirmLabel: "Save Anyway", danger: true });
       if (!ok) {
-        setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
+        setGuardandoProducto(false);
         return;
       }
     }
@@ -952,12 +952,12 @@ export default function Productos() {
     }
 
     if ((ventasCount ?? 0) > 0) {
-      setMensaje(`Cannot delete: this product is used in ${ventasCount} sale(s).`);
-      alert(`No se puede borrar: este producto aparece en ${ventasCount} venta(s).`);
+      toast.warning(`Cannot delete: this product is used in ${ventasCount} sale(s).`);
       return;
     }
 
-    if (!window.confirm("This will permanently delete the product. Continue?")) return;
+    const ok = await confirm("Permanently delete this product?", { confirmLabel: "Delete", danger: true });
+    if (!ok) return;
 
     await Promise.allSettled([
       supabase.from("movimientos_stock").delete().eq("producto_id", id),
