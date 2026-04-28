@@ -8,24 +8,26 @@ import Checkout from "./storefront/Checkout.jsx";
 
 import { UsuarioProvider } from "./UsuarioContext";
 import VanProvider from "./hooks/VanContext";
-
+import { ToastProvider } from "./hooks/useToast";
 
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
-      <UsuarioProvider>
-        <VanProvider>
-          <Routes>
-            {/* 🛒 público */}
-            <Route path="/storefront" element={<Storefront />} />
-            <Route path="/storefront/checkout" element={<Checkout />} />
-            {/* todo lo demás */}
-            <Route path="/*" element={<App />} />
-          </Routes>
-        </VanProvider>
-      </UsuarioProvider>
+      <ToastProvider>
+        <UsuarioProvider>
+          <VanProvider>
+            <Routes>
+              {/* 🛒 público */}
+              <Route path="/storefront" element={<Storefront />} />
+              <Route path="/storefront/checkout" element={<Checkout />} />
+              {/* todo lo demás */}
+              <Route path="/*" element={<App />} />
+            </Routes>
+          </VanProvider>
+        </UsuarioProvider>
+      </ToastProvider>
     </BrowserRouter>
   </React.StrictMode>
 );
