@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { useToast } from "./hooks/useToast";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useUsuario } from "./UsuarioContext";
@@ -496,6 +497,7 @@ function buildFullInvoiceHTML(factura) {
 export default function Facturas() {
   const { usuario } = useUsuario();
   const { van } = useVan();
+  const { toast } = useToast();
 
   const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -766,7 +768,7 @@ export default function Facturas() {
       if (!data?.ok) throw new Error(data?.error || "Failed to send email");
       setBulkEmailSent(true);
     } catch (e) {
-      alert("Error sending email: " + e.message);
+      toast.error("Error sending email: " + e.message);
     } finally {
       setSendingBulkEmail(false);
     }
@@ -804,7 +806,7 @@ export default function Facturas() {
       if (!data?.ok) throw new Error(data?.error || "Failed to send");
       setSingleEmailSent(true);
     } catch (e) {
-      alert("Error sending: " + e.message);
+      toast.error("Error sending: " + e.message);
     } finally {
       setSendingSingleEmail(false);
     }

@@ -20,9 +20,15 @@ import {
   PieChart,
   Pie,
 } from "recharts";
+import {
+  DollarSign, TrendingUp, TrendingDown, ShoppingCart, Users,
+  AlertTriangle, Package, Clock, Map, Check, Plus, Pencil,
+  Trash2, Phone, MapPin, Search, ChevronRight, X,
+} from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
+import { useToast } from "./hooks/useToast";
 import SyncStatusWidget from "./components/SyncStatusWidget";
 import BackupManagerModal from "./components/BackupManagerModal";
 
@@ -59,101 +65,36 @@ function withMA(data, key = "total", windowSize = 7) {
   return out;
 }
 
-/* ---------- Iconos SVG ---------- */
-const IconDollar = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
+/* ---------- Skeleton loader for KPI cards ---------- */
+function SkeletonCard() {
+  return (
+    <div className="bg-gradient-to-br from-gray-200 to-gray-300 rounded-2xl p-5 animate-pulse">
+      <div className="flex items-center justify-between mb-4">
+        <div className="h-3 w-24 bg-white/40 rounded-full" />
+        <div className="w-6 h-6 bg-white/40 rounded-full" />
+      </div>
+      <div className="h-10 w-32 bg-white/40 rounded-xl mb-3" />
+      <div className="h-3 w-20 bg-white/30 rounded-full" />
+    </div>
+  );
+}
 
-const IconTrending = ({ up }) => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    {up ? (
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-    ) : (
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
-    )}
-  </svg>
-);
-
-const IconShoppingCart = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-  </svg>
-);
-
-const IconUsers = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-  </svg>
-);
-
-const IconAlert = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-  </svg>
-);
-
-const IconPackage = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-  </svg>
-);
-
-const IconClock = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
-
-const IconMap = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-  </svg>
-);
-
-const IconCheck = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-  </svg>
-);
-
-const IconPlus = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-  </svg>
-);
-
-const IconEdit = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-  </svg>
-);
-
-const IconTrash = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-  </svg>
-);
-
-const IconPhone = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-  </svg>
-);
-
-const IconLocation = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-  </svg>
-);
-
-const IconSearch = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-  </svg>
-);
+/* ---------- Iconos (lucide-react wrappers for consistent sizing) ---------- */
+const IconDollar      = () => <DollarSign   size={24} />;
+const IconTrending    = ({ up }) => up ? <TrendingUp size={20} /> : <TrendingDown size={20} />;
+const IconShoppingCart= () => <ShoppingCart size={24} />;
+const IconUsers       = () => <Users        size={24} />;
+const IconAlert       = () => <AlertTriangle size={24} />;
+const IconPackage     = () => <Package      size={24} />;
+const IconClock       = () => <Clock        size={20} />;
+const IconMap         = () => <Map          size={24} />;
+const IconCheck       = () => <Check        size={20} />;
+const IconPlus        = () => <Plus         size={20} />;
+const IconEdit        = () => <Pencil       size={20} />;
+const IconTrash       = () => <Trash2       size={20} />;
+const IconPhone       = () => <Phone        size={20} />;
+const IconLocation    = () => <MapPin       size={20} />;
+const IconSearch      = () => <Search       size={20} />;
 
 /* ---------- Modal Low Stock ---------- */
 function LowStockModal({ open, items, onClose }) {
@@ -247,7 +188,7 @@ function LowStockModal({ open, items, onClose }) {
             className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
             onClick={onClose}
           >
-            ✖
+            <X size={16} />
           </button>
         </div>
         <div className="p-4 flex-1 overflow-hidden flex flex-col">
@@ -311,7 +252,7 @@ function RecentSalesModal({ open, ventas, onClose, getNombreCliente, onSelectVen
             className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
             onClick={onClose}
           >
-            ✖
+            <X size={16} />
           </button>
         </div>
         
@@ -601,6 +542,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
 
 /* ---------- Modal Gestión de Rutas ---------- */
 function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh }) {
+  const { toast } = useToast();
   const [barberiaNombre, setBarberiaNombre] = useState("");
   const [direccion, setDireccion] = useState("");
   const [telefono, setTelefono] = useState("");
@@ -639,38 +581,24 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
 
   async function cargarBarberiasExistentes() {
     try {
-      console.log("🔄 Cargando barberías existentes para van_id:", vanId);
-      
-      // 1. Cargar desde rutas_barberias (barberías ya visitadas)
-      const { data: rutasData, error: rutasError } = await supabase
+      // 1. Load from rutas_barberias (previously visited barbershops)
+      const { data: rutasData } = await supabase
         .from("rutas_barberias")
         .select("barberia_nombre, direccion, telefono")
         .eq("van_id", vanId);
 
-      if (rutasError) {
-        console.error("⚠️ Error cargando rutas:", rutasError);
-      }
-
-      // 2. Cargar desde clientes (todos los clientes/barberías del sistema)
-      const { data: clientesData, error: clientesError } = await supabase
+      // 2. Load from clientes (all client businesses in the system)
+      const { data: clientesData } = await supabase
         .from("clientes")
         .select("negocio, direccion, telefono")
-        .not("negocio", "is", null) // ← Solo traer donde negocio NO es null
-        .neq("negocio", ""); // ← Y tampoco string vacío
+        .not("negocio", "is", null)
+        .neq("negocio", "");
 
-      if (clientesError) {
-        console.error("⚠️ Error cargando clientes:", clientesError);
-      }
-
-      console.log("📦 Rutas cargadas:", rutasData?.length || 0);
-      console.log("📦 Clientes cargados:", clientesData?.length || 0);
-
-      // Combinar ambas fuentes y normalizar
+      // Merge both sources
       const todasLasBarberias = [];
-      
-      // Agregar desde rutas_barberias
+
       (rutasData || []).forEach(item => {
-        if (item.barberia_nombre && item.barberia_nombre.trim()) {
+        if (item.barberia_nombre?.trim()) {
           todasLasBarberias.push({
             barberia_nombre: item.barberia_nombre.trim(),
             direccion: item.direccion?.trim() || "",
@@ -680,9 +608,8 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
         }
       });
 
-      // Agregar desde clientes
       (clientesData || []).forEach(item => {
-        if (item.negocio && item.negocio.trim()) {
+        if (item.negocio?.trim()) {
           todasLasBarberias.push({
             barberia_nombre: item.negocio.trim(),
             direccion: item.direccion?.trim() || "",
@@ -692,122 +619,61 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
         }
       });
 
-      // Eliminar duplicados basados en nombre (case-insensitive)
+      // Deduplicate by name (case-insensitive) and sort alphabetically
       const uniques = [];
       const seen = new Set();
-      
       todasLasBarberias.forEach(item => {
-        try {
-          const key = item.barberia_nombre.toLowerCase().trim();
-          if (!seen.has(key) && key.length > 0) {
-            seen.add(key);
-            uniques.push(item);
-          }
-        } catch (error) {
-          console.warn("⚠️ Error procesando item:", item, error);
+        const key = item.barberia_nombre.toLowerCase().trim();
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          uniques.push(item);
         }
       });
+      uniques.sort((a, b) => a.barberia_nombre.localeCompare(b.barberia_nombre));
 
-      // Ordenar alfabéticamente
-      uniques.sort((a, b) => {
-        try {
-          return a.barberia_nombre.localeCompare(b.barberia_nombre);
-        } catch (error) {
-          return 0;
-        }
-      });
-
-      console.log("✅ Total de barberías únicas:", uniques.length);
-      console.log("📋 Primeras 10:", uniques.slice(0, 10));
-      
       setBarberiasExistentes(uniques);
-    } catch (error) {
-      console.error("💥 Error general al cargar barberías:", error);
+    } catch {
       setBarberiasExistentes([]);
     }
   }
 
-  // Filtrar sugerencias por nombre
+  // Filter autocomplete suggestions by name
   const handleNombreChange = (value) => {
     setBarberiaNombre(value);
-    
-    if (!value || value.trim().length < 1) {
+    if (!value?.trim()) {
       setSugerenciasNombre([]);
       setMostrarSugerenciasNombre(false);
       return;
     }
-
-    try {
-      const searchTerm = value.toLowerCase().trim();
-      const filtradas = barberiasExistentes.filter(b => {
-        try {
-          return b.barberia_nombre && 
-                 b.barberia_nombre.toLowerCase().includes(searchTerm);
-        } catch (error) {
-          console.warn("⚠️ Error filtrando barbería:", b, error);
-          return false;
-        }
-      });
-
-      console.log("🔍 Buscando:", value, "Encontradas:", filtradas.length, filtradas.slice(0, 5));
-      setSugerenciasNombre(filtradas);
-      setMostrarSugerenciasNombre(filtradas.length > 0);
-    } catch (error) {
-      console.error("💥 Error en handleNombreChange:", error);
-      setSugerenciasNombre([]);
-      setMostrarSugerenciasNombre(false);
-    }
+    const s = value.toLowerCase().trim();
+    const filtradas = barberiasExistentes.filter(b => b.barberia_nombre?.toLowerCase().includes(s));
+    setSugerenciasNombre(filtradas);
+    setMostrarSugerenciasNombre(filtradas.length > 0);
   };
 
-  // Filtrar sugerencias por dirección
+  // Filter autocomplete suggestions by address
   const handleDireccionChange = (value) => {
     setDireccion(value);
-    
-    if (!value || value.trim().length < 1) {
+    if (!value?.trim()) {
       setSugerenciasDireccion([]);
       setMostrarSugerenciasDireccion(false);
       return;
     }
-
-    try {
-      const searchTerm = value.toLowerCase().trim();
-      const filtradas = barberiasExistentes.filter(b => {
-        try {
-          return b.direccion && 
-                 b.direccion.toLowerCase().includes(searchTerm);
-        } catch (error) {
-          console.warn("⚠️ Error filtrando dirección:", b, error);
-          return false;
-        }
-      });
-
-      console.log("🗺️ Buscando dirección:", value, "Encontradas:", filtradas.length);
-      setSugerenciasDireccion(filtradas);
-      setMostrarSugerenciasDireccion(filtradas.length > 0);
-    } catch (error) {
-      console.error("💥 Error en handleDireccionChange:", error);
-      setSugerenciasDireccion([]);
-      setMostrarSugerenciasDireccion(false);
-    }
+    const s = value.toLowerCase().trim();
+    const filtradas = barberiasExistentes.filter(b => b.direccion?.toLowerCase().includes(s));
+    setSugerenciasDireccion(filtradas);
+    setMostrarSugerenciasDireccion(filtradas.length > 0);
   };
 
-  // Seleccionar sugerencia y autocompletar
+  // Select suggestion and autofill form
   const seleccionarBarberia = (barberia) => {
-    try {
-      setBarberiaNombre(barberia.barberia_nombre || "");
-      setDireccion(barberia.direccion || "");
-      setTelefono(barberia.telefono || "");
-      setMostrarSugerenciasNombre(false);
-      setMostrarSugerenciasDireccion(false);
-      
-      // Mostrar feedback de autocompletado
-      setAutocompletado(true);
-      setTimeout(() => setAutocompletado(false), 2000);
-      
-      console.log("✅ Barbería seleccionada:", barberia);
-    } catch (error) {
-      console.error("💥 Error al seleccionar barbería:", error);
-    }
+    setBarberiaNombre(barberia.barberia_nombre || "");
+    setDireccion(barberia.direccion || "");
+    setTelefono(barberia.telefono || "");
+    setMostrarSugerenciasNombre(false);
+    setMostrarSugerenciasDireccion(false);
+    setAutocompletado(true);
+    setTimeout(() => setAutocompletado(false), 2000);
   };
 
   const handleSubmit = async (e) => {
@@ -829,7 +695,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
 
       if (error) throw error;
 
-      // Limpiar formulario
+      // Reset form
       setBarberiaNombre("");
       setDireccion("");
       setTelefono("");
@@ -840,12 +706,11 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
       setMostrarSugerenciasNombre(false);
       setMostrarSugerenciasDireccion(false);
       setAutocompletado(false);
-      
+
       onRefresh();
       onClose();
-    } catch (error) {
-      console.error("Error al guardar barbería:", error);
-      alert("Error saving the barbershop");
+    } catch {
+      toast.error("Error saving the barbershop. Try again.");
     } finally {
       setGuardando(false);
     }
@@ -865,7 +730,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
             className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
             onClick={onClose}
           >
-            ✖
+            <X size={16} />
           </button>
         </div>
 
@@ -915,24 +780,13 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
                 value={barberiaNombre}
                 onChange={(e) => handleNombreChange(e.target.value)}
                 onFocus={() => {
-                  try {
-                    if (barberiaNombre && barberiaNombre.length >= 1 && barberiasExistentes.length > 0) {
-                      const searchTerm = barberiaNombre.toLowerCase().trim();
-                      const filtradas = barberiasExistentes.filter(b => {
-                        try {
-                          return b.barberia_nombre && 
-                                 b.barberia_nombre.toLowerCase().includes(searchTerm);
-                        } catch (error) {
-                          return false;
-                        }
-                      });
-                      if (filtradas.length > 0) {
-                        setSugerenciasNombre(filtradas);
-                        setMostrarSugerenciasNombre(true);
-                      }
+                  if (barberiaNombre?.length >= 1 && barberiasExistentes.length > 0) {
+                    const s = barberiaNombre.toLowerCase().trim();
+                    const filtradas = barberiasExistentes.filter(b => b.barberia_nombre?.toLowerCase().includes(s));
+                    if (filtradas.length > 0) {
+                      setSugerenciasNombre(filtradas);
+                      setMostrarSugerenciasNombre(true);
                     }
-                  } catch (error) {
-                    console.error("Error en onFocus nombre:", error);
                   }
                 }}
                 onBlur={() => setTimeout(() => setMostrarSugerenciasNombre(false), 300)}
@@ -987,9 +841,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
                         )}
                       </div>
                       <div className="text-purple-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
+                        <ChevronRight size={20} />
                       </div>
                     </div>
                   </div>
@@ -1008,24 +860,13 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
                 value={direccion}
                 onChange={(e) => handleDireccionChange(e.target.value)}
                 onFocus={() => {
-                  try {
-                    if (direccion && direccion.length >= 1 && barberiasExistentes.length > 0) {
-                      const searchTerm = direccion.toLowerCase().trim();
-                      const filtradas = barberiasExistentes.filter(b => {
-                        try {
-                          return b.direccion && 
-                                 b.direccion.toLowerCase().includes(searchTerm);
-                        } catch (error) {
-                          return false;
-                        }
-                      });
-                      if (filtradas.length > 0) {
-                        setSugerenciasDireccion(filtradas);
-                        setMostrarSugerenciasDireccion(true);
-                      }
+                  if (direccion?.length >= 1 && barberiasExistentes.length > 0) {
+                    const s = direccion.toLowerCase().trim();
+                    const filtradas = barberiasExistentes.filter(b => b.direccion?.toLowerCase().includes(s));
+                    if (filtradas.length > 0) {
+                      setSugerenciasDireccion(filtradas);
+                      setMostrarSugerenciasDireccion(true);
                     }
-                  } catch (error) {
-                    console.error("Error en onFocus dirección:", error);
                   }
                 }}
                 onBlur={() => setTimeout(() => setMostrarSugerenciasDireccion(false), 300)}
@@ -1073,9 +914,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
                         )}
                       </div>
                       <div className="text-purple-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
+                        <ChevronRight size={20} />
                       </div>
                     </div>
                   </div>
@@ -2051,6 +1890,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
 export default function Dashboard() {
   const { usuario } = useUsuario();
   const { van } = useVan();
+  const { toast, confirm } = useToast();
 
   const { syncing, lastSync, historialBackups, ventasPendientes, syncError, sincronizarAhora } = useSyncGlobal();
 
@@ -2371,8 +2211,12 @@ export default function Dashboard() {
   }
 
   async function eliminarBarberia(id) {
-    if (!confirm("Remove this barbershop from the route?")) return;
-    
+    const ok = await confirm("Remove this barbershop from the route?", {
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
+
     try {
       const { error } = await supabase
         .from("rutas_barberias")
@@ -2399,7 +2243,7 @@ export default function Dashboard() {
 
       if (error) throw error;
       if (!data || data.length === 0) {
-        alert("No hay barberías en la ruta de la semana anterior para copiar.");
+        toast.warning("No barbershops found in last week's route to copy.");
         return;
       }
 
@@ -2419,9 +2263,8 @@ export default function Dashboard() {
       if (insertError) throw insertError;
 
       cargarRutasBarberias(van.id, fechaRutaSeleccionada);
-    } catch (err) {
-      console.error("Error al copiar ruta:", err);
-      alert("Error al copiar la ruta de la semana anterior.");
+    } catch {
+      toast.error("Error copying last week's route. Try again.");
     }
   }
 
@@ -2774,50 +2617,60 @@ export default function Dashboard() {
 
         {/* Métricas Clave */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          <MetricCard
-            title="Daily Average"
-            value={metricas.promedioDiario}
-            unit=""
-            valuePrefix="$"
-            trend={metricas.crecimiento}
-            icon={<IconDollar />}
-            gradientFrom="from-blue-500"
-            gradientTo="to-cyan-500"
-            onClick={() => setShowKpiModal("daily-avg")}
-          />
-          <MetricCard
-            title="Growth"
-            value={metricas.crecimiento}
-            unit="%"
-            trend={metricas.crecimiento}
-            icon={<IconTrending up={metricas.crecimiento > 0} />}
-            gradientFrom={metricas.crecimiento >= 0 ? "from-green-500" : "from-red-500"}
-            gradientTo={metricas.crecimiento >= 0 ? "to-emerald-500" : "to-orange-500"}
-            onClick={() => setShowKpiModal("growth")}
-          />
-          <MetricCard
-            title="Total Debt"
-            value={metricas.totalDeuda}
-            unit=""
-            valuePrefix="$"
-            trend={null}
-            subtitle={metricas.clientesConDeuda > 0 ? `${metricas.clientesConDeuda} clients` : "No debt"}
-            icon={<IconUsers />}
-            gradientFrom={metricas.totalDeuda > 0 ? "from-orange-500" : "from-green-500"}
-            gradientTo={metricas.totalDeuda > 0 ? "to-red-500" : "to-emerald-500"}
-            onClick={() => setShowKpiModal("debt")}
-          />
-          <MetricCard
-            title="Active Clients"
-            value={metricas.clientesUnicos}
-            unit=""
-            trend={null}
-            subtitle={`in ${rangeDays} days`}
-            icon={<IconAlert />}
-            gradientFrom="from-purple-500"
-            gradientTo="to-pink-500"
-            onClick={() => setShowKpiModal("clients")}
-          />
+          {loading ? (
+            <>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </>
+          ) : null}
+          {!loading && <>
+            <MetricCard
+              title="Daily Average"
+              value={metricas.promedioDiario}
+              unit=""
+              valuePrefix="$"
+              trend={metricas.crecimiento}
+              icon={<IconDollar />}
+              gradientFrom="from-blue-500"
+              gradientTo="to-cyan-500"
+              onClick={() => setShowKpiModal("daily-avg")}
+            />
+            <MetricCard
+              title="Growth"
+              value={metricas.crecimiento}
+              unit="%"
+              trend={metricas.crecimiento}
+              icon={<IconTrending up={metricas.crecimiento > 0} />}
+              gradientFrom={metricas.crecimiento >= 0 ? "from-green-500" : "from-red-500"}
+              gradientTo={metricas.crecimiento >= 0 ? "to-emerald-500" : "to-orange-500"}
+              onClick={() => setShowKpiModal("growth")}
+            />
+            <MetricCard
+              title="Total Debt"
+              value={metricas.totalDeuda}
+              unit=""
+              valuePrefix="$"
+              trend={null}
+              subtitle={metricas.clientesConDeuda > 0 ? `${metricas.clientesConDeuda} clients` : "No debt"}
+              icon={<IconUsers />}
+              gradientFrom={metricas.totalDeuda > 0 ? "from-orange-500" : "from-green-500"}
+              gradientTo={metricas.totalDeuda > 0 ? "to-red-500" : "to-emerald-500"}
+              onClick={() => setShowKpiModal("debt")}
+            />
+            <MetricCard
+              title="Active Clients"
+              value={metricas.clientesUnicos}
+              unit=""
+              trend={null}
+              subtitle={`in ${rangeDays} days`}
+              icon={<IconAlert />}
+              gradientFrom="from-purple-500"
+              gradientTo="to-pink-500"
+              onClick={() => setShowKpiModal("clients")}
+            />
+          </>}
         </div>
 
         {/* Resumen Rápido con Sparklines — clickable detail modals */}

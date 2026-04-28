@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabaseClient";
+import { useToast } from "./hooks/useToast";
 import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import { usePermisos } from "./hooks/usePermisos";
@@ -518,8 +519,7 @@ async function sendSmsIfPossible({ phone, text }) {
   } catch {
     try {
       await navigator.clipboard.writeText(text);
-      alert("SMS preparado. Abre tu app de Mensajes y pega el texto.");
-      return { ok: true, copied: true };
+      return { ok: true, copied: true }; // caller shows toast
     } catch {
       return { ok: false, reason: "popup_blocked_and_clipboard_failed" };
     }
@@ -549,23 +549,26 @@ async function sendEmailSmart({ to, subject, html, text }) {
   if (!w && text) {
     try {
       await navigator.clipboard.writeText(text);
-      alert("Email copiado. Abre tu correo y pega el contenido.");
-      return { ok: true, via: "mailto-copy" };
+      return { ok: true, via: "mailto-copy" }; // caller shows toast
     } catch {
       return { ok: false, reason: "mailto_failed_and_clipboard_failed" };
     }
   }
   return { ok: true, via: "mailto" };
 }
-async function askChannel({ hasPhone, hasEmail }) {
+async function askChannel({ hasPhone, hasEmail, confirmFn }) {
   if (!hasPhone && !hasEmail) return null;
-  if (hasPhone && !hasEmail) return window.confirm("¿Enviar recibo por SMS?") ? "sms" : null;
-  if (!hasEmail && hasPhone === false) return null;
-  if (!hasPhone && hasEmail) return window.confirm("¿Enviar recibo por Email?") ? "email" : null;
-  const ans = (window.prompt("¿Cómo quieres enviar el recibo? (sms / email)", "sms") || "").trim().toLowerCase();
-  if (ans === "sms" && hasPhone) return "sms";
-  if (ans === "email" && hasEmail) return "email";
-  return null;
+  if (hasPhone && !hasEmail) {
+    const ok = await confirmFn("Send receipt via SMS?", { confirmLabel: "Send SMS" });
+    return ok ? "sms" : null;
+  }
+  if (!hasPhone && hasEmail) {
+    const ok = await confirmFn("Send receipt via Email?", { confirmLabel: "Send Email" });
+    return ok ? "email" : null;
+  }
+  // Both available — default to SMS
+  const ok = await confirmFn("Send receipt via SMS?", { confirmLabel: "Send SMS", cancelLabel: "Skip" });
+  return ok ? "sms" : null;
 }
 function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, prevBalance, newBalance, pointOfSaleName }) {
   const lines = [];
@@ -581,20 +584,25 @@ function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, pr
   lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
   return lines.join("\n");
 }
-async function requestAndSendPaymentReceipt({ client, payload }) {
+async function requestAndSendPaymentReceipt({ client, payload, confirmFn, toastFn }) {
   const hasPhone = !!client?.telefono;
   const hasEmail = !!client?.email;
   if (!hasPhone && !hasEmail) return;
 
-  const wants = await askChannel({ hasPhone, hasEmail });
+  const wants = await askChannel({ hasPhone, hasEmail, confirmFn });
   if (!wants) return;
 
   const subject = `${COMPANY_NAME} — Payment ${new Date().toLocaleDateString()}`;
   const text = composePaymentMessageEN(payload);
   const html = text;
 
-  if (wants === "sms") await sendSmsIfPossible({ phone: client.telefono, text });
-  else if (wants === "email") await sendEmailSmart({ to: client.email, subject, html, text });
+  if (wants === "sms") {
+    const res = await sendSmsIfPossible({ phone: client.telefono, text });
+    if (res?.copied) toastFn?.info("Text copied — open your Messages app and paste.");
+  } else if (wants === "email") {
+    const res = await sendEmailSmart({ to: client.email, subject, html, text });
+    if (res?.via === "mailto-copy") toastFn?.info("Email copied — open your email app and paste.");
+  }
 }
 
 const TRANSFER_SUBS = [
@@ -607,6 +615,7 @@ const TRANSFER_SUBS = [
 /* -------------------- COMPONENTE PRINCIPAL -------------------- */
 export default function Clientes() {
   const { puedeEliminarClientes } = usePermisos();
+  const { toast, confirm } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -1014,7 +1023,9 @@ const fetchPage = async (opts = {}) => {
   }
 
   async function handleEliminar(cliente) {
-    if (!cliente || !window.confirm("Delete this client?")) return;
+    if (!cliente) return;
+    const ok = await confirm("Delete this client?", { confirmLabel: "Delete", danger: true });
+    if (!ok) return;
     setIsLoading(true);
     const { error } = await supabase.from("clientes").delete().eq("id", cliente.id);
     if (error) setMensaje("Error deleting: " + error.message);
@@ -2441,12 +2452,12 @@ let restante = pago;
 
     // Mostrar confirmación si hay fee
     if (applyCardFee) {
-      const confirmed = window.confirm(
-        `💳 Card Fee Applied:\n\n` +
-        `Base amount: ${fmtSafe(amount)}\n` +
-        `Card fee (${cardFeePercentage}%): ${fmtSafe(feeAmount)}\n` +
-        `Total to charge: ${fmtSafe(totalAmount)}\n\n` +
-        `Continue?`
+      const confirmed = await confirm(
+        `Card fee of ${cardFeePercentage}% will be applied.`,
+        {
+          detail: `Base: ${fmtSafe(amount)} + Fee: ${fmtSafe(feeAmount)} = Total: ${fmtSafe(totalAmount)}`,
+          confirmLabel: "Continue",
+        }
       );
       if (!confirmed) return;
     }
@@ -2715,7 +2726,7 @@ let restante = pago;
         prevBalance: saldoActualUI,
         newBalance: saldoDespues,
       };
-      try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload }); } catch {}
+      try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload, confirmFn: confirm, toastFn: toast }); } catch {}
 
       // cerrar el modal
       setTimeout(() => {

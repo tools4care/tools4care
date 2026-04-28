@@ -1,4 +1,4 @@
-import {} from "react";
+// React JSX transform handled by @vitejs/plugin-react — no explicit import needed here
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import UsuariosAdmin from "./pages/UsuariosAdmin";
 import Sidebar from "./Sidebar";

@@ -40,6 +40,7 @@ import {
   CreditCard,
   Printer,
 } from "lucide-react";
+import { useToast } from "./hooks/useToast";
 
 /* ========================= Gastos Conductor ========================= */
 const EXPENSE_CATEGORIES_VAN = [
@@ -119,6 +120,7 @@ export default function CierreVan() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const navigate = useNavigate();
+  const { toast } = useToast();
   // ============================
   // Cargar transacciones reales
   // ============================
@@ -684,7 +686,7 @@ useEffect(() => {
       setEmailSent(true);
     } catch (e) {
       console.error("Email error:", e);
-      alert("Error sending email: " + e.message);
+      toast.error("Error sending email: " + e.message);
     } finally {
       setSendingEmail(false);
     }
