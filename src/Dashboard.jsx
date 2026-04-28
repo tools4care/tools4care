@@ -22,7 +22,7 @@ import {
 } from "recharts";
 import {
   DollarSign, TrendingUp, TrendingDown, ShoppingCart, Users,
-  AlertTriangle, Package, Clock, Map, Check, Plus, Pencil,
+  AlertTriangle, Package, Clock, Map as MapIcon, Check, Plus, Pencil,
   Trash2, Phone, MapPin, Search, ChevronRight, X,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
@@ -87,7 +87,7 @@ const IconUsers       = () => <Users        size={24} />;
 const IconAlert       = () => <AlertTriangle size={24} />;
 const IconPackage     = () => <Package      size={24} />;
 const IconClock       = () => <Clock        size={20} />;
-const IconMap         = () => <Map          size={24} />;
+const IconMap         = () => <MapIcon       size={24} />;
 const IconCheck       = () => <Check        size={20} />;
 const IconPlus        = () => <Plus         size={20} />;
 const IconEdit        = () => <Pencil       size={20} />;
