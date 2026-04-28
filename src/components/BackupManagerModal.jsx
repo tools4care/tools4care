@@ -1,13 +1,13 @@
 // src/components/BackupManagerModal.jsx
-// Modal para gestión completa de backups locales:
-//  - Ver backups guardados (hasta 7)
-//  - Descargar backup como JSON
-//  - Restaurar backup existente a los caches locales
-//  - Importar un archivo JSON de backup externo
+// Modal para gestión completa de backups:
+//  - Backups locales (IndexedDB / offline cache)
+//  - Backup completo de Supabase → descarga JSON
+//  - Restaurar Supabase desde archivo JSON
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import localforage from 'localforage';
 import { useToast } from '../hooks/useToast';
+import { supabase } from '../supabaseClient';
 import {
   obtenerBackupsGuardados,
   exportarBackup,
@@ -16,6 +16,51 @@ import {
   crearBackupManual,
   limpiarBackupsAntiguos,
 } from '../utils/backupManager';
+
+// ── Tablas a respaldar (en orden de dependencias) ─────────────
+const BACKUP_TABLES = [
+  'vans','usuarios','usuarios_vans',
+  'clientes','productos','stock_van','stock_almacen',
+  'suplidores','ordenes_compra','abonos_compra',
+  'ventas','detalle_ventas','pagos','devoluciones',
+  'cierres_van','cierres_dia','facturas_ext',
+  'movimientos_stock','gastos_conductor',
+  'acuerdos_pago','cuotas_acuerdo',
+  'cxc_movimientos','cxc_pagos',
+  'rutas_barberias',
+  'subscription_planes','subscription_clientes','subscription_entregas',
+  'configuraciones_comisiones','comisiones_calculadas',
+  'discount_codes','site_settings',
+];
+
+async function fetchTableAll(table) {
+  const PAGE = 1000;
+  let page = 0, all = [];
+  while (true) {
+    const { data, error } = await supabase
+      .from(table).select('*')
+      .range(page * PAGE, (page + 1) * PAGE - 1);
+    if (error) {
+      if (error.code === 'PGRST116' || error.message?.includes('does not exist')) return null;
+      throw new Error(error.message);
+    }
+    if (!data?.length) break;
+    all = all.concat(data);
+    if (data.length < PAGE) break;
+    page++;
+  }
+  return all;
+}
+
+function downloadJSON(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 // ==================== HELPERS ====================
 
@@ -436,10 +481,290 @@ function TabImportarArchivo({ onRefresh }) {
   );
 }
 
+// ==================== TAB: BACKUP SUPABASE ====================
+
+function TabSupabase() {
+  const { toast } = useToast();
+  const fileRef = useRef(null);
+
+  // ── Export state ──
+  const [running,   setRunning]   = useState(false);
+  const [progress,  setProgress]  = useState([]); // [{ table, status, count }]
+  const [done,      setDone]      = useState(false);
+  const [backupObj, setBackupObj] = useState(null);
+
+  // ── Restore state ──
+  const [restoreFile,    setRestoreFile]    = useState(null);
+  const [restorePreview, setRestorePreview] = useState(null);
+  const [restoring,      setRestoring]      = useState(false);
+  const [restoreLog,     setRestoreLog]     = useState([]);
+  const [restoreDone,    setRestoreDone]    = useState(false);
+  const [dragging,       setDragging]       = useState(false);
+
+  // ── Export ────────────────────────────────────────────────
+  const handleExport = async () => {
+    setRunning(true);
+    setDone(false);
+    setBackupObj(null);
+    setProgress(BACKUP_TABLES.map(t => ({ table: t, status: 'pending', count: 0 })));
+
+    const result = { version: '1.0', createdAt: new Date().toISOString(), tables: {} };
+
+    for (let i = 0; i < BACKUP_TABLES.length; i++) {
+      const table = BACKUP_TABLES[i];
+      setProgress(p => p.map(r => r.table === table ? { ...r, status: 'loading' } : r));
+      try {
+        const rows = await fetchTableAll(table);
+        if (rows === null) {
+          setProgress(p => p.map(r => r.table === table ? { ...r, status: 'skipped', count: 0 } : r));
+        } else {
+          result.tables[table] = rows;
+          setProgress(p => p.map(r => r.table === table ? { ...r, status: 'ok', count: rows.length } : r));
+        }
+      } catch (err) {
+        setProgress(p => p.map(r => r.table === table ? { ...r, status: 'error', count: 0 } : r));
+      }
+    }
+
+    setBackupObj(result);
+    setRunning(false);
+    setDone(true);
+    toast.success('Backup completado — listo para descargar');
+  };
+
+  const handleDownload = () => {
+    if (!backupObj) return;
+    const fecha = new Date().toISOString().slice(0, 10);
+    downloadJSON(backupObj, `tools4care-backup-${fecha}.json`);
+    toast.success('Archivo descargado');
+  };
+
+  // ── Restore ───────────────────────────────────────────────
+  const handleFileDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processRestoreFile(file);
+  };
+
+  const processRestoreFile = (file) => {
+    if (!file.name.endsWith('.json')) {
+      toast.error('Solo se aceptan archivos .json');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!data.version || !data.tables) throw new Error('Formato inválido');
+        const tableNames = Object.keys(data.tables);
+        const totalRows  = tableNames.reduce((s, t) => s + (data.tables[t]?.length || 0), 0);
+        setRestoreFile(file);
+        setRestorePreview({ data, tableNames, totalRows, createdAt: data.createdAt });
+        setRestoreLog([]);
+        setRestoreDone(false);
+      } catch {
+        toast.error('Archivo no válido — usa un backup generado por este sistema');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleRestore = async () => {
+    if (!restorePreview?.data) return;
+    setRestoring(true);
+    setRestoreLog([]);
+    const { tables } = restorePreview.data;
+    const log = [];
+
+    for (const table of BACKUP_TABLES) {
+      const rows = tables[table];
+      if (!rows?.length) continue;
+
+      // Upsert en chunks de 200
+      const CHUNK = 200;
+      let ok = true;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const { error } = await supabase
+          .from(table)
+          .upsert(rows.slice(i, i + CHUNK), { onConflict: 'id', ignoreDuplicates: false });
+        if (error) {
+          log.push({ table, status: 'error', msg: error.message });
+          ok = false;
+          break;
+        }
+      }
+      if (ok) log.push({ table, status: 'ok', count: rows.length });
+      setRestoreLog([...log]);
+    }
+
+    setRestoring(false);
+    setRestoreDone(true);
+    const errors = log.filter(l => l.status === 'error').length;
+    if (errors === 0) toast.success('Restauración completa ✅');
+    else toast.warning(`Restauración con ${errors} errores — revisa el detalle`);
+  };
+
+  const resetRestore = () => {
+    setRestoreFile(null);
+    setRestorePreview(null);
+    setRestoreLog([]);
+    setRestoreDone(false);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const totalRows = done && backupObj
+    ? Object.values(backupObj.tables).reduce((s, r) => s + r.length, 0)
+    : 0;
+
+  return (
+    <div className="space-y-6">
+
+      {/* ── SECCIÓN EXPORT ── */}
+      <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="font-bold text-gray-800">📥 Crear backup completo</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Descarga todos los datos de Supabase como archivo JSON</p>
+          </div>
+          {done && backupObj && (
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-4 py-2 rounded-xl transition-all"
+            >
+              ⬇️ Descargar JSON
+            </button>
+          )}
+        </div>
+
+        {!running && !done && (
+          <button
+            onClick={handleExport}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all"
+          >
+            🚀 Iniciar backup
+          </button>
+        )}
+
+        {(running || done) && (
+          <div className="mt-2 space-y-1 max-h-52 overflow-y-auto pr-1">
+            {progress.map(({ table, status, count }) => (
+              <div key={table} className="flex items-center justify-between text-xs py-0.5">
+                <span className={`font-mono ${status === 'skipped' ? 'text-gray-300' : 'text-gray-600'}`}>
+                  {table}
+                </span>
+                <span className={
+                  status === 'ok'      ? 'text-green-600 font-semibold' :
+                  status === 'error'   ? 'text-red-500' :
+                  status === 'loading' ? 'text-blue-500 animate-pulse' :
+                  status === 'skipped' ? 'text-gray-300' :
+                  'text-gray-300'
+                }>
+                  {status === 'ok'      ? `✓ ${count} filas` :
+                   status === 'error'   ? '✗ error' :
+                   status === 'loading' ? '⏳ leyendo...' :
+                   status === 'skipped' ? '— omitida' : '•'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {done && (
+          <div className="mt-3 flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700 font-semibold">
+            ✅ {totalRows.toLocaleString()} filas respaldadas en {Object.keys(backupObj.tables).length} tablas
+            <button onClick={handleDownload} className="ml-auto underline text-green-800 text-xs">
+              Descargar de nuevo
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── SECCIÓN RESTORE ── */}
+      <div className="rounded-2xl border border-amber-100 bg-amber-50/30 p-5">
+        <h3 className="font-bold text-gray-800 mb-1">📤 Restaurar desde archivo</h3>
+        <p className="text-xs text-gray-500 mb-4">Sube un JSON generado por este sistema para restaurar los datos</p>
+
+        {!restorePreview && (
+          <>
+            <div
+              onDragOver={e => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleFileDrop}
+              onClick={() => fileRef.current?.click()}
+              className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-all ${
+                dragging ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300 hover:bg-amber-50/40'
+              }`}
+            >
+              <div className="text-4xl mb-2">📂</div>
+              <p className="font-semibold text-gray-700 text-sm">Arrastra el archivo aquí</p>
+              <p className="text-xs text-gray-400 mt-1">o haz clic para seleccionar</p>
+            </div>
+            <input ref={fileRef} type="file" accept=".json" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) processRestoreFile(f); }} />
+          </>
+        )}
+
+        {restorePreview && !restoreDone && (
+          <div className="space-y-3">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm">
+              <p className="font-bold text-gray-800 mb-2">📋 Archivo: {restoreFile?.name}</p>
+              <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                <span>📅 Creado: {restorePreview.createdAt ? new Date(restorePreview.createdAt).toLocaleString('es-MX') : '—'}</span>
+                <span>📊 {restorePreview.totalRows.toLocaleString()} filas en {restorePreview.tableNames.length} tablas</span>
+              </div>
+            </div>
+            <div className="bg-amber-100 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800">
+              ⚠️ Esto hace <strong>upsert</strong> — actualiza registros existentes y agrega los faltantes. <strong>No elimina</strong> datos nuevos.
+            </div>
+            {restoring && (
+              <div className="max-h-32 overflow-y-auto space-y-0.5">
+                {restoreLog.map((l, i) => (
+                  <div key={i} className={`text-xs flex justify-between ${l.status === 'error' ? 'text-red-500' : 'text-green-600'}`}>
+                    <span className="font-mono">{l.table}</span>
+                    <span>{l.status === 'ok' ? `✓ ${l.count} filas` : `✗ ${l.msg}`}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={resetRestore} disabled={restoring}
+                className="flex-1 text-sm font-semibold py-2 rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all disabled:opacity-40">
+                Cancelar
+              </button>
+              <button onClick={handleRestore} disabled={restoring}
+                className="flex-1 text-sm font-bold py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-all disabled:opacity-40">
+                {restoring ? '⏳ Restaurando...' : '🔄 Restaurar ahora'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {restoreDone && (
+          <div className="space-y-2">
+            <div className="max-h-40 overflow-y-auto space-y-0.5">
+              {restoreLog.map((l, i) => (
+                <div key={i} className={`text-xs flex justify-between ${l.status === 'error' ? 'text-red-500' : 'text-green-600'}`}>
+                  <span className="font-mono">{l.table}</span>
+                  <span>{l.status === 'ok' ? `✓ ${l.count} filas` : `✗ ${l.msg}`}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={resetRestore}
+              className="w-full text-sm font-semibold py-2 rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all">
+              Restaurar otro archivo
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ==================== MODAL PRINCIPAL ====================
 
 export default function BackupManagerModal({ open, onClose, vanId, vanNombre, usuarioId }) {
-  const [tab, setTab]       = useState('backups'); // 'backups' | 'importar'
+  const [tab, setTab]       = useState('supabase'); // 'supabase' | 'backups' | 'importar'
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleRefresh = () => setRefreshKey(k => k + 1);
@@ -471,45 +796,44 @@ export default function BackupManagerModal({ open, onClose, vanId, vanNombre, us
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 px-6 pt-3 pb-0">
+        <div className="flex gap-1 px-4 pt-3 pb-0">
           <button
-            onClick={() => setTab('backups')}
-            className={`flex-1 text-sm font-semibold py-2 rounded-xl transition-all ${
-              tab === 'backups'
-                ? 'bg-sky-100 text-sky-700'
-                : 'text-gray-500 hover:bg-gray-100'
+            onClick={() => setTab('supabase')}
+            className={`flex-1 text-xs font-semibold py-2 rounded-xl transition-all ${
+              tab === 'supabase' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-100'
             }`}
           >
-            📋 Backups guardados
+            ☁️ Supabase
+          </button>
+          <button
+            onClick={() => setTab('backups')}
+            className={`flex-1 text-xs font-semibold py-2 rounded-xl transition-all ${
+              tab === 'backups' ? 'bg-sky-100 text-sky-700' : 'text-gray-500 hover:bg-gray-100'
+            }`}
+          >
+            📋 Caché local
           </button>
           <button
             onClick={() => setTab('importar')}
-            className={`flex-1 text-sm font-semibold py-2 rounded-xl transition-all ${
-              tab === 'importar'
-                ? 'bg-amber-100 text-amber-700'
-                : 'text-gray-500 hover:bg-gray-100'
+            className={`flex-1 text-xs font-semibold py-2 rounded-xl transition-all ${
+              tab === 'importar' ? 'bg-amber-100 text-amber-700' : 'text-gray-500 hover:bg-gray-100'
             }`}
           >
-            📂 Importar archivo
+            📂 Importar
           </button>
         </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          {tab === 'backups' ? (
+          {tab === 'supabase' && <TabSupabase key={refreshKey} />}
+          {tab === 'backups'  && (
             <TabBackupsGuardados
               key={refreshKey}
-              vanId={vanId}
-              vanNombre={vanNombre}
-              usuarioId={usuarioId}
-              onRefresh={handleRefresh}
-            />
-          ) : (
-            <TabImportarArchivo
-              key={refreshKey}
+              vanId={vanId} vanNombre={vanNombre} usuarioId={usuarioId}
               onRefresh={handleRefresh}
             />
           )}
+          {tab === 'importar' && <TabImportarArchivo key={refreshKey} onRefresh={handleRefresh} />}
         </div>
       </div>
     </div>

@@ -9,8 +9,11 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron": "electron .",
-    "dist": "electron-builder"
+    "electron:dev": "NODE_ENV=development electron .",
+    "electron:build": "BUILD_TARGET=electron vite build && electron .",
+    "electron:dist": "BUILD_TARGET=electron vite build && electron-builder",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js"
   },
   "dependencies": {
     "@babel/core": "^7.28.5",
