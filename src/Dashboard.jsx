@@ -1972,6 +1972,7 @@ export default function Dashboard() {
 
   async function cargarDatos(vanId, days) {
     setLoading(true);
+    try {
     const desde = dayjs().subtract(days - 1, "day").startOf("day").format("YYYY-MM-DD");
     const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
 
@@ -2059,7 +2060,11 @@ export default function Dashboard() {
         .slice(0, 10);
     }
     setProductosTop(top);
-    setLoading(false);
+    } catch (err) {
+      console.error("💥 Error cargarDatos:", err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function cargarStockVan(van_id) {
