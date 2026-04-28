@@ -47,10 +47,6 @@ function rangeDaysArray(days) {
   }
   return arr;
 }
-function dinero(n) {
-  return "$" + Number(n || 0).toFixed(2);
-}
-
 function withMA(data, key = "total", windowSize = 7) {
   const out = [];
   let sum = 0;
@@ -468,7 +464,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                 {metodosAplicados.map((m, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-white rounded-lg px-4 py-3 border border-gray-200">
                     <span className="capitalize font-semibold text-gray-700">{m.forma || "—"}</span>
-                    <span className="font-bold text-lg text-blue-600">{dinero(m.monto || 0)}</span>
+                    <span className="font-bold text-lg text-blue-600">{fmtMoney(m.monto || 0)}</span>
                   </div>
                 ))}
               </div>
@@ -497,12 +493,12 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                           <div className="font-bold text-gray-900 text-lg">{p.nombre || p.producto_id}</div>
                           <div className="text-xs text-gray-500 font-mono mt-1">{p.codigo || p.producto_id}</div>
                           <div className="text-sm text-gray-600 mt-2">
-                            Quantity: <span className="font-semibold">{p.cantidad}</span> × {dinero(unit)}
+                            Quantity: <span className="font-semibold">{p.cantidad}</span> × {fmtMoney(unit)}
                           </div>
                         </div>
                         <div className="text-right">
                           <div className="text-xs text-gray-500 mb-1">Subtotal</div>
-                          <div className="font-bold text-xl text-gray-900">{dinero(sub)}</div>
+                          <div className="font-bold text-xl text-gray-900">{fmtMoney(sub)}</div>
                         </div>
                       </div>
                     </div>
@@ -512,7 +508,7 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
                 {/* Total de productos */}
                 <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 flex justify-between items-center text-white shadow-lg">
                   <span className="font-bold text-lg">Products Subtotal:</span>
-                  <span className="font-bold text-2xl">{dinero(totalProductos)}</span>
+                  <span className="font-bold text-2xl">{fmtMoney(totalProductos)}</span>
                 </div>
               </div>
             )}
@@ -1217,7 +1213,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
           {type === "daily-avg" && <>
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">📅 Daily Revenue</h4>
-              <div className="h-48">
+              <div className="h-48 min-h-[192px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={ventasSerie} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
@@ -1238,7 +1234,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
 
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">📈 Cumulative Revenue</h4>
-              <div className="h-40">
+              <div className="h-40 min-h-[160px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={serieWithCumul} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                     <defs>
@@ -1278,7 +1274,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
           {type === "growth" && <>
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">📊 Period Comparison</h4>
-              <div className="h-48">
+              <div className="h-48 min-h-[192px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={[
@@ -1299,7 +1295,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
 
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">📅 Weekly Revenue</h4>
-              <div className="h-40">
+              <div className="h-40 min-h-[160px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={weekData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                     <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
@@ -1378,7 +1374,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
                 {/* Gráfica de distribución */}
                 <div className="bg-gray-50 rounded-2xl p-4">
                   <h4 className="font-bold text-gray-700 mb-3 text-sm">📊 Distribución de Deuda</h4>
-                  <div style={{ height: Math.max(160, deudaReal.top.slice(0,5).length * 36) }}>
+                  <div style={{ height: Math.max(160, deudaReal.top.slice(0,5).length * 36), minHeight: 160 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
                         data={deudaReal.top.slice(0, 5).map(d => ({ ...d, nombre: d.nombre.split(" ")[0] }))}
@@ -1409,7 +1405,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
           {type === "clients" && <>
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">📅 Daily Active Clients</h4>
-              <div className="h-44">
+              <div className="h-44 min-h-[176px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={ventasSerie.map(d => {
@@ -1644,7 +1640,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
             {/* Revenue chart */}
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">Daily Revenue</h4>
-              <div className="h-44">
+              <div className="h-44 min-h-[176px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={ventasSerie} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
@@ -1683,7 +1679,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
               <div className="bg-gray-50 rounded-2xl p-4">
                 <h4 className="font-bold text-gray-700 mb-3 text-sm">💳 Payment Status Breakdown</h4>
                 <div className="flex items-center gap-4">
-                  <div className="w-32 h-32 shrink-0">
+                  <div className="w-32 h-32 min-h-[128px] shrink-0">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie data={payBreakdown} dataKey="value" cx="50%" cy="50%" innerRadius={30} outerRadius={55} paddingAngle={3}>
@@ -1714,7 +1710,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
             {/* Orders per day chart */}
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">Daily Orders</h4>
-              <div className="h-44">
+              <div className="h-44 min-h-[176px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={ventasSerie} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
@@ -1797,7 +1793,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
             {/* Average ticket trend */}
             <div className="bg-gray-50 rounded-2xl p-4">
               <h4 className="font-bold text-gray-700 mb-3 text-sm">Avg Ticket Trend</h4>
-              <div className="h-44">
+              <div className="h-44 min-h-[176px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={ventasSerie.map(d => ({
@@ -2812,7 +2808,7 @@ export default function Dashboard() {
               </div>
 
               {/* Chart */}
-              <div className="relative z-10 px-2 pb-2 h-80 sm:h-96">
+              <div className="relative z-10 px-2 pb-2 h-80 sm:h-96 min-h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                     <defs>
