@@ -16,4 +16,20 @@ export default defineConfig({
       '/openapi.json':{ target: API_TARGET, changeOrigin: true },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('recharts') || id.includes('d3-') || id.includes('victory')) return 'charts';
+            if (id.includes('@supabase')) return 'supabase';
+            if (id.includes('lucide')) return 'icons';
+            if (id.includes('react-dom') || id.includes('react-router')) return 'react-vendor';
+            if (id.includes('localforage') || id.includes('idb')) return 'storage';
+            return 'vendor';
+          }
+        }
+      }
+    }
+  },
 })

@@ -1,19 +1,20 @@
 // React JSX transform handled by @vitejs/plugin-react — no explicit import needed here
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import UsuariosAdmin from "./pages/UsuariosAdmin";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
 import Login from "./Login";
 import VanSelector from "./components/VanSelector";
-import Dashboard from "./Dashboard";
-import Clientes from "./Clientes";
+const Dashboard = lazy(() => import("./Dashboard"));
+const Clientes = lazy(() => import("./Clientes"));
 import Productos from "./Productos";
-import Inventario from "./Inventario";
-import Ventas from "./Ventas";
+const Inventario = lazy(() => import("./Inventario"));
+const Ventas = lazy(() => import("./Ventas"));
 import CierreVan from "./CierreVan";
 import PreCierreVan from "./PreCierreVan";
 import Facturas from "./Facturas";
-import CuentasPorCobrar from "./CuentasPorCobrar.jsx";
+const CuentasPorCobrar = lazy(() => import("./CuentasPorCobrar.jsx"));
 import CreditoSimulador from "./CreditoSimulador";
 
 // === Online ===
@@ -48,10 +49,10 @@ import Suplidores from "./Suplidores";
 import ComisionesPage from './pages/ComisionesPage';
 
 // 📊 Reportes (NUEVO)
-import Reportes from './Reportes';
+const Reportes = lazy(() => import('./Reportes'));
 
 // 📦 Suscripciones
-import Suscripciones from './Suscripciones';
+const Suscripciones = lazy(() => import('./Suscripciones'));
 
 // 🧾 Tax / Impuestos
 import TaxConfig from './pages/TaxConfig'
@@ -258,6 +259,7 @@ export default function App() {
     <ToastProvider>
     <UsuarioProvider>
       <VanProvider>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>}>
         <Routes>
           {/* --- Público: tienda --- */}
           <Route path="/storefront" element={<Storefront />} />
@@ -347,6 +349,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>
+        </Suspense>
       </VanProvider>
     </UsuarioProvider>
     </ToastProvider>
