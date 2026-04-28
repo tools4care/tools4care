@@ -1,5 +1,6 @@
 // CxcDashboard.jsx
 import React from "react";
+import { useToast } from "../hooks/useToast";
 
 const currency = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n || 0));
@@ -89,14 +90,15 @@ const normalizePhone = (raw) => {
   if (digits.length === 10) return `+1${digits}`;
   return digits.startsWith("+") ? digits : `+${digits}`;
 };
-const openWhatsAppWith = (telefono, texto) => {
+const openWhatsAppWith = (telefono, texto, toastFn) => {
   const to = normalizePhone(telefono);
-  if (!to) { alert("Este cliente no tiene teléfono válido."); return; }
+  if (!to) { toastFn?.("Este cliente no tiene teléfono válido."); return; }
   const url = `https://wa.me/${to.replace("+","")}?text=${encodeURIComponent(texto || "")}`;
   window.open(url, "_blank");
 };
 
 function DetalleCliente({ api, cliente, onClose }) {
+  const { toast } = useToast();
   const { data: detalle, loading, error, run } = useFetch();
   const { data: recData, run: runRec } = useFetch();
   const [mensaje, setMensaje] = React.useState("");
@@ -121,8 +123,8 @@ function DetalleCliente({ api, cliente, onClose }) {
   }, [recData]);
 
   const copyToClipboard = async () => {
-    try { await navigator.clipboard.writeText(mensaje || ""); alert("Message copied ✅"); }
-    catch { alert("No se pudo copiar automáticamente."); }
+    try { await navigator.clipboard.writeText(mensaje || ""); toast.success("Message copied"); }
+    catch { toast.error("No se pudo copiar automáticamente."); }
   };
 
   return (
@@ -184,7 +186,7 @@ function DetalleCliente({ api, cliente, onClose }) {
                 <textarea className="w-full border rounded-lg p-2 text-sm h-28" value={mensaje} onChange={e=>setMensaje(e.target.value)} />
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button onClick={copyToClipboard} className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm">Copiar</button>
-                  <button onClick={() => openWhatsAppWith(recData?.telefono, mensaje)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm">WhatsApp</button>
+                  <button onClick={() => openWhatsAppWith(recData?.telefono, mensaje, toast.warning)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm">WhatsApp</button>
                 </div>
                 <div className="mt-2 text-xs text-slate-500">
                   Total: {currency(recData?.saldo_total)} • Tel: {recData?.telefono || "—"}

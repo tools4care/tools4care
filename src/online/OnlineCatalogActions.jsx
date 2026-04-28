@@ -1,6 +1,7 @@
 // src/online/OnlineCatalogActions.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { useToast } from "../hooks/useToast";
 
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
 
@@ -82,6 +83,7 @@ function ProductSearch({ onPick, placeholder = "Search product…" }) {
 
 /* ---------- Modal: Agregar producto a VAN Online ---------- */
 function AddStockModal({ open, onClose, onlineVanId, onDone }) {
+  const { toast } = useToast();
   const [picked, setPicked] = useState(null);
   const [qty, setQty] = useState(1);
   const [saving, setSaving] = useState(false);
@@ -100,7 +102,7 @@ function AddStockModal({ open, onClose, onlineVanId, onDone }) {
     if (!picked) return;
     const amount = Number(qty);
     if (!Number.isFinite(amount) || amount <= 0) {
-      alert("Quantity must be a positive number.");
+      toast.warning("Quantity must be a positive number.");
       return;
     }
 
@@ -133,7 +135,7 @@ function AddStockModal({ open, onClose, onlineVanId, onDone }) {
       onDone && onDone();
       onClose && onClose();
     } catch (e) {
-      alert(e?.message || "Could not add stock.");
+      toast.error(e?.message || "Could not add stock.");
     } finally {
       setSaving(false);
     }
@@ -185,6 +187,7 @@ function AddStockModal({ open, onClose, onlineVanId, onDone }) {
 
 /* ---------- Modal: Transferir desde Almacén → Online ---------- */
 function TransferModal({ open, onClose, onlineVanId, onDone }) {
+  const { toast } = useToast();
   const [picked, setPicked] = useState(null);
   const [qty, setQty] = useState(1);
   const [saving, setSaving] = useState(false);
@@ -214,7 +217,7 @@ function TransferModal({ open, onClose, onlineVanId, onDone }) {
     if (!picked) return;
     const amount = Number(qty);
     if (!Number.isFinite(amount) || amount <= 0) {
-      alert("Quantity must be a positive number.");
+      toast.warning("Quantity must be a positive number.");
       return;
     }
 
@@ -265,7 +268,7 @@ function TransferModal({ open, onClose, onlineVanId, onDone }) {
       onDone && onDone();
       onClose && onClose();
     } catch (e) {
-      alert(e?.message || "Could not transfer stock.");
+      toast.error(e?.message || "Could not transfer stock.");
     } finally {
       setSaving(false);
     }

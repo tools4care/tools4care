@@ -1,6 +1,7 @@
 // src/Suplidores.jsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useToast } from "./hooks/useToast";
 
 /* ---------- helpers ---------- */
 function MoneyInput({ value, onChange, ...rest }) {
@@ -38,6 +39,7 @@ function parsePOFromNotes(notas) {
 
 /* ---------- Crear/editar Suplidor (inline, sin <form>) ---------- */
 function CrearSuplidorInline({ onCreated }) {
+  const { toast } = useToast();
   const [f, setF] = useState({
     nombre: "",
     contacto: "",
@@ -87,7 +89,7 @@ function CrearSuplidorInline({ onCreated }) {
     setSaving(false);
 
     if (res.error) {
-      alert(res.error.message || "Error saving supplier.");
+      toast.error(res.error.message || "Error saving supplier.");
       return;
     }
     onCreated?.(res.data);
@@ -191,6 +193,7 @@ function Modal({ open, onClose, title, children }) {
 
 /* ---------- Modal de edición de suplidor ---------- */
 function EditSupplierModal({ open, onClose, supplier, onSaved }) {
+  const { toast } = useToast();
   const [f, setF] = useState({
     nombre: "",
     contacto: "",
@@ -262,7 +265,7 @@ function EditSupplierModal({ open, onClose, supplier, onSaved }) {
     setSaving(false);
 
     if (res.error) {
-      alert(res.error.message || "Error updating supplier.");
+      toast.error(res.error.message || "Error updating supplier.");
       return;
     }
 
@@ -341,6 +344,7 @@ function EditSupplierModal({ open, onClose, supplier, onSaved }) {
 
 /* ---------- Vista de detalle (órdenes/abonos) ---------- */
 function DetalleSuplidor({ suplidor, onBack }) {
+  const { toast } = useToast();
   // mantenemos copia local editable para reflejar cambios sin tocar el padre
   const [sup, setSup] = useState(suplidor);
   useEffect(() => setSup(suplidor), [suplidor]);
@@ -449,7 +453,7 @@ function DetalleSuplidor({ suplidor, onBack }) {
       }
     }
 
-    if (res.error) return alert(res.error.message);
+    if (res.error) { toast.error(res.error.message); return; }
     setOrdenes((prev) => [res.data, ...(prev || [])]);
     setShowNuevaOrden(false);
     setOTotal("");
@@ -472,7 +476,7 @@ function DetalleSuplidor({ suplidor, onBack }) {
       .insert([payload])
       .select()
       .maybeSingle();
-    if (error) return alert(error.message);
+    if (error) { toast.error(error.message); return; }
     setAbonos((prev) => [data, ...(prev || [])]);
     setShowNuevoAbono(false);
     setAMonto("");
@@ -835,6 +839,7 @@ function DetalleSuplidor({ suplidor, onBack }) {
 
 /* ---------- Listado y buscador ---------- */
 export default function Suplidores() {
+  const { toast } = useToast();
   const [busqueda, setBusqueda] = useState("");
   const [suplidores, setSuplidores] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -854,7 +859,7 @@ export default function Suplidores() {
       const { data, error } = await query;
       if (!mounted) return;
       if (error) {
-        alert(error.message);
+        toast.error(error.message);
         setSuplidores([]);
       } else {
         setSuplidores(data || []);

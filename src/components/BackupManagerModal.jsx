@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import localforage from 'localforage';
+import { useToast } from '../hooks/useToast';
 import {
   obtenerBackupsGuardados,
   exportarBackup,
@@ -82,6 +83,7 @@ function ResumenPills({ resumen }) {
 // ==================== TAB: BACKUPS GUARDADOS ====================
 
 function TabBackupsGuardados({ vanId, vanNombre, usuarioId, onRefresh }) {
+  const { confirm } = useToast();
   const [backups, setBackups]         = useState([]);
   const [loading, setLoading]         = useState(true);
   const [exportingId, setExportingId] = useState(null);
@@ -114,10 +116,9 @@ function TabBackupsGuardados({ vanId, vanNombre, usuarioId, onRefresh }) {
     const backup = backups.find(b => b.backup_id === backupId);
     if (!backup) return;
 
-    const confirmar = window.confirm(
-      `¿Restaurar datos desde backup del ${fmtFecha(backup.timestamp)}?\n\n` +
-      `Esto reemplazará los datos locales de clientes, inventario y deudas.\n` +
-      `Las ventas pendientes offline NO serán afectadas.`
+    const confirmar = await confirm(
+      `¿Restaurar datos desde backup del ${fmtFecha(backup.timestamp)}? Esto reemplazará los datos locales de clientes, inventario y deudas. Las ventas pendientes offline NO serán afectadas.`,
+      { confirmLabel: "Restaurar", danger: true }
     );
     if (!confirmar) return;
 

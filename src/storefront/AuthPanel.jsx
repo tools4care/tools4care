@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { supabase } from "../supabaseClient";
+import { useToast } from "../hooks/useToast";
 
 export default function AuthPanel({ open, onClose }) {
+  const { toast } = useToast();
   const [mode, setMode] = useState("login"); // 'login' | 'signup'
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
@@ -22,7 +24,7 @@ export default function AuthPanel({ open, onClose }) {
       } else {
         const { error } = await supabase.auth.signUp({ email, password: pass });
         if (error) throw error;
-        alert("Cuenta creada. Revisa tu correo si te piden confirmación.");
+        toast.success("Cuenta creada. Revisa tu correo si te piden confirmación.");
         onClose?.();
       }
     } catch (e) {

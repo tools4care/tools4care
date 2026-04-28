@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
+import { useToast } from "../hooks/useToast";
 import {
   addToCart,
   ensureCart,
@@ -97,6 +98,7 @@ function Toast({ toasts }) {
 
 /* -------------------- Cart Drawer -------------------- */
 function CartDrawer({ open, onClose }) {
+  const { toast } = useToast();
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -146,7 +148,7 @@ function CartDrawer({ open, onClose }) {
       // Calling refresh() was causing a loading flicker on every quantity change.
     } catch (e) {
       setLines(prev);
-      alert(e?.message || "Could not update quantity.");
+      toast.error(e?.message || "Could not update quantity.");
     }
   }
 
@@ -157,7 +159,7 @@ function CartDrawer({ open, onClose }) {
       await removeCartItem(productoId);
     } catch (e) {
       setLines(prev);
-      alert(e?.message || "Could not remove item.");
+      toast.error(e?.message || "Could not remove item.");
     }
   }
 
@@ -637,6 +639,7 @@ function DealCardMini({ p, onAdd }) {
 
 /* -------------------- Storefront -------------------- */
 export default function Storefront() {
+  const { toast } = useToast();
   const [q, setQ] = useState("");
   const [allRows, setAllRows] = useState([]);
   const [rows, setRows] = useState([]);
@@ -799,7 +802,7 @@ export default function Storefront() {
 
       setAllRows(enriched);
     } catch (err) {
-      alert(err?.message || "Could not load products.");
+      toast.error(err?.message || "Could not load products.");
       setAllRows([]);
     } finally {
       setLoading(false);
@@ -900,7 +903,7 @@ export default function Storefront() {
       setCount(newCount);
     } catch (e) {
       setCount((c) => Math.max(0, c - 1));
-      alert(String(e?.message || "Could not add to cart."));
+      toast.error(String(e?.message || "Could not add to cart."));
     }
   }
 
