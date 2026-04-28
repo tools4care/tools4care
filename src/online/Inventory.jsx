@@ -1,12 +1,14 @@
 // src/online/Inventory.jsx
 import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { supabase } from "../supabaseClient";
+import { useToast } from "../hooks/useToast";
 
 // Panel de imágenes (opcional, si administras fotos del storefront)
 const ProductImagesPanel = lazy(() => import("./ProductImagesPanel.jsx"));
 
 /* ====================== ModalTraspasoStock (integrado) ====================== */
 function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
+  const { toast } = useToast();
   const [origenKey, setOrigenKey] = useState("");
   const [destinoKey, setDestinoKey] = useState("");
   const [productos, setProductos] = useState([]);
@@ -45,7 +47,7 @@ function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
 
     const { data, error } = await q;
     if (error) {
-      alert(error.message);
+      toast.error(error.message);
       return;
     }
     setProductos(data || []);
@@ -72,11 +74,11 @@ function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
       .match(filtroOrigen)
       .maybeSingle();
     if (eSO) {
-      alert(eSO.message);
+      toast.error(eSO.message);
       return;
     }
     if (!sO || sO.cantidad < Number(cantidad)) {
-      alert("Not enough stock in the origin.");
+      toast.error("Not enough stock in the origin.");
       return;
     }
 
@@ -85,7 +87,7 @@ function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
       .update({ cantidad: sO.cantidad - Number(cantidad) })
       .match(filtroOrigen);
     if (eUpdO) {
-      alert(eUpdO.message);
+      toast.error(eUpdO.message);
       return;
     }
 
@@ -104,7 +106,7 @@ function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
       .match(filtroDestino)
       .maybeSingle();
     if (eSD) {
-      alert(eSD.message);
+      toast.error(eSD.message);
       return;
     }
 
@@ -114,7 +116,7 @@ function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
         .update({ cantidad: sD.cantidad + Number(cantidad) })
         .match(filtroDestino);
       if (error) {
-        alert(error.message);
+        toast.error(error.message);
         return;
       }
     } else {
@@ -122,7 +124,7 @@ function ModalTraspasoStock({ abierto, cerrar, ubicaciones, onSuccess }) {
         .from(tablaDestino)
         .insert([{ ...filtroDestino, cantidad: Number(cantidad) }]);
       if (error) {
-        alert(error.message);
+        toast.error(error.message);
         return;
       }
     }
@@ -267,6 +269,7 @@ function Price({ v }) {
 }
 
 export default function Inventory() {
+  const { toast } = useToast();
   const [q, setQ] = useState("");
   const [rows, setRows] = useState([]); // stock_van (online) + productos + meta
   const [loading, setLoading] = useState(false);
@@ -378,7 +381,7 @@ export default function Inventory() {
       setRows(combined);
       setLastUpdate(new Date());
     } catch (e) {
-      alert(e?.message || "Could not load online inventory.");
+      toast.error(e?.message || "Could not load online inventory.");
       setRows([]);
     } finally {
       setLoading(false);
@@ -467,7 +470,7 @@ export default function Inventory() {
         prev.map((r) => (r.id === producto_id ? { ...r, [field]: value } : r))
       );
     } catch (e) {
-      alert(e?.message || "Update failed.");
+      toast.error(e?.message || "Update failed.");
     }
   }
 
@@ -478,7 +481,7 @@ export default function Inventory() {
         prev.map((r) => (r.id === producto_id ? { ...r, ...patch } : r))
       );
     } catch (e) {
-      alert(e?.message || "Update failed.");
+      toast.error(e?.message || "Update failed.");
     }
   }
 

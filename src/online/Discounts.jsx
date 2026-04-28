@@ -1,6 +1,7 @@
 // src/online/Discounts.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { useToast } from "../hooks/useToast";
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
@@ -43,6 +44,7 @@ function CopyButton({ text }) {
 }
 
 export default function OnlineDiscounts() {
+  const { toast } = useToast();
   const [codes, setCodes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ code: "", percent: "" });
@@ -70,7 +72,7 @@ export default function OnlineDiscounts() {
     const { error } = await supabase.from("discount_codes").insert({ code, percent });
     setSaving(false);
     if (error) {
-      alert(error.message);
+      toast.error(error.message);
       return;
     }
     setForm({ code: "", percent: "" });
@@ -89,7 +91,7 @@ export default function OnlineDiscounts() {
         }
       }
       const { error } = await supabase.from("discount_codes").delete().eq("code", row.code);
-      if (error) alert(error.message);
+      if (error) toast.error(error.message);
       loadCodes();
     } finally {
       setDeletingId(null);

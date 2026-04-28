@@ -1,6 +1,7 @@
 // src/admin/Orders.jsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { useToast } from "../hooks/useToast";
 
 /* =========================
    Configuración / helpers
@@ -119,6 +120,7 @@ function Skeleton() {
 
 function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
   // ─── ALL HOOKS BEFORE ANY CONDITIONAL RETURN ───
+  const { toast } = useToast();
   const [order, setOrder] = useState(null);
   const [items, setItems] = useState([]);
   const [history, setHistory] = useState([]);
@@ -200,7 +202,7 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
       changed_by: userId,
     });
     if (error) {
-      alert(error.message || "No se pudo guardar la nota.");
+      toast.error(error.message || "No se pudo guardar la nota.");
       return;
     }
     const { data: hist } = await supabase
@@ -222,7 +224,7 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
       .neq("status", next);
     if (error) {
       setOrder((o) => (o ? { ...o, status: prev } : o));
-      alert(error.message || "No se pudo actualizar el estado.");
+      toast.error(error.message || "No se pudo actualizar el estado.");
       return;
     }
     const { data: hist } = await supabase
@@ -244,7 +246,7 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
         .eq("id", orderId);
       setOrder((o) => (o ? { ...o, tracking_number: trackingInput.trim() || null } : o));
     } catch (e) {
-      alert(e?.message || "Error al guardar el tracking.");
+      toast.error(e?.message || "Error al guardar el tracking.");
     } finally {
       setSavingTracking(false);
     }
@@ -252,7 +254,7 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
 
   async function resendEmail() {
     if (!order?.email) {
-      alert("Este pedido no tiene email registrado.");
+      toast.warning("Este pedido no tiene email registrado.");
       return;
     }
     setSendingEmail(true);
@@ -622,6 +624,7 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
    ========================= */
 
 export default function Orders() {
+  const { toast } = useToast();
   const [rows, setRows] = useState([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -742,7 +745,7 @@ export default function Orders() {
       .neq("status", next); // evita no-op y re-disparos inútiles
     if (error) {
       setRows(before);
-      alert(error.message || "No se pudo actualizar el estado.");
+      toast.error(error.message || "No se pudo actualizar el estado.");
     }
   }
 
