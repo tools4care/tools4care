@@ -44,15 +44,15 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
-  const [showAlreadyLoggedModal, setShowAlreadyLoggedModal] = useState(false);
+  // showAlreadyLoggedModal removed — useEffect now auto-navigates to "/" when already logged in
   const { usuario, cargando } = useUsuario();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (!cargando && usuario) {
-      setShowAlreadyLoggedModal(true);
+      navigate("/", { replace: true });
     }
-  }, [usuario, cargando]);
+  }, [usuario, cargando, navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -145,9 +145,6 @@ export default function Login() {
       {/* Decorative elements */}
       <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-blue-400/20 to-indigo-400/20 rounded-full blur-3xl"></div>
       <div className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-purple-400/20 to-pink-400/20 rounded-full blur-3xl"></div>
-
-      {/* Modal: Already logged in */}
-      {showAlreadyLoggedModal && <AlreadyLoggedModal />}
 
       {/* Login Container */}
       <div className="w-full max-w-md relative z-10">
