@@ -3,9 +3,11 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const API_TARGET = process.env.VITE_DEV_API || 'http://127.0.0.1:8000'
+// Use relative paths for Electron build, absolute for Vercel
+const isElectron = process.env.BUILD_TARGET === 'electron'
 
 export default defineConfig({
-  base: '/',                  // absolute paths — required for Vercel SPA routing (relative ./ breaks deep URLs)
+  base: isElectron ? './' : '/',   // './' for Electron, '/' for Vercel
   plugins: [react()],
   server: {
     port: parseInt(process.env.PORT) || 5173,
