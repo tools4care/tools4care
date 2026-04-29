@@ -1,0 +1,43 @@
+name: Daily Backup
+
+on:
+  schedule:
+    # Cada día a las 2am hora del Este (7am UTC)
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    # También permite correrlo manualmente desde GitHub con un clic
+
+jobs:
+  backup:
+    name: Backup Supabase → Storage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js
+
+      - name: Run backup
+        run: node scripts/backup.js
+        env:
+          VITE_SUPABASE_URL:    ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          T4C_BACKUP_DIR:       ./backups
+          UPLOAD_TO_STORAGE:    'true'
+
+      - name: Upload artifact (90 días de retención)
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-${{ github.run_number }}-${{ github.run_id }}
+          path: ./backups/
+          retention-days: 90
+          if-no-files-found: error
