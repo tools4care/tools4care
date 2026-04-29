@@ -483,13 +483,102 @@ function TabImportarArchivo({ onRefresh }) {
 
 // ==================== TAB: BACKUP SUPABASE ====================
 
+const STORAGE_BUCKET = 'backups';
+
+function BackupsEnNube({ onRestoreFromCloud }) {
+  const { toast } = useToast();
+  const [lista,       setLista]       = useState([]);
+  const [cargando,    setCargando]    = useState(true);
+  const [descargando, setDescargando] = useState(null);
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET).list('', { sortBy: { column: 'name', order: 'desc' } });
+    if (!error && data) setLista(data.filter(f => f.name.endsWith('.json')));
+    setCargando(false);
+  }, []);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const handleDescargar = async (nombre) => {
+    setDescargando(nombre);
+    try {
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(nombre);
+      if (error) throw error;
+      const url = URL.createObjectURL(data);
+      const a   = document.createElement('a');
+      a.href = url; a.download = nombre; a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Backup descargado');
+    } catch (e) {
+      toast.error('Error al descargar: ' + e.message);
+    } finally {
+      setDescargando(null);
+    }
+  };
+
+  const handleRestaurar = async (nombre) => {
+    try {
+      setDescargando(nombre + '_restore');
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(nombre);
+      if (error) throw error;
+      const text = await data.text();
+      const obj  = JSON.parse(text);
+      onRestoreFromCloud(obj, nombre);
+    } catch (e) {
+      toast.error('Error al cargar backup: ' + e.message);
+      setDescargando(null);
+    }
+  };
+
+  if (cargando) return (
+    <div className="flex items-center gap-2 py-4 text-gray-400 text-sm">
+      <div className="w-4 h-4 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" />
+      Cargando backups en la nube...
+    </div>
+  );
+
+  if (!lista.length) return (
+    <p className="text-xs text-gray-400 py-2">No hay backups en la nube aún. Crea uno arriba o espera el backup automático de esta noche.</p>
+  );
+
+  return (
+    <div className="space-y-2">
+      {lista.map((f) => {
+        const fecha = f.name.replace('backup-', '').replace('.json', '').replace(/T/, ' ').replace(/-(\d{2})-(\d{2})-(\d{2})$/, ':$1:$2');
+        const sizeKB = f.metadata?.size ? (f.metadata.size / 1024).toFixed(0) + ' KB' : '';
+        const isLoading = descargando === f.name || descargando === f.name + '_restore';
+        return (
+          <div key={f.name} className="flex items-center justify-between gap-2 bg-white border border-gray-100 rounded-xl px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-gray-700 truncate">{fecha}</p>
+              {sizeKB && <p className="text-xs text-gray-400">{sizeKB}</p>}
+            </div>
+            <div className="flex gap-1.5 shrink-0">
+              <button onClick={() => handleDescargar(f.name)} disabled={isLoading}
+                className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-all disabled:opacity-40">
+                {descargando === f.name ? '⏳' : '⬇️'} Descargar
+              </button>
+              <button onClick={() => handleRestaurar(f.name)} disabled={isLoading}
+                className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-all disabled:opacity-40">
+                {descargando === f.name + '_restore' ? '⏳' : '🔄'} Restaurar
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function TabSupabase() {
   const { toast } = useToast();
   const fileRef = useRef(null);
 
   // ── Export state ──
   const [running,   setRunning]   = useState(false);
-  const [progress,  setProgress]  = useState([]); // [{ table, status, count }]
+  const [progress,  setProgress]  = useState([]);
   const [done,      setDone]      = useState(false);
   const [backupObj, setBackupObj] = useState(null);
 
@@ -613,12 +702,35 @@ function TabSupabase() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
+  // ── Restore from cloud (recibe el objeto ya cargado) ──────
+  const handleRestoreFromCloud = (obj, nombre) => {
+    setRestoreFile({ name: nombre });
+    const tableNames = Object.keys(obj.tables);
+    const totalRows  = tableNames.reduce((s, t) => s + (obj.tables[t]?.length || 0), 0);
+    setRestorePreview({ data: obj, tableNames, totalRows, createdAt: obj.createdAt });
+    setRestoreLog([]);
+    setRestoreDone(false);
+    // Scroll al restore section
+    setTimeout(() => document.getElementById('restore-section')?.scrollIntoView({ behavior: 'smooth' }), 100);
+  };
+
   const totalRows = done && backupObj
     ? Object.values(backupObj.tables).reduce((s, r) => s + r.length, 0)
     : 0;
 
   return (
     <div className="space-y-6">
+
+      {/* ── BACKUPS EN LA NUBE ── */}
+      <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="font-bold text-gray-800">☁️ Backups automáticos</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Creados cada noche por GitHub Actions</p>
+          </div>
+        </div>
+        <BackupsEnNube onRestoreFromCloud={handleRestoreFromCloud} />
+      </div>
 
       {/* ── SECCIÓN EXPORT ── */}
       <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-5">
@@ -681,7 +793,7 @@ function TabSupabase() {
       </div>
 
       {/* ── SECCIÓN RESTORE ── */}
-      <div className="rounded-2xl border border-amber-100 bg-amber-50/30 p-5">
+      <div id="restore-section" className="rounded-2xl border border-amber-100 bg-amber-50/30 p-5">
         <h3 className="font-bold text-gray-800 mb-1">📤 Restaurar desde archivo</h3>
         <p className="text-xs text-gray-500 mb-4">Sube un JSON generado por este sistema para restaurar los datos</p>
 
