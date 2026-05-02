@@ -2065,74 +2065,60 @@ export default function Dashboard() {
 
   async function cargarStockVan(van_id) {
     try {
-      // 1. Productos con stock bajo (< 10 unidades)
+      const hace90d = dayjs().subtract(90, "day").toISOString();
+      const hace30d = dayjs().subtract(30, "day").toISOString();
+
+      // Consultar desde ventas (sin ambigüedad) embebiendo detalle_ventas
+      // Solo ventas de esta van en últimos 90 días, en páginas de 500
+      const vendido30dMap      = new Map();
+      const productosConVentas = new Set();
+      let page = 0;
+      const PAGE = 500;
+      while (true) {
+        const { data: ventasPage, error: vErr } = await supabase
+          .from("ventas")
+          .select("created_at, detalle_ventas(producto_id, cantidad)")
+          .eq("van_id", van_id)
+          .gte("created_at", hace90d)
+          .range(page * PAGE, (page + 1) * PAGE - 1);
+        if (vErr) { console.warn("ventas error:", vErr.message); break; }
+        if (!ventasPage?.length) break;
+        for (const venta of ventasPage) {
+          const en30d = venta.created_at >= hace30d;
+          for (const d of venta.detalle_ventas || []) {
+            const pid = d.producto_id;
+            productosConVentas.add(pid);
+            if (en30d) vendido30dMap.set(pid, (vendido30dMap.get(pid) || 0) + Number(d.cantidad || 0));
+          }
+        }
+        if (ventasPage.length < PAGE) break;
+        page++;
+      }
+
+      if (!productosConVentas.size) { setStockVan([]); return; }
+
+      // Solo productos vendidos en los últimos 90d con stock < 10 en esta van
+      const pids = [...productosConVentas];
       const { data: stockBajo, error: errorStock } = await supabase
         .from("stock_van")
         .select("cantidad, producto_id, productos(nombre, codigo, precio)")
         .eq("van_id", van_id)
         .lt("cantidad", 10)
-        .order("cantidad", { ascending: true });
+        .in("producto_id", pids);
 
       if (errorStock) console.error("❌ Error stock:", errorStock);
       if (!stockBajo?.length) { setStockVan([]); return; }
 
-      const hace90d = dayjs().subtract(90, "day").toISOString();
-      const hace30d = dayjs().subtract(30, "day").toISOString();
-
-      // 2. detalle_ventas de los últimos 90d con join a ventas (evita .in() con cientos de IDs)
-      const { data: detalles90, error: detErr90 } = await supabase
-        .from("detalle_ventas")
-        .select("venta_id, producto_id, cantidad, ventas!inner(van_id, created_at)")
-        .eq("ventas.van_id", van_id)
-        .gte("ventas.created_at", hace90d);
-
-      if (detErr90) console.warn("⚠️ detalle_ventas error:", detErr90.message);
-
-      // Si no hay ventas en 90d, mostrar como sin_movimiento
-      if (!detalles90?.length) {
-        setStockVan(stockBajo.map(item => ({
-          nombre:        item.productos?.nombre || item.producto_id,
-          codigo:        item.productos?.codigo || "",
-          precio:        Number(item.productos?.precio || 0),
-          cantidad:      item.cantidad,
-          vendido30d:    0,
-          velocidad:     0,
-          diasRestantes: 999,
-          ultimaVenta:   null,
-          urgencia:      item.cantidad === 0 ? "critico" : "sin_movimiento",
-        })));
-        return;
-      }
-
-      // 3. Calcular vendido30d y productos activos en 90d
-      const vendido30dMap     = new Map();
-      const productosConVentas = new Set();
-
-      detalles90.forEach(d => {
-        const pid = d.producto_id;
-        productosConVentas.add(pid);
-        if (d.ventas?.created_at >= hace30d) {
-          vendido30dMap.set(pid, (vendido30dMap.get(pid) || 0) + Number(d.cantidad || 0));
-        }
-      });
-
-      // 4. Filtrar stock con ventas en 90d y calcular urgencia
       const stockFiltrado = stockBajo
-        .filter(item => productosConVentas.has(item.producto_id))
         .map(item => {
           const v30 = vendido30dMap.get(item.producto_id) || 0;
-          const velocidad = Number((v30 / 30).toFixed(2)); // unidades/día
-          const diasRestantes = velocidad > 0
-            ? Math.floor(item.cantidad / velocidad)
-            : 999;
+          const velocidad = Number((v30 / 30).toFixed(2));
+          const diasRestantes = velocidad > 0 ? Math.floor(item.cantidad / velocidad) : 999;
           const urgencia = item.cantidad === 0
             ? "critico"
-            : diasRestantes < 7
-            ? "critico"
-            : diasRestantes < 14
-            ? "bajo"
-            : diasRestantes < 30
-            ? "watch"
+            : diasRestantes < 7  ? "critico"
+            : diasRestantes < 14 ? "bajo"
+            : diasRestantes < 30 ? "watch"
             : "sin_movimiento";
           return {
             nombre:        item.productos?.nombre || item.producto_id,
@@ -2146,7 +2132,6 @@ export default function Dashboard() {
             urgencia,
           };
         })
-        // Más urgente primero; desempate por velocidad (se acaba más rápido)
         .sort((a, b) => a.diasRestantes - b.diasRestantes || b.velocidad - a.velocidad);
 
       setStockVan(stockFiltrado);
