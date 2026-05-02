@@ -219,15 +219,15 @@ export default function SyncStatusWidget({
   const [downloadingId,  setDownloadingId]  = useState(null);
   const [restoreTarget,  setRestoreTarget]  = useState(null); // nombre del backup a restaurar
 
-  // Cargar lista de backups en la nube
+  // Cargar lista de backups en la nube (via edge function con service key)
   const cargarCloudBackups = useCallback(async () => {
     setLoadingCloud(true);
-    const { data, error } = await supabase.storage
-      .from(STORAGE_BUCKET)
-      .list("", { sortBy: { column: "name", order: "desc" }, limit: 5 });
-    if (!error && data) {
-      setCloudBackups(data.filter(f => f.name.endsWith(".json")));
-    }
+    try {
+      const { data, error } = await supabase.functions.invoke("list-backups");
+      if (!error && Array.isArray(data)) {
+        setCloudBackups(data.filter(f => f.name?.endsWith(".json")).slice(0, 5));
+      }
+    } catch { /* silencioso */ }
     setLoadingCloud(false);
   }, []);
 

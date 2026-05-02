@@ -177,7 +177,7 @@ function LowStockModal({ open, items, onClose }) {
             <IconAlert />
             <div>
               <h3 className="font-bold text-lg">Running Low</h3>
-              <p className="text-xs opacity-80">Active in last 60 days · {items.length} products</p>
+              <p className="text-xs opacity-80">Active in last 90 days · {items.length} products</p>
             </div>
           </div>
           <button
@@ -2076,17 +2076,17 @@ export default function Dashboard() {
       if (errorStock) console.error("❌ Error stock:", errorStock);
       if (!stockBajo?.length) { setStockVan([]); return; }
 
-      // 2. Solo ventas de los últimos 60 días (filtro de productos "activos")
-      const hace60d = dayjs().subtract(60, "day").toISOString();
+      // 2. Solo ventas de los últimos 90 días (filtro de productos "activos")
+      const hace90d = dayjs().subtract(90, "day").toISOString();
       const hace30d = dayjs().subtract(30, "day").toISOString();
 
       const { data: ventasRecientes } = await supabase
         .from("ventas")
         .select("id")
         .eq("van_id", van_id)
-        .gte("created_at", hace60d);
+        .gte("created_at", hace90d);
 
-      // Fix: if no sales in 60d, still show low-stock items as 'sin_movimiento'
+      // Fix: if no sales in 90d, still show low-stock items as 'sin_movimiento'
       if (!ventasRecientes?.length) {
         const stockSinMovimiento = stockBajo.map(item => ({
           nombre:       item.productos?.nombre || item.producto_id,
@@ -2110,17 +2110,17 @@ export default function Dashboard() {
         .eq("van_id", van_id)
         .gte("created_at", hace30d);
       const ids30 = new Set((ventas30d || []).map(v => v.id));
-      const ids60 = ventasRecientes.map(v => v.id);
+      const ids90 = ventasRecientes.map(v => v.id);
 
-      // 3b. detalle_ventas de los últimos 60d — solo producto_id y cantidad
+      // 3b. detalle_ventas de los últimos 90d — solo producto_id y cantidad
       const { data: detalles, error: detErr } = await supabase
         .from("detalle_ventas")
         .select("venta_id, producto_id, cantidad")
-        .in("venta_id", ids60);
+        .in("venta_id", ids90);
 
       if (detErr) console.warn("⚠️ detalle_ventas error:", detErr.message);
 
-      // 4. Calcular vendido30d y qué productos tuvieron ventas en 60d
+      // 4. Calcular vendido30d y qué productos tuvieron ventas en 90d
       const vendido30dMap  = new Map();
       const productosConVentas = new Set();
 
@@ -2132,7 +2132,7 @@ export default function Dashboard() {
         }
       });
 
-      // 5. Mostrar: productos vendidos en 60d con cantidad < 10
+      // 5. Mostrar: productos vendidos en 90d con cantidad < 10
       //    (cantidad === 0 pero sin ventas recientes = producto inactivo, no mostrar)
       const stockFiltrado = stockBajo
         .filter(item => productosConVentas.has(item.producto_id))
@@ -2166,7 +2166,8 @@ export default function Dashboard() {
             urgencia,
           };
         })
-        .sort((a, b) => a.diasRestantes - b.diasRestantes); // más urgentes primero
+        // Primero por días restantes (más urgente), desempate por velocidad (se acaba más rápido)
+        .sort((a, b) => a.diasRestantes - b.diasRestantes || b.velocidad - a.velocidad);
 
       setStockVan(stockFiltrado);
 
@@ -3112,7 +3113,7 @@ export default function Dashboard() {
                           </div>
                         )}
                         {p.urgencia === 'sin_movimiento' && (
-                          <div className="text-xs text-gray-400 mt-1 italic">No sales in 60 days</div>
+                          <div className="text-xs text-gray-400 mt-1 italic">No sales in 90 days</div>
                         )}
                       </div>
                     );
