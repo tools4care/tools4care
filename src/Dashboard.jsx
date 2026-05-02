@@ -136,6 +136,12 @@ function LowStockModal({ open, items, onClose }) {
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-gray-900 truncate">{p.nombre}</div>
+            {(p.marca || p.size) && (
+              <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
+                {p.marca && <span className="text-xs font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">{p.marca}</span>}
+                {p.size  && <span className="text-xs font-medium text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">{p.size}</span>}
+              </div>
+            )}
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
               {p.codigo && <span className="text-xs text-gray-400 font-mono">{p.codigo}</span>}
               {p.vendido30d > 0 && <span className="text-xs text-gray-500">{p.vendido30d} u./30d · {p.velocidad}/day</span>}
@@ -2117,7 +2123,7 @@ export default function Dashboard() {
       // Puede haber muchos pids; filtramos en batches y cruzamos con stock_van
       const { data: stockBajo, error: errorStock } = await supabase
         .from("stock_van")
-        .select("cantidad, producto_id, productos(nombre, codigo, precio)")
+        .select("cantidad, producto_id, productos(nombre, codigo, precio, marca, size)")
         .eq("van_id", van_id)
         .lt("cantidad", 10)
         .in("producto_id", pids.slice(0, 500)); // máx 500 productos activos
@@ -2140,6 +2146,8 @@ export default function Dashboard() {
             nombre:        item.productos?.nombre || item.producto_id,
             codigo:        item.productos?.codigo || "",
             precio:        Number(item.productos?.precio || 0),
+            marca:         item.productos?.marca  || "",
+            size:          item.productos?.size   || "",
             cantidad:      item.cantidad,
             vendido30d:    v30,
             velocidad,
