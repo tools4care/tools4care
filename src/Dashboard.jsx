@@ -100,7 +100,8 @@ function LowStockModal({ open, items, onClose }) {
     const base = s
       ? items.filter(i =>
           String(i.codigo).toLowerCase().includes(s) ||
-          String(i.nombre).toLowerCase().includes(s)
+          String(i.nombre).toLowerCase().includes(s) ||
+          String(i.marca).toLowerCase().includes(s)
         )
       : items;
     return base;
@@ -196,7 +197,7 @@ function LowStockModal({ open, items, onClose }) {
         <div className="p-4 flex-1 overflow-hidden flex flex-col">
           <input
             className="w-full border-2 border-gray-200 focus:border-red-500 rounded-xl px-4 py-2.5 mb-4 transition-colors"
-            placeholder="Search by code or name..."
+            placeholder="Search by code, name or brand..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
