@@ -227,6 +227,7 @@ const getPaymentMethodLabel = (method) => {
 // Preview modal: shows closure details for a date range (read-only)
 function CierrePreviewModal({ van, usuario, previewData, onClose }) {
   const { ventas = [], pagos = [], fechas = [], resumen = {}, gastos = [], observaciones = "" } = previewData || {};
+  const { toast } = useToast();
 
   // Email state
   const [showEmailPanel, setShowEmailPanel] = useState(false);
