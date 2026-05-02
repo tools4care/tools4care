@@ -2068,43 +2068,59 @@ export default function Dashboard() {
       const hace90d = dayjs().subtract(90, "day").toISOString();
       const hace30d = dayjs().subtract(30, "day").toISOString();
 
-      // Consultar desde ventas (sin ambigüedad) embebiendo detalle_ventas
-      // Solo ventas de esta van en últimos 90 días, en páginas de 500
-      const vendido30dMap      = new Map();
-      const productosConVentas = new Set();
+      // 1. Obtener IDs de ventas de esta van en los últimos 90 días (paginado)
+      const ventaIds90 = [];
+      const ventaFechas = new Map(); // id → created_at
       let page = 0;
-      const PAGE = 500;
+      const PAGE = 1000;
       while (true) {
-        const { data: ventasPage, error: vErr } = await supabase
+        const { data, error } = await supabase
           .from("ventas")
-          .select("created_at, detalle_ventas(producto_id, cantidad)")
+          .select("id, created_at")
           .eq("van_id", van_id)
           .gte("created_at", hace90d)
           .range(page * PAGE, (page + 1) * PAGE - 1);
-        if (vErr) { console.warn("ventas error:", vErr.message); break; }
-        if (!ventasPage?.length) break;
-        for (const venta of ventasPage) {
-          const en30d = venta.created_at >= hace30d;
-          for (const d of venta.detalle_ventas || []) {
-            const pid = d.producto_id;
-            productosConVentas.add(pid);
-            if (en30d) vendido30dMap.set(pid, (vendido30dMap.get(pid) || 0) + Number(d.cantidad || 0));
+        if (error || !data?.length) break;
+        for (const v of data) {
+          ventaIds90.push(v.id);
+          ventaFechas.set(v.id, v.created_at);
+        }
+        if (data.length < PAGE) break;
+        page++;
+      }
+
+      if (!ventaIds90.length) { setStockVan([]); return; }
+
+      // 2. Obtener detalle_ventas en batches de 40 IDs (URL segura ~1.5KB)
+      const vendido30dMap      = new Map();
+      const productosConVentas = new Set();
+      const BATCH = 40;
+      for (let i = 0; i < ventaIds90.length; i += BATCH) {
+        const batch = ventaIds90.slice(i, i + BATCH);
+        const { data: detalles } = await supabase
+          .from("detalle_ventas")
+          .select("venta_id, producto_id, cantidad")
+          .in("venta_id", batch);
+        for (const d of detalles || []) {
+          const pid = d.producto_id;
+          productosConVentas.add(pid);
+          if (ventaFechas.get(d.venta_id) >= hace30d) {
+            vendido30dMap.set(pid, (vendido30dMap.get(pid) || 0) + Number(d.cantidad || 0));
           }
         }
-        if (ventasPage.length < PAGE) break;
-        page++;
       }
 
       if (!productosConVentas.size) { setStockVan([]); return; }
 
-      // Solo productos vendidos en los últimos 90d con stock < 10 en esta van
+      // 3. Stock bajo solo para productos que realmente se vendieron
       const pids = [...productosConVentas];
+      // Puede haber muchos pids; filtramos en batches y cruzamos con stock_van
       const { data: stockBajo, error: errorStock } = await supabase
         .from("stock_van")
         .select("cantidad, producto_id, productos(nombre, codigo, precio)")
         .eq("van_id", van_id)
         .lt("cantidad", 10)
-        .in("producto_id", pids);
+        .in("producto_id", pids.slice(0, 500)); // máx 500 productos activos
 
       if (errorStock) console.error("❌ Error stock:", errorStock);
       if (!stockBajo?.length) { setStockVan([]); return; }
