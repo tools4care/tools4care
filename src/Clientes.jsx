@@ -2282,6 +2282,8 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [metodo, setMetodo] = useState("Cash");
   const [subMetodo, setSubMetodo] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [paymentDone, setPaymentDone] = useState(false);
+  const [receiptData, setReceiptData] = useState(null);
   const [mensaje, setMensaje] = useState("");
 
   // 🆕 ESTADOS PARA STRIPE QR
@@ -2710,14 +2712,8 @@ let restante = pago;
       if (cargarCuotasRef.current) cargarCuotasRef.current().catch(() => {});
       if (typeof refresh === "function") await refresh();
 
-      // mensaje
-      setMensaje(cambioDevuelto > 0
-        ? `✅ Payment registered. Return $${cambioDevuelto.toFixed(2)} to the customer.`
-        : "✅ Payment registered successfully!"
-      );
-
-      // recibo
-      const receiptPayload = {
+      // mostrar pantalla de éxito con opciones de recibo
+      const payload = {
         clientName: cliente?.nombre || "",
         creditNumber: getCreditNumber(cliente),
         dateStr: new Date().toLocaleString(),
@@ -2725,13 +2721,10 @@ let restante = pago;
         amount: pagoAplicado,
         prevBalance: saldoActualUI,
         newBalance: saldoDespues,
+        cambioDevuelto,
       };
-      try { await requestAndSendPaymentReceipt({ client: cliente, payload: receiptPayload, confirmFn: confirm, toastFn: toast }); } catch {}
-
-      // cerrar el modal
-      setTimeout(() => {
-        if (typeof onClose === "function") onClose();
-      }, 1800);
+      setReceiptData(payload);
+      setPaymentDone(true);
 
     } catch (err) {
       setMensaje("❌ Error saving payment: " + (err?.message || "unknown"));
@@ -2781,6 +2774,90 @@ let restante = pago;
                     onChange={e => setMonto(e.target.value)}
                     required
                   />
+                  {/* Balance restante — visible inmediatamente */}
+                  {montoNum > 0 && (
+                    <div className={`mt-3 rounded-xl p-4 border-2 flex items-center justify-between ${
+                      excedente > 0
+                        ? "bg-orange-50 border-orange-300"
+                        : "bg-green-50 border-green-300"
+                    }`}>
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                          {excedente > 0 ? "Overpayment — return to customer" : "Remaining balance after payment"}
+                        </div>
+                        <div className={`text-4xl font-black mt-0.5 ${excedente > 0 ? "text-orange-600" : "text-green-600"}`}>
+                          ${excedente > 0
+                            ? excedente.toFixed(2)
+                            : Math.max(0, (prevCents - payCents) / 100).toFixed(2)
+                          }
+                        </div>
+                      </div>
+                      <div className="text-3xl">{excedente > 0 ? "⚠️" : "✅"}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Payment Method — movido aquí, arriba de los acuerdos */}
+                <div>
+                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Method</label>
+                  <div className="flex gap-2">
+                    <select
+                      className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white font-medium"
+                      value={metodo}
+                      onChange={e => { setMetodo(e.target.value); setSubMetodo(null); }}
+                    >
+                      <option value="Cash">💵 Cash</option>
+                      <option value="Card">💳 Card</option>
+                      <option value="Transfer">🏦 Transfer</option>
+                    </select>
+                    {metodo === "Card" && (
+                      <button type="button" onClick={handleGenerateQR}
+                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 whitespace-nowrap">
+                        📱 QR
+                      </button>
+                    )}
+                  </div>
+                  {metodo === "Transfer" && (
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <p className="text-[11px] uppercase text-gray-500 font-semibold mb-2 tracking-wide">Via</p>
+                      <div className="flex flex-wrap gap-2">
+                        {TRANSFER_SUBS.map((s) => {
+                          const active = subMetodo === s.key;
+                          return (
+                            <button key={s.key} type="button" onClick={() => setSubMetodo(active ? null : s.key)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 shadow-sm border-2 ${
+                                active ? `${s.color} text-white border-transparent shadow-md` : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
+                              }`}>
+                              {s.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {metodo === "Card" && (
+                    <div className="mt-4 pt-4 border-t-2 border-gray-200">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" checked={applyCardFee} onChange={(e) => setApplyCardFee(e.target.checked)}
+                          className="w-5 h-5 text-purple-600 rounded focus:ring-2 focus:ring-purple-500" />
+                        <span className="text-gray-700 font-semibold">
+                          💳 Apply card fee ({cardFeePercentage}%)
+                          {applyCardFee && Number(monto) > 0 && (
+                            <span className="ml-2 font-bold text-purple-600 text-lg">→ Total: {fmtSafe(Number(monto) * (1 + cardFeePercentage / 100))}</span>
+                          )}
+                        </span>
+                      </label>
+                      {applyCardFee && (
+                        <div className="mt-3 flex items-center gap-3 bg-purple-50 rounded-xl p-3 border-2 border-purple-200">
+                          <label className="text-sm text-purple-700 font-bold">Fee %:</label>
+                          <input type="number" min="0" max="10" step="0.1" value={cardFeePercentage}
+                            onChange={(e) => setCardFeePercentage(Math.max(0, Math.min(10, Number(e.target.value))))}
+                            className="w-20 border-2 border-purple-300 rounded-lg px-3 py-2 text-sm font-bold" />
+                          <span className="text-sm text-purple-600 font-semibold">(Fee: {fmtSafe(Number(monto) * (cardFeePercentage / 100))})</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
               
@@ -2944,128 +3021,7 @@ let restante = pago;
     )}
   </div>
 )}
-                <div>
-                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Method</label>
-                  <div className="flex gap-2">
-                    <select
-                      className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white font-medium"
-                      value={metodo}
-                      onChange={e => { setMetodo(e.target.value); setSubMetodo(null); }}
-                    >
-                      <option value="Cash">💵 Cash</option>
-                      <option value="Card">💳 Card</option>
-                      <option value="Transfer">🏦 Transfer</option>
-                    </select>
-
-                    {/* 🆕 BOTÓN QR PARA TARJETA */}
-                    {metodo === "Card" && (
-                      <button
-                        type="button"
-                        onClick={handleGenerateQR}
-                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 whitespace-nowrap"
-                        title="Generar QR para pago con Stripe"
-                      >
-                        📱 QR
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Transfer sub-method chips */}
-                  {metodo === "Transfer" && (
-                    <div className="mt-3 pt-3 border-t border-gray-200">
-                      <p className="text-[11px] uppercase text-gray-500 font-semibold mb-2 tracking-wide">Via</p>
-                      <div className="flex flex-wrap gap-2">
-                        {TRANSFER_SUBS.map((s) => {
-                          const active = subMetodo === s.key;
-                          return (
-                            <button
-                              key={s.key}
-                              type="button"
-                              onClick={() => setSubMetodo(active ? null : s.key)}
-                              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 shadow-sm border-2 ${
-                                active
-                                  ? `${s.color} text-white border-transparent shadow-md`
-                                  : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
-                              }`}
-                            >
-                              {s.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 🆕 CHECKBOX PARA FEE */}
-                  {metodo === "Card" && (
-                    <div className="mt-4 pt-4 border-t-2 border-gray-200">
-                      <label className="flex items-center gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={applyCardFee}
-                          onChange={(e) => setApplyCardFee(e.target.checked)}
-                          className="w-5 h-5 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
-                        />
-                        <span className="text-gray-700 font-semibold">
-                          💳 Apply card fee ({cardFeePercentage}%)
-                          {applyCardFee && Number(monto) > 0 && (
-                            <span className="ml-2 font-bold text-purple-600 text-lg">
-                              → Total: {fmtSafe(Number(monto) * (1 + cardFeePercentage / 100))}
-                            </span>
-                          )}
-                        </span>
-                      </label>
-                      
-                      {applyCardFee && (
-                        <div className="mt-3 flex items-center gap-3 bg-purple-50 rounded-xl p-3 border-2 border-purple-200">
-                          <label className="text-sm text-purple-700 font-bold">Fee %:</label>
-                          <input
-                            type="number"
-                            min="0"
-                            max="10"
-                            step="0.1"
-                            value={cardFeePercentage}
-                            onChange={(e) => setCardFeePercentage(Math.max(0, Math.min(10, Number(e.target.value))))}
-                            className="w-20 border-2 border-purple-300 rounded-lg px-3 py-2 text-sm font-bold"
-                          />
-                          <span className="text-sm text-purple-600 font-semibold">
-                            (Fee: {fmtSafe(Number(monto) * (cardFeePercentage / 100))})
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
               </div>
-
-              <div className="bg-amber-50 border-2 border-amber-200 text-amber-800 rounded-xl p-4 mb-4 shadow-sm">
-                {montoNum <= 0 ? (
-                  <span className="text-sm font-semibold">💡 Enter a payment amount to see details.</span>
-                ) : excedente > 0 ? (
-                  <div className="text-sm font-semibold">
-                    ⚠️ The payment exceeds the current balance by <span className="font-bold text-amber-900 text-lg">${excedente.toFixed(2)}</span>. You must return this amount to the customer.
-                  </div>
-                ) : (
-                  (() => {
-                    const newCents = Math.max(0, prevCents - payCents);
-                    const newBalance = (newCents / 100).toFixed(2);
-                    return (
-                      <div className="text-sm font-semibold">
-                        ✅ Payment will reduce balance to <span className="font-bold text-green-700 text-lg">${newBalance}</span>.
-                      </div>
-                    );
-                  })()
-                )}
-              </div>
-
-              {mensaje && (
-                <div className={`mb-4 p-4 rounded-xl border-2 ${mensaje.includes("Error") || mensaje.includes("invalid") ? "bg-red-50 text-red-800 border-red-300" : "bg-green-50 text-green-800 border-green-300"}`}>
-                  <div className="flex items-center gap-3 font-semibold">
-                    {mensaje.includes("Error") ? <X size={20} /> : <Check size={20} />}
-                    <span className="whitespace-pre-line">{mensaje}</span>
-                  </div>
-                </div>
-              )}
 
               {/* Resumen de compras/pagos */}
               <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-5 border-2 border-gray-200 shadow-sm">
@@ -3125,36 +3081,103 @@ let restante = pago;
             >
               <div className="flex gap-3">
                 <button
-                  type="submit"
-                  disabled={guardando}
-                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
-                >
-                  {guardando ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <Check size={20} />
-                      Record Payment
-                    </>
-                  )}
-                </button>
-                <button
                   type="button"
-                  className="flex-1 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
+                  className="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
                   onClick={onClose}
                   disabled={guardando}
                 >
                   <X size={20} />
                   Cancel
                 </button>
+                <button
+                  type="submit"
+                  disabled={guardando}
+                  className="flex-[2] bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
+                >
+                  {guardando ? (
+                    <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>Processing...</>
+                  ) : (
+                    <><Check size={20} />Record Payment</>
+                  )}
+                </button>
               </div>
             </div>
           </form>
         </div>
       </div>
+
+      {/* Pantalla de éxito con opciones de recibo */}
+      {paymentDone && receiptData && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center z-[99999] p-0 sm:p-4">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 bg-gradient-to-r from-green-500 to-emerald-500 text-white text-center">
+              <div className="text-5xl mb-2">✅</div>
+              <h3 className="text-2xl font-black">Payment Recorded!</h3>
+              <p className="text-green-100 mt-1">{receiptData.clientName}</p>
+            </div>
+            <div className="p-6 space-y-3">
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-gray-50 rounded-xl p-4 text-center border-2 border-gray-200">
+                  <div className="text-xs text-gray-500 uppercase font-bold">Paid</div>
+                  <div className="text-2xl font-black text-green-600">${receiptData.amount.toFixed(2)}</div>
+                </div>
+                <div className={`rounded-xl p-4 text-center border-2 ${receiptData.newBalance > 0 ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"}`}>
+                  <div className="text-xs text-gray-500 uppercase font-bold">New Balance</div>
+                  <div className={`text-2xl font-black ${receiptData.newBalance > 0 ? "text-red-600" : "text-green-600"}`}>
+                    ${receiptData.newBalance.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              {receiptData.cambioDevuelto > 0 && (
+                <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-3 text-center">
+                  <span className="font-bold text-orange-700">⚠️ Return ${receiptData.cambioDevuelto.toFixed(2)} to customer</span>
+                </div>
+              )}
+              <p className="text-center text-sm text-gray-500 font-semibold pt-1">Send receipt to client?</p>
+              <div className="grid grid-cols-2 gap-3">
+                {cliente?.telefono && (
+                  <button
+                    onClick={async () => {
+                      const text = composePaymentMessageEN(receiptData);
+                      const res = await sendSmsIfPossible({ phone: cliente.telefono, text });
+                      if (res?.copied) toast.info("Text copied — open Messages and paste.");
+                      else toast.success("SMS sent!");
+                      onClose();
+                    }}
+                    className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all"
+                  >
+                    💬 Send SMS
+                  </button>
+                )}
+                {cliente?.email && (
+                  <button
+                    onClick={async () => {
+                      const subject = `${COMPANY_NAME} — Payment ${new Date().toLocaleDateString()}`;
+                      const text = composePaymentMessageEN(receiptData);
+                      const res = await sendEmailSmart({ to: cliente.email, subject, html: text, text });
+                      if (res?.via === "mailto-copy") toast.info("Email copied — open your email app and paste.");
+                      else toast.success("Email sent!");
+                      onClose();
+                    }}
+                    className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all"
+                  >
+                    ✉️ Send Email
+                  </button>
+                )}
+                {!cliente?.telefono && !cliente?.email && (
+                  <p className="col-span-2 text-center text-gray-400 text-sm">No phone or email on file.</p>
+                )}
+              </div>
+              <button
+                onClick={onClose}
+                className="w-full mt-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-all"
+              >
+                Done without sending
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 🆕 MODAL QR */}
       {showQRModal && (
