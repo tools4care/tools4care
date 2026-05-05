@@ -995,48 +995,58 @@ export default function Storefront() {
               const isFull = plan.cupo_maximo > 0 && (plan._ocupados || 0) >= plan.cupo_maximo;
               const spotsLeft = plan.cupo_maximo > 0 ? plan.cupo_maximo - (plan._ocupados || 0) : null;
               return (
-                <div key={plan.id} className="bg-white border-2 border-indigo-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
-                  {/* Cover photo */}
-                  {plan.imagen_url && (
-                    <div className="h-44 overflow-hidden">
-                      <img src={plan.imagen_url} alt={plan.nombre} className="w-full h-full object-cover" />
-                    </div>
-                  )}
-                  {/* Header */}
-                  <div className={`bg-gradient-to-br px-5 py-4 text-white ${isFull ? "from-gray-500 to-gray-600" : "from-indigo-600 to-purple-600"}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-bold text-lg leading-tight">{plan.nombre}</h3>
-                      <span className="shrink-0 bg-white/20 rounded-full px-2 py-0.5 text-xs font-semibold">
-                        {CICLO_LABEL[plan.ciclo] || plan.ciclo}
-                      </span>
-                    </div>
-                    {plan.descripcion && (
-                      <p className="text-white/80 text-sm mt-1 line-clamp-2">{plan.descripcion}</p>
+                <div key={plan.id} className="bg-white rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-shadow flex flex-col">
+                  {/* ── Hero: imagen con overlay O degradado puro ── */}
+                  <div className={`relative flex flex-col justify-end overflow-hidden ${plan.imagen_url ? "min-h-[220px] sm:min-h-[260px]" : "px-5 py-5"} ${!plan.imagen_url ? (isFull ? "bg-gradient-to-br from-gray-500 to-gray-600" : "bg-gradient-to-br from-indigo-600 to-purple-700") : ""}`}>
+                    {/* Foto de fondo */}
+                    {plan.imagen_url && (
+                      <img
+                        src={plan.imagen_url}
+                        alt={plan.nombre}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        loading="lazy"
+                      />
                     )}
-                    <div className="mt-3 flex items-end justify-between gap-2">
-                      <div>
-                        <span className="text-3xl font-black">
-                          ${Number(plan.precio).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                    {/* Gradient overlay sobre la foto */}
+                    {plan.imagen_url && (
+                      <div className={`absolute inset-0 ${isFull ? "bg-gradient-to-t from-gray-900/90 via-gray-800/50 to-transparent" : "bg-gradient-to-t from-indigo-900/90 via-purple-800/40 to-transparent"}`} />
+                    )}
+                    {/* Texto encima */}
+                    <div className="relative z-10 px-5 pb-5 pt-3 text-white">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <h3 className="font-black text-xl leading-tight drop-shadow">{plan.nombre}</h3>
+                        <span className="shrink-0 bg-white/20 backdrop-blur-sm border border-white/30 rounded-full px-2.5 py-0.5 text-xs font-semibold">
+                          {CICLO_LABEL[plan.ciclo] || plan.ciclo}
                         </span>
-                        <span className="text-white/70 text-sm ml-1">/ {CICLO_LABEL[plan.ciclo]?.toLowerCase() || plan.ciclo}</span>
                       </div>
-                      {plan.cupo_maximo > 0 && (
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isFull ? "bg-red-400/80" : "bg-white/25"}`}>
-                          {isFull ? "Full" : `${spotsLeft} spot${spotsLeft !== 1 ? "s" : ""} left`}
-                        </span>
+                      {plan.descripcion && (
+                        <p className="text-white/80 text-sm line-clamp-2 drop-shadow-sm">{plan.descripcion}</p>
                       )}
+                      <div className="mt-3 flex items-end justify-between gap-2">
+                        <div>
+                          <span className="text-4xl font-black drop-shadow">
+                            ${Number(plan.precio).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-white/70 text-sm ml-1.5">/ {CICLO_LABEL[plan.ciclo]?.toLowerCase() || plan.ciclo}</span>
+                        </div>
+                        {plan.cupo_maximo > 0 && (
+                          <span className={`text-xs font-bold px-2.5 py-1 rounded-full backdrop-blur-sm ${isFull ? "bg-red-500/80 border border-red-400/50" : "bg-emerald-500/70 border border-emerald-400/50"}`}>
+                            {isFull ? "Sold out" : `${spotsLeft} spot${spotsLeft !== 1 ? "s" : ""} left`}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Content */}
+                  {/* ── Contenido: productos + botón ── */}
                   <div className="p-5 flex-1 flex flex-col">
                     {productos.length > 0 && (
-                      <div className="flex-1">
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">What's included</p>
-                        <ul className="space-y-1.5">
+                      <div className="flex-1 mb-4">
+                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">What's included</p>
+                        <ul className="space-y-2">
                           {productos.map((item, i) => (
                             <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
-                              <span className="text-indigo-400 shrink-0 mt-0.5">✓</span>
+                              <span className="text-indigo-500 shrink-0 mt-0.5 font-bold">✓</span>
                               <span>
                                 {item.nombre}
                                 {item.nota && <span className="text-gray-400 ml-1">— {item.nota}</span>}
@@ -1048,7 +1058,7 @@ export default function Storefront() {
                     )}
 
                     <button
-                      className={`mt-5 w-full py-2.5 rounded-xl font-semibold text-sm transition-all ${isFull ? "bg-gray-200 text-gray-400 cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95"}`}
+                      className={`w-full py-3.5 rounded-xl font-bold text-sm tracking-wide transition-all ${isFull ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.98] shadow-md shadow-indigo-200"}`}
                       disabled={isFull}
                       onClick={() => !isFull && setSubModal(plan)}
                     >
