@@ -1,5 +1,5 @@
 // src/storefront/Storefront.jsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { supabase } from "../supabaseClient";
 import {
   addToCart,
@@ -51,6 +51,111 @@ function fmtPrice(n, currency = "USD") {
 
 const norm = (s = "") =>
   String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+/* ─── Image Lightbox con carrusel ─── */
+function ImageLightbox({ images, startIndex = 0, onClose }) {
+  const [idx, setIdx] = useState(startIndex);
+  const touchStartX = useRef(null);
+
+  // sync startIndex cuando cambia
+  useEffect(() => setIdx(startIndex), [startIndex]);
+
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowRight") setIdx((i) => (i + 1) % images.length);
+      if (e.key === "ArrowLeft")  setIdx((i) => (i - 1 + images.length) % images.length);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [images.length, onClose]);
+
+  if (!images.length) return null;
+
+  const prev = () => setIdx((i) => (i - 1 + images.length) % images.length);
+  const next = () => setIdx((i) => (i + 1) % images.length);
+
+  return (
+    <div
+      className="fixed inset-0 z-[300] bg-black/90 flex flex-col items-center justify-center"
+      onClick={onClose}
+    >
+      {/* Cerrar */}
+      <button
+        className="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none font-light z-10"
+        onClick={onClose}
+        aria-label="Close"
+      >×</button>
+
+      {/* Contador */}
+      {images.length > 1 && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 text-white/60 text-sm">
+          {idx + 1} / {images.length}
+        </div>
+      )}
+
+      {/* Imagen */}
+      <div
+        className="relative flex items-center justify-center w-full h-full px-16 py-12"
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+        onTouchEnd={(e) => {
+          if (touchStartX.current === null) return;
+          const dx = e.changedTouches[0].clientX - touchStartX.current;
+          if (Math.abs(dx) > 40) dx < 0 ? next() : prev();
+          touchStartX.current = null;
+        }}
+      >
+        <img
+          key={images[idx]}
+          src={images[idx]}
+          alt=""
+          className="max-h-full max-w-full object-contain rounded-xl select-none"
+          style={{ animation: "fadeImg 0.18s ease" }}
+          onError={(e) => { e.currentTarget.style.opacity = "0.3"; }}
+        />
+      </div>
+
+      {/* Flechas */}
+      {images.length > 1 && (
+        <>
+          <button
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white text-xl flex items-center justify-center transition-colors"
+            onClick={(e) => { e.stopPropagation(); prev(); }}
+            aria-label="Previous"
+          >‹</button>
+          <button
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white text-xl flex items-center justify-center transition-colors"
+            onClick={(e) => { e.stopPropagation(); next(); }}
+            aria-label="Next"
+          >›</button>
+        </>
+      )}
+
+      {/* Thumbnails */}
+      {images.length > 1 && (
+        <div
+          className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 px-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {images.map((url, i) => (
+            <button
+              key={i}
+              onClick={() => setIdx(i)}
+              className={`w-12 h-12 rounded-lg border-2 overflow-hidden shrink-0 transition-all ${
+                i === idx ? "border-white scale-110" : "border-white/30 opacity-60 hover:opacity-90"
+              }`}
+            >
+              <img src={url} alt="" className="w-full h-full object-contain bg-white/10" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <style>{`@keyframes fadeImg { from { opacity:0; transform:scale(0.97); } to { opacity:1; transform:scale(1); } }`}</style>
+    </div>
+  );
+}
 
 /* ─── Toast flotante ─── */
 function AddedToast({ toasts }) {
@@ -264,7 +369,7 @@ function DealCardMini({ p, onAdd }) {
 }
 
 /* ─── Product Card — FUERA de Storefront para evitar re-creación en cada render ─── */
-function ProductCard({ p, onAdd }) {
+function ProductCard({ p, onAdd, onOpenLightbox }) {
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
@@ -273,6 +378,7 @@ function ProductCard({ p, onAdd }) {
   const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
   const maxQty = p.stock > 0 ? p.stock : 99;
   const lowStock = p.stock > 0 && p.stock <= 5;
+  const hasMultiple = (p.images?.length ?? 0) > 1;
 
   async function doAdd() {
     if (adding) return;
@@ -292,12 +398,16 @@ function ProductCard({ p, onAdd }) {
   return (
     <div className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col">
       <div className="p-3 flex-1 flex flex-col">
-        {/* Imagen */}
+        {/* Imagen — clickeable para abrir lightbox */}
         <div className="relative">
-          <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
+          <div
+            className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center cursor-zoom-in"
+            onClick={() => p.main_image_url && onOpenLightbox(p)}
+            title="Click to enlarge"
+          >
             {p.main_image_url ? (
               <img src={p.main_image_url} alt={p.nombre}
-                className="w-full h-full object-contain p-2" loading="lazy"
+                className="w-full h-full object-contain p-2 hover:scale-105 transition-transform duration-200" loading="lazy"
                 onError={(e) => { e.currentTarget.style.display = "none"; }} />
             ) : (
               <span className="text-xs text-gray-400">no image</span>
@@ -311,6 +421,13 @@ function ProductCard({ p, onAdd }) {
           {lowStock && (
             <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 font-medium">
               {p.stock} left
+            </span>
+          )}
+          {/* Indicador de múltiples fotos */}
+          {hasMultiple && (
+            <span className="absolute bottom-2 right-2 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/50 text-white font-medium">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M22 16V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M2 6v14a2 2 0 0 0 2 2h14v-2H4V6z"/></svg>
+              {p.images.length}
             </span>
           )}
         </div>
@@ -432,6 +549,15 @@ export default function Storefront() {
   const [count, setCount] = useState(0);
   const [cartBump, setCartBump] = useState(false);
 
+  // Lightbox
+  const [lightbox, setLightbox] = useState(null); // { images: [], idx: 0 }
+
+  const handleOpenLightbox = useCallback((p, startIdx = 0) => {
+    const imgs = p.images?.length ? p.images : (p.main_image_url ? [p.main_image_url] : []);
+    if (!imgs.length) return;
+    setLightbox({ images: imgs, idx: startIdx });
+  }, []);
+
   // Toast notifications
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
@@ -520,12 +646,34 @@ export default function Storefront() {
         coverMap = new Map(covers.map((c) => [c.producto_id, c.main_image_url]));
       }
 
+      // Cargar todas las imágenes por producto (para el carrusel)
+      let imagesMap = new Map();
+      if (ids.length) {
+        const imgs = await selectInChunks({
+          table: "product_images",
+          columns: "producto_id, url, is_primary, sort_order",
+          key: "producto_id",
+          ids,
+          chunkSize: 150,
+        });
+        imgs
+          .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) || (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          .forEach((img) => {
+            const arr = imagesMap.get(img.producto_id) || [];
+            arr.push(img.url);
+            imagesMap.set(img.producto_id, arr);
+          });
+      }
+
       const enriched = (stock || [])
         .filter((r) => !!r.productos)
         .map((r) => {
           const m = metasMap.get(r.producto_id) || {};
           const base = Number(r.productos.precio ?? 0);
           const online = m.price_online == null ? null : Number(m.price_online);
+          const mainUrl = coverMap.get(r.producto_id) || null;
+          // imágenes del carrusel: si no hay en product_images, usamos la principal
+          const allImgs = imagesMap.get(r.producto_id) || (mainUrl ? [mainUrl] : []);
           return {
             id: r.productos.id,
             codigo: r.productos.codigo,
@@ -537,7 +685,8 @@ export default function Storefront() {
             stock: Number(r.cantidad ?? 0),
             descripcion: m.descripcion ?? "",
             visible_online: toBool(m.visible_online),
-            main_image_url: coverMap.get(r.producto_id) || null,
+            main_image_url: mainUrl,
+            images: allImgs,
             is_deal: toBool(m.is_deal),
             deal_starts_at: m.deal_starts_at || null,
             deal_ends_at: m.deal_ends_at || null,
@@ -649,6 +798,15 @@ export default function Storefront() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-16 sm:pb-0">
+      {/* Lightbox */}
+      {lightbox && (
+        <ImageLightbox
+          images={lightbox.images}
+          startIndex={lightbox.idx}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+
       {/* Toast */}
       <AddedToast toasts={toasts} />
 
@@ -737,7 +895,7 @@ export default function Storefront() {
           </div>
         ) : deals.length ? (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {deals.slice(0, 8).map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} />)}
+            {deals.slice(0, 8).map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpenLightbox={handleOpenLightbox} />)}
           </div>
         ) : (
           <div className="text-gray-500">No deals yet.</div>
@@ -753,7 +911,7 @@ export default function Storefront() {
           </div>
         ) : allRows.length ? (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {allRows.slice(0, 12).map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} />)}
+            {allRows.slice(0, 12).map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpenLightbox={handleOpenLightbox} />)}
           </div>
         ) : (
           <div className="text-gray-500">Nothing new for now.</div>
@@ -805,7 +963,7 @@ export default function Storefront() {
           <div className="py-12 text-center text-gray-400">No products match your filters.</div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {rows.map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} />)}
+            {rows.map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpenLightbox={handleOpenLightbox} />)}
           </div>
         )}
       </section>
