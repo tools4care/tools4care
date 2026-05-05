@@ -1,6 +1,5 @@
 // src/storefront/Storefront.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import {
   addToCart,
@@ -12,13 +11,10 @@ import {
 } from "./cartApi";
 import AuthModal from "./AuthModal";
 
-/* -------------------- Helpers -------------------- */
+/* ─── env / cache ─── */
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
-
-// Cache local del VAN Online para evitar consultas repetidas
 let ONLINE_VAN_ID_CACHE = ENV_ONLINE_VAN_ID || null;
 
-// VAN Online (para escuchar cambios de stock)
 async function getOnlineVanId() {
   if (ONLINE_VAN_ID_CACHE) return ONLINE_VAN_ID_CACHE;
   const { data, error } = await supabase
@@ -26,30 +22,21 @@ async function getOnlineVanId() {
     .select("id, nombre_van")
     .ilike("nombre_van", "%online%")
     .maybeSingle();
-  if (error) {
-    console.error(error);
-    return null;
-  }
+  if (error) { console.error(error); return null; }
   ONLINE_VAN_ID_CACHE = data?.id ?? null;
   return ONLINE_VAN_ID_CACHE;
 }
 
-// util para consultas .in() en bloques y evitar URLs enormes
 async function selectInChunks({ table, columns, key, ids, chunkSize = 150 }) {
   const out = [];
   for (let i = 0; i < ids.length; i += chunkSize) {
-    const slice = ids.slice(i, i + chunkSize);
-    const { data, error } = await supabase
-      .from(table)
-      .select(columns)
-      .in(key, slice);
+    const { data, error } = await supabase.from(table).select(columns).in(key, ids.slice(i, i + chunkSize));
     if (error) throw error;
     out.push(...(data || []));
   }
   return out;
 }
 
-// booleano robusto para valores de PG ('t'/'f', 'true'/'false', 1/0, null)
 const toBool = (v) => {
   if (v === true) return true;
   if (v === false || v == null) return false;
@@ -58,34 +45,42 @@ const toBool = (v) => {
   return false;
 };
 
-function Price({ value, currency = "USD" }) {
-  const n = Number(value || 0);
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+function fmtPrice(n, currency = "USD") {
+  return Number(n || 0).toLocaleString("en-US", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const norm = (s = "") =>
-  String(s || "")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
+  String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
-/* -------------------- Cart Drawer -------------------- */
+/* ─── Toast flotante ─── */
+function AddedToast({ toasts }) {
+  return (
+    <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className="flex items-center gap-2 bg-gray-900 text-white px-4 py-3 rounded-2xl shadow-xl text-sm font-medium
+                     animate-[slideIn_0.25s_ease-out]"
+          style={{ animation: "slideIn 0.25s ease-out" }}
+        >
+          <span className="text-emerald-400 text-base">✓</span>
+          <span className="truncate max-w-[220px]">{t.name}</span>
+          <span className="text-gray-400 text-xs ml-1">added to cart</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Cart Drawer ─── */
 function CartDrawer({ open, onClose }) {
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const subtotal = useMemo(
-    () => lines.reduce((acc, l) => acc + Number(l.subtotal || 0), 0),
-    [lines]
-  );
+  const subtotal = useMemo(() => lines.reduce((acc, l) => acc + Number(l.subtotal || 0), 0), [lines]);
 
-  async function refresh() {
-    setLoading(true);
+  async function refresh(showLoader = true) {
+    if (showLoader) setLoading(true);
     try {
       const cid = await ensureCart();
       const items = await listCartItems(cid);
@@ -94,22 +89,19 @@ function CartDrawer({ open, onClose }) {
       console.error(e);
       setLines([]);
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   }
 
   useEffect(() => {
-    if (open) refresh();
+    if (open) refresh(true);
   }, [open]);
 
   function optimisticSet(productoId, nextQty) {
     setLines((prev) => {
       const arr = prev.map((l) => {
         if (l.producto_id !== productoId) return l;
-        const clamped = Math.max(
-          0,
-          Math.min(Number(nextQty), Number(l.stock ?? Infinity))
-        );
+        const clamped = Math.max(0, Math.min(Number(nextQty), Number(l.stock ?? Infinity)));
         return { ...l, qty: clamped, subtotal: clamped * Number(l.price || 0) };
       });
       return arr.filter((l) => Number(l.qty || 0) > 0);
@@ -118,12 +110,12 @@ function CartDrawer({ open, onClose }) {
 
   async function handleQty(productoId, next) {
     const prev = [...lines];
-    optimisticSet(productoId, next);
+    optimisticSet(productoId, next); // instant UI update — no loading flash
     try {
       await updateCartItemQty(productoId, next);
-      await refresh();
+      // ✓ don't call refresh() here — optimistic state is correct, avoids flicker
     } catch (e) {
-      setLines(prev);
+      setLines(prev); // revert only on error
       alert(e?.message || "Could not update quantity.");
     }
   }
@@ -147,19 +139,18 @@ function CartDrawer({ open, onClose }) {
       <aside className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl border-l flex flex-col">
         <div className="p-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">Your cart</h3>
-          <button
-            className="rounded-lg border px-3 py-1.5 hover:bg-gray-50"
-            onClick={onClose}
-          >
+          <button className="rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={onClose}>
             Close
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
           {loading ? (
-            <div className="text-sm text-gray-500">Loading…</div>
+            <div className="flex items-center gap-2 text-sm text-gray-400 mt-4 justify-center">
+              <span className="animate-spin">⟳</span> Loading…
+            </div>
           ) : lines.length === 0 ? (
-            <div className="text-sm text-gray-500">Your cart is empty.</div>
+            <div className="text-sm text-gray-500 mt-4 text-center">Your cart is empty.</div>
           ) : (
             <div className="space-y-3">
               {lines.map((l) => {
@@ -167,77 +158,47 @@ function CartDrawer({ open, onClose }) {
                 const stock = Number(l.stock || 0);
                 const atMax = qty >= stock && stock > 0;
                 const left = Math.max(0, stock - qty);
-
                 return (
-                  <div
-                    key={l.producto_id}
-                    className="flex gap-3 border rounded-xl p-2 bg-white"
-                  >
-                    <div className="w-20">
+                  <div key={l.producto_id} className="flex gap-3 border rounded-xl p-2 bg-white">
+                    <div className="w-20 shrink-0">
                       <div className="aspect-square bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
                         {l.main_image_url ? (
-                          <img
-                            src={l.main_image_url}
-                            alt=""
-                            className="w-full h-full object-contain p-1"
-                            loading="lazy"
-                            onError={(e) => (e.currentTarget.style.display = "none")}
-                          />
+                          <img src={l.main_image_url} alt="" className="w-full h-full object-contain p-1"
+                            loading="lazy" onError={(e) => (e.currentTarget.style.display = "none")} />
                         ) : (
-                          <span className="text-[10px] text-gray-400">
-                            no image
-                          </span>
+                          <span className="text-[10px] text-gray-400">no image</span>
                         )}
                       </div>
                     </div>
-
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{l.nombre}</div>
+                      <div className="font-medium truncate text-sm">{l.nombre}</div>
                       <div className="text-xs text-gray-500">{l.marca || "—"}</div>
-
                       <div className="mt-2 flex items-center gap-2">
                         <button
-                          className="w-7 h-7 rounded-md border hover:bg-gray-50"
-                          onClick={() =>
-                            handleQty(l.producto_id, Math.max(0, qty - 1))
-                          }
+                          className="w-8 h-8 rounded-lg border hover:bg-gray-50 text-lg font-bold flex items-center justify-center disabled:opacity-40"
+                          onClick={() => handleQty(l.producto_id, Math.max(0, qty - 1))}
                           title="Less"
-                        >
-                          −
-                        </button>
-                        <span className="w-8 text-center text-sm">{qty}</span>
+                        >−</button>
+                        <span className="w-8 text-center text-sm font-semibold">{qty}</span>
                         <button
-                          className="w-7 h-7 rounded-md border hover:bg-gray-50 disabled:opacity-50"
+                          className="w-8 h-8 rounded-lg border hover:bg-gray-50 text-lg font-bold flex items-center justify-center disabled:opacity-40"
                           onClick={() => handleQty(l.producto_id, qty + 1)}
                           disabled={stock > 0 ? atMax : false}
                           title={atMax ? "No more stock" : "More"}
-                        >
-                          +
-                        </button>
-
+                        >+</button>
                         <button
-                          className="ml-2 text-xs text-rose-600 hover:underline"
+                          className="ml-1 text-xs text-rose-500 hover:text-rose-700 hover:underline"
                           onClick={() => handleRemove(l.producto_id)}
-                        >
-                          Remove
-                        </button>
-
+                        >Remove</button>
                         {left <= 3 && stock > 0 && (
-                          <span className="ml-2 text-[11px] text-amber-700">
-                            Only {left} left
-                          </span>
+                          <span className="text-[11px] text-amber-700">Only {left} left</span>
                         )}
                       </div>
                     </div>
-
-                    <div className="text-right">
-                      <div className="font-semibold">
-                        <Price value={l.subtotal} />
-                      </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-semibold text-sm">{fmtPrice(l.subtotal)}</div>
                       {qty > 1 && (
-                        <div className="text-[11px] text-gray-500">
-                          <Price value={l.price} /> each
-                        </div>
+                        <div className="text-[11px] text-gray-400">{fmtPrice(l.price)} each</div>
                       )}
                     </div>
                   </div>
@@ -248,24 +209,16 @@ function CartDrawer({ open, onClose }) {
         </div>
 
         <div className="border-t p-3">
-          <div className="flex items-center justify-between text-sm">
-            <span>Items: {lines.reduce((a, l) => a + Number(l.qty || 0), 0)}</span>
-            <span className="font-semibold">
-              Subtotal: <Price value={subtotal} />
-            </span>
+          <div className="flex items-center justify-between text-sm mb-3">
+            <span className="text-gray-600">Items: {lines.reduce((a, l) => a + Number(l.qty || 0), 0)}</span>
+            <span className="font-bold text-lg">{fmtPrice(subtotal)}</span>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <button
-              className="rounded-lg border px-3 py-2 hover:bg-gray-50"
-              onClick={onClose}
-            >
+          <div className="grid grid-cols-2 gap-2">
+            <button className="rounded-xl border px-3 py-2.5 hover:bg-gray-50 text-sm font-medium" onClick={onClose}>
               Keep shopping
             </button>
-            <a
-              href="/checkout"
-              className="text-center rounded-lg bg-blue-600 text-white px-3 py-2 hover:bg-blue-700"
-            >
-              Go to checkout
+            <a href="/checkout" className="text-center rounded-xl bg-blue-600 text-white px-3 py-2.5 hover:bg-blue-700 text-sm font-semibold">
+              Go to checkout →
             </a>
           </div>
         </div>
@@ -274,53 +227,34 @@ function CartDrawer({ open, onClose }) {
   );
 }
 
-/* -------------------- Mini Deal Card (hero) -------------------- */
+/* ─── Deal Card Mini (hero) ─── */
 function DealCardMini({ p, onAdd }) {
   const [adding, setAdding] = useState(false);
   const price = Number(p.price_online ?? p.price_base ?? 0);
-  const hasOffer =
-    p.price_online != null &&
-    p.price_base != null &&
-    Number(p.price_online) < Number(p.price_base);
+  const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
+
   return (
-    // Fondo blanco + texto oscuro para legibilidad
     <div className="bg-white rounded-xl p-3 border hover:shadow-sm transition text-gray-900">
       <div className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center">
         {p.main_image_url ? (
-          <img
-            src={p.main_image_url}
-            alt={p.nombre}
-            className="w-full h-full object-contain p-2"
-            loading="lazy"
-            onError={(e) => (e.currentTarget.style.display = "none")}
-          />
+          <img src={p.main_image_url} alt={p.nombre} className="w-full h-full object-contain p-2"
+            loading="lazy" onError={(e) => (e.currentTarget.style.display = "none")} />
         ) : (
           <span className="text-xs text-gray-400">no image</span>
         )}
       </div>
-      <div className="mt-2 font-semibold line-clamp-1 text-gray-900">{p.nombre}</div>
-      <div className="text-xs text-gray-600 line-clamp-1">{p.marca || "—"}</div>
-      {p.descripcion ? (
-        <div className="text-xs text-gray-700 mt-1 line-clamp-2">{p.descripcion}</div>
-      ) : null}
-      <div className="mt-2 font-semibold text-gray-900">
-        <Price value={price} />
-        {hasOffer ? (
-          <span className="ml-2 text-xs text-gray-500 line-through">
-            <Price value={p.price_base} />
-          </span>
-        ) : null}
+      <div className="mt-2 font-semibold line-clamp-1 text-sm text-gray-900">{p.nombre}</div>
+      <div className="text-xs text-gray-500 line-clamp-1">{p.marca || "—"}</div>
+      <div className="mt-1.5 flex items-baseline gap-1.5">
+        <span className="font-bold text-gray-900">{fmtPrice(price)}</span>
+        {hasOffer && <span className="text-xs text-gray-400 line-through">{fmtPrice(p.price_base)}</span>}
       </div>
       <button
-        className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50"
+        className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
         disabled={adding}
         onClick={async () => {
-          try {
-            setAdding(true);
-            await onAdd(p);
-          } finally {
-            setAdding(false);
-          }
+          setAdding(true);
+          try { await onAdd(p); } finally { setAdding(false); }
         }}
       >
         {adding ? "Adding…" : "Add to cart"}
@@ -329,13 +263,162 @@ function DealCardMini({ p, onAdd }) {
   );
 }
 
-/* -------------------- Storefront -------------------- */
+/* ─── Product Card — FUERA de Storefront para evitar re-creación en cada render ─── */
+function ProductCard({ p, onAdd }) {
+  const [qty, setQty] = useState(1);
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState(false);
+
+  const price = Number(p.price_online ?? p.price_base ?? 0);
+  const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
+  const maxQty = p.stock > 0 ? p.stock : 99;
+  const lowStock = p.stock > 0 && p.stock <= 5;
+
+  async function doAdd() {
+    if (adding) return;
+    setAdding(true);
+    try {
+      await onAdd(p, qty);
+      setQty(1);
+      setAdded(true);
+      setTimeout(() => setAdded(false), 2000);
+    } catch (e) {
+      alert(String(e?.message || "Could not add to cart."));
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col">
+      <div className="p-3 flex-1 flex flex-col">
+        {/* Imagen */}
+        <div className="relative">
+          <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
+            {p.main_image_url ? (
+              <img src={p.main_image_url} alt={p.nombre}
+                className="w-full h-full object-contain p-2" loading="lazy"
+                onError={(e) => { e.currentTarget.style.display = "none"; }} />
+            ) : (
+              <span className="text-xs text-gray-400">no image</span>
+            )}
+          </div>
+          {(hasOffer || p.is_deal) && (
+            <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200 font-medium">
+              {p.deal_badge || "Deal"}
+            </span>
+          )}
+          {lowStock && (
+            <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 font-medium">
+              {p.stock} left
+            </span>
+          )}
+        </div>
+
+        {/* Info */}
+        <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px] text-sm">{p.nombre}</div>
+        <div className="text-xs text-gray-500">{p.marca || "—"}</div>
+        {p.descripcion
+          ? <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">{p.descripcion}</div>
+          : <div className="mt-1 min-h-[32px]" />
+        }
+
+        {/* Precio */}
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="font-bold text-gray-900">{fmtPrice(price)}</span>
+          {hasOffer && <span className="text-xs text-gray-400 line-through">{fmtPrice(p.price_base)}</span>}
+        </div>
+
+        {/* Qty + Add */}
+        <div className="mt-3 flex items-center gap-2">
+          <div className="flex items-center border rounded-lg overflow-hidden shrink-0">
+            <button
+              type="button"
+              className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              onClick={() => setQty((q) => Math.max(1, q - 1))}
+              disabled={qty <= 1}
+            >−</button>
+            <span className="w-7 text-center text-sm font-semibold">{qty}</span>
+            <button
+              type="button"
+              className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+              disabled={qty >= maxQty}
+            >+</button>
+          </div>
+
+          <button
+            type="button"
+            onClick={doAdd}
+            disabled={adding}
+            className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-all duration-200 ${
+              added
+                ? "bg-emerald-500 text-white scale-[1.02]"
+                : "bg-blue-600 text-white hover:bg-blue-700 active:scale-95 disabled:opacity-50"
+            }`}
+          >
+            {adding ? (
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <span className="animate-spin text-base leading-none">⟳</span>
+              </span>
+            ) : added ? (
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <span>✓</span> Added!
+              </span>
+            ) : (
+              "Add to cart"
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Skeleton card ─── */
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-xl shadow-sm border overflow-hidden animate-pulse">
+      <div className="p-3">
+        <div className="aspect-square bg-gray-100 rounded-xl mb-3" />
+        <div className="h-3 bg-gray-100 rounded w-3/4 mb-2" />
+        <div className="h-3 bg-gray-100 rounded w-1/2 mb-3" />
+        <div className="h-8 bg-gray-100 rounded w-full" />
+      </div>
+    </div>
+  );
+}
+
+/* ─── Cart icon animated ─── */
+function CartIcon({ count, onClick, bump }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative ml-1 hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 hover:bg-gray-50"
+      aria-label="Cart"
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" className="text-gray-700">
+        <path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z" />
+      </svg>
+      <span
+        className={`absolute -top-1 -right-1 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5 transition-transform ${bump ? "scale-125" : "scale-100"}`}
+        style={{ transition: "transform 0.2s cubic-bezier(0.34,1.56,0.64,1)" }}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+/* ═══════════════════════════════════
+   STOREFRONT PRINCIPAL
+═══════════════════════════════════ */
 export default function Storefront() {
   const [q, setQ] = useState("");
   const [allRows, setAllRows] = useState([]);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [count, setCount] = useState(0);
 
   const [brand, setBrand] = useState("all");
   const [minPrice, setMinPrice] = useState("");
@@ -346,12 +429,28 @@ export default function Storefront() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("signup");
   const [cartOpen, setCartOpen] = useState(false);
+  const [count, setCount] = useState(0);
+  const [cartBump, setCartBump] = useState(false);
 
-  const [settings, setSettings] = useState(null); // site_settings (logo + nombre)
+  // Toast notifications
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
 
-  const navigate = useNavigate();
+  const [settings, setSettings] = useState(null);
+
   const offersRef = useRef(null);
   const reloadTimeoutRef = useRef(null);
+
+  function showToast(name) {
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev, { id, name }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2500);
+  }
+
+  function bumpCart() {
+    setCartBump(true);
+    setTimeout(() => setCartBump(false), 300);
+  }
 
   // sesión
   useEffect(() => {
@@ -359,26 +458,18 @@ export default function Storefront() {
     (async () => {
       const { data } = await supabase.auth.getSession();
       setUser(data?.session?.user || null);
-      sub = supabase.auth
-        .onAuthStateChange((_e, s) => setUser(s?.user || null))
-        .data?.subscription;
+      sub = supabase.auth.onAuthStateChange((_e, s) => setUser(s?.user || null)).data?.subscription;
     })();
     return () => sub?.unsubscribe?.();
   }, []);
 
-  // site_settings (logo + nombre público)
+  // site settings
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase
-          .from("site_settings")
-          .select("site_name, logo_url")
-          .eq("id", 1)
-          .maybeSingle();
+        const { data } = await supabase.from("site_settings").select("site_name, logo_url").eq("id", 1).maybeSingle();
         if (data) setSettings(data);
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     })();
   }, []);
 
@@ -387,72 +478,48 @@ export default function Storefront() {
     (async () => {
       try {
         const cid = await ensureCart();
-        const c = await cartCount(cid);
-        setCount(c);
-      } catch {
-        // ignore
-      }
+        setCount(await cartCount(cid));
+      } catch { /* ignore */ }
     })();
   }, [user]);
 
-  // --------- CARGA DE CATÁLOGO DIRECTO DE BD ----------
+  // carga catálogo
   async function reloadCatalog() {
     setLoading(true);
     try {
       const onlineVanId = await getOnlineVanId();
       if (!onlineVanId) throw new Error("Online VAN not found.");
 
-      // 1) Stock del VAN Online + producto base
       const { data: stock, error: stErr } = await supabase
         .from("stock_van")
-        .select(
-          `
-          producto_id,
-          cantidad,
-          productos ( id, codigo, nombre, marca, precio )
-        `
-        )
+        .select("producto_id, cantidad, productos ( id, codigo, nombre, marca, precio )")
         .eq("van_id", onlineVanId)
         .gt("cantidad", 0)
         .order("producto_id", { ascending: true });
       if (stErr) throw stErr;
 
       const ids = (stock || []).map((r) => r.producto_id);
-
-      // 2) Metas online (solo visibles) en bloques
       let metasMap = new Map();
       if (ids.length) {
-        const chunkSize = 150;
         const metas = [];
-        for (let i = 0; i < ids.length; i += chunkSize) {
-          const slice = ids.slice(i, i + chunkSize);
+        for (let i = 0; i < ids.length; i += 150) {
           const { data, error } = await supabase
             .from("online_product_meta")
-            .select(
-              "producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority"
-            )
+            .select("producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority")
             .eq("visible_online", true)
-            .in("producto_id", slice);
+            .in("producto_id", ids.slice(i, i + 150));
           if (error) throw error;
           metas.push(...(data || []));
         }
         metas.forEach((m) => metasMap.set(m.producto_id, m));
       }
 
-      // 3) Imagen principal (chunked)
       let coverMap = new Map();
       if (ids.length) {
-        const covers = await selectInChunks({
-          table: "product_main_image_v",
-          columns: "producto_id, main_image_url",
-          key: "producto_id",
-          ids,
-          chunkSize: 150,
-        });
+        const covers = await selectInChunks({ table: "product_main_image_v", columns: "producto_id, main_image_url", key: "producto_id", ids, chunkSize: 150 });
         coverMap = new Map(covers.map((c) => [c.producto_id, c.main_image_url]));
       }
 
-      // 4) Enriquecer y filtrar
       const enriched = (stock || [])
         .filter((r) => !!r.productos)
         .map((r) => {
@@ -471,8 +538,6 @@ export default function Storefront() {
             descripcion: m.descripcion ?? "",
             visible_online: toBool(m.visible_online),
             main_image_url: coverMap.get(r.producto_id) || null,
-
-            // Ofertas
             is_deal: toBool(m.is_deal),
             deal_starts_at: m.deal_starts_at || null,
             deal_ends_at: m.deal_ends_at || null,
@@ -492,46 +557,23 @@ export default function Storefront() {
     }
   }
 
-  useEffect(() => {
-    reloadCatalog();
-  }, []);
+  useEffect(() => { reloadCatalog(); }, []);
 
   // Realtime con debounce
   useEffect(() => {
     let channel;
     (async () => {
       const onlineVanId = await getOnlineVanId();
-
       const scheduleReload = () => {
         if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
-        reloadTimeoutRef.current = setTimeout(() => reloadCatalog(), 600);
+        reloadTimeoutRef.current = setTimeout(() => reloadCatalog(), 800);
       };
-
-      channel = supabase
-        .channel("online-catalog-watch")
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "stock_van",
-            filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined,
-          },
-          scheduleReload
-        )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "productos" },
-          scheduleReload
-        )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "online_product_meta" },
-          scheduleReload
-        )
+      channel = supabase.channel("online-catalog-watch")
+        .on("postgres_changes", { event: "*", schema: "public", table: "stock_van", filter: onlineVanId ? `van_id=eq.${onlineVanId}` : undefined }, scheduleReload)
+        .on("postgres_changes", { event: "*", schema: "public", table: "productos" }, scheduleReload)
+        .on("postgres_changes", { event: "*", schema: "public", table: "online_product_meta" }, scheduleReload)
         .subscribe();
     })();
-
     return () => {
       if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
       if (channel) supabase.removeChannel(channel);
@@ -542,160 +584,40 @@ export default function Storefront() {
   useEffect(() => {
     const nq = norm(q);
     let list = [...allRows];
-
-    if (nq)
-      list = list.filter((p) =>
-        [p.nombre, p.marca, p.codigo].some((f) => norm(f).includes(nq))
-      );
-    if (brand !== "all")
-      list = list.filter((p) => (p.marca || "").toLowerCase() === brand);
-
+    if (nq) list = list.filter((p) => [p.nombre, p.marca, p.codigo].some((f) => norm(f).includes(nq)));
+    if (brand !== "all") list = list.filter((p) => (p.marca || "").toLowerCase() === brand);
     list = list.filter((p) => {
-      const price = Number(p.price ?? p.price_online ?? p.price_base ?? 0);
-      if (minPrice !== "" && price < Number(minPrice)) return false;
-      if (maxPrice !== "" && price > Number(maxPrice)) return false;
+      const pr = Number(p.price ?? p.price_online ?? p.price_base ?? 0);
+      if (minPrice !== "" && pr < Number(minPrice)) return false;
+      if (maxPrice !== "" && pr > Number(maxPrice)) return false;
       return true;
     });
-
-    if (sort === "price_asc")
-      list.sort(
-        (a, b) =>
-          (a.price ?? a.price_online ?? a.price_base ?? 0) -
-          (b.price ?? b.price_online ?? b.price_base ?? 0)
-      );
-    if (sort === "price_desc")
-      list.sort(
-        (a, b) =>
-          (b.price ?? b.price_online ?? b.price_base ?? 0) -
-          (a.price ?? a.price_online ?? a.price_base ?? 0)
-      );
-    if (sort === "name_asc")
-      list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
-
+    if (sort === "price_asc") list.sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+    if (sort === "price_desc") list.sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
+    if (sort === "name_asc") list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
     setRows(list);
   }, [q, brand, minPrice, maxPrice, sort, allRows]);
 
-  const total = useMemo(() => rows.length, [rows]);
-
-  // Used by DealCardMini (hero section) — opens cart drawer for context
-  async function handleAdd(p) {
-    setCount((c) => c + 1);
+  // Callback estable para agregar al carrito — no recrea ProductCard en cada render
+  const handleAdd = useCallback(async (p, qty = 1) => {
+    setCount((c) => c + (qty || 1));
+    bumpCart();
     try {
-      const newCount = await addToCart(p, 1);
+      const newCount = await addToCart(p, qty);
       setCount(newCount);
-      setCartOpen(true);
+      showToast(p.nombre);
     } catch (e) {
-      setCount((c) => Math.max(0, c - 1));
-      alert(String(e?.message || "Could not add to cart."));
+      setCount((c) => Math.max(0, c - (qty || 1)));
+      throw e;
     }
-  }
+  }, []);
 
-  function ProductCard({ p }) {
-    const [qty,    setQty]    = useState(1);
-    const [adding, setAdding] = useState(false);
-    const [added,  setAdded]  = useState(false);
-    const price = Number(p.price_online ?? p.price_base ?? 0);
-    const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
-    const maxQty = p.stock > 0 ? p.stock : 99;
-    const lowStock = p.stock > 0 && p.stock <= 5;
+  // handleAdd para DealCardMini (abre cart drawer)
+  const handleAddDeal = useCallback(async (p) => {
+    await handleAdd(p, 1);
+    setCartOpen(true);
+  }, [handleAdd]);
 
-    async function doAdd() {
-      if (adding) return;
-      setAdding(true);
-      try {
-        const newCount = await addToCart(p, qty);
-        setCount(newCount);
-        setQty(1);
-        setAdded(true);
-        setTimeout(() => setAdded(false), 1800);
-      } catch (e) {
-        alert(String(e?.message || "Could not add to cart."));
-      } finally {
-        setAdding(false);
-      }
-    }
-
-    return (
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col">
-        <div className="p-3 flex-1 flex flex-col">
-          {/* Image */}
-          <div className="relative">
-            <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
-              {p.main_image_url ? (
-                <img src={p.main_image_url} alt={p.nombre}
-                  className="w-full h-full object-contain p-2" loading="lazy"
-                  onError={(e) => { e.currentTarget.style.display = "none"; }} />
-              ) : (
-                <span className="text-xs text-gray-400">no image</span>
-              )}
-            </div>
-            {(hasOffer || p.is_deal) && (
-              <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-                {p.deal_badge || "Deal"}
-              </span>
-            )}
-            {lowStock && (
-              <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
-                {p.stock} left
-              </span>
-            )}
-          </div>
-
-          {/* Info */}
-          <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px] text-sm">{p.nombre}</div>
-          <div className="text-xs text-gray-500">{p.marca || "—"}</div>
-          {p.descripcion
-            ? <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">{p.descripcion}</div>
-            : <div className="mt-1 min-h-[32px]" />
-          }
-
-          {/* Price */}
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="font-semibold text-gray-900"><Price value={price} /></span>
-            {hasOffer && (
-              <span className="text-xs text-gray-400 line-through"><Price value={p.price_base} /></span>
-            )}
-          </div>
-
-          {/* Qty stepper + Add to cart */}
-          <div className="mt-3 flex items-center gap-2">
-            {/* Qty stepper */}
-            <div className="flex items-center border rounded-lg overflow-hidden shrink-0">
-              <button
-                type="button"
-                className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-                onClick={() => setQty((q) => Math.max(1, q - 1))}
-                disabled={qty <= 1}
-              >−</button>
-              <span className="w-7 text-center text-sm font-medium">{qty}</span>
-              <button
-                type="button"
-                className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-                onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
-                disabled={qty >= maxQty}
-              >+</button>
-            </div>
-
-            {/* Add button */}
-            <button
-              type="button"
-              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
-                added
-                  ? "bg-emerald-500 text-white"
-                  : "bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-              }`}
-              disabled={adding}
-              onClick={doAdd}
-            >
-              {adding ? "…" : added ? "✓ Added!" : "Add to cart"}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Featured deals
   const deals = useMemo(() => {
     const now = Date.now();
     const within = (p) => {
@@ -703,165 +625,97 @@ export default function Storefront() {
       const eOk = !p.deal_ends_at || new Date(p.deal_ends_at).getTime() >= now;
       return sOk && eOk;
     };
-
     let pick = allRows.filter((p) => p.is_deal && within(p));
     if (pick.length < 8) {
-      const fallback = allRows.filter(
-        (p) =>
-          !p.is_deal &&
-          p.price_online != null &&
-          p.price_base != null &&
-          Number(p.price_online) < Number(p.price_base)
-      );
+      const fallback = allRows.filter((p) => !p.is_deal && p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base));
       pick = [...pick, ...fallback];
     }
-
     pick.sort((a, b) => {
       if (b.deal_priority !== a.deal_priority) return b.deal_priority - a.deal_priority;
       const da = a.price_base ? 1 - (a.price_online ?? a.price_base) / a.price_base : 0;
       const db = b.price_base ? 1 - (b.price_online ?? b.price_base) / b.price_base : 0;
       return db - da;
     });
-
     return pick.slice(0, 8);
   }, [allRows]);
+
+  const brands = useMemo(() =>
+    ["all", ...new Set(allRows.map((p) => (p.marca || "").toLowerCase()).filter(Boolean))].sort(),
+    [allRows]
+  );
 
   const siteName = settings?.site_name || "Tools4care";
   const logoUrl = settings?.logo_url || null;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-16 sm:pb-0">
+      {/* Toast */}
+      <AddedToast toasts={toasts} />
+
       {/* HEADER */}
-      <header className="sticky top-0 z-20 bg-white border-b">
+      <header className="sticky top-0 z-20 bg-white border-b shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
-          {/* Brand */}
           <button
-            className="flex items-center gap-2 text-lg font-semibold"
+            className="flex items-center gap-2 text-lg font-semibold shrink-0"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            title="Home"
           >
             {logoUrl ? (
-              <img
-                src={logoUrl}
-                alt={siteName}
-                className="h-7 w-auto object-contain"
-                onError={(e) => (e.currentTarget.style.display = "none")}
-              />
+              <img src={logoUrl} alt={siteName} className="h-7 w-auto object-contain"
+                onError={(e) => (e.currentTarget.style.display = "none")} />
             ) : (
               <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
-                <path
-                  fill="currentColor"
-                  d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 12h6.5z"
-                />
+                <path fill="currentColor" d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 12h6.5z" />
               </svg>
             )}
-            <span className="truncate max-w-[180px]">{siteName}</span>
+            <span className="truncate max-w-[160px] hidden sm:block">{siteName}</span>
           </button>
 
-          {/* Quick search */}
           <div className="flex-1">
             <input
-              className="w-full border rounded-lg px-3 py-2"
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
               placeholder="Search by code, name, or brand…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
 
-          {/* Auth (desktop) */}
           {!user ? (
             <div className="hidden sm:flex items-center gap-2">
-              <button
-                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={() => {
-                  setAuthMode("signup");
-                  setAuthOpen(true);
-                }}
-                title="Create account"
-              >
-                Sign up
-              </button>
-              <button
-                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={() => {
-                  setAuthMode("login");
-                  setAuthOpen(true);
-                }}
-                title="Sign in"
-              >
-                Sign in
-              </button>
+              <button className="text-sm rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={() => { setAuthMode("signup"); setAuthOpen(true); }}>Sign up</button>
+              <button className="text-sm rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={() => { setAuthMode("login"); setAuthOpen(true); }}>Sign in</button>
             </div>
           ) : (
             <div className="hidden sm:flex items-center gap-2">
-              <span className="text-sm text-gray-700 truncate max-w-[180px]">
-                Hi, {user.email}
-              </span>
-              <button
-                className="px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={async () => {
-                  await supabase.auth.signOut();
-                }}
-              >
-                Sign out
-              </button>
+              <span className="text-sm text-gray-600 truncate max-w-[140px]">{user.email}</span>
+              <button className="text-sm rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={() => supabase.auth.signOut()}>Sign out</button>
             </div>
           )}
 
-          {/* Cart (desktop header) */}
-          <button
-            type="button"
-            onClick={() => setCartOpen(true)}
-            className="relative ml-1 hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 hover:bg-gray-50"
-            title="Open cart"
-            aria-label="Cart"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" className="text-gray-700">
-              <path
-                fill="currentColor"
-                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z"
-              />
-            </svg>
-            <span className="absolute -top-1 -right-1 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5">
-              {count}
-            </span>
-          </button>
+          <CartIcon count={count} bump={cartBump} onClick={() => setCartOpen(true)} />
         </div>
       </header>
 
-      {/* HERO con ofertas */}
+      {/* HERO */}
       <section className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white">
         <div className="max-w-7xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-6 items-center">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold leading-tight">
-              Weekly deals & new arrivals
-            </h1>
-            <p className="mt-2 text-white/90">
-              Discover special prices and freshly added products.
-            </p>
+            <h1 className="text-2xl sm:text-3xl font-bold leading-tight">Weekly deals & new arrivals</h1>
+            <p className="mt-2 text-white/90">Discover special prices and freshly added products.</p>
             <div className="mt-4 flex gap-2">
-              <button
-                onClick={() =>
-                  offersRef.current?.scrollIntoView({ behavior: "smooth" })
-                }
-                className="rounded-lg bg-white text-gray-900 px-4 py-2 font-semibold hover:bg-gray-100"
-              >
+              <button onClick={() => offersRef.current?.scrollIntoView({ behavior: "smooth" })}
+                className="rounded-lg bg-white text-gray-900 px-4 py-2 font-semibold hover:bg-gray-100">
                 View deals
               </button>
-              <a
-                href="#catalog"
-                className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10"
-              >
+              <a href="#catalog" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10">
                 Browse catalog
               </a>
             </div>
           </div>
-
           <div className="bg-white/10 rounded-2xl p-3">
             {deals.length ? (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {deals.slice(0, 6).map((p) => (
-                  <DealCardMini key={p.id} p={p} onAdd={handleAdd} />
+                  <DealCardMini key={p.id} p={p} onAdd={handleAddDeal} />
                 ))}
               </div>
             ) : (
@@ -873,34 +727,36 @@ export default function Storefront() {
 
       {/* DEALS */}
       <section ref={offersRef} className="max-w-7xl mx-auto px-4 py-8">
-        <div className="flex items-end justify-between">
+        <div className="flex items-end justify-between mb-4">
           <h2 className="text-xl font-bold">Featured deals</h2>
-          <a href="#catalog" className="text-sm text-blue-600 hover:underline">
-            See full catalog →
-          </a>
+          <a href="#catalog" className="text-sm text-blue-600 hover:underline">See full catalog →</a>
         </div>
-        {deals.length ? (
-          <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {deals.slice(0, 8).map((p) => (
-              <ProductCard key={p.id} p={p} />
-            ))}
+        {loading ? (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        ) : deals.length ? (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {deals.slice(0, 8).map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} />)}
           </div>
         ) : (
-          <div className="mt-4 text-gray-500">No deals yet.</div>
+          <div className="text-gray-500">No deals yet.</div>
         )}
       </section>
 
       {/* NEW ARRIVALS */}
       <section className="max-w-7xl mx-auto px-4 pb-2">
-        <h2 className="text-xl font-bold">New arrivals</h2>
-        {[...allRows].length ? (
-          <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {[...allRows].slice(0, 12).map((p) => (
-              <ProductCard key={p.id} p={p} />
-            ))}
+        <h2 className="text-xl font-bold mb-4">New arrivals</h2>
+        {loading ? (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        ) : allRows.length ? (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {allRows.slice(0, 12).map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} />)}
           </div>
         ) : (
-          <div className="mt-4 text-gray-500">Nothing new for now.</div>
+          <div className="text-gray-500">Nothing new for now.</div>
         )}
       </section>
 
@@ -908,160 +764,96 @@ export default function Storefront() {
       <section id="catalog" className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-center gap-2 mb-3">
           <h2 className="text-xl font-bold">Catalog</h2>
-          <div className="text-sm text-gray-600">
-            {loading ? "Loading…" : `${total} product${total === 1 ? "" : "s"}`}
-          </div>
+          <span className="text-sm text-gray-500">
+            {loading ? "Loading…" : `${rows.length} product${rows.length === 1 ? "" : "s"}`}
+          </span>
         </div>
 
         <div className="bg-white border rounded-xl p-3 mb-4">
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
             <div className="sm:col-span-2">
-              <input
-                className="w-full border rounded-lg px-3 py-2"
-                placeholder="Search by code, name, or brand…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
+              <input className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                placeholder="Search by code, name, or brand…" value={q} onChange={(e) => setQ(e.target.value)} />
             </div>
-
             <div>
-              <select
-                className="w-full border rounded-lg px-3 py-2 bg-white"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                title="Brand"
-              >
-                {["all", ...new Set(allRows.map((p) => (p.marca || "").toLowerCase()))]
-                  .filter((v, i, a) => a.indexOf(v) === i)
-                  .sort()
-                  .map((b) => (
-                    <option key={b} value={b}>
-                      {b === "all" ? "All brands" : b}
-                    </option>
-                  ))}
+              <select className="w-full border rounded-lg px-3 py-2 bg-white text-sm" value={brand} onChange={(e) => setBrand(e.target.value)}>
+                {brands.map((b) => <option key={b} value={b}>{b === "all" ? "All brands" : b}</option>)}
               </select>
             </div>
-
             <div className="flex gap-2">
-              <input
-                type="number"
-                min="0"
-                className="w-full border rounded-lg px-3 py-2"
-                placeholder="Min $"
-                value={minPrice}
-                onChange={(e) => setMinPrice(e.target.value)}
-              />
-              <input
-                type="number"
-                min="0"
-                className="w-full border rounded-lg px-3 py-2"
-                placeholder="Max $"
-                value={maxPrice}
-                onChange={(e) => setMaxPrice(e.target.value)}
-              />
+              <input type="number" min="0" className="w-full border rounded-lg px-3 py-2 text-sm"
+                placeholder="Min $" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} />
+              <input type="number" min="0" className="w-full border rounded-lg px-3 py-2 text-sm"
+                placeholder="Max $" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
             </div>
-
             <div>
-              <select
-                className="w-full border rounded-lg px-3 py-2 bg-white"
-                value={sort}
-                onChange={(e) => setSort(e.target.value)}
-                title="Sort"
-              >
+              <select className="w-full border rounded-lg px-3 py-2 bg-white text-sm" value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="relevance">Relevance</option>
-                <option value="price_asc">Price: low to high</option>
-                <option value="price_desc">Price: high to low</option>
+                <option value="price_asc">Price: low → high</option>
+                <option value="price_desc">Price: high → low</option>
                 <option value="name_asc">Name A → Z</option>
               </select>
             </div>
           </div>
         </div>
 
-        {!rows.length && !loading && (
-          <div className="text-gray-500">No products match your filters.</div>
+        {loading ? (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="py-12 text-center text-gray-400">No products match your filters.</div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {rows.map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} />)}
+          </div>
         )}
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {rows.map((p) => (
-            <ProductCard key={p.id} p={p} />
-          ))}
-        </div>
       </section>
 
-      <footer className="mt-10 py-6 text-center text-sm text-gray-500">
+      <footer className="mt-10 py-6 text-center text-sm text-gray-400 border-t">
         © {new Date().getFullYear()} {siteName} — made with 💙
       </footer>
 
-      {/* Auth modal */}
-      <AuthModal
-        open={authOpen}
-        mode={authMode}
-        onClose={() => setAuthOpen(false)}
-        onSignedIn={() => setAuthOpen(false)}
-      />
-
-      {/* Cart panel */}
+      <AuthModal open={authOpen} mode={authMode} onClose={() => setAuthOpen(false)} onSignedIn={() => setAuthOpen(false)} />
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
 
       {/* Mobile bottom bar */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
         <div className="flex justify-around items-center py-2">
-          <button
-            className="flex flex-col items-center text-xs"
-            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
-            </svg>
+          <button className="flex flex-col items-center text-xs gap-0.5" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+            <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" /></svg>
             Home
           </button>
-
-          <a href="#catalog" className="flex flex-col items-center text-xs">
-            <svg width="22" height="22" viewBox="0 0 24 24">
-              <path
-                fill="currentColor"
-                d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.471 6.471 0 0 0 4.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14"
-              />
-            </svg>
+          <a href="#catalog" className="flex flex-col items-center text-xs gap-0.5">
+            <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.471 6.471 0 0 0 4.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14" /></svg>
             Search
           </a>
-
-          {/* Único botón: abre el modal con ambas opciones (login/sign up) */}
           {!user && (
-            <button
-              className="flex flex-col items-center text-xs"
-              onClick={() => {
-                setAuthMode("login"); // modo inicial; dentro del modal el usuario puede cambiar a Sign up
-                setAuthOpen(true);
-              }}
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"
-                />
-              </svg>
-              Login / Sign up
+            <button className="flex flex-col items-center text-xs gap-0.5" onClick={() => { setAuthMode("login"); setAuthOpen(true); }}>
+              <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z" /></svg>
+              Login
             </button>
           )}
-
-          <button
-            className="relative flex flex-col items-center text-xs"
-            onClick={() => setCartOpen(true)}
-            aria-label="Open cart"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24">
-              <path
-                fill="currentColor"
-                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z"
-              />
-            </svg>
-            <span className="absolute -top-2 -right-3 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5">
+          <button className="relative flex flex-col items-center text-xs gap-0.5" onClick={() => setCartOpen(true)}>
+            <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z" /></svg>
+            <span
+              className="absolute -top-1 right-0 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5"
+              style={{ transition: "transform 0.2s cubic-bezier(0.34,1.56,0.64,1)", transform: cartBump ? "scale(1.3)" : "scale(1)" }}
+            >
               {count}
             </span>
             Cart
           </button>
         </div>
       </nav>
+
+      {/* Keyframes para el toast */}
+      <style>{`
+        @keyframes slideIn {
+          from { opacity: 0; transform: translateY(-12px) scale(0.95); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+      `}</style>
     </div>
   );
 }
