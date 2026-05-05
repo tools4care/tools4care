@@ -792,11 +792,7 @@ export default function Storefront() {
     }
   }, []);
 
-  // handleAdd para DealCardMini (abre cart drawer)
-  const handleAddDeal = useCallback(async (p) => {
-    await handleAdd(p, 1);
-    setCartOpen(true);
-  }, [handleAdd]);
+  const handleAddDeal = useCallback((p) => handleAdd(p, 1), [handleAdd]);
 
   const deals = useMemo(() => {
     const now = Date.now();
