@@ -237,8 +237,9 @@ function PlanesTab({ van, usuario }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
-  const [form, setForm] = useState({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", cupo_maximo: "", productos_txt: "" });
+  const [form, setForm] = useState({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", cupo_maximo: "", imagen_url: "", productos_txt: "" });
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => { loadPlanes(); }, []);
 
@@ -264,6 +265,22 @@ function PlanesTab({ van, usuario }) {
     setLoading(false);
   }
 
+  async function uploadPlanImage(file) {
+    setUploading(true);
+    try {
+      const ext = file.name.split(".").pop();
+      const path = `plan-images/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("plan-images").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data } = supabase.storage.from("plan-images").getPublicUrl(path);
+      setForm(f => ({ ...f, imagen_url: data.publicUrl }));
+    } catch (e) {
+      alert("Error uploading image: " + e.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function savePlan(e) {
     e.preventDefault();
     setSaving(true);
@@ -282,6 +299,7 @@ function PlanesTab({ van, usuario }) {
       ciclo: form.ciclo,
       productos,
       cupo_maximo: form.cupo_maximo !== "" ? parseInt(form.cupo_maximo, 10) || 0 : null,
+      imagen_url: form.imagen_url || null,
       activo: true,
     };
     if (form.id) {
@@ -291,7 +309,7 @@ function PlanesTab({ van, usuario }) {
     }
     setSaving(false);
     setShowForm(false);
-    setForm({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", cupo_maximo: "", productos_txt: "" });
+    setForm({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", cupo_maximo: "", imagen_url: "", productos_txt: "" });
     loadPlanes();
   }
 
@@ -308,6 +326,7 @@ function PlanesTab({ van, usuario }) {
       precio: p.precio,
       ciclo: p.ciclo || "mensual",
       cupo_maximo: p.cupo_maximo != null ? String(p.cupo_maximo) : "",
+      imagen_url: p.imagen_url || "",
       productos_txt: (p.productos || []).map(x => x.nota ? `${x.nombre} - ${x.nota}` : x.nombre).join("\n"),
     });
     setShowForm(true);
@@ -320,7 +339,7 @@ function PlanesTab({ van, usuario }) {
       <div className="flex items-center justify-between mb-6">
         <p className="text-sm text-gray-500">{planes.length} subscription box{planes.length !== 1 ? "es" : ""} configured</p>
         {isAdmin && (
-          <button onClick={() => { setForm({ nombre:"",descripcion:"",precio:"",ciclo:"mensual",cupo_maximo:"",productos_txt:"" }); setShowForm(true); }}
+          <button onClick={() => { setForm({ nombre:"",descripcion:"",precio:"",ciclo:"mensual",cupo_maximo:"",imagen_url:"",productos_txt:"" }); setShowForm(true); }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
             <Plus size={15}/> New Box Plan
           </button>
@@ -367,6 +386,24 @@ function PlanesTab({ van, usuario }) {
               className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm" placeholder="What's included in this box…" />
           </div>
           <div>
+            <label className="text-xs font-semibold text-gray-600 mb-1 block">Cover Photo</label>
+            <div className="flex items-start gap-3">
+              {form.imagen_url && (
+                <div className="relative shrink-0">
+                  <img src={form.imagen_url} alt="cover" className="w-20 h-20 object-cover rounded-xl border border-blue-200" />
+                  <button type="button" onClick={()=>setForm(f=>({...f,imagen_url:""}))}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center hover:bg-red-600">×</button>
+                </div>
+              )}
+              <label className={`flex-1 flex flex-col items-center justify-center gap-1 border-2 border-dashed rounded-xl px-3 py-4 cursor-pointer transition-colors ${uploading ? "opacity-50 pointer-events-none" : "border-blue-200 hover:border-blue-400 hover:bg-blue-50"}`}>
+                <Package size={20} className="text-blue-400" />
+                <span className="text-xs text-blue-600 font-medium">{uploading ? "Uploading…" : form.imagen_url ? "Replace photo" : "Upload photo"}</span>
+                <span className="text-[11px] text-gray-400">JPG, PNG, WebP</span>
+                <input type="file" accept="image/*" className="hidden" onChange={e => { if (e.target.files?.[0]) uploadPlanImage(e.target.files[0]); }} />
+              </label>
+            </div>
+          </div>
+          <div>
             <label className="text-xs font-semibold text-gray-600 mb-1 block">
               Products (one per line, format: <code>Product Name - optional note</code>)
             </label>
@@ -391,9 +428,13 @@ function PlanesTab({ van, usuario }) {
           <div key={p.id} className={`bg-white border-2 rounded-2xl overflow-hidden transition-all ${p.activo ? "border-blue-200" : "border-gray-200 opacity-60"}`}>
             <div className="flex items-center justify-between p-4 cursor-pointer" onClick={()=>setExpanded(expanded===p.id?null:p.id)}>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
-                  <Package size={18} className="text-white"/>
-                </div>
+                {p.imagen_url ? (
+                  <img src={p.imagen_url} alt={p.nombre} className="w-10 h-10 object-cover rounded-xl shrink-0 border border-blue-100" />
+                ) : (
+                  <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shrink-0">
+                    <Package size={18} className="text-white"/>
+                  </div>
+                )}
                 <div>
                   <p className="font-bold text-gray-900">{p.nombre}</p>
                   <p className="text-xs text-gray-500">{p.descripcion || `${(p.productos||[]).length} products included`}</p>

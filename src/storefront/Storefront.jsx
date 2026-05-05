@@ -996,6 +996,12 @@ export default function Storefront() {
               const spotsLeft = plan.cupo_maximo > 0 ? plan.cupo_maximo - (plan._ocupados || 0) : null;
               return (
                 <div key={plan.id} className="bg-white border-2 border-indigo-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
+                  {/* Cover photo */}
+                  {plan.imagen_url && (
+                    <div className="h-44 overflow-hidden">
+                      <img src={plan.imagen_url} alt={plan.nombre} className="w-full h-full object-cover" />
+                    </div>
+                  )}
                   {/* Header */}
                   <div className={`bg-gradient-to-br px-5 py-4 text-white ${isFull ? "from-gray-500 to-gray-600" : "from-indigo-600 to-purple-600"}`}>
                     <div className="flex items-start justify-between gap-2">
