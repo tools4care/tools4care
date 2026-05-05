@@ -1,8 +1,7 @@
 // src/storefront/Storefront.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
-import { useToast } from "../hooks/useToast";
 import {
   addToCart,
   ensureCart,
@@ -12,7 +11,6 @@ import {
   removeCartItem,
 } from "./cartApi";
 import AuthModal from "./AuthModal";
-import AccountPanel from "./AccountPanel";
 
 /* -------------------- Helpers -------------------- */
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
@@ -76,29 +74,8 @@ const norm = (s = "") =>
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
 
-/* -------------------- Toast -------------------- */
-function Toast({ toasts }) {
-  if (!toasts.length) return null;
-  return (
-    <div className="fixed bottom-20 sm:bottom-6 right-4 z-[200] flex flex-col gap-2 items-end pointer-events-none">
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          className="bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 animate-fade-in"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" className="text-emerald-400 flex-shrink-0">
-            <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-          </svg>
-          {t.msg}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /* -------------------- Cart Drawer -------------------- */
 function CartDrawer({ open, onClose }) {
-  const { toast } = useToast();
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -144,11 +121,10 @@ function CartDrawer({ open, onClose }) {
     optimisticSet(productoId, next);
     try {
       await updateCartItemQty(productoId, next);
-      // No refresh() — the optimistic update already reflects the correct qty/subtotal.
-      // Calling refresh() was causing a loading flicker on every quantity change.
+      await refresh();
     } catch (e) {
       setLines(prev);
-      toast.error(e?.message || "Could not update quantity.");
+      alert(e?.message || "Could not update quantity.");
     }
   }
 
@@ -159,7 +135,7 @@ function CartDrawer({ open, onClose }) {
       await removeCartItem(productoId);
     } catch (e) {
       setLines(prev);
-      toast.error(e?.message || "Could not remove item.");
+      alert(e?.message || "Could not remove item.");
     }
   }
 
@@ -285,13 +261,12 @@ function CartDrawer({ open, onClose }) {
             >
               Keep shopping
             </button>
-            <Link
-              to="/storefront/checkout"
+            <a
+              href="/checkout"
               className="text-center rounded-lg bg-blue-600 text-white px-3 py-2 hover:bg-blue-700"
-              onClick={onClose}
             >
               Go to checkout
-            </Link>
+            </a>
           </div>
         </div>
       </aside>
@@ -299,347 +274,63 @@ function CartDrawer({ open, onClose }) {
   );
 }
 
-/* -------------------- Product Detail Modal -------------------- */
-function ProductDetailModal({ p, onAdd, onClose }) {
-  const [adding, setAdding] = useState(false);
-  const [added, setAdded] = useState(false);
-  const [images, setImages] = useState(p.main_image_url ? [p.main_image_url] : []);
-  const [activeIdx, setActiveIdx] = useState(0);
-  const [loadingImgs, setLoadingImgs] = useState(false);
-
-  const price = Number(p.price_online ?? p.price_base ?? 0);
-  const hasOffer =
-    p.price_online != null &&
-    p.price_base != null &&
-    Number(p.price_online) < Number(p.price_base);
-
-  // Cargar todas las imágenes del producto
-  useEffect(() => {
-    if (!p.id) return;
-    setLoadingImgs(true);
-    supabase
-      .from("product_images")
-      .select("url, is_primary, sort_order")
-      .eq("producto_id", p.id)
-      .order("is_primary", { ascending: false })
-      .order("sort_order", { ascending: true })
-      .then(({ data }) => {
-        const urls = (data || []).map(r => r.url).filter(Boolean);
-        if (urls.length > 0) {
-          setImages(urls);
-          setActiveIdx(0);
-        }
-        setLoadingImgs(false);
-      });
-  }, [p.id]);
-
-  // Cerrar con Escape / swipe navigation con teclado
-  useEffect(() => {
-    const handler = (e) => {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowRight") setActiveIdx(i => Math.min(i + 1, images.length - 1));
-      if (e.key === "ArrowLeft")  setActiveIdx(i => Math.max(i - 1, 0));
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose, images.length]);
-
-  // Bloquear scroll del body
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
-  }, []);
-
-  return (
-    <div
-      className="fixed inset-0 z-[60] bg-black/70 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
-          <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto sm:hidden" />
-          <button
-            onClick={onClose}
-            className="ml-auto w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Imagen principal (carrusel) */}
-        <div className="flex-shrink-0 mx-4">
-          <div className="relative bg-gray-50 rounded-xl overflow-hidden aspect-square flex items-center justify-center">
-            {loadingImgs ? (
-              <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            ) : images.length > 0 ? (
-              <img
-                key={images[activeIdx]}
-                src={images[activeIdx]}
-                alt={p.nombre}
-                className="w-full h-full object-contain p-4"
-              />
-            ) : (
-              <span className="text-gray-300 text-6xl">📦</span>
-            )}
-
-            {/* Flechas de navegación */}
-            {images.length > 1 && (
-              <>
-                <button
-                  className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/80 hover:bg-white rounded-full shadow flex items-center justify-center text-gray-700 disabled:opacity-30 transition-all"
-                  onClick={() => setActiveIdx(i => Math.max(i - 1, 0))}
-                  disabled={activeIdx === 0}
-                >‹</button>
-                <button
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/80 hover:bg-white rounded-full shadow flex items-center justify-center text-gray-700 disabled:opacity-30 transition-all"
-                  onClick={() => setActiveIdx(i => Math.min(i + 1, images.length - 1))}
-                  disabled={activeIdx === images.length - 1}
-                >›</button>
-                {/* Contador */}
-                <span className="absolute bottom-2 right-2 text-xs bg-black/40 text-white px-2 py-0.5 rounded-full">
-                  {activeIdx + 1} / {images.length}
-                </span>
-              </>
-            )}
-          </div>
-
-          {/* Miniaturas */}
-          {images.length > 1 && (
-            <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
-              {images.map((url, i) => (
-                <button
-                  key={i}
-                  onClick={() => setActiveIdx(i)}
-                  className={`flex-shrink-0 w-14 h-14 rounded-lg border-2 overflow-hidden transition-all ${
-                    i === activeIdx ? "border-blue-500 shadow-md" : "border-gray-200 opacity-60 hover:opacity-100"
-                  }`}
-                >
-                  <img src={url} alt="" className="w-full h-full object-contain p-1" />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Detalle scrollable */}
-        <div className="overflow-y-auto px-4 py-3 space-y-2 flex-1">
-          {(hasOffer || p.is_deal) && (
-            <span className="inline-block text-xs px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-              {p.deal_badge || "Deal"}
-            </span>
-          )}
-          <h2 className="text-lg font-bold text-gray-900 leading-snug">{p.nombre}</h2>
-          {p.marca && <p className="text-sm text-gray-500">{p.marca}</p>}
-          {p.descripcion && (
-            <p className="text-sm text-gray-700 leading-relaxed">{p.descripcion}</p>
-          )}
-          <div className="flex items-baseline gap-2 pt-1">
-            <span className="text-2xl font-bold text-gray-900"><Price value={price} /></span>
-            {hasOffer && (
-              <span className="text-sm text-gray-400 line-through"><Price value={p.price_base} /></span>
-            )}
-          </div>
-        </div>
-
-        {/* Botón Add to cart */}
-        <div className="px-4 pb-6 pt-2 flex-shrink-0">
-          <button
-            className={`w-full py-3 rounded-xl font-semibold text-base transition-all ${
-              added
-                ? "bg-green-500 text-white"
-                : "bg-blue-600 hover:bg-blue-700 text-white"
-            } disabled:opacity-50`}
-            disabled={adding}
-            onClick={async () => {
-              try {
-                setAdding(true);
-                await onAdd(p);
-                setAdded(true);
-                setTimeout(() => { setAdded(false); onClose(); }, 800);
-              } finally {
-                setAdding(false);
-              }
-            }}
-          >
-            {adding ? "Adding…" : added ? "✓ Added!" : "Add to cart"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* -------------------- Product Card -------------------- */
-// Definida FUERA de Storefront para tener identidad estable y no violar Rules of Hooks
-function ProductCard({ p, onAdd }) {
-  const [adding, setAdding] = useState(false);
-  const [showDetail, setShowDetail] = useState(false);
-  const price = Number(p.price_online ?? p.price_base ?? 0);
-  const hasOffer =
-    p.price_online != null &&
-    p.price_base != null &&
-    Number(p.price_online) < Number(p.price_base);
-
-  return (
-    <>
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="p-3">
-          <div className="relative">
-            <div
-              className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center cursor-pointer"
-              onClick={() => setShowDetail(true)}
-            >
-              {p.main_image_url ? (
-                <img
-                  src={p.main_image_url}
-                  alt={p.nombre}
-                  className="w-full h-full object-contain p-2"
-                  loading="lazy"
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-              ) : (
-                <span className="text-xs text-gray-400">no image</span>
-              )}
-              {/* Hint de zoom */}
-              <span className="absolute bottom-1.5 right-1.5 bg-black/30 text-white text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none">
-                🔍
-              </span>
-            </div>
-            {(hasOffer || p.is_deal) && (
-              <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-                {p.deal_badge || "Deal"}
-              </span>
-            )}
-          </div>
-
-          <div
-            className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px] cursor-pointer hover:text-blue-600 transition-colors"
-            onClick={() => setShowDetail(true)}
-          >
-            {p.nombre}
-          </div>
-          <div className="text-xs text-gray-500">{p.marca || "—"}</div>
-
-          {p.descripcion ? (
-            <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">
-              {p.descripcion}
-            </div>
-          ) : (
-            <div className="mt-1 text-xs text-gray-400 min-h-[32px]"> </div>
-          )}
-
-          <div className="mt-2 font-semibold">
-            <Price value={price} />
-            {hasOffer ? (
-              <span className="ml-2 text-xs text-gray-500 line-through">
-                <Price value={p.price_base} />
-              </span>
-            ) : null}
-          </div>
-
-          <button
-            type="button"
-            className="mt-3 w-full rounded-lg px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-            disabled={adding}
-            onClick={async () => {
-              try {
-                setAdding(true);
-                await onAdd(p);
-              } finally {
-                setAdding(false);
-              }
-            }}
-          >
-            {adding ? "Adding…" : "Add to cart"}
-          </button>
-        </div>
-      </div>
-
-      {showDetail && (
-        <ProductDetailModal p={p} onAdd={onAdd} onClose={() => setShowDetail(false)} />
-      )}
-    </>
-  );
-}
-
 /* -------------------- Mini Deal Card (hero) -------------------- */
 function DealCardMini({ p, onAdd }) {
   const [adding, setAdding] = useState(false);
-  const [showDetail, setShowDetail] = useState(false);
   const price = Number(p.price_online ?? p.price_base ?? 0);
   const hasOffer =
     p.price_online != null &&
     p.price_base != null &&
     Number(p.price_online) < Number(p.price_base);
   return (
-    <>
-      <div className="bg-white rounded-xl p-3 border hover:shadow-sm transition text-gray-900">
-        <div
-          className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center cursor-pointer relative"
-          onClick={() => setShowDetail(true)}
-        >
-          {p.main_image_url ? (
-            <img
-              src={p.main_image_url}
-              alt={p.nombre}
-              className="w-full h-full object-contain p-2"
-              loading="lazy"
-              onError={(e) => (e.currentTarget.style.display = "none")}
-            />
-          ) : (
-            <span className="text-xs text-gray-400">no image</span>
-          )}
-          <span className="absolute bottom-1.5 right-1.5 bg-black/30 text-white text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none">
-            🔍
-          </span>
-        </div>
-        <div
-          className="mt-2 font-semibold line-clamp-1 text-gray-900 cursor-pointer hover:text-blue-600 transition-colors"
-          onClick={() => setShowDetail(true)}
-        >
-          {p.nombre}
-        </div>
-        <div className="text-xs text-gray-600 line-clamp-1">{p.marca || "—"}</div>
-        {p.descripcion ? (
-          <div className="text-xs text-gray-700 mt-1 line-clamp-2">{p.descripcion}</div>
-        ) : null}
-        <div className="mt-2 font-semibold text-gray-900">
-          <Price value={price} />
-          {hasOffer ? (
-            <span className="ml-2 text-xs text-gray-500 line-through">
-              <Price value={p.price_base} />
-            </span>
-          ) : null}
-        </div>
-        <button
-          className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50"
-          disabled={adding}
-          onClick={async () => {
-            try {
-              setAdding(true);
-              await onAdd(p);
-            } finally {
-              setAdding(false);
-            }
-          }}
-        >
-          {adding ? "Adding…" : "Add to cart"}
-        </button>
+    // Fondo blanco + texto oscuro para legibilidad
+    <div className="bg-white rounded-xl p-3 border hover:shadow-sm transition text-gray-900">
+      <div className="aspect-[4/3] bg-white rounded-lg border overflow-hidden flex items-center justify-center">
+        {p.main_image_url ? (
+          <img
+            src={p.main_image_url}
+            alt={p.nombre}
+            className="w-full h-full object-contain p-2"
+            loading="lazy"
+            onError={(e) => (e.currentTarget.style.display = "none")}
+          />
+        ) : (
+          <span className="text-xs text-gray-400">no image</span>
+        )}
       </div>
-
-      {showDetail && (
-        <ProductDetailModal p={p} onAdd={onAdd} onClose={() => setShowDetail(false)} />
-      )}
-    </>
+      <div className="mt-2 font-semibold line-clamp-1 text-gray-900">{p.nombre}</div>
+      <div className="text-xs text-gray-600 line-clamp-1">{p.marca || "—"}</div>
+      {p.descripcion ? (
+        <div className="text-xs text-gray-700 mt-1 line-clamp-2">{p.descripcion}</div>
+      ) : null}
+      <div className="mt-2 font-semibold text-gray-900">
+        <Price value={price} />
+        {hasOffer ? (
+          <span className="ml-2 text-xs text-gray-500 line-through">
+            <Price value={p.price_base} />
+          </span>
+        ) : null}
+      </div>
+      <button
+        className="mt-2 w-full rounded-lg bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50"
+        disabled={adding}
+        onClick={async () => {
+          try {
+            setAdding(true);
+            await onAdd(p);
+          } finally {
+            setAdding(false);
+          }
+        }}
+      >
+        {adding ? "Adding…" : "Add to cart"}
+      </button>
+    </div>
   );
 }
 
 /* -------------------- Storefront -------------------- */
 export default function Storefront() {
-  const { toast } = useToast();
   const [q, setQ] = useState("");
   const [allRows, setAllRows] = useState([]);
   const [rows, setRows] = useState([]);
@@ -655,20 +346,12 @@ export default function Storefront() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("signup");
   const [cartOpen, setCartOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
 
   const [settings, setSettings] = useState(null); // site_settings (logo + nombre)
-  const [toasts, setToasts] = useState([]);
 
   const navigate = useNavigate();
   const offersRef = useRef(null);
   const reloadTimeoutRef = useRef(null);
-
-  function showToast(msg) {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, msg }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2500);
-  }
 
   // sesión
   useEffect(() => {
@@ -802,7 +485,7 @@ export default function Storefront() {
 
       setAllRows(enriched);
     } catch (err) {
-      toast.error(err?.message || "Could not load products.");
+      alert(err?.message || "Could not load products.");
       setAllRows([]);
     } finally {
       setLoading(false);
@@ -894,17 +577,122 @@ export default function Storefront() {
 
   const total = useMemo(() => rows.length, [rows]);
 
-  // Optimismo suave + toast
+  // Used by DealCardMini (hero section) — opens cart drawer for context
   async function handleAdd(p) {
     setCount((c) => c + 1);
-    showToast(`${p.nombre?.slice(0, 28) || "Item"} added to cart`);
     try {
       const newCount = await addToCart(p, 1);
       setCount(newCount);
+      setCartOpen(true);
     } catch (e) {
       setCount((c) => Math.max(0, c - 1));
-      toast.error(String(e?.message || "Could not add to cart."));
+      alert(String(e?.message || "Could not add to cart."));
     }
+  }
+
+  function ProductCard({ p }) {
+    const [qty,    setQty]    = useState(1);
+    const [adding, setAdding] = useState(false);
+    const [added,  setAdded]  = useState(false);
+    const price = Number(p.price_online ?? p.price_base ?? 0);
+    const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
+    const maxQty = p.stock > 0 ? p.stock : 99;
+    const lowStock = p.stock > 0 && p.stock <= 5;
+
+    async function doAdd() {
+      if (adding) return;
+      setAdding(true);
+      try {
+        const newCount = await addToCart(p, qty);
+        setCount(newCount);
+        setQty(1);
+        setAdded(true);
+        setTimeout(() => setAdded(false), 1800);
+      } catch (e) {
+        alert(String(e?.message || "Could not add to cart."));
+      } finally {
+        setAdding(false);
+      }
+    }
+
+    return (
+      <div className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col">
+        <div className="p-3 flex-1 flex flex-col">
+          {/* Image */}
+          <div className="relative">
+            <div className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center">
+              {p.main_image_url ? (
+                <img src={p.main_image_url} alt={p.nombre}
+                  className="w-full h-full object-contain p-2" loading="lazy"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }} />
+              ) : (
+                <span className="text-xs text-gray-400">no image</span>
+              )}
+            </div>
+            {(hasOffer || p.is_deal) && (
+              <span className="absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+                {p.deal_badge || "Deal"}
+              </span>
+            )}
+            {lowStock && (
+              <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                {p.stock} left
+              </span>
+            )}
+          </div>
+
+          {/* Info */}
+          <div className="mt-2 font-medium leading-tight line-clamp-2 min-h-[40px] text-sm">{p.nombre}</div>
+          <div className="text-xs text-gray-500">{p.marca || "—"}</div>
+          {p.descripcion
+            ? <div className="mt-1 text-xs text-gray-600 line-clamp-2 min-h-[32px]">{p.descripcion}</div>
+            : <div className="mt-1 min-h-[32px]" />
+          }
+
+          {/* Price */}
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="font-semibold text-gray-900"><Price value={price} /></span>
+            {hasOffer && (
+              <span className="text-xs text-gray-400 line-through"><Price value={p.price_base} /></span>
+            )}
+          </div>
+
+          {/* Qty stepper + Add to cart */}
+          <div className="mt-3 flex items-center gap-2">
+            {/* Qty stepper */}
+            <div className="flex items-center border rounded-lg overflow-hidden shrink-0">
+              <button
+                type="button"
+                className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                disabled={qty <= 1}
+              >−</button>
+              <span className="w-7 text-center text-sm font-medium">{qty}</span>
+              <button
+                type="button"
+                className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+                disabled={qty >= maxQty}
+              >+</button>
+            </div>
+
+            {/* Add button */}
+            <button
+              type="button"
+              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+                added
+                  ? "bg-emerald-500 text-white"
+                  : "bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              }`}
+              disabled={adding}
+              onClick={doAdd}
+            >
+              {adding ? "…" : added ? "✓ Added!" : "Add to cart"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Featured deals
@@ -985,33 +773,39 @@ export default function Storefront() {
             <div className="hidden sm:flex items-center gap-2">
               <button
                 className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
-                onClick={() => { setAuthMode("login"); setAuthOpen(true); }}
-              >
-                Sign in
-              </button>
-              <button
-                className="inline-flex items-center px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium"
-                onClick={() => { setAuthMode("signup"); setAuthOpen(true); }}
+                onClick={() => {
+                  setAuthMode("signup");
+                  setAuthOpen(true);
+                }}
+                title="Create account"
               >
                 Sign up
               </button>
+              <button
+                className="inline-flex items-center px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthOpen(true);
+                }}
+                title="Sign in"
+              >
+                Sign in
+              </button>
             </div>
           ) : (
-            <button
-              className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl border hover:bg-gray-50 transition-colors"
-              onClick={() => setAccountOpen(true)}
-              title="My account"
-            >
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold">
-                {(user?.user_metadata?.name || user?.email || "U").charAt(0).toUpperCase()}
-              </div>
-              <span className="text-sm text-gray-700 truncate max-w-[120px]">
-                {user?.user_metadata?.name || user?.email?.split("@")[0]}
+            <div className="hidden sm:flex items-center gap-2">
+              <span className="text-sm text-gray-700 truncate max-w-[180px]">
+                Hi, {user.email}
               </span>
-              <svg width="14" height="14" viewBox="0 0 24 24" className="text-gray-400 flex-shrink-0">
-                <path fill="currentColor" d="M7 10l5 5 5-5z"/>
-              </svg>
-            </button>
+              <button
+                className="px-3 py-2 text-sm rounded-lg border hover:bg-gray-50"
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
           )}
 
           {/* Cart (desktop header) */}
@@ -1088,7 +882,7 @@ export default function Storefront() {
         {deals.length ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {deals.slice(0, 8).map((p) => (
-              <ProductCard key={p.id} p={p} onAdd={handleAdd} />
+              <ProductCard key={p.id} p={p} />
             ))}
           </div>
         ) : (
@@ -1102,7 +896,7 @@ export default function Storefront() {
         {[...allRows].length ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {[...allRows].slice(0, 12).map((p) => (
-              <ProductCard key={p.id} p={p} onAdd={handleAdd} />
+              <ProductCard key={p.id} p={p} />
             ))}
           </div>
         ) : (
@@ -1188,7 +982,7 @@ export default function Storefront() {
         )}
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
-            <ProductCard key={p.id} p={p} onAdd={handleAdd} />
+            <ProductCard key={p.id} p={p} />
           ))}
         </div>
       </section>
@@ -1205,18 +999,8 @@ export default function Storefront() {
         onSignedIn={() => setAuthOpen(false)}
       />
 
-      {/* Account panel */}
-      <AccountPanel
-        open={accountOpen}
-        onClose={() => setAccountOpen(false)}
-        user={user}
-      />
-
       {/* Cart panel */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
-
-      {/* Toasts */}
-      <Toast toasts={toasts} />
 
       {/* Mobile bottom bar */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
@@ -1241,26 +1025,22 @@ export default function Storefront() {
             Search
           </a>
 
-          {/* Account / Login button */}
-          {!user ? (
+          {/* Único botón: abre el modal con ambas opciones (login/sign up) */}
+          {!user && (
             <button
-              className="flex flex-col items-center text-xs text-gray-600"
-              onClick={() => { setAuthMode("login"); setAuthOpen(true); }}
+              className="flex flex-col items-center text-xs"
+              onClick={() => {
+                setAuthMode("login"); // modo inicial; dentro del modal el usuario puede cambiar a Sign up
+                setAuthOpen(true);
+              }}
             >
               <svg width="22" height="22" viewBox="0 0 24 24">
-                <path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"/>
+                <path
+                  fill="currentColor"
+                  d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"
+                />
               </svg>
-              Sign in
-            </button>
-          ) : (
-            <button
-              className="flex flex-col items-center text-xs text-blue-600"
-              onClick={() => setAccountOpen(true)}
-            >
-              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold">
-                {(user?.user_metadata?.name || user?.email || "U").charAt(0).toUpperCase()}
-              </div>
-              Account
+              Login / Sign up
             </button>
           )}
 
