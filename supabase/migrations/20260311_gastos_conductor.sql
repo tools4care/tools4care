@@ -17,10 +17,14 @@ CREATE INDEX IF NOT EXISTS idx_gastos_conductor_van_fecha
 -- RLS: same van-based rules as other tables
 ALTER TABLE gastos_conductor ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "gastos_conductor_all"
-  ON gastos_conductor FOR ALL
-  USING (true)
-  WITH CHECK (true);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'gastos_conductor' AND policyname = 'gastos_conductor_all'
+  ) THEN
+    EXECUTE 'CREATE POLICY "gastos_conductor_all" ON gastos_conductor FOR ALL USING (true) WITH CHECK (true)';
+  END IF;
+END $$;
 
 COMMENT ON TABLE gastos_conductor IS
   'Daily driver expenses (fuel, tolls, food, etc.) deducted from cash-on-hand at day close';

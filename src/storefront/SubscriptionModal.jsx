@@ -330,6 +330,18 @@ export default function SubscriptionModal({ plan, user, onClose }) {
     setCreateErr("");
     setCreating(true);
     try {
+      // Guard: re-check spot availability before charging
+      if (plan.cupo_maximo > 0) {
+        const { count } = await supabase
+          .from("subscription_clientes")
+          .select("id", { count: "exact", head: true })
+          .in("estado", ["activa", "pendiente"])
+          .eq("plan_id", plan.id);
+        if ((count || 0) >= plan.cupo_maximo) {
+          throw new Error("Sorry, this plan just sold out. Please choose another.");
+        }
+      }
+
       const amountCents = Math.round(Number(plan.precio) * 100);
       const res = await fetch(FN_URL, {
         method: "POST",
@@ -412,8 +424,8 @@ export default function SubscriptionModal({ plan, user, onClose }) {
 
     // 2. Create subscription record
     const today = new Date().toISOString().slice(0, 10);
+    const direccion = [info.address1, info.city, info.state, info.zip].filter(Boolean).join(", ");
     try {
-      const direccion = [info.address1, info.city, info.state, info.zip].filter(Boolean).join(", ");
       await supabase.from("subscription_clientes").insert({
         cliente_id: clienteId || null,
         plan_id: plan.id,
@@ -432,6 +444,40 @@ export default function SubscriptionModal({ plan, user, onClose }) {
     } catch (e) {
       console.warn("Could not create subscription record:", e.message);
       // Still show success — payment went through
+    }
+
+    // 3. Notify admin
+    try {
+      const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
+      if (adminEmail) {
+        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-order-email`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            to: adminEmail,
+            subject: `Nueva suscripción online — ${plan.nombre}`,
+            html: `
+              <h2 style="color:#4f46e5">Nueva suscripción recibida</h2>
+              <table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px">
+                <tr><td style="padding:6px 12px;color:#6b7280;width:140px">Plan</td><td style="padding:6px 12px;font-weight:600">${plan.nombre}</td></tr>
+                <tr style="background:#f9fafb"><td style="padding:6px 12px;color:#6b7280">Precio</td><td style="padding:6px 12px;font-weight:600">${fmt$(plan.precio)} / ${plan.ciclo}</td></tr>
+                <tr><td style="padding:6px 12px;color:#6b7280">Cliente</td><td style="padding:6px 12px">${info.nombre}</td></tr>
+                <tr style="background:#f9fafb"><td style="padding:6px 12px;color:#6b7280">Email</td><td style="padding:6px 12px">${info.email}</td></tr>
+                <tr><td style="padding:6px 12px;color:#6b7280">Teléfono</td><td style="padding:6px 12px">${info.telefono || "—"}</td></tr>
+                <tr style="background:#f9fafb"><td style="padding:6px 12px;color:#6b7280">Dirección</td><td style="padding:6px 12px">${direccion}</td></tr>
+                <tr><td style="padding:6px 12px;color:#6b7280">Stripe PI</td><td style="padding:6px 12px;font-family:monospace;font-size:12px">${paymentIntent.id}</td></tr>
+                <tr style="background:#f9fafb"><td style="padding:6px 12px;color:#6b7280">Fecha</td><td style="padding:6px 12px">${today}</td></tr>
+              </table>
+              <p style="margin-top:16px;font-size:13px;color:#6b7280">Revisa el panel de Suscripciones para asignar van y confirmar.</p>
+            `,
+          }),
+        });
+      }
+    } catch (e) {
+      console.warn("Admin email failed:", e.message);
     }
 
     setPhase("success");

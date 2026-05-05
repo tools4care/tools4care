@@ -43,9 +43,17 @@ alter table subscription_planes    enable row level security;
 alter table subscription_clientes  enable row level security;
 alter table subscription_entregas  enable row level security;
 
-create policy "auth read planes"    on subscription_planes    for select using (auth.role() = 'authenticated');
-create policy "auth write planes"   on subscription_planes    for all    using (auth.role() = 'authenticated');
-create policy "auth read subs"      on subscription_clientes  for select using (auth.role() = 'authenticated');
-create policy "auth write subs"     on subscription_clientes  for all    using (auth.role() = 'authenticated');
-create policy "auth read entregas"  on subscription_entregas  for select using (auth.role() = 'authenticated');
-create policy "auth write entregas" on subscription_entregas  for all    using (auth.role() = 'authenticated');
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='subscription_planes' AND policyname='auth read planes') THEN
+    EXECUTE 'create policy "auth read planes" on subscription_planes for select using (auth.role() = ''authenticated'')'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='subscription_planes' AND policyname='auth write planes') THEN
+    EXECUTE 'create policy "auth write planes" on subscription_planes for all using (auth.role() = ''authenticated'')'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='subscription_clientes' AND policyname='auth read subs') THEN
+    EXECUTE 'create policy "auth read subs" on subscription_clientes for select using (auth.role() = ''authenticated'')'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='subscription_clientes' AND policyname='auth write subs') THEN
+    EXECUTE 'create policy "auth write subs" on subscription_clientes for all using (auth.role() = ''authenticated'')'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='subscription_entregas' AND policyname='auth read entregas') THEN
+    EXECUTE 'create policy "auth read entregas" on subscription_entregas for select using (auth.role() = ''authenticated'')'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='subscription_entregas' AND policyname='auth write entregas') THEN
+    EXECUTE 'create policy "auth write entregas" on subscription_entregas for all using (auth.role() = ''authenticated'')'; END IF;
+END $$;

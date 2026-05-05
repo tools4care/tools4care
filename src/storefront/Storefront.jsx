@@ -594,17 +594,28 @@ export default function Storefront() {
     return () => sub?.unsubscribe?.();
   }, []);
 
-  // Cargar planes activos (requiere auth por RLS)
+  // Cargar planes activos con conteo de spots (requiere auth por RLS)
   useEffect(() => {
     if (!user) { setPlans([]); return; }
     (async () => {
       try {
-        const { data } = await supabase
+        const { data: planesData } = await supabase
           .from("subscription_planes")
-          .select("id, nombre, descripcion, precio, ciclo, productos")
+          .select("*")
           .eq("activo", true)
           .order("precio", { ascending: true });
-        setPlans(data || []);
+        const planes = planesData || [];
+        if (planes.length) {
+          const { data: counts } = await supabase
+            .from("subscription_clientes")
+            .select("plan_id")
+            .in("estado", ["activa", "pendiente"])
+            .in("plan_id", planes.map(p => p.id));
+          const countMap = {};
+          (counts || []).forEach(r => { countMap[r.plan_id] = (countMap[r.plan_id] || 0) + 1; });
+          planes.forEach(p => { p._ocupados = countMap[p.id] || 0; });
+        }
+        setPlans(planes);
       } catch { setPlans([]); }
     })();
   }, [user]);
@@ -981,10 +992,12 @@ export default function Storefront() {
             {plans.map((plan) => {
               const CICLO_LABEL = { semana:"Weekly", quincena:"Bi-weekly", mensual:"Monthly", bimestral:"Bi-monthly", trimestral:"Quarterly" };
               const productos = Array.isArray(plan.productos) ? plan.productos : [];
+              const isFull = plan.cupo_maximo > 0 && (plan._ocupados || 0) >= plan.cupo_maximo;
+              const spotsLeft = plan.cupo_maximo > 0 ? plan.cupo_maximo - (plan._ocupados || 0) : null;
               return (
                 <div key={plan.id} className="bg-white border-2 border-indigo-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
                   {/* Header */}
-                  <div className="bg-gradient-to-br from-indigo-600 to-purple-600 px-5 py-4 text-white">
+                  <div className={`bg-gradient-to-br px-5 py-4 text-white ${isFull ? "from-gray-500 to-gray-600" : "from-indigo-600 to-purple-600"}`}>
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="font-bold text-lg leading-tight">{plan.nombre}</h3>
                       <span className="shrink-0 bg-white/20 rounded-full px-2 py-0.5 text-xs font-semibold">
@@ -994,11 +1007,18 @@ export default function Storefront() {
                     {plan.descripcion && (
                       <p className="text-white/80 text-sm mt-1 line-clamp-2">{plan.descripcion}</p>
                     )}
-                    <div className="mt-3">
-                      <span className="text-3xl font-black">
-                        ${Number(plan.precio).toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-white/70 text-sm ml-1">/ {CICLO_LABEL[plan.ciclo]?.toLowerCase() || plan.ciclo}</span>
+                    <div className="mt-3 flex items-end justify-between gap-2">
+                      <div>
+                        <span className="text-3xl font-black">
+                          ${Number(plan.precio).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-white/70 text-sm ml-1">/ {CICLO_LABEL[plan.ciclo]?.toLowerCase() || plan.ciclo}</span>
+                      </div>
+                      {plan.cupo_maximo > 0 && (
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isFull ? "bg-red-400/80" : "bg-white/25"}`}>
+                          {isFull ? "Full" : `${spotsLeft} spot${spotsLeft !== 1 ? "s" : ""} left`}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -1022,10 +1042,11 @@ export default function Storefront() {
                     )}
 
                     <button
-                      className="mt-5 w-full py-2.5 rounded-xl bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 active:scale-95 transition-all"
-                      onClick={() => setSubModal(plan)}
+                      className={`mt-5 w-full py-2.5 rounded-xl font-semibold text-sm transition-all ${isFull ? "bg-gray-200 text-gray-400 cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95"}`}
+                      disabled={isFull}
+                      onClick={() => !isFull && setSubModal(plan)}
                     >
-                      Subscribe now →
+                      {isFull ? "Sold out" : "Subscribe now →"}
                     </button>
                   </div>
                 </div>

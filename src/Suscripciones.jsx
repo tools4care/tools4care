@@ -237,18 +237,30 @@ function PlanesTab({ van, usuario }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
-  const [form, setForm] = useState({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", productos_txt: "" });
+  const [form, setForm] = useState({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", cupo_maximo: "", productos_txt: "" });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { loadPlanes(); }, []);
 
   async function loadPlanes() {
     setLoading(true);
-    const { data } = await supabase
+    const { data: planesData } = await supabase
       .from("subscription_planes")
       .select("*")
       .order("created_at", { ascending: false });
-    setPlanes(data || []);
+    const planes = planesData || [];
+    // Fetch active/pending subscriber counts per plan
+    if (planes.length) {
+      const { data: counts } = await supabase
+        .from("subscription_clientes")
+        .select("plan_id")
+        .in("estado", ["activa", "pendiente"])
+        .in("plan_id", planes.map(p => p.id));
+      const countMap = {};
+      (counts || []).forEach(r => { countMap[r.plan_id] = (countMap[r.plan_id] || 0) + 1; });
+      planes.forEach(p => { p._ocupados = countMap[p.id] || 0; });
+    }
+    setPlanes(planes);
     setLoading(false);
   }
 
@@ -269,6 +281,7 @@ function PlanesTab({ van, usuario }) {
       precio: parseFloat(form.precio) || 0,
       ciclo: form.ciclo,
       productos,
+      cupo_maximo: form.cupo_maximo !== "" ? parseInt(form.cupo_maximo, 10) || 0 : null,
       activo: true,
     };
     if (form.id) {
@@ -278,7 +291,7 @@ function PlanesTab({ van, usuario }) {
     }
     setSaving(false);
     setShowForm(false);
-    setForm({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", productos_txt: "" });
+    setForm({ nombre: "", descripcion: "", precio: "", ciclo: "mensual", cupo_maximo: "", productos_txt: "" });
     loadPlanes();
   }
 
@@ -294,6 +307,7 @@ function PlanesTab({ van, usuario }) {
       descripcion: p.descripcion || "",
       precio: p.precio,
       ciclo: p.ciclo || "mensual",
+      cupo_maximo: p.cupo_maximo != null ? String(p.cupo_maximo) : "",
       productos_txt: (p.productos || []).map(x => x.nota ? `${x.nombre} - ${x.nota}` : x.nombre).join("\n"),
     });
     setShowForm(true);
@@ -306,7 +320,7 @@ function PlanesTab({ van, usuario }) {
       <div className="flex items-center justify-between mb-6">
         <p className="text-sm text-gray-500">{planes.length} subscription box{planes.length !== 1 ? "es" : ""} configured</p>
         {isAdmin && (
-          <button onClick={() => { setForm({ nombre:"",descripcion:"",precio:"",ciclo:"mensual",productos_txt:"" }); setShowForm(true); }}
+          <button onClick={() => { setForm({ nombre:"",descripcion:"",precio:"",ciclo:"mensual",cupo_maximo:"",productos_txt:"" }); setShowForm(true); }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
             <Plus size={15}/> New Box Plan
           </button>
@@ -340,6 +354,11 @@ function PlanesTab({ van, usuario }) {
                   <option value="trimestral">Quarterly</option>
                 </select>
               </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-600 mb-1 block">Max spots (leave blank = unlimited)</label>
+              <input type="number" min="0" step="1" value={form.cupo_maximo} onChange={e=>setForm(f=>({...f,cupo_maximo:e.target.value}))}
+                className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm" placeholder="e.g. 20" />
             </div>
           </div>
           <div>
@@ -384,6 +403,13 @@ function PlanesTab({ van, usuario }) {
                 <div className="text-right">
                   <p className="font-bold text-blue-700 text-lg">{fmt(p.precio)}</p>
                   <p className="text-xs text-gray-400">{CICLO_LABEL[p.ciclo] || p.ciclo}</p>
+                  {p.cupo_maximo > 0 ? (
+                    <p className={`text-xs font-semibold mt-0.5 ${p._ocupados >= p.cupo_maximo ? "text-red-500" : "text-emerald-600"}`}>
+                      {p._ocupados >= p.cupo_maximo ? "Full" : `${p._ocupados}/${p.cupo_maximo} spots`}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-400 mt-0.5">{p._ocupados} subscriber{p._ocupados !== 1 ? "s" : ""}</p>
+                  )}
                 </div>
                 {expanded===p.id ? <ChevronUp size={16} className="text-gray-400"/> : <ChevronDown size={16} className="text-gray-400"/>}
               </div>
