@@ -10,6 +10,7 @@ import {
   removeCartItem,
 } from "./cartApi";
 import AuthModal from "./AuthModal";
+import SubscriptionModal from "./SubscriptionModal";
 
 /* ─── env / cache ─── */
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
@@ -549,6 +550,10 @@ export default function Storefront() {
   const [count, setCount] = useState(0);
   const [cartBump, setCartBump] = useState(false);
 
+  // Subscriptions
+  const [plans, setPlans] = useState([]);
+  const [subModal, setSubModal] = useState(null); // plan seleccionado
+
   // Lightbox
   const [lightbox, setLightbox] = useState(null); // { images: [], idx: 0 }
 
@@ -588,6 +593,21 @@ export default function Storefront() {
     })();
     return () => sub?.unsubscribe?.();
   }, []);
+
+  // Cargar planes activos (requiere auth por RLS)
+  useEffect(() => {
+    if (!user) { setPlans([]); return; }
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("subscription_planes")
+          .select("id, nombre, descripcion, precio, ciclo, productos")
+          .eq("activo", true)
+          .order("precio", { ascending: true });
+        setPlans(data || []);
+      } catch { setPlans([]); }
+    })();
+  }, [user]);
 
   // site settings
   useEffect(() => {
@@ -867,6 +887,9 @@ export default function Storefront() {
               <a href="#catalog" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10">
                 Browse catalog
               </a>
+              <a href="#subscriptions" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10">
+                📦 Subscriptions
+              </a>
             </div>
           </div>
           <div className="bg-white/10 rounded-2xl p-3">
@@ -915,6 +938,100 @@ export default function Storefront() {
           </div>
         ) : (
           <div className="text-gray-500">Nothing new for now.</div>
+        )}
+      </section>
+
+      {/* SUBSCRIPTION BOXES */}
+      <section id="subscriptions" className="max-w-7xl mx-auto px-4 py-10">
+        <div className="flex items-end justify-between mb-2">
+          <div>
+            <h2 className="text-xl font-bold">Subscription Boxes</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Curated boxes delivered on your schedule.</p>
+          </div>
+          {!user && (
+            <button
+              className="text-sm text-indigo-600 hover:underline font-medium"
+              onClick={() => { setAuthMode("login"); setAuthOpen(true); }}
+            >
+              Sign in to subscribe →
+            </button>
+          )}
+        </div>
+
+        {!user ? (
+          <div className="mt-4 border-2 border-dashed border-indigo-200 rounded-2xl p-8 text-center bg-indigo-50">
+            <div className="text-4xl mb-3">📦</div>
+            <h3 className="font-bold text-indigo-900 mb-1">Subscription boxes available</h3>
+            <p className="text-sm text-indigo-600 mb-4">Sign in to view our curated subscription plans and subscribe.</p>
+            <div className="flex gap-2 justify-center">
+              <button
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"
+                onClick={() => { setAuthMode("login"); setAuthOpen(true); }}
+              >Sign in</button>
+              <button
+                className="px-4 py-2 rounded-xl border border-indigo-300 text-indigo-700 text-sm font-semibold hover:bg-indigo-100"
+                onClick={() => { setAuthMode("signup"); setAuthOpen(true); }}
+              >Create account</button>
+            </div>
+          </div>
+        ) : plans.length === 0 ? (
+          <div className="mt-4 text-gray-400 text-sm">No subscription plans available right now.</div>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {plans.map((plan) => {
+              const CICLO_LABEL = { semana:"Weekly", quincena:"Bi-weekly", mensual:"Monthly", bimestral:"Bi-monthly", trimestral:"Quarterly" };
+              const productos = Array.isArray(plan.productos) ? plan.productos : [];
+              return (
+                <div key={plan.id} className="bg-white border-2 border-indigo-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
+                  {/* Header */}
+                  <div className="bg-gradient-to-br from-indigo-600 to-purple-600 px-5 py-4 text-white">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-bold text-lg leading-tight">{plan.nombre}</h3>
+                      <span className="shrink-0 bg-white/20 rounded-full px-2 py-0.5 text-xs font-semibold">
+                        {CICLO_LABEL[plan.ciclo] || plan.ciclo}
+                      </span>
+                    </div>
+                    {plan.descripcion && (
+                      <p className="text-white/80 text-sm mt-1 line-clamp-2">{plan.descripcion}</p>
+                    )}
+                    <div className="mt-3">
+                      <span className="text-3xl font-black">
+                        ${Number(plan.precio).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-white/70 text-sm ml-1">/ {CICLO_LABEL[plan.ciclo]?.toLowerCase() || plan.ciclo}</span>
+                    </div>
+                  </div>
+
+                  {/* Content */}
+                  <div className="p-5 flex-1 flex flex-col">
+                    {productos.length > 0 && (
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">What's included</p>
+                        <ul className="space-y-1.5">
+                          {productos.map((item, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                              <span className="text-indigo-400 shrink-0 mt-0.5">✓</span>
+                              <span>
+                                {item.nombre}
+                                {item.nota && <span className="text-gray-400 ml-1">— {item.nota}</span>}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <button
+                      className="mt-5 w-full py-2.5 rounded-xl bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 active:scale-95 transition-all"
+                      onClick={() => setSubModal(plan)}
+                    >
+                      Subscribe now →
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </section>
 
@@ -971,6 +1088,14 @@ export default function Storefront() {
       <footer className="mt-10 py-6 text-center text-sm text-gray-400 border-t">
         © {new Date().getFullYear()} {siteName} — made with 💙
       </footer>
+
+      {subModal && (
+        <SubscriptionModal
+          plan={subModal}
+          user={user}
+          onClose={() => setSubModal(null)}
+        />
+      )}
 
       <AuthModal open={authOpen} mode={authMode} onClose={() => setAuthOpen(false)} onSignedIn={() => setAuthOpen(false)} />
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
