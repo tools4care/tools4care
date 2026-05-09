@@ -334,7 +334,43 @@ export default function CierreVan() {
           console.log(`💰 Totales para ${iso}:`, map[iso]);
         });
 
-        console.log("✅ Resumen completo por fecha:", map);
+        // ➕ Agregar pagos directos de CxC (no ligados a ventas)
+        // Estos son abonos registrados desde Cuentas por Cobrar que el RPC no incluye
+        function normMetodoPago(m) {
+          if (!m) return "otro";
+          const s = m.toLowerCase();
+          if (s.includes("cash") || s.includes("efectivo")) return "cash";
+          if (s.includes("card") || s.includes("tarjeta") || s.includes("credit") || s.includes("debit")) return "card";
+          if (s.includes("transfer") || s.includes("venmo") || s.includes("zelle") || s.includes("paypal") || s.includes("wire")) return "transfer";
+          return "otro";
+        }
+
+        try {
+          // Standalone CxC pagos: idem_key IS NULL (no vienen de la pantalla de ventas)
+          // idem IS NOT NULL los diferencia de registros del sistema antiguo
+          const { data: pagosData } = await supabase
+            .from("pagos")
+            .select("id, monto, metodo_pago, fecha_pago")
+            .eq("van_id", van.id)
+            .is("idem_key", null)
+            .gte("fecha_pago", p_from + "T00:00:00-04:00")
+            .lte("fecha_pago", p_to + "T23:59:59-04:00");
+
+          (pagosData || []).forEach((p) => {
+            const iso = (p.fecha_pago || "").slice(0, 10);
+            if (!iso || !fechasSeleccionadas.includes(iso)) return;
+            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, cxc_extra: 0 };
+            const bucket = normMetodoPago(p.metodo_pago);
+            const monto = Number(p.monto || 0);
+            if (bucket === "cash") map[iso].cash += monto;
+            else if (bucket === "card") map[iso].card += monto;
+            else if (bucket === "transfer") map[iso].transfer += monto;
+            // Track the extra separately so UI can show it
+            map[iso].cxc_extra = (map[iso].cxc_extra || 0) + monto;
+          });
+        } catch (_) { /* silently ignore if pagos table is unavailable */ }
+
+        console.log("✅ Resumen completo por fecha (incl. CxC):", map);
         setResumenPorFecha(map);
       } catch (err) {
         console.error("❌ Error loading expected totals:", err);
