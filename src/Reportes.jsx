@@ -62,7 +62,8 @@ const CHART_COLORS = ["#2196F3", "#4CAF50", "#9C27B0", "#FF9800", "#F44336", "#0
 
 /* ========================= Tab Config ========================= */
 const TABS = [
-  { id: "ventas",           label: "Daily Sales",    icon: ShoppingCart, color: "text-green-600" },
+  { id: "cierre_diario",    label: "Daily Closeout", icon: DollarSign,   color: "text-indigo-600" },
+  { id: "ventas",           label: "Sales Detail",   icon: ShoppingCart, color: "text-green-600" },
   { id: "devoluciones",     label: "Returns",        icon: RotateCcw,    color: "text-red-600" },
   { id: "pagos_atrasados",  label: "Late Payments",  icon: AlertTriangle,color: "text-amber-600" },
   { id: "top_clientes",     label: "Top Clients",    icon: Users,        color: "text-blue-600" },
@@ -117,6 +118,264 @@ function DateFilterBar({ from, to, onFrom, onTo, onSearch, loading, extraLabel }
 function ErrorBox({ msg }) {
   if (!msg) return null;
   return <div className="text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm">{msg}</div>;
+}
+
+/* ========================= 0. CIERRE DIARIO REPORT ========================= */
+function normMetodo(m) {
+  if (!m) return "otro";
+  const s = m.toLowerCase();
+  if (s.includes("cash") || s.includes("efectivo")) return "efectivo";
+  if (s.includes("card") || s.includes("tarjeta") || s.includes("credit") || s.includes("debit")) return "tarjeta";
+  if (s.includes("transfer") || s.includes("venmo") || s.includes("zelle") || s.includes("paypal") || s.includes("wire")) return "transferencia";
+  return "otro";
+}
+
+function CierreDiarioReport({ van }) {
+  const [from, setFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 6);
+    return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  });
+  const [to, setTo] = useState(getToday());
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [searched, setSearched] = useState(false);
+
+  const search = async () => {
+    if (!van?.id) return;
+    setLoading(true); setError(null);
+    try {
+      const { start, end } = dateRangeBounds(from, to);
+
+      // 1️⃣ Ventas del período
+      const { data: ventas, error: vErr } = await supabase
+        .from("ventas")
+        .select("id, fecha, total_venta, pago_efectivo, pago_tarjeta, pago_transferencia, pago_otro, tipo")
+        .eq("van_id", van.id)
+        .gte("fecha", start).lte("fecha", end)
+        .neq("tipo", "devolucion");
+      if (vErr) throw vErr;
+
+      // 2️⃣ Pagos directos de CxC (standalone — no generados por ventas)
+      const { data: pagos } = await supabase
+        .from("pagos")
+        .select("id, monto, metodo_pago, fecha_pago")
+        .eq("van_id", van.id)
+        .is("idem_key", null)
+        .gte("fecha_pago", start).lte("fecha_pago", end);
+
+      // Build daily map
+      const dayMap = {};
+      const addDay = (iso) => {
+        if (!dayMap[iso]) dayMap[iso] = {
+          fecha: iso,
+          vendido: 0, ventas_count: 0,
+          efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0,
+          cxc_efectivo: 0, cxc_tarjeta: 0, cxc_transferencia: 0, cxc_otro: 0,
+        };
+      };
+
+      (ventas || []).forEach((v) => {
+        const iso = String(v.fecha || "").slice(0, 10);
+        addDay(iso);
+        dayMap[iso].vendido       += Number(v.total_venta   || 0);
+        dayMap[iso].efectivo      += Number(v.pago_efectivo  || 0);
+        dayMap[iso].tarjeta       += Number(v.pago_tarjeta   || 0);
+        dayMap[iso].transferencia += Number(v.pago_transferencia || 0);
+        dayMap[iso].otro          += Number(v.pago_otro      || 0);
+        dayMap[iso].ventas_count  += 1;
+      });
+
+      (pagos || []).forEach((p) => {
+        const iso = String(p.fecha_pago || "").slice(0, 10);
+        addDay(iso);
+        const m = Number(p.monto || 0);
+        const bucket = normMetodo(p.metodo_pago);
+        dayMap[iso][`cxc_${bucket}`] = (dayMap[iso][`cxc_${bucket}`] || 0) + m;
+      });
+
+      setRows(
+        Object.values(dayMap)
+          .sort((a, b) => a.fecha.localeCompare(b.fecha))
+          .map((d) => ({
+            ...d,
+            total_efectivo:      d.efectivo + d.cxc_efectivo,
+            total_tarjeta:       d.tarjeta + d.cxc_tarjeta,
+            total_transferencia: d.transferencia + d.cxc_transferencia,
+            total_cobrado:       d.efectivo + d.tarjeta + d.transferencia + d.otro
+                               + d.cxc_efectivo + d.cxc_tarjeta + d.cxc_transferencia + d.cxc_otro,
+            pendiente_cxc:       Math.max(0, d.vendido - (d.efectivo + d.tarjeta + d.transferencia + d.otro)),
+          }))
+      );
+      setSearched(true);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const totals = useMemo(() => rows.reduce((t, r) => ({
+    vendido:      t.vendido      + r.vendido,
+    cobrado:      t.cobrado      + r.total_cobrado,
+    efectivo:     t.efectivo     + r.total_efectivo,
+    tarjeta:      t.tarjeta      + r.total_tarjeta,
+    transferencia:t.transferencia+ r.total_transferencia,
+    pendiente:    t.pendiente    + r.pendiente_cxc,
+    cxc_extra:    t.cxc_extra    + r.cxc_efectivo + r.cxc_tarjeta + r.cxc_transferencia + r.cxc_otro,
+  }), { vendido:0, cobrado:0, efectivo:0, tarjeta:0, transferencia:0, pendiente:0, cxc_extra:0 }), [rows]);
+
+  const exportPDF = () => {
+    const doc = new jsPDF({ orientation: "landscape" });
+    doc.setFillColor(79, 70, 229); doc.rect(0, 0, 297, 22, "F");
+    doc.setTextColor(255,255,255); doc.setFontSize(14);
+    doc.text(`Tools4Care — Daily Closeout Report  |  ${fmtDate(from)} – ${fmtDate(to)}`, 14, 15);
+    doc.setTextColor(0,0,0);
+    autoTable(doc, {
+      startY: 28,
+      head: [["Date","Sales","Sold","Cash","Card","Transfer","Total Collected","Pending CxC"]],
+      body: rows.map(r => [
+        fmtDate(r.fecha), r.ventas_count,
+        fmtCurrency(r.vendido),
+        fmtCurrency(r.total_efectivo),
+        fmtCurrency(r.total_tarjeta),
+        fmtCurrency(r.total_transferencia),
+        fmtCurrency(r.total_cobrado),
+        fmtCurrency(r.pendiente_cxc),
+      ]),
+      foot: [["TOTAL", "", fmtCurrency(totals.vendido), fmtCurrency(totals.efectivo),
+              fmtCurrency(totals.tarjeta), fmtCurrency(totals.transferencia),
+              fmtCurrency(totals.cobrado), fmtCurrency(totals.pendiente)]],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [79,70,229], textColor: 255, fontStyle: "bold" },
+      footStyles: { fillColor: [238,242,255], fontStyle: "bold" },
+    });
+    doc.save(`Cierre_Diario_${from}_${to}.pdf`);
+  };
+
+  const chartData = rows.map(r => ({
+    day: fmtDate(r.fecha),
+    Vendido: r.vendido,
+    Cobrado: r.total_cobrado,
+    "Pend. CxC": r.pendiente_cxc,
+  }));
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-end gap-3 mb-6">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <button onClick={search} disabled={loading}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
+          {loading ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+          Search
+        </button>
+        {searched && rows.length > 0 && (
+          <button onClick={exportPDF}
+            className="bg-white border border-indigo-300 text-indigo-700 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-indigo-50">
+            <Download size={14}/> Export PDF
+          </button>
+        )}
+      </div>
+
+      <ErrorBox msg={error} />
+
+      {searched && (<>
+        {/* Summary cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+          <SummaryCard label="Total Sold"      value={fmtCurrency(totals.vendido)}      color="blue"    icon={ShoppingCart} />
+          <SummaryCard label="Total Collected" value={fmtCurrency(totals.cobrado)}      color="green"   icon={DollarSign} />
+          <SummaryCard label="Cash"            value={fmtCurrency(totals.efectivo)}     color="emerald" icon={DollarSign} />
+          <SummaryCard label="Card"            value={fmtCurrency(totals.tarjeta)}      color="purple"  icon={FileText} />
+          <SummaryCard label="Transfer"        value={fmtCurrency(totals.transferencia)}color="blue"    icon={TrendingUp} />
+          <SummaryCard label="Pending CxC"     value={fmtCurrency(totals.pendiente)}    color="amber"   icon={AlertTriangle}
+            sub="from sales only" />
+        </div>
+
+        {/* CxC standalone note */}
+        {totals.cxc_extra > 0 && (
+          <div className="mb-4 p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-sm text-indigo-800 flex items-start gap-2">
+            <span className="text-lg">ℹ️</span>
+            <span>Includes <strong>{fmtCurrency(totals.cxc_extra)}</strong> in direct CxC payments (Venmo, Zelle, cash abonos) recorded outside of sales.</span>
+          </div>
+        )}
+
+        {/* Bar chart */}
+        {rows.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6">
+            <p className="font-semibold text-gray-700 mb-3">Daily breakdown — Sold vs Collected vs Pending</p>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={chartData} barCategoryGap="25%">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={v => `$${v}`} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={v => fmtCurrency(v)} />
+                <Legend />
+                <Bar dataKey="Vendido"    fill="#6366f1" radius={[3,3,0,0]} />
+                <Bar dataKey="Cobrado"    fill="#22c55e" radius={[3,3,0,0]} />
+                <Bar dataKey="Pend. CxC" fill="#f59e0b" radius={[3,3,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Daily table */}
+        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
+          <table className="min-w-full text-sm divide-y divide-gray-200">
+            <thead className="bg-indigo-50">
+              <tr>
+                {["Date","# Sales","Sold","Cash","Card","Transfer","Total Collected","Pending CxC"].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-bold text-indigo-700 uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rows.length === 0 ? (
+                <tr><td colSpan={8} className="text-center py-10 text-gray-400">No data found</td></tr>
+              ) : rows.map(r => (
+                <tr key={r.fecha} className="hover:bg-gray-50">
+                  <td className="px-4 py-2.5 font-semibold text-gray-800">{fmtDate(r.fecha)}</td>
+                  <td className="px-4 py-2.5 text-gray-600 text-center">{r.ventas_count}</td>
+                  <td className="px-4 py-2.5 font-bold text-indigo-700">{fmtCurrency(r.vendido)}</td>
+                  <td className="px-4 py-2.5 text-emerald-700">
+                    {fmtCurrency(r.total_efectivo)}
+                    {r.cxc_efectivo > 0 && <span className="ml-1 text-[10px] text-indigo-500">(+{fmtCurrency(r.cxc_efectivo)} CxC)</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-purple-700">
+                    {fmtCurrency(r.total_tarjeta)}
+                    {r.cxc_tarjeta > 0 && <span className="ml-1 text-[10px] text-indigo-500">(+{fmtCurrency(r.cxc_tarjeta)} CxC)</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-blue-700">
+                    {fmtCurrency(r.total_transferencia)}
+                    {r.cxc_transferencia > 0 && <span className="ml-1 text-[10px] text-indigo-500">(+{fmtCurrency(r.cxc_transferencia)} CxC)</span>}
+                  </td>
+                  <td className="px-4 py-2.5 font-bold text-green-700">{fmtCurrency(r.total_cobrado)}</td>
+                  <td className="px-4 py-2.5 font-semibold text-amber-700">{fmtCurrency(r.pendiente_cxc)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-indigo-50 font-bold">
+              <tr>
+                <td className="px-4 py-3 text-indigo-800">TOTAL</td>
+                <td className="px-4 py-3 text-center text-gray-600">{rows.reduce((s,r) => s+r.ventas_count, 0)}</td>
+                <td className="px-4 py-3 text-indigo-700">{fmtCurrency(totals.vendido)}</td>
+                <td className="px-4 py-3 text-emerald-700">{fmtCurrency(totals.efectivo)}</td>
+                <td className="px-4 py-3 text-purple-700">{fmtCurrency(totals.tarjeta)}</td>
+                <td className="px-4 py-3 text-blue-700">{fmtCurrency(totals.transferencia)}</td>
+                <td className="px-4 py-3 text-green-700">{fmtCurrency(totals.cobrado)}</td>
+                <td className="px-4 py-3 text-amber-700">{fmtCurrency(totals.pendiente)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </>)}
+    </div>
+  );
 }
 
 /* ========================= 1. VENTAS REPORT ========================= */
@@ -1118,7 +1377,7 @@ function GananciasReport({ van, usuario }) {
 export default function Reportes() {
   const { van }     = useVan();
   const { usuario } = useUsuario();
-  const [activeTab, setActiveTab] = useState("ventas");
+  const [activeTab, setActiveTab] = useState("cierre_diario");
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-slate-100 p-2 sm:p-4">
@@ -1153,6 +1412,7 @@ export default function Reportes() {
           <div className="flex items-center gap-2 mb-5 pb-4 border-b border-gray-100">
             {(() => { const t=TABS.find(x=>x.id===activeTab); const I=t?.icon; return (<>{I&&<I size={20} className={t?.color}/>}<h2 className="text-lg font-bold text-gray-800">{t?.label}</h2></>); })()}
           </div>
+          {activeTab==="cierre_diario"    && <CierreDiarioReport   van={van} usuario={usuario}/>}
           {activeTab==="ventas"          && <VentasReport         van={van} usuario={usuario}/>}
           {activeTab==="devoluciones"    && <DevolucionesReport    van={van} usuario={usuario}/>}
           {activeTab==="pagos_atrasados" && <PagosAtrasadosReport  van={van} usuario={usuario}/>}
