@@ -197,15 +197,20 @@ function CierreDiarioReport({ van }) {
       setRows(
         Object.values(dayMap)
           .sort((a, b) => a.fecha.localeCompare(b.fecha))
-          .map((d) => ({
-            ...d,
-            total_efectivo:      d.efectivo + d.cxc_efectivo,
-            total_tarjeta:       d.tarjeta + d.cxc_tarjeta,
-            total_transferencia: d.transferencia + d.cxc_transferencia,
-            total_cobrado:       d.efectivo + d.tarjeta + d.transferencia + d.otro
-                               + d.cxc_efectivo + d.cxc_tarjeta + d.cxc_transferencia + d.cxc_otro,
-            pendiente_cxc:       Math.max(0, d.vendido - (d.efectivo + d.tarjeta + d.transferencia + d.otro)),
-          }))
+          .map((d) => {
+            const cxc_extra = d.cxc_efectivo + d.cxc_tarjeta + d.cxc_transferencia + d.cxc_otro;
+            const total_cobrado = d.efectivo + d.tarjeta + d.transferencia + d.otro + cxc_extra;
+            return {
+              ...d,
+              cxc_extra,
+              total_efectivo:      d.efectivo + d.cxc_efectivo,
+              total_tarjeta:       d.tarjeta + d.cxc_tarjeta,
+              total_transferencia: d.transferencia + d.cxc_transferencia,
+              total_cobrado,
+              // Pendiente = lo vendido menos TODO lo cobrado ese día (ventas + abonos CxC independientes)
+              pendiente_cxc: Math.max(0, d.vendido - total_cobrado),
+            };
+          })
       );
       setSearched(true);
     } catch (e) { setError(e.message); }
@@ -230,19 +235,20 @@ function CierreDiarioReport({ van }) {
     doc.setTextColor(0,0,0);
     autoTable(doc, {
       startY: 28,
-      head: [["Date","Sales","Sold","Cash","Card","Transfer","Total Collected","Pending CxC"]],
+      head: [["Date","Sales","Sold","Cash","Card","Transfer","CxC Abonos","Total Collected","Pending CxC"]],
       body: rows.map(r => [
         fmtDate(r.fecha), r.ventas_count,
         fmtCurrency(r.vendido),
         fmtCurrency(r.total_efectivo),
         fmtCurrency(r.total_tarjeta),
         fmtCurrency(r.total_transferencia),
+        r.cxc_extra > 0 ? fmtCurrency(r.cxc_extra) : "—",
         fmtCurrency(r.total_cobrado),
-        fmtCurrency(r.pendiente_cxc),
+        r.pendiente_cxc > 0 ? fmtCurrency(r.pendiente_cxc) : "$0.00",
       ]),
       foot: [["TOTAL", "", fmtCurrency(totals.vendido), fmtCurrency(totals.efectivo),
               fmtCurrency(totals.tarjeta), fmtCurrency(totals.transferencia),
-              fmtCurrency(totals.cobrado), fmtCurrency(totals.pendiente)]],
+              fmtCurrency(totals.cxc_extra), fmtCurrency(totals.cobrado), fmtCurrency(totals.pendiente)]],
       styles: { fontSize: 9 },
       headStyles: { fillColor: [79,70,229], textColor: 255, fontStyle: "bold" },
       footStyles: { fillColor: [238,242,255], fontStyle: "bold" },
@@ -329,14 +335,14 @@ function CierreDiarioReport({ van }) {
           <table className="min-w-full text-sm divide-y divide-gray-200">
             <thead className="bg-indigo-50">
               <tr>
-                {["Date","# Sales","Sold","Cash","Card","Transfer","Total Collected","Pending CxC"].map(h => (
+                {["Date","# Sales","Sold","Cash","Card","Transfer","CxC Abonos","Total Collected","Pending CxC"].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-bold text-indigo-700 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {rows.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-gray-400">No data found</td></tr>
+                <tr><td colSpan={9} className="text-center py-10 text-gray-400">No data found</td></tr>
               ) : rows.map(r => (
                 <tr key={r.fecha} className="hover:bg-gray-50">
                   <td className="px-4 py-2.5 font-semibold text-gray-800">{fmtDate(r.fecha)}</td>
@@ -355,7 +361,13 @@ function CierreDiarioReport({ van }) {
                     {r.cxc_transferencia > 0 && <span className="ml-1 text-[10px] text-indigo-500">(+{fmtCurrency(r.cxc_transferencia)} CxC)</span>}
                   </td>
                   <td className="px-4 py-2.5 font-bold text-green-700">{fmtCurrency(r.total_cobrado)}</td>
-                  <td className="px-4 py-2.5 font-semibold text-amber-700">{fmtCurrency(r.pendiente_cxc)}</td>
+                  {/* CxC Abonos: pagos directos desde CxC (idem_key IS NULL) */}
+                  <td className="px-4 py-2.5 text-indigo-600 font-semibold">
+                    {r.cxc_extra > 0 ? fmtCurrency(r.cxc_extra) : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 font-semibold text-amber-700">
+                    {r.pendiente_cxc > 0 ? fmtCurrency(r.pendiente_cxc) : <span className="text-green-600 font-bold">✓ $0</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -368,6 +380,7 @@ function CierreDiarioReport({ van }) {
                 <td className="px-4 py-3 text-purple-700">{fmtCurrency(totals.tarjeta)}</td>
                 <td className="px-4 py-3 text-blue-700">{fmtCurrency(totals.transferencia)}</td>
                 <td className="px-4 py-3 text-green-700">{fmtCurrency(totals.cobrado)}</td>
+                <td className="px-4 py-3 text-indigo-600">{fmtCurrency(totals.cxc_extra)}</td>
                 <td className="px-4 py-3 text-amber-700">{fmtCurrency(totals.pendiente)}</td>
               </tr>
             </tfoot>
