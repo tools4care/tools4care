@@ -57,6 +57,7 @@ const Suscripciones = lazy(() => import('./Suscripciones'));
 // 🧾 Tax / Impuestos
 import TaxConfig from './pages/TaxConfig'
 import CreateTenantManual from './admin/CreateTenantManual';
+import ListaEmergencia from './ListaEmergencia';
 
 // Componente de carga profesional
 const LoadingScreen = () => {
@@ -336,6 +337,7 @@ export default function App() {
 
             {/* 📊 REPORTES (NUEVO) */}
             <Route path="reportes" element={<Reportes />} />
+            <Route path="emergencia" element={<ListaEmergencia />} />
 
             {/* 📦 SUSCRIPCIONES */}
             <Route path="suscripciones" element={<Suscripciones />} />

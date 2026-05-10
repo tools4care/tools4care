@@ -692,23 +692,18 @@ export default function Productos() {
     }
   }
 
-  // 🆕 HANDLER DE ESCÁNER — preserva ceros a la izquierda exactamente como los tiene el código
   const handleBarcodeScanned = (code) => {
-    const cleanedCode = (code || '').trim(); // sin tocar los ceros
-    if (!cleanedCode) return;
-
+    const raw = (code || '').trim();
+    if (!raw) return;
+    // Strip leading zeros so "0010181055935" and "010181055935" both find the same product
+    const normalized = raw.replace(/^0+/, '') || raw;
     setShowScanner(false);
-
     setTimeout(() => {
       const searchInput = document.querySelector('input[placeholder="Search by code, name, brand, category..."]');
-      if (searchInput) {
-        searchInput.focus();
-        searchInput.select();
-      }
+      if (searchInput) { searchInput.focus(); searchInput.select(); }
     }, 300);
-
     setPagina(1);
-    setBusqueda(cleanedCode);
+    setBusqueda(normalized);
   };
 
   function handleBuscar(e) {
