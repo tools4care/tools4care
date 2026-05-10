@@ -8,6 +8,21 @@ import { BarcodeScanner } from "./BarcodeScanner";
 const isLikelyScan = (s) => !!s && s.length >= 6 && !/\s/.test(s);
 const norm = (s) => String(s || "").trim();
 
+// Genera variantes del código para manejar ceros al inicio (UPC-A vs EAN-13).
+// Ej: "0010181055935" → ["0010181055935", "010181055935", "10181055935"]
+function barcodeVariants(code) {
+  const s = norm(code);
+  const stripped = s.replace(/^0+/, "") || "0";
+  return [...new Set([s, stripped])].filter(Boolean);
+}
+
+// Normaliza código escaneado para búsqueda: usa la versión sin ceros al inicio
+// para que ILIKE %stripped% encuentre tanto "010181055935" como "10181055935"
+function normBarcode(code) {
+  const s = norm(code);
+  return s.replace(/^0+/, "") || s;
+}
+
 export default function AgregarStockModal({
   abierto,
   cerrar,
@@ -83,10 +98,14 @@ export default function AgregarStockModal({
 
     let prodQuery = supabase.from("productos").select("id, nombre, marca, codigo").limit(50);
 
-    if (modoBusqueda === "codigo")      prodQuery = prodQuery.ilike("codigo", `%${filtro}%`);
+    // Para búsqueda por código usamos la versión sin ceros al inicio para que
+    // "%10181055935%" encuentre tanto "010181055935" como "10181055935" en la DB
+    const filtroCode = normBarcode(filtro);
+
+    if (modoBusqueda === "codigo")      prodQuery = prodQuery.ilike("codigo", `%${filtroCode}%`);
     else if (modoBusqueda === "nombre") prodQuery = prodQuery.ilike("nombre", `%${filtro}%`);
     else if (modoBusqueda === "marca")  prodQuery = prodQuery.ilike("marca", `%${filtro}%`);
-    else prodQuery = prodQuery.or(`codigo.ilike.%${filtro}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`);
+    else prodQuery = prodQuery.or(`codigo.ilike.%${filtroCode}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`);
 
     const { data: productosData, error: prodErr } = await prodQuery;
     if (!isLatest(qid)) return;
@@ -138,15 +157,21 @@ export default function AgregarStockModal({
     const code = norm(codeRaw);
     if (!code) return false;
 
-    if (exactCacheRef.current.has(code)) {
-      const opt = exactCacheRef.current.get(code);
-      setOpciones([opt]); setSeleccion(opt); setMensaje("exact"); setLoading(false);
-      return true;
+    const variants = barcodeVariants(code);
+
+    for (const v of variants) {
+      if (exactCacheRef.current.has(v)) {
+        const opt = exactCacheRef.current.get(v);
+        setOpciones([opt]); setSeleccion(opt); setMensaje("exact"); setLoading(false);
+        return true;
+      }
     }
 
     const qid = allocQ(); setLoading(true);
-    const { data: prod, error: prodErr } = await supabase
-      .from("productos").select("id, nombre, marca, codigo").eq("codigo", code).maybeSingle();
+    // Intenta todas las variantes del código en una sola query (UPC-A / EAN-13)
+    const { data: prods, error: prodErr } = await supabase
+      .from("productos").select("id, nombre, marca, codigo").in("codigo", variants).limit(1);
+    const prod = prods?.[0] ?? null;
 
     if (!isLatest(qid)) return true;
     if (prodErr || !prod) { setLoading(false); return false; }
@@ -528,7 +553,7 @@ export default function AgregarStockModal({
         <BarcodeScanner
           isActive={showScanner}
           onScan={(code) => {
-            setBusqueda(code.trim());
+            setBusqueda(normBarcode(code));
             setSeleccion(null);
             setMensaje("");
             setShowScanner(false);

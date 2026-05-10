@@ -149,7 +149,7 @@ function usePrecloseRows(vanId, diasAtras = 21) {
 
         console.log("✅ RPC data received:", data);
 
-        // Procesar y normalizar los datos
+        // Procesar y normalizar los datos del RPC
         const normalized = (data ?? [])
           .map((r) => {
             const iso = r.dia ?? r.fecha ?? r.day ?? r.f ?? null;
@@ -160,31 +160,56 @@ function usePrecloseRows(vanId, diasAtras = 21) {
               transfer_expected: Number(r.transfer_expected ?? r.transfer ?? 0),
               mix_unallocated: Number(r.mix_unallocated ?? r.mix ?? 0),
             };
-          })
-          // Filtrar días sin transacciones o que ya tienen cierre
-          .filter((r) => {
+          });
+
+        // Pagos CxC standalone desde pantalla Clientes (formato "Transfer - Zelle", etc.)
+        // Solo los de prefijo "Transfer - " — los genéricos ("Cash", "efectivo") ya están en el RPC.
+        try {
+          const { data: pagosData } = await supabase
+            .from("pagos")
+            .select("monto, metodo_pago, fecha_pago")
+            .eq("van_id", vanId)
+            .is("idem_key", null)
+            .like("metodo_pago", "Transfer - %")
+            .gte("fecha_pago", p_from + "T00:00:00")
+            .lte("fecha_pago", p_to + "T23:59:59");
+
+          (pagosData || []).forEach((p) => {
+            const iso = String(p.fecha_pago || "").slice(0, 10);
+            if (!iso) return;
+            let row = normalized.find((r) => r.dia === iso);
+            if (!row) {
+              row = { dia: iso, cash_expected: 0, card_expected: 0, transfer_expected: 0, mix_unallocated: 0 };
+              normalized.push(row);
+            }
+            row.transfer_expected += Number(p.monto || 0);
+          });
+        } catch (_) { /* pagos table unavailable */ }
+
+        // Filtrar días sin transacciones o que ya tienen cierre
+        const filtered = normalized.filter((r) => {
             const total = r.cash_expected + r.card_expected + r.transfer_expected + r.mix_unallocated;
             const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
             const hasCierre = fechasConCierre.has(r.dia);
             const hasTransactions = total > 0;
-            
+
             if (isValid && !hasCierre && hasTransactions) {
               console.log(`✅ Día válido: ${r.dia} - Total: $${total.toFixed(2)}`);
               return true;
             }
-            
+
             if (isValid && hasCierre) {
               console.log(`🔒 Día omitido (ya cerrado): ${r.dia}`);
             }
-            
+
             return false;
           });
 
         // Ordenar por fecha descendente (más reciente primero)
-        normalized.sort((a, b) => (a.dia < b.dia ? 1 : -1));
-        
-        console.log(`📊 Total de días pendientes: ${normalized.length}`);
-        setRows(normalized);
+        filtered.sort((a, b) => (a.dia < b.dia ? 1 : -1));
+
+        console.log(`📊 Total de días pendientes: ${filtered.length}`);
+        setRows(filtered);
       } catch (err) {
         console.error("❌ Error in fetchData:", err);
         setError(err.message);

@@ -131,7 +131,7 @@ export default function CierreVan() {
     for (const col of ["metodo_pago", "metodo", "forma_pago"]) {
       const { data, error } = await supabase
         .from("pagos")
-        .select(`id, monto, ${col}, created_at, cliente_id, clientes:cliente_id(nombre)`)
+        .select(`id, monto, ${col}, idem_key, created_at, cliente_id, clientes:cliente_id(nombre)`)
         .eq("van_id", van.id)
         .gte("created_at", start)
         .lte("created_at", end)
@@ -143,7 +143,7 @@ export default function CierreVan() {
     // Fallback: fetch without method column
     const { data } = await supabase
       .from("pagos")
-      .select("id, monto, created_at, cliente_id, clientes:cliente_id(nombre)")
+      .select("id, monto, idem_key, created_at, cliente_id, clientes:cliente_id(nombre)")
       .eq("van_id", van.id)
       .gte("created_at", start)
       .lte("created_at", end)
@@ -162,6 +162,9 @@ export default function CierreVan() {
   // ── Gastos del conductor (multi-día) ──
   const [gastos, setGastos] = useState([]);
   const [gastosLoading, setGastosLoading] = useState(false);
+
+  // ── Abonos CxC (para desglose de transferencias — display only) ──
+  const [abonosCxC, setAbonosCxC] = useState([]);
 
   // ── Post-close report dialog ──
   const [showPostCloseDialog, setShowPostCloseDialog] = useState(false);
@@ -334,43 +337,31 @@ export default function CierreVan() {
           console.log(`💰 Totales para ${iso}:`, map[iso]);
         });
 
-        // ➕ Agregar pagos directos de CxC (no ligados a ventas)
-        // Estos son abonos registrados desde Cuentas por Cobrar que el RPC no incluye
-        function normMetodoPago(m) {
-          if (!m) return "otro";
-          const s = m.toLowerCase();
-          if (s.includes("cash") || s.includes("efectivo")) return "cash";
-          if (s.includes("card") || s.includes("tarjeta") || s.includes("credit") || s.includes("debit")) return "card";
-          if (s.includes("transfer") || s.includes("venmo") || s.includes("zelle") || s.includes("paypal") || s.includes("wire")) return "transfer";
-          return "otro";
-        }
-
+        // Pagos CxC standalone desde pantalla Clientes (formato "Transfer - Zelle", etc.)
+        // idem_key IS NULL + metodo empieza con "Transfer - " → la pantalla Clientes los guarda así.
+        // Los pagos offline de ventas (syncManager) también tienen idem_key NULL pero con metodo
+        // genérico ("Cash", "efectivo") — esos YA están en el RPC, no los tocamos.
+        // Solo añadimos los que tienen prefijo "Transfer - " porque esos NO los cubre el RPC.
         try {
-          // Standalone CxC pagos: idem_key IS NULL (no vienen de la pantalla de ventas)
-          // idem IS NOT NULL los diferencia de registros del sistema antiguo
           const { data: pagosData } = await supabase
             .from("pagos")
-            .select("id, monto, metodo_pago, fecha_pago")
+            .select("id, monto, metodo_pago, fecha_pago, cliente_id, clientes:cliente_id(nombre)")
             .eq("van_id", van.id)
             .is("idem_key", null)
-            .gte("fecha_pago", p_from + "T00:00:00-04:00")
-            .lte("fecha_pago", p_to + "T23:59:59-04:00");
+            .like("metodo_pago", "Transfer - %")
+            .gte("fecha_pago", p_from + "T00:00:00")
+            .lte("fecha_pago", p_to + "T23:59:59");
 
           (pagosData || []).forEach((p) => {
-            const iso = (p.fecha_pago || "").slice(0, 10);
-            if (!iso || !fechasSeleccionadas.includes(iso)) return;
-            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, cxc_extra: 0 };
-            const bucket = normMetodoPago(p.metodo_pago);
-            const monto = Number(p.monto || 0);
-            if (bucket === "cash") map[iso].cash += monto;
-            else if (bucket === "card") map[iso].card += monto;
-            else if (bucket === "transfer") map[iso].transfer += monto;
-            // Track the extra separately so UI can show it
-            map[iso].cxc_extra = (map[iso].cxc_extra || 0) + monto;
+            const iso = String(p.fecha_pago || "").slice(0, 10);
+            if (!iso) return;
+            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
+            map[iso].transfer += Number(p.monto || 0);
           });
-        } catch (_) { /* silently ignore if pagos table is unavailable */ }
 
-        console.log("✅ Resumen completo por fecha (incl. CxC):", map);
+          setAbonosCxC(pagosData || []);
+        } catch (_) { /* pagos table unavailable */ }
+
         setResumenPorFecha(map);
       } catch (err) {
         console.error("❌ Error loading expected totals:", err);
@@ -1370,31 +1361,54 @@ useEffect(() => {
     );
   }, [ventasPorFecha, transacciones]);
 
-  /* ========================= Transfer Sub-type Breakdown from Sales ========================= */
+  /* ========================= Transfer Sub-type Breakdown ========================= */
+
+  // Helper: parse metodo_pago string (e.g. "Transfer - Zelle") to a known sub-key
+  function parsearSubTipoTransfer(raw) {
+    const s = String(raw || "").toLowerCase();
+    if (s.includes("zelle")) return "zelle";
+    if (s.includes("cashapp") || s.includes("cash app")) return "cashapp";
+    if (s.includes("venmo")) return "venmo";
+    if (s.includes("applepay") || s.includes("apple pay") || s.includes("apple")) return "applepay";
+    return "other";
+  }
+
+  // Desglose de transfers: ventas + abonos CxC — ambos fusionados por sub-tipo
   const transferDesgloseSistema = useMemo(() => {
     const result = { zelle: 0, cashapp: 0, venmo: 0, applepay: 0, other: 0 };
+
+    // 1) Desde ventas (pago.transferencia_detalle o pago.metodos)
     Object.values(ventasPorFecha).flat().forEach((venta) => {
       const pago = venta.pago;
       if (!pago) return;
       const detalle = pago.transferencia_detalle;
       if (detalle) {
-        result.zelle += Number(detalle.zelle || 0);
-        result.cashapp += Number(detalle.cashapp || 0);
-        result.venmo += Number(detalle.venmo || 0);
+        result.zelle    += Number(detalle.zelle    || 0);
+        result.cashapp  += Number(detalle.cashapp  || 0);
+        result.venmo    += Number(detalle.venmo    || 0);
         result.applepay += Number(detalle.applepay || 0);
-        result.other += Number(detalle.other || 0);
+        result.other    += Number(detalle.other    || 0);
       } else if (pago.metodos) {
         pago.metodos.forEach((m) => {
           if (m.forma === "transferencia") {
-            const sub = m.subMetodo;
-            const key = ["zelle", "cashapp", "venmo", "applepay"].includes(sub) ? sub : "other";
-            result[key] += Number(m.monto || 0);
+            result[parsearSubTipoTransfer(m.subMetodo)] += Number(m.monto || 0);
           }
         });
       }
     });
+
+    // 2) Desde abonos CxC (venta_id IS NULL) — "Transfer - Zelle", "Transfer - Cash App", etc.
+    abonosCxC.forEach((t) => {
+      const m = String(t.metodo_pago || "").toLowerCase();
+      const isTransfer = m.includes("transfer") || m.includes("zelle") ||
+                         m.includes("cashapp")  || m.includes("cash app") ||
+                         m.includes("venmo")    || m.includes("applepay") || m.includes("apple");
+      if (!isTransfer) return;
+      result[parsearSubTipoTransfer(t.metodo_pago)] += Number(t.monto || 0);
+    });
+
     return result;
-  }, [ventasPorFecha]);
+  }, [ventasPorFecha, abonosCxC]);
 
   /* ========================= Chart Data ========================= */
   const datosMetodosPago = useMemo(() => {
