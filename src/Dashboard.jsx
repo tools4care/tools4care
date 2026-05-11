@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import dayjs from "dayjs";
 import {
@@ -23,7 +24,7 @@ import {
 import {
   DollarSign, TrendingUp, TrendingDown, ShoppingCart, Users,
   AlertTriangle, Package, Clock, Map as MapIcon, Check, Plus, Pencil,
-  Trash2, Phone, MapPin, Search, ChevronRight, X,
+  Trash2, Phone, MapPin, Search, ChevronRight, X, SendHorizonal,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -92,19 +93,37 @@ const IconPhone       = () => <Phone        size={20} />;
 const IconLocation    = () => <MapPin       size={20} />;
 const IconSearch      = () => <Search       size={20} />;
 
+const EMERGENCY_KEY = "lista_emergencia_v1";
+
+function loadEmergencyList() {
+  try { return JSON.parse(localStorage.getItem(EMERGENCY_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveEmergencyList(items) {
+  localStorage.setItem(EMERGENCY_KEY, JSON.stringify(items));
+}
+
 /* ---------- Modal Low Stock ---------- */
 function LowStockModal({ open, items, onClose }) {
+  const navigate = useNavigate();
   const [q, setQ] = useState("");
+  const [selected, setSelected] = useState(new Set());
+  const [sent, setSent] = useState(false);
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (open) { setSelected(new Set()); setSent(false); setQ(""); }
+  }, [open]);
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const base = s
+    return s
       ? items.filter(i =>
           String(i.codigo).toLowerCase().includes(s) ||
           String(i.nombre).toLowerCase().includes(s) ||
           String(i.marca).toLowerCase().includes(s)
         )
       : items;
-    return base;
   }, [q, items]);
 
   const criticos      = filtered.filter(p => p.urgencia === "critico");
@@ -112,12 +131,37 @@ function LowStockModal({ open, items, onClose }) {
   const vigilar       = filtered.filter(p => p.urgencia === "watch");
   const sinMovimiento = filtered.filter(p => p.urgencia === "sin_movimiento");
 
+  const toggleSelect = useCallback((id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAll = () => setSelected(new Set(filtered.map(p => p.producto_id || p.id)));
+  const clearAll  = () => setSelected(new Set());
+
+  const sendToEmergency = () => {
+    const toAdd = items.filter(p => selected.has(p.producto_id || p.id));
+    const current = loadEmergencyList();
+    const merged = [...current];
+    toAdd.forEach(p => {
+      const key = p.producto_id || p.id;
+      if (!merged.find(it => it.id === key)) {
+        merged.push({ id: key, nombre: p.nombre, marca: p.marca || "", size: p.size || "", codigo: p.codigo || "", cantidad: 1, notas: "" });
+      }
+    });
+    saveEmergencyList(merged);
+    setSent(true);
+  };
+
   const StockRow = ({ p }) => {
+    const id = p.producto_id || p.id;
+    const isSelected = selected.has(id);
     const diasLabel = p.cantidad === 0
       ? "OUT OF STOCK"
-      : p.urgencia === "sin_movimiento"
-      ? `${p.cantidad} u.`
-      : p.diasRestantes >= 999
+      : p.urgencia === "sin_movimiento" || p.diasRestantes >= 999
       ? `${p.cantidad} u.`
       : `~${p.diasRestantes}d left`;
     const urgColor = p.urgencia === "critico"
@@ -129,12 +173,18 @@ function LowStockModal({ open, items, onClose }) {
       : { border: "border-yellow-400", badge: "bg-yellow-100 text-yellow-700", bg: "from-yellow-50 to-yellow-50" };
     const ultimaLabel = p.ultimaVenta
       ? `Last sale ${dayjs().diff(dayjs(p.ultimaVenta), "day")}d ago`
-      : p.urgencia === "sin_movimiento"
-      ? "No recent sales"
-      : null;
+      : p.urgencia === "sin_movimiento" ? "No recent sales" : null;
+
     return (
-      <li className={`bg-gradient-to-r ${urgColor.bg} rounded-xl p-3.5 border-l-4 ${urgColor.border}`}>
-        <div className="flex items-center justify-between gap-3">
+      <li
+        onClick={() => toggleSelect(id)}
+        className={`bg-gradient-to-r ${urgColor.bg} rounded-xl p-3.5 border-l-4 ${urgColor.border} cursor-pointer transition-all ${isSelected ? "ring-2 ring-orange-400 ring-offset-1" : ""}`}
+      >
+        <div className="flex items-center gap-3">
+          {/* Checkbox */}
+          <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${isSelected ? "bg-orange-500 border-orange-500" : "border-gray-300 bg-white"}`}>
+            {isSelected && <Check size={12} color="white" strokeWidth={3} />}
+          </div>
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-gray-900 truncate">{p.nombre}</div>
             {(p.marca || p.size) && (
@@ -154,9 +204,7 @@ function LowStockModal({ open, items, onClose }) {
               <div className="text-xs text-gray-400">Stock</div>
               <div className="text-2xl font-bold text-gray-800">{p.cantidad}</div>
             </div>
-            <span className={`text-xs font-bold px-2 py-1 rounded-lg ${urgColor.badge}`}>
-              {diasLabel}
-            </span>
+            <span className={`text-xs font-bold px-2 py-1 rounded-lg ${urgColor.badge}`}>{diasLabel}</span>
           </div>
         </div>
       </li>
@@ -179,48 +227,72 @@ function LowStockModal({ open, items, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        {/* Header */}
         <div className="px-5 py-4 bg-gradient-to-r from-red-600 to-orange-600 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <IconAlert />
             <div>
               <h3 className="font-bold text-lg">Running Low</h3>
-              <p className="text-xs opacity-80">Active in last 90 days · {items.length} products</p>
+              <p className="text-xs opacity-80">Tap products to select · {items.length} products</p>
             </div>
           </div>
-          <button
-            className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors"
-            onClick={onClose}
-          >
+          <button className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
-        <div className="p-4 flex-1 overflow-hidden flex flex-col">
+
+        {/* Search + select all */}
+        <div className="px-4 pt-4 pb-2 flex gap-2 items-center">
           <input
-            className="w-full border-2 border-gray-200 focus:border-red-500 rounded-xl px-4 py-2.5 mb-4 transition-colors"
+            className="flex-1 border-2 border-gray-200 focus:border-red-500 rounded-xl px-4 py-2.5 transition-colors text-sm"
             placeholder="Search by code, name or brand..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <div className="flex-1 overflow-y-auto">
-            {filtered.length === 0 ? (
-              <div className="text-gray-500 text-sm text-center py-8">No results found.</div>
-            ) : (
-              <>
-                <Grupo titulo="🔴 Critical — less than 7 days"  color="text-red-600"    items={criticos}      />
-                <Grupo titulo="🟠 Low Stock — less than 14 days" color="text-orange-600" items={bajos}         />
-                <Grupo titulo="🟡 Watch — less than 30 days"     color="text-yellow-600" items={vigilar}       />
-                <Grupo titulo="⚪ No Recent Sales — no movement" color="text-gray-500"   items={sinMovimiento} />
-              </>
-            )}
-          </div>
+          {selected.size > 0
+            ? <button onClick={clearAll} className="text-xs text-gray-500 hover:text-red-500 whitespace-nowrap px-2">Clear</button>
+            : <button onClick={selectAll} className="text-xs text-orange-600 font-semibold hover:text-orange-800 whitespace-nowrap px-2">Select all</button>
+          }
         </div>
-        <div className="p-4 border-t">
-          <button
-            className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white font-semibold py-3 px-4 rounded-xl transition-all"
-            onClick={onClose}
-          >
-            Close
-          </button>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto px-4 pb-2">
+          {filtered.length === 0 ? (
+            <div className="text-gray-500 text-sm text-center py-8">No results found.</div>
+          ) : (
+            <>
+              <Grupo titulo="🔴 Critical — less than 7 days"  color="text-red-600"    items={criticos}      />
+              <Grupo titulo="🟠 Low Stock — less than 14 days" color="text-orange-600" items={bajos}         />
+              <Grupo titulo="🟡 Watch — less than 30 days"     color="text-yellow-600" items={vigilar}       />
+              <Grupo titulo="⚪ No Recent Sales — no movement" color="text-gray-500"   items={sinMovimiento} />
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t flex gap-2">
+          {sent ? (
+            <button
+              onClick={() => { onClose(); navigate("/emergencia"); }}
+              className="flex-1 flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 rounded-xl transition-all"
+            >
+              <Check size={16} /> {selected.size} added — View Emergency List
+            </button>
+          ) : selected.size > 0 ? (
+            <button
+              onClick={sendToEmergency}
+              className="flex-1 flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 rounded-xl transition-all"
+            >
+              <SendHorizonal size={16} /> Send {selected.size} to Emergency List
+            </button>
+          ) : (
+            <button
+              className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 px-4 rounded-xl transition-all"
+              onClick={onClose}
+            >
+              Close
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -2144,6 +2216,7 @@ export default function Dashboard() {
             : diasRestantes < 30 ? "watch"
             : "sin_movimiento";
           return {
+            producto_id:   item.producto_id,
             nombre:        item.productos?.nombre || item.producto_id,
             codigo:        item.productos?.codigo || "",
             precio:        Number(item.productos?.precio || 0),
