@@ -45,7 +45,7 @@ const MORE_ITEMS = [
   { path: "/reportes",       label: "Reports",       icon: BarChart2,     iconColor: "#e11d48", bg: "bg-rose-50",    ring: "ring-rose-200"   },
   { path: "/suscripciones", label: "Subscriptions", icon: CalendarCheck, iconColor: "#7c3aed", bg: "bg-violet-50",  ring: "ring-violet-200" },
   { path: "/van",            label: "Change VAN",    icon: Navigation,    iconColor: "#b45309", bg: "bg-amber-50",   ring: "ring-amber-200"  },
-  { path: "/emergencia",    label: "Emergency List",icon: AlertTriangle, iconColor: "#ea580c", bg: "bg-orange-50",  ring: "ring-orange-200" },
+  { path: "/emergencia",    label: "Essentials",    icon: AlertTriangle, iconColor: "#2563eb", bg: "bg-blue-50",    ring: "ring-blue-200"   },
 ];
 
 export default function BottomNav() {
