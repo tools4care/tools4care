@@ -274,9 +274,9 @@ function LowStockModal({ open, items, onClose }) {
           {sent ? (
             <button
               onClick={() => { onClose(); navigate("/emergencia"); }}
-              className="flex-1 flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 rounded-xl transition-all"
+              className="flex-1 flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 rounded-xl transition-all"
             >
-              <Check size={16} /> {selected.size} added — View Emergency List
+              <Check size={16} /> {selected.size} added — View Essentials
             </button>
           ) : selected.size > 0 ? (
             <button
