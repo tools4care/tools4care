@@ -2010,50 +2010,37 @@ useEffect(() => {
     if (step === 2) reloadInventory();
   }, [step]);
 
-  /* ---------- ⌨️ Keyboard shortcuts ---------- */
+  /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
   useEffect(() => {
     const handler = (e) => {
-      const tag = document.activeElement?.tagName?.toLowerCase();
+      const tag  = document.activeElement?.tagName?.toLowerCase();
       const inInput = tag === "input" || tag === "select" || tag === "textarea";
+      const isCtrl  = e.ctrlKey || e.metaKey; // Ctrl on Win, Cmd on Mac
 
-      // F2 = focus client search (any step)
-      if (e.key === "F2") {
+      // Ctrl/Cmd + Shift + C = jump to Customer search
+      if (isCtrl && e.shiftKey && e.key.toLowerCase() === "c" && !inInput) {
         e.preventDefault();
         const el = document.getElementById("client-search-input");
-        if (el) { setStep(1); el.focus(); el.select(); }
+        if (el) { setStep(1); setTimeout(() => { el.focus(); el.select(); }, 50); }
         return;
       }
 
-      // F3 = focus product search (step 2)
-      if (e.key === "F3") {
+      // Ctrl/Cmd + Shift + B = jump to product search (B = Browse products)
+      if (isCtrl && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         const el = document.getElementById("product-search-input");
-        if (el) { setStep(2); el.focus(); el.select(); }
+        if (el) { setStep(2); setTimeout(() => { el.focus(); el.select(); }, 50); }
         return;
       }
 
-      // F4 = save sale (step 3)
-      if (e.key === "F4" && step === 3 && !saving) {
+      // Ctrl/Cmd + Enter = Save sale (step 3) — works even from inside inputs
+      if (isCtrl && e.key === "Enter" && step === 3 && !saving) {
         e.preventDefault();
         saveSale();
         return;
       }
 
-      // F5 = open cash drawer
-      if (e.key === "F5") {
-        e.preventDefault();
-        openCashDrawer();
-        return;
-      }
-
-      // F6 = print last receipt
-      if (e.key === "F6" && lastReceiptRef.current) {
-        e.preventDefault();
-        printThermalReceipt(lastReceiptRef.current);
-        return;
-      }
-
-      // Enter (outside inputs) = save sale on step 3
+      // Enter (outside inputs, step 3) = Save sale
       if (e.key === "Enter" && step === 3 && !saving && !inInput) {
         e.preventDefault();
         saveSale();
@@ -2063,8 +2050,8 @@ useEffect(() => {
       // Escape = close POS actions or go back one step
       if (e.key === "Escape") {
         if (showPOSActions) { setShowPOSActions(false); return; }
-        if (step === 3) setStep(2);
-        else if (step === 2) setStep(1);
+        if (step === 3) { setStep(2); return; }
+        if (step === 2) { setStep(1); return; }
       }
     };
     window.addEventListener("keydown", handler);
@@ -4883,9 +4870,10 @@ function renderStepProducts() {
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
         {/* Keyboard hints — desktop only */}
         <div className="hidden lg:flex items-center gap-3 text-xs text-gray-400">
-          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">F3</kbd> Search product</span>
-          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">F2</kbd> Back to client</span>
+          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">Ctrl+Shift+B</kbd> Search product</span>
+          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">Ctrl+Shift+C</kbd> Back to client</span>
           <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">↑↓ Enter</kbd> Navigate & add</span>
+          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">Esc</kbd> Back</span>
         </div>
       </div>
 
@@ -5697,12 +5685,10 @@ function renderStepPayment() {
       {/* Keyboard hint — desktop only */}
       <div className="hidden lg:flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-400 pt-1 border-t border-gray-100">
         {[
-          ["Enter / F4", "Save Sale"],
+          ["Ctrl+Enter", "Save Sale"],
           ["Esc", "Back"],
-          ["F2", "Search customer"],
-          ["F3", "Search product"],
-          ["F5", "Open drawer"],
-          ["F6", "Reprint receipt"],
+          ["Ctrl+Shift+C", "Customer search"],
+          ["Ctrl+Shift+B", "Product search"],
         ].map(([k, v]) => (
           <span key={k} className="flex items-center gap-1">
             <kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">{k}</kbd>
@@ -5849,7 +5835,7 @@ function renderStepPayment() {
           onSyncNow={sincronizarAhora}
         />
 
-        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
+        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 lg:pb-20">
           {modalPendingSales && renderPendingSalesModal()}
           {showQRModal && renderQRModal()}
 
@@ -5882,6 +5868,7 @@ function renderStepPayment() {
           {step === 3 && renderStepPayment()}
         </div>
 
+        {/* Mobile floating cart bar */}
         {cartSafe.length > 0 && step === 2 && (
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 p-4 shadow-lg sm:hidden">
             <div className="flex items-center justify-between">
@@ -5890,6 +5877,100 @@ function renderStepPayment() {
             </div>
           </div>
         )}
+
+        {/* ── Desktop POS Toolbar — always visible on lg screens ── */}
+        <div className="hidden lg:flex fixed bottom-0 left-[260px] right-0 z-40 bg-gray-900 border-t-2 border-gray-700 px-4 py-2 gap-2 items-center">
+          {/* Step indicators */}
+          <div className="flex items-center gap-1 mr-3">
+            {[1,2,3].map(s => (
+              <button
+                key={s}
+                onClick={() => setStep(s)}
+                className={`w-8 h-8 rounded-full text-sm font-bold transition-all ${
+                  step === s
+                    ? "bg-blue-500 text-white scale-110 shadow-lg shadow-blue-500/40"
+                    : step > s
+                    ? "bg-green-600 text-white"
+                    : "bg-gray-700 text-gray-400"
+                }`}
+              >
+                {step > s ? "✓" : s}
+              </button>
+            ))}
+            <span className="text-gray-400 text-xs ml-2">
+              {step === 1 ? "Client" : step === 2 ? "Products" : "Payment"}
+            </span>
+          </div>
+
+          <div className="w-px h-8 bg-gray-700 mx-1" />
+
+          {/* Customer search */}
+          <button
+            onClick={() => { setStep(1); setTimeout(() => { document.getElementById("client-search-input")?.focus(); }, 50); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+              step === 1 ? "bg-blue-600 text-white shadow-lg" : "bg-gray-700 text-gray-200 hover:bg-gray-600"
+            }`}
+          >
+            <span>👤</span>
+            <span>Customer</span>
+            <kbd className="bg-black/30 text-gray-300 rounded px-1 text-[9px] font-mono">Ctrl+Shift+C</kbd>
+          </button>
+
+          {/* Product search */}
+          <button
+            onClick={() => { setStep(2); setTimeout(() => { document.getElementById("product-search-input")?.focus(); }, 50); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+              step === 2 ? "bg-blue-600 text-white shadow-lg" : "bg-gray-700 text-gray-200 hover:bg-gray-600"
+            }`}
+          >
+            <span>📦</span>
+            <span>Products</span>
+            <kbd className="bg-black/30 text-gray-300 rounded px-1 text-[9px] font-mono">Ctrl+Shift+B</kbd>
+          </button>
+
+          {/* Cart summary */}
+          {cartSafe.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-gray-800 rounded-lg">
+              <span className="text-green-400 font-bold text-sm">🛒 {cartSafe.length}</span>
+              <span className="text-white font-bold">{fmt(saleTotal)}</span>
+            </div>
+          )}
+
+          <div className="flex-1" />
+
+          {/* Print last receipt */}
+          {lastReceiptRef.current && (
+            <button
+              onClick={() => printThermalReceipt(lastReceiptRef.current)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all"
+            >
+              <span>🖨️</span>
+              <span>Print</span>
+            </button>
+          )}
+
+          {/* Open cash drawer */}
+          <button
+            onClick={() => openCashDrawer()}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-all"
+          >
+            <span>💵</span>
+            <span>Drawer</span>
+          </button>
+
+          {/* Save sale — only on step 3 */}
+          {step === 3 && (
+            <button
+              onClick={saveSale}
+              disabled={saving}
+              className="flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold bg-green-600 hover:bg-green-500 text-white transition-all disabled:opacity-50 shadow-lg shadow-green-700/40"
+            >
+              <span>{saving ? "⏳" : "💾"}</span>
+              <span>{saving ? "Saving…" : "Save Sale"}</span>
+              <kbd className="bg-black/30 text-green-200 rounded px-1 text-[9px] font-mono">Ctrl+Enter</kbd>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Modal: Ajuste inicial */}
