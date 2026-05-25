@@ -628,7 +628,7 @@ function DevolucionesReport({ van, usuario }) {
         .from("ventas")
         .select(`
           id, created_at, total_venta, motivo_devolucion, venta_origen_id, notas,
-          cliente_id, clientes:cliente_id(nombre, apellido),
+          cliente_id, clientes:cliente_id(nombre),
           usuario_id, usuarios:usuario_id(nombre),
           detalle_ventas!detalle_ventas_venta_id_fkey(cantidad, precio_unitario, producto_id, productos:producto_id(nombre))
         `)
@@ -649,7 +649,7 @@ function DevolucionesReport({ van, usuario }) {
         const productNames = items
           .map(d => `${d.productos?.nombre || "Product"} ×${d.cantidad}`)
           .join(", ") || "—";
-        const clientName = [v.clientes?.nombre, v.clientes?.apellido].filter(Boolean).join(" ") || "—";
+        const clientName = v.clientes?.nombre || "—";
         return {
           id: v.id,
           created_at: v.created_at,
