@@ -630,7 +630,7 @@ function DevolucionesReport({ van, usuario }) {
           id, created_at, total_venta, motivo_devolucion, venta_origen_id, notas,
           cliente_id, clientes:cliente_id(nombre, apellido),
           usuario_id, usuarios:usuario_id(nombre),
-          detalle_ventas(cantidad, precio_unitario, producto_id, productos:producto_id(nombre))
+          detalle_ventas!detalle_ventas_venta_id_fkey(cantidad, precio_unitario, producto_id, productos:producto_id(nombre))
         `)
         .eq("van_id", van.id)
         .eq("tipo", "devolucion")
