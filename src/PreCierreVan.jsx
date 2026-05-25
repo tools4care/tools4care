@@ -186,6 +186,34 @@ function usePrecloseRows(vanId, diasAtras = 21) {
           });
         } catch (_) { /* pagos table unavailable */ }
 
+        // ── Deducir reembolsos en efectivo (devoluciones) del cash esperado ──
+        // Si el vendedor devolvió dinero en cash, ese monto baja del efectivo a entregar.
+        try {
+          const { data: devData } = await supabase
+            .from("ventas")
+            .select("created_at, total_venta")
+            .eq("van_id", vanId)
+            .eq("tipo", "devolucion")
+            .eq("estado_pago", "reembolsado")
+            .gte("created_at", p_from + "T00:00:00")
+            .lte("created_at", p_to + "T23:59:59");
+
+          (devData || []).forEach((r) => {
+            const iso = String(r.created_at || "").slice(0, 10);
+            if (!iso) return;
+            const row = normalized.find((n) => n.dia === iso);
+            if (!row) return;
+            const monto = Number(r.total_venta || 0);
+            row.cash_expected = Math.max(0, row.cash_expected - monto);
+            row.cashRefunds = (row.cashRefunds || 0) + monto;
+          });
+
+          const totalRefunds = (devData || []).reduce((s, r) => s + Number(r.total_venta || 0), 0);
+          if (totalRefunds > 0) {
+            console.log(`💸 Cash refunds deducted: -$${totalRefunds.toFixed(2)}`);
+          }
+        } catch (_) { /* ventas table unavailable */ }
+
         // Filtrar días sin transacciones o que ya tienen cierre
         const filtered = normalized.filter((r) => {
             const total = r.cash_expected + r.card_expected + r.transfer_expected + r.mix_unallocated;
@@ -1414,6 +1442,7 @@ export default function PreCierreVan() {
         .from("ventas")
         .select("id", { count: "exact", head: true })
         .eq("van_id", van_id)
+        .neq("tipo", "devolucion")   // ← exclude returns from invoice count
         .gte(col, start)
         .lte(col, end)
         .is("cierre_id", null);
