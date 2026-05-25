@@ -12,6 +12,7 @@ import autoTable from "jspdf-autotable";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
+  CreditCard, Filter,
 } from "lucide-react";
 
 /* ========================= Helpers ========================= */
@@ -64,6 +65,7 @@ const CHART_COLORS = ["#2196F3", "#4CAF50", "#9C27B0", "#FF9800", "#F44336", "#0
 const TABS = [
   { id: "cierre_diario",    label: "Daily Closeout", icon: DollarSign,   color: "text-indigo-600" },
   { id: "ventas",           label: "Sales Detail",   icon: ShoppingCart, color: "text-green-600" },
+  { id: "pagos_breakdown",  label: "Payments",       icon: CreditCard,   color: "text-blue-600"   },
   { id: "devoluciones",     label: "Returns",        icon: RotateCcw,    color: "text-red-600" },
   { id: "pagos_atrasados",  label: "Late Payments",  icon: AlertTriangle,color: "text-amber-600" },
   { id: "top_clientes",     label: "Top Clients",    icon: Users,        color: "text-blue-600" },
@@ -1379,6 +1381,588 @@ function GananciasReport({ van, usuario }) {
   );
 }
 
+/* ========================= PAYMENT BREAKDOWN REPORT ========================= */
+
+const METODO_OPTIONS = [
+  { value: "all",        label: "All",            emoji: "💰", group: "main",     color: "slate"  },
+  { value: "efectivo",   label: "Cash",           emoji: "💵", group: "main",     color: "green"  },
+  { value: "tarjeta",    label: "Card",           emoji: "💳", group: "main",     color: "purple" },
+  { value: "transfer_all", label: "Transfer (All)", emoji: "🏦", group: "transfer", color: "blue"   },
+  { value: "zelle",      label: "Zelle",          emoji: "💜", group: "transfer", color: "violet" },
+  { value: "cashapp",    label: "Cash App",       emoji: "💚", group: "transfer", color: "green"  },
+  { value: "venmo",      label: "Venmo",          emoji: "💙", group: "transfer", color: "sky"    },
+  { value: "applepay",   label: "Apple Pay",      emoji: "🍎", group: "transfer", color: "gray"   },
+];
+
+const PRESETS = [
+  { value: "today",    label: "Today" },
+  { value: "yesterday",label: "Yesterday" },
+  { value: "thisweek", label: "This Week" },
+  { value: "lastweek", label: "Last Week" },
+  { value: "last7",    label: "Last 7 Days" },
+  { value: "last30",   label: "Last 30 Days" },
+  { value: "custom",   label: "Custom" },
+];
+
+function applyDatePreset(p) {
+  const tz = "America/New_York";
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: tz });
+  if (p === "today")     return { from: today, to: today };
+  if (p === "yesterday") {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    const iso = d.toLocaleDateString("en-CA", { timeZone: tz });
+    return { from: iso, to: iso };
+  }
+  if (p === "thisweek") {
+    const d = new Date();
+    const day = d.getDay(); // 0=Sun
+    const mon = new Date(d); mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    return { from: mon.toLocaleDateString("en-CA", { timeZone: tz }), to: today };
+  }
+  if (p === "lastweek") {
+    const d = new Date();
+    const day = d.getDay();
+    const lastMon = new Date(d); lastMon.setDate(d.getDate() - (day === 0 ? 6 : day - 1) - 7);
+    const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6);
+    return { from: lastMon.toLocaleDateString("en-CA", { timeZone: tz }), to: lastSun.toLocaleDateString("en-CA", { timeZone: tz }) };
+  }
+  if (p === "last7")  { const d = new Date(); d.setDate(d.getDate()-6);  return { from: d.toLocaleDateString("en-CA", { timeZone: tz }), to: today }; }
+  if (p === "last30") { const d = new Date(); d.setDate(d.getDate()-29); return { from: d.toLocaleDateString("en-CA", { timeZone: tz }), to: today }; }
+  return null; // custom
+}
+
+function normMetodoDisplay(m) {
+  if (!m) return "—";
+  const s = m.toLowerCase();
+  if (s.includes("zelle"))      return "Zelle";
+  if (s.includes("cash app") || s.includes("cashapp")) return "Cash App";
+  if (s.includes("venmo"))      return "Venmo";
+  if (s.includes("apple pay") || s.includes("applepay")) return "Apple Pay";
+  if (s.includes("transfer"))   return "Transfer";
+  if (s.includes("cash") || s.includes("efectivo")) return "Cash";
+  if (s.includes("card") || s.includes("tarjeta"))  return "Card";
+  return m;
+}
+
+function metodoTag(display) {
+  const map = {
+    "Zelle":     "bg-violet-100 text-violet-800",
+    "Cash App":  "bg-green-100 text-green-800",
+    "Venmo":     "bg-sky-100 text-sky-800",
+    "Apple Pay": "bg-gray-100 text-gray-800",
+    "Transfer":  "bg-blue-100 text-blue-800",
+    "Cash":      "bg-emerald-100 text-emerald-800",
+    "Card":      "bg-purple-100 text-purple-800",
+  };
+  return map[display] || "bg-gray-100 text-gray-700";
+}
+
+function PaymentBreakdownReport({ van, usuario }) {
+  const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
+  const tz = "America/New_York";
+  const todayIso = new Date().toLocaleDateString("en-CA", { timeZone: tz });
+
+  /* ── Filters ── */
+  const [preset, setPreset]       = useState("last7");
+  const [from,   setFrom]         = useState(() => { const d=new Date(); d.setDate(d.getDate()-6); return d.toLocaleDateString("en-CA",{timeZone:tz}); });
+  const [to,     setTo]           = useState(todayIso);
+  const [metodo, setMetodo]       = useState("all");
+  const [vans,   setVans]         = useState([]);
+  const [vanFiltro, setVanFiltro] = useState(van?.id || "");
+  const [drivers,   setDrivers]   = useState([]);
+  const [driverFiltro, setDriverFiltro] = useState("");
+
+  /* ── Results ── */
+  const [dayRows, setDayRows] = useState([]);
+  const [txRows,  setTxRows]  = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
+  const [searched, setSearched] = useState(false);
+  const [showTx,   setShowTx]   = useState(false);
+
+  /* ── Load vans + drivers (admin) ── */
+  useEffect(() => {
+    if (!isAdmin) return;
+    supabase.from("vans").select("id,nombre_van,nombre").order("nombre_van")
+      .then(({ data }) => setVans(data || []));
+    supabase.from("usuarios").select("id,nombre,email").eq("activo", true)
+      .then(({ data }) => setDrivers(data || []));
+  }, [isAdmin]);
+
+  /* ── Keep vanFiltro in sync with prop ── */
+  useEffect(() => { if (van?.id && !vanFiltro) setVanFiltro(van.id); }, [van?.id]);
+
+  /* ── Preset picker ── */
+  const pickPreset = (p) => {
+    setPreset(p);
+    const d = applyDatePreset(p);
+    if (d) { setFrom(d.from); setTo(d.to); }
+  };
+
+  const effectiveVanId = isAdmin ? (vanFiltro || van?.id) : van?.id;
+  const isSubType = ["zelle", "cashapp", "venmo", "applepay"].includes(metodo);
+  const subTypeLabel = { zelle: "Zelle", cashapp: "Cash App", venmo: "Venmo", applepay: "Apple Pay" };
+
+  /* ── Main search ── */
+  const search = async () => {
+    if (!effectiveVanId) return;
+    setLoading(true); setError(null);
+    try {
+      const { start, end } = dateRangeBounds(from, to);
+      const dayMap = {}; // iso → { cash, card, transfer, zelle, cashapp, venmo, applepay, count }
+      const txList = [];
+
+      const addDay = (iso) => {
+        if (!dayMap[iso]) dayMap[iso] = { fecha: iso, cash: 0, card: 0, transfer: 0, zelle: 0, cashapp: 0, venmo: 0, applepay: 0, count: 0 };
+      };
+
+      /* ─ 1. Ventas (for Cash, Card, and "All" totals) ─ */
+      const needVentas = ["all", "efectivo", "tarjeta"].includes(metodo);
+      if (needVentas) {
+        let q = supabase
+          .from("ventas")
+          .select("id,created_at,fecha,pago_efectivo,pago_tarjeta,pago_transferencia,total_venta,cliente_id,clientes:cliente_id(nombre),usuario_id,usuarios:usuario_id(nombre)")
+          .eq("van_id", effectiveVanId)
+          .gte("created_at", start)
+          .lte("created_at", end)
+          .neq("tipo", "devolucion")
+          .order("created_at", { ascending: false });
+
+        if (!isAdmin)      q = q.eq("usuario_id", usuario.id);
+        else if (driverFiltro) q = q.eq("usuario_id", driverFiltro);
+
+        const { data: ventas, error: vErr } = await q;
+        if (vErr) throw vErr;
+
+        (ventas || []).forEach(v => {
+          const iso = String(v.fecha || v.created_at || "").slice(0, 10);
+          addDay(iso);
+          const cash     = Number(v.pago_efectivo     || 0);
+          const card     = Number(v.pago_tarjeta      || 0);
+          const transfer = Number(v.pago_transferencia || 0);
+
+          if (metodo === "all" || metodo === "efectivo") dayMap[iso].cash     += cash;
+          if (metodo === "all" || metodo === "tarjeta")  dayMap[iso].card     += card;
+          if (metodo === "all")                          dayMap[iso].transfer += transfer;
+          dayMap[iso].count++;
+
+          const filteredAmt =
+            metodo === "efectivo" ? cash :
+            metodo === "tarjeta"  ? card :
+            cash + card + transfer;
+
+          if (filteredAmt > 0) {
+            const parts = [];
+            if (cash > 0)     parts.push(`Cash ${fmtCurrency(cash)}`);
+            if (card > 0)     parts.push(`Card ${fmtCurrency(card)}`);
+            if (transfer > 0) parts.push(`Transfer ${fmtCurrency(transfer)}`);
+            txList.push({
+              id: v.id, fecha: v.created_at || v.fecha,
+              tipo: "Sale", cliente: v.clientes?.nombre || "—",
+              metodo_display: parts.join(" + ") || "—",
+              amount: filteredAmt,
+              driver: v.usuarios?.nombre || "—",
+            });
+          }
+        });
+      }
+
+      /* ─ 2. Pagos (for Transfer sub-types + "transfer_all" + standalone CxC in "all") ─ */
+      const needPagos = ["all", "transfer_all", "zelle", "cashapp", "venmo", "applepay"].includes(metodo);
+      if (needPagos) {
+        let pq = supabase
+          .from("pagos")
+          .select("id,monto,metodo_pago,fecha_pago,cliente_id,clientes:cliente_id(nombre),idem_key,van_id")
+          .eq("van_id", effectiveVanId)
+          .gte("fecha_pago", start)
+          .lte("fecha_pago", end);
+
+        if (isSubType) {
+          // specific sub-type — include both sale-linked AND standalone
+          pq = pq.ilike("metodo_pago", `%${subTypeLabel[metodo]}%`);
+        } else if (metodo === "transfer_all") {
+          // all transfer methods
+          pq = pq.like("metodo_pago", "Transfer - %");
+        } else {
+          // "all" mode — only standalone CxC transfers (sale transfers counted via ventas columns)
+          pq = pq.like("metodo_pago", "Transfer - %").is("idem_key", null);
+        }
+
+        const { data: pagosData } = await pq;
+
+        (pagosData || []).forEach(p => {
+          const iso = String(p.fecha_pago || "").slice(0, 10);
+          addDay(iso);
+          const monto = Number(p.monto || 0);
+          const mp    = (p.metodo_pago || "").toLowerCase();
+          const disp  = normMetodoDisplay(p.metodo_pago);
+
+          if (mp.includes("zelle"))       dayMap[iso].zelle    += monto;
+          else if (mp.includes("cash app") || mp.includes("cashapp")) dayMap[iso].cashapp += monto;
+          else if (mp.includes("venmo"))  dayMap[iso].venmo    += monto;
+          else if (mp.includes("apple pay") || mp.includes("applepay")) dayMap[iso].applepay += monto;
+          else                            dayMap[iso].transfer += monto;
+
+          // For sub-type mode also bump the generic transfer bucket
+          if (isSubType) dayMap[iso].transfer += 0; // already counted above
+
+          dayMap[iso].count++;
+
+          txList.push({
+            id: p.id, fecha: p.fecha_pago,
+            tipo: p.idem_key ? "Sale Payment" : "CxC Payment",
+            cliente: p.clientes?.nombre || "—",
+            metodo_display: disp,
+            amount: monto,
+            driver: "—",
+          });
+        });
+      }
+
+      /* ─ 3. Build per-day rows ─ */
+      const rows = Object.values(dayMap)
+        .sort((a, b) => a.fecha.localeCompare(b.fecha))
+        .map(d => {
+          const transferTotal = d.transfer + d.zelle + d.cashapp + d.venmo + d.applepay;
+          const total =
+            metodo === "efectivo"    ? d.cash :
+            metodo === "tarjeta"     ? d.card :
+            isSubType || metodo === "transfer_all" ? transferTotal :
+            d.cash + d.card + transferTotal; // all
+          return { ...d, transferTotal, total };
+        });
+
+      setDayRows(rows);
+      setTxRows(txList.sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "")));
+      setSearched(true);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  /* ── Totals ── */
+  const totals = useMemo(() => ({
+    total:    dayRows.reduce((s, r) => s + r.total, 0),
+    cash:     dayRows.reduce((s, r) => s + r.cash, 0),
+    card:     dayRows.reduce((s, r) => s + r.card, 0),
+    zelle:    dayRows.reduce((s, r) => s + r.zelle, 0),
+    cashapp:  dayRows.reduce((s, r) => s + r.cashapp, 0),
+    venmo:    dayRows.reduce((s, r) => s + r.venmo, 0),
+    applepay: dayRows.reduce((s, r) => s + r.applepay, 0),
+    transfer: dayRows.reduce((s, r) => s + r.transferTotal, 0),
+    count:    dayRows.reduce((s, r) => s + r.count, 0),
+  }), [dayRows]);
+
+  /* ── Chart data ── */
+  const chartData = useMemo(() => dayRows.map(r => ({
+    day:       fmtDate(r.fecha),
+    Cash:      r.cash,
+    Card:      r.card,
+    Zelle:     r.zelle,
+    "Cash App":r.cashapp,
+    Venmo:     r.venmo,
+    "Apple Pay":r.applepay,
+    Transfer:  r.transfer,
+  })), [dayRows]);
+
+  /* ── Export PDF ── */
+  const exportPDF = () => {
+    const doc = new jsPDF({ orientation: "landscape" });
+    const label = METODO_OPTIONS.find(m => m.value === metodo)?.label || "All";
+    doc.setFillColor(37, 99, 235); doc.rect(0, 0, 297, 22, "F");
+    doc.setTextColor(255,255,255); doc.setFontSize(13);
+    doc.text(`Tools4Care — Payment Breakdown · ${label} · ${fmtDate(from)} – ${fmtDate(to)}`, 14, 15);
+    doc.setTextColor(0,0,0);
+    autoTable(doc, {
+      startY: 28,
+      head: [["Date","# Trans","Cash","Card","Zelle","Cash App","Venmo","Apple Pay","Other Transfer","Total"]],
+      body: dayRows.map(r => [
+        fmtDate(r.fecha), r.count,
+        r.cash     > 0 ? fmtCurrency(r.cash)     : "—",
+        r.card     > 0 ? fmtCurrency(r.card)     : "—",
+        r.zelle    > 0 ? fmtCurrency(r.zelle)    : "—",
+        r.cashapp  > 0 ? fmtCurrency(r.cashapp)  : "—",
+        r.venmo    > 0 ? fmtCurrency(r.venmo)    : "—",
+        r.applepay > 0 ? fmtCurrency(r.applepay) : "—",
+        r.transfer > 0 ? fmtCurrency(r.transfer) : "—",
+        fmtCurrency(r.total),
+      ]),
+      foot: [["TOTAL", totals.count,
+        fmtCurrency(totals.cash), fmtCurrency(totals.card),
+        fmtCurrency(totals.zelle), fmtCurrency(totals.cashapp),
+        fmtCurrency(totals.venmo), fmtCurrency(totals.applepay),
+        fmtCurrency(totals.transfer), fmtCurrency(totals.total)]],
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [37,99,235], textColor: 255, fontStyle: "bold" },
+      footStyles: { fillColor: [239,246,255], fontStyle: "bold" },
+    });
+    doc.save(`Payments_${metodo}_${from}_${to}.pdf`);
+  };
+
+  const activeMetodo = METODO_OPTIONS.find(m => m.value === metodo) || METODO_OPTIONS[0];
+
+  return (
+    <div className="space-y-5">
+
+      {/* ── Date Presets ── */}
+      <div>
+        <p className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1.5"><Filter size={12}/> Quick Date Range</p>
+        <div className="flex flex-wrap gap-1.5">
+          {PRESETS.map(p => (
+            <button key={p.value} onClick={() => pickPreset(p.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                preset === p.value
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "bg-white border border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700"
+              }`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Date inputs (shown when custom or for reference) ── */}
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+          <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPreset("custom"); }}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+          <input type="date" value={to} onChange={e => { setTo(e.target.value); setPreset("custom"); }}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+        </div>
+
+        {/* Van filter (admin) */}
+        {isAdmin && vans.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Van</label>
+            <select value={vanFiltro} onChange={e => setVanFiltro(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+              <option value="">All Vans</option>
+              {vans.map(v => <option key={v.id} value={v.id}>{v.nombre_van || v.nombre || v.id}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* Driver filter (admin) */}
+        {isAdmin && drivers.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Driver</label>
+            <select value={driverFiltro} onChange={e => setDriverFiltro(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+              <option value="">All Drivers</option>
+              {drivers.map(u => <option key={u.id} value={u.id}>{u.nombre || u.email}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* ── Payment Method Filter ── */}
+      <div>
+        <p className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1.5"><CreditCard size={12}/> Payment Method</p>
+
+        {/* Main methods row */}
+        <div className="flex flex-wrap gap-2 mb-2">
+          {METODO_OPTIONS.filter(m => m.group === "main").map(m => (
+            <button key={m.value} onClick={() => setMetodo(m.value)}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-all ${
+                metodo === m.value
+                  ? "bg-blue-600 border-blue-600 text-white shadow-md scale-[1.02]"
+                  : "bg-white border-gray-200 text-gray-700 hover:border-blue-300"
+              }`}>
+              <span>{m.emoji}</span>{m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Transfer sub-types row */}
+        <div className="flex flex-wrap gap-2 pl-2 border-l-2 border-blue-100">
+          <span className="text-[11px] font-bold text-gray-400 flex items-center">🏦 Transfer:</span>
+          {METODO_OPTIONS.filter(m => m.group === "transfer").map(m => (
+            <button key={m.value} onClick={() => setMetodo(m.value)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border-2 transition-all ${
+                metodo === m.value
+                  ? "bg-blue-600 border-blue-600 text-white shadow-md"
+                  : "bg-white border-gray-200 text-gray-600 hover:border-blue-300"
+              }`}>
+              <span>{m.emoji}</span>{m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Action bar ── */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <button onClick={search} disabled={loading}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 disabled:opacity-50 shadow-sm transition-all">
+          {loading ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+          Search
+        </button>
+        {searched && dayRows.length > 0 && (
+          <button onClick={exportPDF}
+            className="bg-white border border-blue-300 text-blue-700 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 hover:bg-blue-50">
+            <Download size={14}/> Export PDF
+          </button>
+        )}
+        {searched && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl text-xs font-semibold text-blue-700">
+            <span>{activeMetodo.emoji}</span>
+            <span>{activeMetodo.label}</span>
+            <span className="text-blue-400">·</span>
+            <span>{fmtDate(from)} – {fmtDate(to)}</span>
+          </div>
+        )}
+      </div>
+
+      <ErrorBox msg={error} />
+
+      {searched && (<>
+
+        {/* ── Summary cards ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <SummaryCard label="Total Collected" value={fmtCurrency(totals.total)} color="blue" icon={DollarSign}
+            sub={`${totals.count} transactions`} />
+          {(metodo === "all" || metodo === "efectivo") && totals.cash > 0 &&
+            <SummaryCard label="💵 Cash" value={fmtCurrency(totals.cash)} color="emerald" />}
+          {(metodo === "all" || metodo === "tarjeta") && totals.card > 0 &&
+            <SummaryCard label="💳 Card" value={fmtCurrency(totals.card)} color="purple" />}
+          {(metodo === "all" || metodo === "transfer_all" || metodo === "zelle") && totals.zelle > 0 &&
+            <SummaryCard label="💜 Zelle" value={fmtCurrency(totals.zelle)} color="purple" />}
+          {(metodo === "all" || metodo === "transfer_all" || metodo === "cashapp") && totals.cashapp > 0 &&
+            <SummaryCard label="💚 Cash App" value={fmtCurrency(totals.cashapp)} color="green" />}
+          {(metodo === "all" || metodo === "transfer_all" || metodo === "venmo") && totals.venmo > 0 &&
+            <SummaryCard label="💙 Venmo" value={fmtCurrency(totals.venmo)} color="blue" />}
+          {(metodo === "all" || metodo === "transfer_all" || metodo === "applepay") && totals.applepay > 0 &&
+            <SummaryCard label="🍎 Apple Pay" value={fmtCurrency(totals.applepay)} color="emerald" />}
+          {(metodo === "all" || metodo === "transfer_all") && totals.transfer > 0 &&
+            <SummaryCard label="🏦 Transfer" value={fmtCurrency(totals.transfer)} color="blue"
+              sub="unclassified" />}
+        </div>
+
+        {/* ── Bar chart ── */}
+        {dayRows.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <p className="font-semibold text-gray-700 mb-3 text-sm">Daily breakdown by payment method</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={chartData} barCategoryGap="25%">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                <YAxis tickFormatter={v => `$${v}`} tick={{ fontSize: 10 }} />
+                <Tooltip formatter={v => fmtCurrency(v)} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {(metodo === "all" || metodo === "efectivo") && <Bar dataKey="Cash" fill="#10b981" stackId="a" radius={[0,0,0,0]} />}
+                {(metodo === "all" || metodo === "tarjeta") && <Bar dataKey="Card" fill="#8b5cf6" stackId="a" />}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "zelle")    && <Bar dataKey="Zelle"     fill="#7c3aed" stackId="a" />}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "cashapp")  && <Bar dataKey="Cash App"  fill="#16a34a" stackId="a" />}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "venmo")    && <Bar dataKey="Venmo"     fill="#0284c7" stackId="a" />}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "applepay") && <Bar dataKey="Apple Pay" fill="#374151" stackId="a" />}
+                {(metodo === "all" || metodo === "transfer_all") && <Bar dataKey="Transfer" fill="#3b82f6" stackId="a" radius={[3,3,0,0]} />}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* ── Day-by-day summary table ── */}
+        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
+          <table className="min-w-full text-sm divide-y divide-gray-200">
+            <thead className="bg-blue-50">
+              <tr>
+                {["Date","# Trans",
+                  ...(metodo === "all" || metodo === "efectivo"    ? ["💵 Cash"]    : []),
+                  ...(metodo === "all" || metodo === "tarjeta"     ? ["💳 Card"]    : []),
+                  ...(metodo === "all" || metodo === "transfer_all" || metodo === "zelle"    ? ["💜 Zelle"]    : []),
+                  ...(metodo === "all" || metodo === "transfer_all" || metodo === "cashapp"  ? ["💚 Cash App"]  : []),
+                  ...(metodo === "all" || metodo === "transfer_all" || metodo === "venmo"    ? ["💙 Venmo"]    : []),
+                  ...(metodo === "all" || metodo === "transfer_all" || metodo === "applepay" ? ["🍎 Apple Pay"] : []),
+                  ...(metodo === "all" || metodo === "transfer_all" ? ["🏦 Transfer"] : []),
+                  "Total",
+                ].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-bold text-blue-700 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {dayRows.length === 0 ? (
+                <tr><td colSpan={12} className="text-center py-10 text-gray-400">No data for this range and filter</td></tr>
+              ) : dayRows.map(r => (
+                <tr key={r.fecha} className="hover:bg-blue-50 transition-colors">
+                  <td className="px-4 py-2.5 font-semibold text-gray-800 whitespace-nowrap">{fmtDate(r.fecha)}</td>
+                  <td className="px-4 py-2.5 text-gray-500 text-center">{r.count}</td>
+                  {(metodo === "all" || metodo === "efectivo") && <td className="px-4 py-2.5 text-emerald-700 font-medium">{r.cash > 0 ? fmtCurrency(r.cash) : <span className="text-gray-300">—</span>}</td>}
+                  {(metodo === "all" || metodo === "tarjeta") && <td className="px-4 py-2.5 text-purple-700 font-medium">{r.card > 0 ? fmtCurrency(r.card) : <span className="text-gray-300">—</span>}</td>}
+                  {(metodo === "all" || metodo === "transfer_all" || metodo === "zelle")    && <td className="px-4 py-2.5 text-violet-700 font-medium">{r.zelle    > 0 ? fmtCurrency(r.zelle)    : <span className="text-gray-300">—</span>}</td>}
+                  {(metodo === "all" || metodo === "transfer_all" || metodo === "cashapp")  && <td className="px-4 py-2.5 text-green-700  font-medium">{r.cashapp  > 0 ? fmtCurrency(r.cashapp)  : <span className="text-gray-300">—</span>}</td>}
+                  {(metodo === "all" || metodo === "transfer_all" || metodo === "venmo")    && <td className="px-4 py-2.5 text-sky-700    font-medium">{r.venmo    > 0 ? fmtCurrency(r.venmo)    : <span className="text-gray-300">—</span>}</td>}
+                  {(metodo === "all" || metodo === "transfer_all" || metodo === "applepay") && <td className="px-4 py-2.5 text-gray-700   font-medium">{r.applepay > 0 ? fmtCurrency(r.applepay) : <span className="text-gray-300">—</span>}</td>}
+                  {(metodo === "all" || metodo === "transfer_all") && <td className="px-4 py-2.5 text-blue-700 font-medium">{r.transfer > 0 ? fmtCurrency(r.transfer) : <span className="text-gray-300">—</span>}</td>}
+                  <td className="px-4 py-2.5 font-bold text-blue-800">{fmtCurrency(r.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-blue-50 font-bold">
+              <tr>
+                <td className="px-4 py-3 text-blue-800">TOTAL</td>
+                <td className="px-4 py-3 text-center text-gray-600">{totals.count}</td>
+                {(metodo === "all" || metodo === "efectivo") && <td className="px-4 py-3 text-emerald-700">{fmtCurrency(totals.cash)}</td>}
+                {(metodo === "all" || metodo === "tarjeta")  && <td className="px-4 py-3 text-purple-700">{fmtCurrency(totals.card)}</td>}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "zelle")    && <td className="px-4 py-3 text-violet-700">{fmtCurrency(totals.zelle)}</td>}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "cashapp")  && <td className="px-4 py-3 text-green-700">{fmtCurrency(totals.cashapp)}</td>}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "venmo")    && <td className="px-4 py-3 text-sky-700">{fmtCurrency(totals.venmo)}</td>}
+                {(metodo === "all" || metodo === "transfer_all" || metodo === "applepay") && <td className="px-4 py-3 text-gray-700">{fmtCurrency(totals.applepay)}</td>}
+                {(metodo === "all" || metodo === "transfer_all") && <td className="px-4 py-3 text-blue-700">{fmtCurrency(totals.transfer)}</td>}
+                <td className="px-4 py-3 text-blue-800 text-base">{fmtCurrency(totals.total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        {/* ── Transaction detail toggle ── */}
+        <button
+          onClick={() => setShowTx(x => !x)}
+          className="flex items-center gap-2 text-sm font-semibold text-blue-700 hover:text-blue-900 transition-colors border border-blue-200 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-xl"
+        >
+          <FileText size={14}/>
+          {showTx ? "Hide" : "Show"} transaction detail ({txRows.length})
+        </button>
+
+        {showTx && txRows.length > 0 && (
+          <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
+            <table className="min-w-full text-sm divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>{["Date / Time","Customer","Type","Method","Amount","Driver"].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {txRows.map((r, i) => (
+                  <tr key={`${r.id}-${i}`} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5 whitespace-nowrap text-xs text-gray-500">{fmtDateTime(r.fecha)}</td>
+                    <td className="px-4 py-2.5 font-medium text-gray-900">{r.cliente}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${r.tipo === "Sale" ? "bg-blue-100 text-blue-800" : "bg-indigo-100 text-indigo-800"}`}>
+                        {r.tipo}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${metodoTag(normMetodoDisplay(r.metodo_display))}`}>
+                        {r.metodo_display}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 font-bold text-blue-700">{fmtCurrency(r.amount)}</td>
+                    <td className="px-4 py-2.5 text-gray-500 text-xs">{r.driver}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+      </>)}
+    </div>
+  );
+}
+
 /* ========================= MAIN ========================= */
 export default function Reportes() {
   const { van }     = useVan();
@@ -1418,9 +2002,10 @@ export default function Reportes() {
           <div className="flex items-center gap-2 mb-5 pb-4 border-b border-gray-100">
             {(() => { const t=TABS.find(x=>x.id===activeTab); const I=t?.icon; return (<>{I&&<I size={20} className={t?.color}/>}<h2 className="text-lg font-bold text-gray-800">{t?.label}</h2></>); })()}
           </div>
-          {activeTab==="cierre_diario"    && <CierreDiarioReport   van={van} usuario={usuario}/>}
-          {activeTab==="ventas"          && <VentasReport         van={van} usuario={usuario}/>}
-          {activeTab==="devoluciones"    && <DevolucionesReport    van={van} usuario={usuario}/>}
+          {activeTab==="cierre_diario"    && <CierreDiarioReport      van={van} usuario={usuario}/>}
+          {activeTab==="ventas"          && <VentasReport           van={van} usuario={usuario}/>}
+          {activeTab==="pagos_breakdown" && <PaymentBreakdownReport van={van} usuario={usuario}/>}
+          {activeTab==="devoluciones"    && <DevolucionesReport     van={van} usuario={usuario}/>}
           {activeTab==="pagos_atrasados" && <PagosAtrasadosReport  van={van} usuario={usuario}/>}
           {activeTab==="top_clientes"    && <TopClientesReport     van={van} usuario={usuario}/>}
           {activeTab==="productos"       && <ProductosReport       van={van} usuario={usuario}/>}
