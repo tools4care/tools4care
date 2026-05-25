@@ -1104,6 +1104,7 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
   const [walkinDevolucion, setWalkinDevolucion] = useState(false);
   const [walkinSearch, setWalkinSearch] = useState("");
   const [walkinLoading, setWalkinLoading] = useState(false);
+  const [invoiceSearch, setInvoiceSearch] = useState(""); // filter inside client history list
 
   // ---- SALE BLOCK / OVERRIDE MODAL
   const [saleBlockModal, setSaleBlockModal] = useState(null); // { type, message, resolve }
@@ -2025,18 +2026,32 @@ useEffect(() => {
     if (!van?.id) return;
     setWalkinLoading(true);
     try {
+      const term = searchTerm.trim();
+
       let q = supabase
         .from("ventas")
-        .select("id, created_at, total, total_venta, estado_pago, cliente_id, clientes:cliente_id(nombre)")
+        .select("id, created_at, total, total_venta, estado_pago, cliente_id")
         .eq("van_id", van.id)
         .eq("tipo", "venta")
         .is("cliente_id", null)        // walk-in sales (no client)
-        .order("created_at", { ascending: false })
-        .limit(30);
+        .order("created_at", { ascending: false });
 
-      // If they typed a partial invoice ID, filter by it
-      if (searchTerm.trim().length >= 4) {
-        // Supabase doesn't support LIKE on UUID easily, so we load and filter client-side
+      // Date search: if term looks like a date (contains / or - with digits), filter server-side
+      // Accepts: "05/25", "05-25", "2026-05-25", "25/5", "may 25", etc.
+      const dateRe = /(\d{1,4})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/;
+      if (dateRe.test(term)) {
+        // Try to extract a year-month-day to narrow the server query
+        const parts = term.match(dateRe);
+        const maybeYear = parts[1].length === 4 ? parts[1] : (parts[3] && parts[3].length >= 4 ? parts[3] : new Date().getFullYear().toString());
+        const month     = parts[1].length === 4 ? parts[2].padStart(2, "0") : parts[1].padStart(2, "0");
+        const day       = parts[1].length === 4 ? (parts[3]?.padStart(2,"0") || null) : parts[2].padStart(2, "0");
+        const dateStr   = day ? `${maybeYear}-${month}-${day}` : `${maybeYear}-${month}`;
+        q = q.gte("created_at", `${dateStr.length === 7 ? dateStr + "-01" : dateStr}T00:00:00`)
+             .lte("created_at", `${dateStr.length === 7 ? dateStr + "-31" : dateStr}T23:59:59`);
+        q = q.limit(100);
+      } else {
+        // No date search → load last 60 and do client-side ID filter
+        q = q.limit(60);
       }
 
       const { data: ventasData, error } = await q;
@@ -2105,9 +2120,20 @@ useEffect(() => {
         };
       });
 
-      // Client-side filter by partial invoice ID
-      if (searchTerm.trim().length >= 4) {
-        result = result.filter(v => v.id.toLowerCase().includes(searchTerm.trim().toLowerCase()));
+      // Client-side filter: match invoice ID (partial) OR product name OR date string
+      if (term.length >= 3) {
+        const tl = term.toLowerCase();
+        result = result.filter(v => {
+          if (v.id.toLowerCase().includes(tl)) return true;
+          // Date strings like "05/25/2026" or "2026-05-25"
+          const dateLocale = new Date(v.created_at).toLocaleDateString("en-US");
+          const dateISO    = new Date(v.created_at).toISOString().slice(0, 10);
+          if (dateLocale.includes(tl) || dateISO.includes(tl)) return true;
+          // Product names
+          const names = (v.detalle_ventas || []).map(d => (d.productos?.nombre || "").toLowerCase()).join(" ");
+          if (names.includes(tl)) return true;
+          return false;
+        });
       }
 
       setClientSalesHistory(result);
@@ -2754,6 +2780,7 @@ function clearSale() {
   setReturnType("cash");
   setWalkinDevolucion(false);
   setWalkinSearch("");
+  setInvoiceSearch("");
 }
 
   function openChannelModal({ hasPhone, hasEmail }) {
@@ -3224,8 +3251,7 @@ if (rpcResult.requiere_reembolso_efectivo) {
     }
 
     // ===== FALLBACK MANUAL (si el RPC no existe) =====
-    
-    const isCredit = returnType === "credit" && selectedClient?.id;
+    // isCredit was already declared above (same value, reuse it)
 
     // 2b. Crear registro de devolución en 'ventas'
     const { data: returnSale, error: insertErr } = await supabase
@@ -4080,32 +4106,63 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
     );
   }
 
-  // 🆕 DEVOLUCIONES: Renderizar lista de facturas
+  // 🆕 DEVOLUCIONES: Renderizar lista de facturas del cliente
 function renderClientInvoiceList() {
   if (appMode !== 'devolucion' || !selectedClient || clientSalesHistory.length === 0) {
     return null;
   }
 
+  // Client-side filter by invoice # or date
+  const tl = invoiceSearch.trim().toLowerCase();
+  const filtered = tl.length >= 2
+    ? clientSalesHistory.filter(s => {
+        if (s.id.toLowerCase().includes(tl)) return true;
+        const dateLocale = new Date(s.created_at).toLocaleDateString("en-US");
+        const dateISO    = new Date(s.created_at).toISOString().slice(0, 10);
+        if (dateLocale.includes(tl) || dateISO.includes(tl)) return true;
+        const names = (s.detalle_ventas || []).map(d => (d.productos?.nombre || "").toLowerCase()).join(" ");
+        if (names.includes(tl)) return true;
+        return false;
+      })
+    : clientSalesHistory;
+
   return (
     <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-4 mb-4 shadow-sm">
       <div className="flex justify-between items-center mb-3">
         <h3 className="font-bold text-orange-900 flex items-center gap-2">
-          📜 Historial de Ventas: {selectedClient.nombre}
+          📜 {selectedClient.nombre} — Invoices
         </h3>
-        <button 
+        <button
           onClick={() => setAppMode('venta')}
           className="text-xs text-orange-700 underline hover:text-orange-900"
         >
-          ❌ Salir de Devolución
+          ❌ Exit Return
         </button>
       </div>
 
+      {/* Search inside client history */}
+      <div className="mb-3">
+        <input
+          type="text"
+          value={invoiceSearch}
+          onChange={e => { setInvoiceSearch(e.target.value); setSelectedInvoice(null); }}
+          placeholder="🔍 Search by invoice #, date (05/25), or product…"
+          className="w-full border-2 border-orange-200 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none bg-white"
+        />
+        {tl.length >= 2 && (
+          <div className="text-[10px] text-gray-500 mt-1 ml-1">
+            {filtered.length} of {clientSalesHistory.length} invoices — tap one to return
+          </div>
+        )}
+      </div>
+
       <div className="space-y-2 max-h-64 overflow-y-auto">
-        {clientSalesHistory.map((sale) => {
+        {filtered.length === 0 && (
+          <div className="text-center text-sm text-gray-500 py-4">No invoices match your search</div>
+        )}
+        {filtered.map((sale) => {
           const totalDevuelto = sale.total_devuelto || 0;
           const fullReturned = totalDevuelto >= sale.total;
-          
-          // 🆕 Verificar si todos los items ya fueron devueltos
           const allItemsReturned = sale.detalle_ventas?.every(
             d => (d.cantidad_disponible ?? d.cantidad) <= 0
           );
@@ -4124,35 +4181,32 @@ function renderClientInvoiceList() {
               className={`w-full text-left bg-white border rounded-lg p-3 transition-all flex justify-between items-center group ${
                 fullReturned || allItemsReturned
                   ? 'border-gray-300 opacity-50 cursor-not-allowed'
-                  : selectedInvoice?.id === sale.id 
-                    ? 'border-orange-500 ring-2 ring-orange-200' 
+                  : selectedInvoice?.id === sale.id
+                    ? 'border-orange-500 ring-2 ring-orange-200'
                     : 'border-orange-100 hover:border-orange-400 hover:bg-orange-100'
               }`}
             >
-              <div>
-                <div className="font-bold text-gray-800 group-hover:text-orange-700 flex items-center gap-2">
-                  #{sale.id.slice(0, 8)}...
+              <div className="min-w-0">
+                <div className="font-mono text-xs font-bold text-gray-700 flex items-center gap-1 flex-wrap">
+                  #{sale.id.slice(0, 8)}…
                   {sale.tiene_devoluciones && (
-                    <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
-                      🔄 Parcialmente devuelto
-                    </span>
+                    <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">partial return</span>
                   )}
                   {(fullReturned || allItemsReturned) && (
-                    <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
-                      ✅ Completamente devuelto
-                    </span>
+                    <span className="text-[10px] bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full">fully returned</span>
                   )}
                 </div>
-                <div className="text-xs text-gray-500">
+                <div className="text-[11px] text-gray-500 mt-0.5">
                   {new Date(sale.created_at).toLocaleString()}
                 </div>
+                <div className="text-[11px] text-gray-600 truncate mt-0.5">
+                  {(sale.detalle_ventas || []).map(d => d.productos?.nombre).filter(Boolean).join(", ") || "—"}
+                </div>
               </div>
-              <div className="text-right">
+              <div className="text-right flex-shrink-0 ml-2">
                 <div className="font-bold text-gray-900">{fmt(sale.total)}</div>
                 {totalDevuelto > 0 && (
-                  <div className="text-xs text-orange-600">
-                    Devuelto: {fmt(totalDevuelto)}
-                  </div>
+                  <div className="text-xs text-orange-600">returned: {fmt(totalDevuelto)}</div>
                 )}
                 <div className={`text-xs font-semibold ${
                   sale.estado_pago === 'pendiente' ? 'text-red-600' : 'text-green-600'
@@ -4753,7 +4807,7 @@ function renderStepClient() {
                   type="text"
                   value={walkinSearch}
                   onChange={(e) => { setWalkinSearch(e.target.value); loadWalkinSales(e.target.value); }}
-                  placeholder="Search by Invoice # (last 8 chars)…"
+                  placeholder="🔍 Invoice #, date (05/25), or product name…"
                   className="flex-1 border-2 border-orange-300 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none"
                   autoFocus
                 />
@@ -4802,6 +4856,9 @@ function renderStepClient() {
           )}
         </div>
       )}
+
+      {/* ── Walk-in return details: show product selector after invoice is picked ── */}
+      {walkinDevolucion && renderReturnDetails()}
 
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div className="flex items-center gap-2">
