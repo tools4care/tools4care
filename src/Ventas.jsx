@@ -511,6 +511,109 @@ function composeReceiptMessageEN(payload) {
   return lines.join("\n");
 }// src/Ventas.jsx - PARTE 2 DE 3 (Componente Principal, Estados y useEffects)
 
+/* ── Pending Sale Alert Modal ── */
+function PendingSaleAlertModal({ client, pendingSale, onResume, onStartNew, onCancel }) {
+  const clientName = [client?.nombre, client?.apellido].filter(Boolean).join(" ") || "This customer";
+  const cartCount  = Array.isArray(pendingSale?.cart) ? pendingSale.cart.length : 0;
+  const total      = Number(pendingSale?.total_estimado || 0);
+  const updatedAt  = pendingSale?.updated_at
+    ? new Date(pendingSale.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+        {/* Header */}
+        <div className="bg-amber-500 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+              <span className="text-xl">⏸️</span>
+            </div>
+            <div>
+              <div className="text-white font-bold text-base">Pending Sale Found</div>
+              <div className="text-amber-100 text-sm">{clientName} has an unfinished order</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Sale summary */}
+        <div className="px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <span className="text-gray-500">Items in cart</span>
+            <span className="font-bold text-gray-800">{cartCount} {cartCount === 1 ? "item" : "items"}</span>
+          </div>
+          {total > 0 && (
+            <div className="flex items-center justify-between text-sm mb-2">
+              <span className="text-gray-500">Estimated total</span>
+              <span className="font-bold text-emerald-700">${total.toFixed(2)}</span>
+            </div>
+          )}
+          {updatedAt && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Last updated</span>
+              <span className="text-gray-600 font-medium">{updatedAt}</span>
+            </div>
+          )}
+          {Array.isArray(pendingSale?.cart) && pendingSale.cart.length > 0 && (
+            <div className="mt-3 bg-amber-50 rounded-xl p-3 border border-amber-100">
+              <div className="text-[11px] font-semibold text-amber-700 mb-1.5">Products in pending order:</div>
+              <ul className="space-y-1">
+                {pendingSale.cart.slice(0, 4).map((item, idx) => (
+                  <li key={idx} className="flex items-center justify-between text-xs">
+                    <span className="text-gray-700 truncate flex-1 mr-2">
+                      {item.nombre || item.productos?.nombre || "Product"}
+                    </span>
+                    <span className="text-gray-500 shrink-0">× {item.cantidad}</span>
+                  </li>
+                ))}
+                {pendingSale.cart.length > 4 && (
+                  <li className="text-[11px] text-gray-400 italic">+{pendingSale.cart.length - 4} more…</li>
+                )}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="px-4 pb-4 pt-3 space-y-2.5">
+          <button
+            onClick={onResume}
+            className="w-full flex items-center gap-4 bg-amber-500 hover:bg-amber-600 text-white px-5 py-3.5 rounded-2xl shadow active:scale-[0.98] transition-all"
+          >
+            <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+              <span className="text-lg">▶️</span>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-bold text-sm">Resume Pending Order</div>
+              <div className="text-amber-100 text-xs">Continue where you left off</div>
+            </div>
+          </button>
+
+          <button
+            onClick={onStartNew}
+            className="w-full flex items-center gap-4 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3.5 rounded-2xl shadow active:scale-[0.98] transition-all"
+          >
+            <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+              <span className="text-lg">➕</span>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-bold text-sm">Start New Sale</div>
+              <div className="text-emerald-100 text-xs">Ignore the pending order</div>
+            </div>
+          </button>
+
+          <button
+            onClick={onCancel}
+            className="w-full py-3 text-gray-400 text-sm font-medium border border-gray-200 rounded-2xl hover:bg-gray-50 transition-colors"
+          >
+            Cancel — go back
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Sale Block / Override Modal ── */
 function SaleBlockModal({ type, message, onOverride, onCancel }) {
   const [note, setNote] = useState("");
@@ -879,6 +982,9 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
   // ---- SALE BLOCK / OVERRIDE MODAL
   const [saleBlockModal, setSaleBlockModal] = useState(null); // { type, message, resolve }
+
+  // ---- PENDING SALE ALERT (when selecting a client that has a pending sale)
+  const [pendingSaleAlert, setPendingSaleAlert] = useState(null); // { client, pendingSale }
 
   // ---- DASHBOARD Y CLIENTES RECIENTES
   const [recentClients, setRecentClients] = useState([]);
@@ -2582,7 +2688,43 @@ function clearSale() {
     setPendingStockIssues([]);
   }
 
- async function handleSelectPendingSale(sale) {
+ /* ── Client selection with pending-sale check ──────────────────── */
+  async function handleClientSelect(c) {
+    // Reset current sale state first
+    window.pendingSaleId = null;
+    setCart([]);
+    setPayments([{ forma: "efectivo", monto: 0 }]);
+
+    // Check if this client has any pending sale on this van
+    if (c?.id && van?.id) {
+      try {
+        const { data: pending } = await supabase
+          .from("ventas_pendientes")
+          .select("id, cart, total_estimado, updated_at, step, notes, payments")
+          .eq("van_id", van.id)
+          .eq("cliente_id", c.id)
+          .in("estado", ["preparada", "en_progreso"])
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (pending) {
+          // Pause — show the alert modal instead of setting the client immediately
+          setPendingSaleAlert({ client: c, pendingSale: pending });
+          return;
+        }
+      } catch (err) {
+        // If the check fails, just continue normally
+        console.warn("Could not check pending sales for client:", err?.message);
+      }
+    }
+
+    // No pending sale — proceed normally
+    setSelectedClient(c);
+    runCreditAgent(c.id);
+  }
+
+  async function handleSelectPendingSale(sale) {
     // Si es una pending sale de la nube
     if (sale.id && sale.cliente_data) {
       try {
@@ -4267,13 +4409,7 @@ function renderStepClient() {
             {recentClients.map((c) => (
               <button
                 key={c.id}
-                onClick={() => {
-                  window.pendingSaleId = null;
-                  setCart([]);
-                  setPayments([{ forma: "efectivo", monto: 0 }]);
-                  setSelectedClient(c);
-                   runCreditAgent(c.id);
-                }}
+                onClick={() => handleClientSelect(c)}
                 className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-blue-200 rounded-lg px-3 py-2 transition-all duration-200 min-w-[140px]"
               >
                 <div className="text-left">
@@ -4341,11 +4477,7 @@ function renderStepClient() {
               const idx = focusedClientIdx >= 0 ? focusedClientIdx : 0;
               const c = clientsSafe[idx];
               if (c) {
-                window.pendingSaleId = null;
-                setCart([]);
-                setPayments([{ forma: "efectivo", monto: 0 }]);
-                setSelectedClient(c);
-                runCreditAgent(c.id);
+                handleClientSelect(c);
               }
             // Esc → clear search and reset focus
             } else if (e.key === "Escape") {
@@ -4458,13 +4590,7 @@ function renderStepClient() {
                   ? "border-blue-500 bg-blue-50 shadow-md ring-2 ring-blue-200"
                   : "border-transparent hover:border-blue-200 hover:bg-blue-50"
               }`}
-              onClick={() => {
-                window.pendingSaleId = null;
-                setCart([]);
-                setPayments([{ forma: "efectivo", monto: 0 }]);
-                setSelectedClient(c);
-                runCreditAgent(c.id);
-              }}
+              onClick={() => handleClientSelect(c)}
               onMouseEnter={() => setFocusedClientIdx(i)}
             >
               {/* Row 1 — Name + debt badge */}
@@ -5640,6 +5766,26 @@ function renderStepPayment() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Pending sale alert (client has unfinished order) ── */}
+      {pendingSaleAlert && (
+        <PendingSaleAlertModal
+          client={pendingSaleAlert.client}
+          pendingSale={pendingSaleAlert.pendingSale}
+          onResume={() => {
+            const { pendingSale } = pendingSaleAlert;
+            setPendingSaleAlert(null);
+            handleSelectPendingSale(pendingSale);
+          }}
+          onStartNew={() => {
+            const { client } = pendingSaleAlert;
+            setPendingSaleAlert(null);
+            setSelectedClient(client);
+            runCreditAgent(client.id);
+          }}
+          onCancel={() => setPendingSaleAlert(null)}
+        />
       )}
 
       {/* ── Sale block / override modal ── */}
