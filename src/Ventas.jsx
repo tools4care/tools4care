@@ -3245,13 +3245,10 @@ if (rpcResult.requiere_reembolso_efectivo) {
       return; // Éxito con RPC
 
     } catch (rpcFallbackErr) {
-      // Si el RPC no existe, usar fallback manual
-      if (rpcFallbackErr?.code === '42883') {
-        console.warn('RPC procesar_devolucion no disponible, usando fallback manual');
-        // Continúa abajo con el fallback
-      } else {
-        throw rpcFallbackErr;
-      }
+      // Cualquier error del RPC (no existe, firma diferente, RPC_NOT_AVAILABLE, etc.)
+      // → usar el fallback manual. No re-lanzar.
+      console.warn('⚠️ RPC procesar_devolucion falló, usando fallback manual:',
+        rpcFallbackErr?.message || rpcFallbackErr?.code || String(rpcFallbackErr));
     }
 
     // ===== FALLBACK MANUAL (si el RPC no existe) =====
@@ -3391,7 +3388,8 @@ if (rpcResult.requiere_reembolso_efectivo) {
 
   } catch (err) {
     console.error("Error en devolución:", err);
-    toast.error("Error processing return: " + err.message);
+    const msg = err?.message || err?.code || err?.error || String(err) || "Unknown error";
+    toast.error("Error processing return: " + msg);
   } finally {
     setProcessingReturn(false);
   }
