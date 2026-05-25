@@ -1546,13 +1546,28 @@ function PaymentBreakdownReport({ van, usuario }) {
           const card = Number(v.pago_tarjeta      || 0);
           const totalTransfer = Number(v.pago_transferencia || 0);
 
-          // Extract sub-type amounts from JSON column pago.transferencia_detalle
+          // Extract sub-type amounts — try transferencia_detalle first, then metodos array fallback
           const td = v.pago?.transferencia_detalle || {};
-          const zelleAmt    = Number(td.zelle    || 0);
-          const cashappAmt  = Number(td.cashapp  || 0);
-          const venmoAmt    = Number(td.venmo    || 0);
-          const applepayAmt = Number(td.applepay || 0);
-          // Anything not labelled → "other transfer"
+          let zelleAmt    = Number(td.zelle    || 0);
+          let cashappAmt  = Number(td.cashapp  || 0);
+          let venmoAmt    = Number(td.venmo    || 0);
+          let applepayAmt = Number(td.applepay || 0);
+
+          // Fallback: read sub-type from pago.metodos[] when transferencia_detalle has nothing
+          const totalFromTd = zelleAmt + cashappAmt + venmoAmt + applepayAmt;
+          if (totalFromTd === 0 && totalTransfer > 0) {
+            const metodos = Array.isArray(v.pago?.metodos) ? v.pago.metodos : [];
+            for (const pm of metodos) {
+              if (pm.forma === "transferencia" && pm.subMetodo && Number(pm.monto || 0) > 0) {
+                if (pm.subMetodo === "zelle")    zelleAmt    += Number(pm.monto);
+                if (pm.subMetodo === "cashapp")  cashappAmt  += Number(pm.monto);
+                if (pm.subMetodo === "venmo")    venmoAmt    += Number(pm.monto);
+                if (pm.subMetodo === "applepay") applepayAmt += Number(pm.monto);
+              }
+            }
+          }
+
+          // Anything not labelled → "other transfer" (sub-type chip was not selected)
           const classifiedTransfer = zelleAmt + cashappAmt + venmoAmt + applepayAmt;
           const otherTransfer = Math.max(0, totalTransfer - classifiedTransfer);
 
@@ -1904,10 +1919,26 @@ function PaymentBreakdownReport({ van, usuario }) {
             <SummaryCard label="💙 Venmo" value={fmtCurrency(totals.venmo)} color="blue" />}
           {(metodo === "all" || metodo === "transfer_all" || metodo === "applepay") && totals.applepay > 0 &&
             <SummaryCard label="🍎 Apple Pay" value={fmtCurrency(totals.applepay)} color="emerald" />}
-          {(metodo === "all" || metodo === "transfer_all") && totals.transfer > 0 &&
-            <SummaryCard label="🏦 Transfer" value={fmtCurrency(totals.transfer)} color="blue"
-              sub="unclassified" />}
+          {(metodo === "all" || metodo === "transfer_all") && totals.transfer_other > 0 &&
+            <SummaryCard label="🏦 Transfer" value={fmtCurrency(totals.transfer_other)} color="blue"
+              sub="unclassified sub-type" />}
         </div>
+
+        {/* ── Warning: unclassified transfers exist when filtering by sub-type ── */}
+        {isSubType && totals.transfer_other > 0 && (
+          <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+            <span className="text-2xl leading-none">⚠️</span>
+            <div>
+              <p className="font-bold text-amber-800">
+                {fmtCurrency(totals.transfer_other)} in unclassified transfers not shown above
+              </p>
+              <p className="text-amber-700 mt-0.5">
+                These are transfer payments where the driver didn't select a sub-type (Zelle / Cash App / Venmo / Apple Pay) when recording the sale.
+                Switch to <strong>Transfer (All)</strong> to see the full transfer total including these.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* ── Bar chart ── */}
         {dayRows.length > 0 && (
