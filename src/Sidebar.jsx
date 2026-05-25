@@ -31,18 +31,18 @@ function NavLink({ to, icon, text, location }) {
   return (
     <Link
       to={to}
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-all duration-300 transform hover:scale-105 ${
+      className={`flex items-center gap-3 px-3 py-2.5 lg:py-3 rounded-xl font-medium transition-all duration-200 ${
         isActive
-          ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg"
-          : "hover:bg-[#23395d] hover:shadow-md"
+          ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg text-white"
+          : "hover:bg-[#23395d] hover:text-white text-gray-300"
       }`}
     >
-      <div className={`transition-transform duration-300 ${isActive ? "scale-110" : "scale-100"}`}>
+      <div className={`flex-shrink-0 transition-transform duration-200 ${isActive ? "scale-110" : ""}`}>
         {icon}
       </div>
-      <span className="transition-all duration-300">{text}</span>
+      <span className="text-sm lg:text-[15px] font-semibold truncate">{text}</span>
       {isActive && (
-        <div className="ml-auto w-2 h-2 bg-white rounded-full animate-pulse" />
+        <div className="ml-auto w-2 h-2 bg-white rounded-full flex-shrink-0" />
       )}
     </Link>
   );
@@ -85,11 +85,11 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="bg-[#162941] text-white min-h-screen w-[220px] flex flex-col justify-between py-5 px-3 transition-all duration-300">
+    <aside className="bg-[#162941] text-white min-h-screen w-[220px] lg:w-[260px] flex flex-col justify-between py-5 px-3 lg:px-4 transition-all duration-300">
       <div>
         {/* ── Brand ── */}
-        <div className="font-bold text-lg mb-6 ml-2 tracking-wide transition-all duration-300 hover:scale-105">
-          TOOLS4CARE
+        <div className="font-bold text-lg lg:text-xl mb-6 ml-1 tracking-wide">
+          🛠 TOOLS4CARE
         </div>
 
         {/* ── Role badge ── */}
@@ -138,14 +138,14 @@ export default function Sidebar() {
               localStorage.removeItem("van");
               window.location.href = "/van";
             }}
-            className="w-full bg-yellow-400 hover:bg-yellow-500 text-black py-2 px-3 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
+            className="w-full bg-yellow-400 hover:bg-yellow-500 text-black py-2.5 lg:py-3 px-3 rounded-xl font-bold text-sm lg:text-base transition-all hover:shadow-lg"
           >
             Change VAN
           </button>
         )}
         <button
           onClick={handleLogout}
-          className="w-full bg-red-600 hover:bg-red-700 py-2 px-3 rounded-lg font-semibold flex items-center gap-2 justify-center transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
+          className="w-full bg-red-600 hover:bg-red-700 py-2.5 lg:py-3 px-3 rounded-xl font-bold text-sm lg:text-base flex items-center gap-2 justify-center transition-all hover:shadow-lg"
         >
           <LogOut size={20} /> Log out
         </button>
