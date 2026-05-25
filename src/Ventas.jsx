@@ -454,6 +454,7 @@ async function sendEmailSmart({ to, subject, html, text }) {
 /* ========================= Thermal Printer / Cash Drawer ========================= */
 function printThermalReceipt(payload) {
   const {
+    saleId,
     clientName, creditNumber, dateStr, pointOfSaleName,
     items = [], saleTotal, paid, change,
     prevBalance, saleRemaining, newDue,
@@ -496,7 +497,8 @@ function printThermalReceipt(payload) {
 </head><body>
 <div class="center bold" style="font-size:16px;letter-spacing:2px;">${COMPANY_NAME}</div>
 ${pointOfSaleName ? `<div class="center" style="font-size:10px;">${pointOfSaleName}</div>` : ""}
-<div class="center" style="font-size:9px;margin-bottom:4px;">${dateStr || new Date().toLocaleString()}</div>
+<div class="center" style="font-size:9px;margin-bottom:2px;">${dateStr || new Date().toLocaleString()}</div>
+${saleId ? `<div class="center" style="font-size:9px;color:#555;margin-bottom:4px;">Ref: #${saleId.slice(0,8).toUpperCase()}</div>` : ""}
 <div class="divider"></div>
 
 ${clientName ? `<div><span class="bold">Customer:</span> ${clientName}${creditNumber ? ` (#${creditNumber})` : ""}</div>` : '<div class="center" style="font-size:10px">Walk-in / Quick Sale</div>'}
@@ -577,6 +579,7 @@ async function getStockMapForVan(vanId, ids = []) {
 
 function composeReceiptMessageEN(payload) {
   const {
+    saleId,
     clientName,
     creditNumber,
     dateStr,
@@ -600,6 +603,7 @@ function composeReceiptMessageEN(payload) {
   const lines = [];
   lines.push(`${COMPANY_NAME} — Receipt`);
   lines.push(`Date: ${dateStr}`);
+  if (saleId) lines.push(`Ref: #${saleId.slice(0,8).toUpperCase()}`);
   if (pointOfSaleName) lines.push(`Point of sale: ${pointOfSaleName}`);
   if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
   lines.push("");
@@ -3904,6 +3908,7 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
       const newDue = Math.max(0, balancePost);
 
       const payload = {
+        saleId: ventaId,
         clientName: selectedClient?.nombre || "",
         creditNumber: getCreditNumber(selectedClient),
         dateStr: new Date().toLocaleString(),
