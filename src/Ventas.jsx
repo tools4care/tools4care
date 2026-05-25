@@ -1895,6 +1895,36 @@ useEffect(() => {
     if (step === 2) reloadInventory();
   }, [step]);
 
+  /* ---------- ⌨️ Desktop keyboard shortcuts ---------- */
+  useEffect(() => {
+    const handler = (e) => {
+      // F2 = focus client search (step 1)
+      if (e.key === "F2") {
+        e.preventDefault();
+        if (step === 1) {
+          const input = document.querySelector('input[placeholder*="Name"]') ||
+                        document.querySelector('input[placeholder*="Name · Phone"]');
+          if (input) input.focus();
+        }
+      }
+      // Enter = save sale (step 3, only when not already in an input/select)
+      if (e.key === "Enter" && step === 3 && !saving) {
+        const tag = document.activeElement?.tagName?.toLowerCase();
+        if (tag !== "input" && tag !== "select" && tag !== "textarea") {
+          e.preventDefault();
+          saveSale();
+        }
+      }
+      // Escape = go back one step
+      if (e.key === "Escape") {
+        if (step === 3) setStep(2);
+        else if (step === 2) setStep(1);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [step, saving]); // eslint-disable-line
+
   /* ---------- Filtro del buscador ---------- */
  useEffect(() => {
   const filter = productSearch.trim().toLowerCase();
@@ -5166,7 +5196,7 @@ function renderStepPayment() {
           </div>
           <div className="text-right">
             <div className="text-slate-300 text-xs uppercase tracking-wide">{balanceBefore > 0 ? "Total Owed" : "Total"}</div>
-            <div className="text-white font-extrabold text-xl">{fmt(totalAPagar)}</div>
+            <div className="text-white font-extrabold text-xl lg:text-3xl">{fmt(totalAPagar)}</div>
           </div>
         </div>
 
@@ -5205,9 +5235,14 @@ function renderStepPayment() {
 
         {/* Change banner */}
         {change > 0 && (
-          <div className="bg-green-500 px-4 py-2 flex items-center justify-between">
-            <span className="text-white font-semibold text-sm">💵 Change to give back</span>
-            <span className="text-white font-extrabold text-lg">{fmt(change)}</span>
+          <div className="bg-green-500 px-4 py-3 lg:py-4 flex items-center justify-between rounded-b-xl">
+            <div className="flex flex-col">
+              <span className="text-green-100 font-semibold text-xs lg:text-sm uppercase tracking-wide">💵 Change to give back</span>
+              <span className="text-white font-black text-2xl lg:text-4xl leading-tight">{fmt(change)}</span>
+            </div>
+            <div className="w-12 h-12 lg:w-16 lg:h-16 bg-white/20 rounded-full flex items-center justify-center">
+              <span className="text-2xl lg:text-3xl">💵</span>
+            </div>
           </div>
         )}
 
@@ -5336,7 +5371,7 @@ function renderStepPayment() {
                     <select
                       value={p.forma}
                       onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
-                      className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 focus:border-blue-500 outline-none transition-all"
+                      className="flex-1 border-2 border-gray-300 rounded-lg px-3 py-2 lg:py-3 lg:text-base focus:border-blue-500 outline-none transition-all"
                     >
                       {PAYMENT_METHODS.map((fp) => (
                         <option key={fp.key} value={fp.key}>{fp.label}</option>
@@ -5365,7 +5400,7 @@ function renderStepPayment() {
                       }}
                       readOnly={!!p?.toAR}
                       disabled={!!p?.toAR}
-                      className={`w-28 border-2 rounded-lg px-3 py-2 text-right font-bold focus:border-blue-500 outline-none ${
+                      className={`w-28 lg:w-36 border-2 rounded-lg px-3 py-2 lg:py-3 text-right font-bold lg:text-lg focus:border-blue-500 outline-none ${
                         p?.toAR ? "bg-amber-50 border-amber-300 text-amber-800 cursor-not-allowed" : "border-gray-300"
                       }`}
                       placeholder="0.00"
@@ -5499,14 +5534,21 @@ function renderStepPayment() {
       )}
 
       {/* ── NAVIGATION ───────────────────────────────── */}
+      {/* Keyboard hint — desktop only */}
+      <div className="hidden lg:flex items-center gap-4 text-xs text-gray-400 pt-1">
+        <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600">Enter</kbd> Save Sale</span>
+        <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600">Esc</kbd> Back</span>
+        <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600">F2</kbd> Search customer</span>
+      </div>
+
       <div className="flex flex-col sm:flex-row gap-3 pt-2">
         <button
-          className="bg-gray-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
+          className="bg-gray-500 text-white px-6 py-3 lg:py-4 rounded-xl font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1 lg:text-base"
           onClick={() => setStep(2)}
           disabled={saving}
         >← Back</button>
         <button
-          className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-8 py-4 rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg"
+          className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-8 py-4 lg:py-5 rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg lg:text-2xl"
           disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
           onClick={saveSale}
         >
