@@ -627,7 +627,7 @@ function DevolucionesReport({ van, usuario }) {
       let q = supabase
         .from("ventas")
         .select(`
-          id, created_at, total_venta, motivo_devolucion, venta_origen_id, notas,
+          id, created_at, total_venta, total, total_pagado, pago_efectivo, pago_tarjeta, pago_transferencia, motivo_devolucion, venta_origen_id, notas,
           cliente_id, clientes:cliente_id(nombre),
           usuario_id, usuarios:usuario_id(nombre),
           detalle_ventas!detalle_ventas_venta_id_fkey(cantidad, precio_unitario, producto_id, productos:producto_id(nombre))
@@ -653,7 +653,8 @@ function DevolucionesReport({ van, usuario }) {
         return {
           id: v.id,
           created_at: v.created_at,
-          monto: Number(v.total_venta || 0),
+          monto: Number(v.total_venta || v.total || v.total_pagado ||
+            (Number(v.pago_efectivo||0) + Number(v.pago_tarjeta||0) + Number(v.pago_transferencia||0)) || 0),
           motivo: v.motivo_devolucion || v.notas || "—",
           clientName,
           productNames,
