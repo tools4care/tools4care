@@ -3189,70 +3189,7 @@ async function handleProcessReturn() {
       return;
     }
 
-    // 2. ✅ INTENTAR USAR RPC TRANSACCIONAL (más seguro)
-    try {
-      const itemsJson = itemsToReturn.map(it => ({
-        detalle_venta_id: it.detalle_venta_id,
-        producto_id: it.producto_id,
-        cantidad: it.cantidad,
-        precio_unitario: it.precio_unitario,
-      }));
-
-      const { data: rpcResult, error: rpcErr } = await supabase.rpc('procesar_devolucion', {
-        p_venta_origen_id: selectedInvoice.id,
-        p_cliente_id: selectedClient?.id || null,
-        p_van_id: van.id,
-        p_usuario_id: usuario.id,
-        p_motivo: returnReason || "Return",
-        p_items: itemsJson,
-        p_tipo_reembolso: returnType === "credit" && selectedClient?.id ? "credito" : "efectivo",
-      });
-
-      if (rpcErr) throw rpcErr;
-
-      if (!rpcResult?.ok) {
-        throw new Error(rpcResult?.error || 'Error desconocido en RPC');
-      }
-
-     // 3. Mostrar resultado con desglose
-if (rpcResult.requiere_reembolso_efectivo) {
-  const cashBack    = Number(rpcResult.cash_refund     || 0);
-  const debtReduced = Number(rpcResult.cxc_adjustment  || 0);
-  const parts = [`Devolución procesada — total ${fmt(totalRefund)}`];
-  if (cashBack    > 0) parts.push(`💵 Entregar en efectivo: ${fmt(cashBack)}`);
-  if (debtReduced > 0) parts.push(`📋 Deuda reducida: ${fmt(debtReduced)}`);
-  toast.return(parts.join(" · "), 7000);
-} else {
-  toast.return(
-    `Devolución procesada — deuda reducida ${fmt(Number(rpcResult.cxc_adjustment || 0))}`,
-    6000
-  );
-}
-
-      // Resetear UI
-      setSelectedInvoice(null);
-      setReturnQuantities({});
-      setReturnReason("");
-      
-      // Recargar inventario
-      reloadInventory();
-      
-      // Recargar historial del cliente
-      if (selectedClient?.id) {
-        runCreditAgent(selectedClient.id);
-      }
-
-      return; // Éxito con RPC
-
-    } catch (rpcFallbackErr) {
-      // Cualquier error del RPC (no existe, firma diferente, RPC_NOT_AVAILABLE, etc.)
-      // → usar el fallback manual. No re-lanzar.
-      console.warn('⚠️ RPC procesar_devolucion falló, usando fallback manual:',
-        rpcFallbackErr?.message || rpcFallbackErr?.code || String(rpcFallbackErr));
-    }
-
-    // ===== FALLBACK MANUAL (si el RPC no existe) =====
-    // isCredit was already declared above (same value, reuse it)
+    // ===== IMPLEMENTACIÓN DIRECTA (sin RPC) =====
 
     // 2b. Crear registro de devolución en 'ventas'
     const { data: returnSale, error: insertErr } = await supabase
