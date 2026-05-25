@@ -604,17 +604,18 @@ function VentasReport({ van, usuario }) {
   );
 }
 
-/* ========================= 2. DEVOLUCIONES REPORT (FIXED) ========================= */
+/* ========================= 2. DEVOLUCIONES REPORT ========================= */
 function DevolucionesReport({ van, usuario }) {
-  const [from, setFrom] = useState(get30DaysAgo());
-  const [to, setTo]     = useState(getToday());
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+  const [from, setFrom]         = useState(get30DaysAgo());
+  const [to, setTo]             = useState(getToday());
+  const [data, setData]         = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
   const [searched, setSearched] = useState(false);
-  const [source, setSource] = useState("");
 
-  useEffect(() => { search(); }, [van?.id, from, to]); // eslint-disable-line
+  const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
+
+  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
 
   const search = async () => {
     if (!van?.id) return;
@@ -622,122 +623,156 @@ function DevolucionesReport({ van, usuario }) {
     try {
       const { start, end } = dateRangeBounds(from, to);
 
-      // ── Try dedicated devoluciones table first ──
-      const { data: devs, error: devErr } = await supabase
-        .from("devoluciones")
-        .select("id, created_at, monto, motivo, cliente_id, clientes:cliente_id(nombre), producto_id, productos:producto_id(nombre), venta_id")
-        .eq("van_id", van.id)
-        .gte("created_at", start)
-        .lte("created_at", end)
-        .order("created_at", { ascending: false });
-
-      if (!devErr) {
-        setData(devs || []);
-        setSource("devoluciones");
-        setSearched(true);
-        return;
-      }
-
-      const isAdminDev = usuario?.rol === "admin" || usuario?.rol === "supervisor";
-      // ── Fallback: ventas con estado_pago = 'devolucion' ──
-      let qVentas = supabase
+      // ── Primary: ventas with tipo = 'devolucion' (how the app saves them) ──
+      let q = supabase
         .from("ventas")
-        .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), notas")
+        .select(`
+          id, created_at, total_venta, motivo_devolucion, venta_origen_id, notas,
+          cliente_id, clientes:cliente_id(nombre, apellido),
+          usuario_id, usuarios:usuario_id(nombre),
+          detalle_ventas(cantidad, precio_unitario, producto_id, productos:producto_id(nombre))
+        `)
         .eq("van_id", van.id)
-        .eq("estado_pago", "devolucion")
+        .eq("tipo", "devolucion")
         .gte("created_at", start)
         .lte("created_at", end)
         .order("created_at", { ascending: false });
-      if (!isAdminDev && usuario?.id) qVentas = qVentas.eq("usuario_id", usuario.id);
-      const { data: ventas, error: vErr } = await qVentas;
 
-      if (!vErr) {
-        setData((ventas || []).map(v => ({ ...v, monto: v.total_venta, motivo: v.notas || "Return" })));
-        setSource("ventas");
-        setSearched(true);
-        return;
-      }
+      if (!isAdmin && usuario?.id) q = q.eq("usuario_id", usuario.id);
 
-      // ── Fallback 2: ventas con total negativo ──
-      let qNeg = supabase
-        .from("ventas")
-        .select("id, created_at, total_venta, cliente_id, clientes:cliente_id(nombre), notas")
-        .eq("van_id", van.id)
-        .lt("total_venta", 0)
-        .gte("created_at", start)
-        .lte("created_at", end)
-        .order("created_at", { ascending: false });
-      if (!isAdminDev && usuario?.id) qNeg = qNeg.eq("usuario_id", usuario.id);
-      const { data: neg, error: nErr } = await qNeg;
+      const { data: rows, error: qErr } = await q;
+      if (qErr) throw new Error(qErr.message);
 
-      if (!nErr) {
-        setData((neg || []).map(v => ({ ...v, monto: Math.abs(v.total_venta), motivo: v.notas || "Return" })));
-        setSource("ventas");
-      } else {
-        throw new Error(nErr.message);
-      }
+      // Flatten: one row per product line, group under parent if multiple items
+      const flat = (rows || []).map(v => {
+        const items = Array.isArray(v.detalle_ventas) ? v.detalle_ventas : [];
+        const productNames = items
+          .map(d => `${d.productos?.nombre || "Product"} ×${d.cantidad}`)
+          .join(", ") || "—";
+        const clientName = [v.clientes?.nombre, v.clientes?.apellido].filter(Boolean).join(" ") || "—";
+        return {
+          id: v.id,
+          created_at: v.created_at,
+          monto: Number(v.total_venta || 0),
+          motivo: v.motivo_devolucion || v.notas || "—",
+          clientName,
+          productNames,
+          driver: v.usuarios?.nombre || "—",
+          venta_origen_id: v.venta_origen_id,
+        };
+      });
+
+      setData(flat);
       setSearched(true);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
 
-  const total = useMemo(() => data.reduce((s, r) => s + Number(r.monto || 0), 0), [data]);
+  const total      = useMemo(() => data.reduce((s, r) => s + r.monto, 0), [data]);
+  const totalItems = useMemo(() => data.length, [data]);
 
   const exportPDF = () => {
     const doc = new jsPDF();
     doc.setFillColor(220,38,38); doc.rect(0,0,210,28,"F");
     doc.setTextColor(255,255,255); doc.setFontSize(16);
-    doc.text("Tools4Care - Returns Report", 14, 18);
-    doc.setTextColor(0,0,0); doc.setFontSize(10);
-    doc.text(`Period: ${fmtDate(from)} - ${fmtDate(to)} | Generated: ${new Date().toLocaleString()}`, 14, 36);
+    doc.text("Tools4Care — Returns Report", 14, 18);
+    doc.setTextColor(0,0,0); doc.setFontSize(9);
+    doc.text(`Period: ${fmtDate(from)} – ${fmtDate(to)}  |  VAN: ${van?.nombre_van||"—"}  |  Generated: ${new Date().toLocaleString()}`, 14, 36);
     autoTable(doc, {
       startY: 44,
-      head:[["Date","Client","Product","Reason","Amount"]],
-      body: data.map(r=>[fmtDateTime(r.created_at), r.clientes?.nombre||"—", r.productos?.nombre||"—", r.motivo||"—", fmtCurrency(r.monto)]),
-      foot:[["","","","TOTAL",fmtCurrency(total)]],
-      styles:{fontSize:8}, headStyles:{fillColor:[220,38,38],textColor:255},
+      head:[["Date/Time","Client","Products","Reason","Driver","Amount"]],
+      body: data.map(r=>[
+        fmtDateTime(r.created_at),
+        r.clientName,
+        r.productNames,
+        r.motivo,
+        r.driver,
+        fmtCurrency(r.monto),
+      ]),
+      foot:[["","","","","TOTAL",fmtCurrency(total)]],
+      styles:{fontSize:7.5}, headStyles:{fillColor:[220,38,38],textColor:255},
       footStyles:{fontStyle:"bold"},
     });
-    doc.save(`Returns_Report_${from}_to_${to}.pdf`);
+    doc.save(`Returns_${from}_to_${to}.pdf`);
   };
 
   return (
     <div>
       <DateFilterBar from={from} to={to} onFrom={setFrom} onTo={setTo} onSearch={search} loading={loading} />
       <ErrorBox msg={error} />
+
       {searched && (<>
+        {/* Summary cards */}
         <div className="grid grid-cols-2 gap-4 mb-6">
-          <SummaryCard label="Total Returns" value={fmtCurrency(total)} sub={`${data.length} transactions`} color="red"   icon={RotateCcw} />
-          <SummaryCard label="Transactions"  value={data.length} sub={`${fmtDate(from)} – ${fmtDate(to)}`} color="amber" icon={FileText} />
+          <SummaryCard label="Total Refunded"  value={fmtCurrency(total)} sub={`${totalItems} return${totalItems!==1?"s":""}`} color="red"   icon={RotateCcw} />
+          <SummaryCard label="# of Returns"    value={totalItems}         sub={`${fmtDate(from)} – ${fmtDate(to)}`}           color="amber" icon={FileText}   />
         </div>
+
+        {/* Header row */}
         <div className="flex justify-between items-center mb-3">
-          <p className="font-semibold text-gray-700">{data.length} returns found{source ? ` (source: ${source})` : ""}</p>
-          <button onClick={exportPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 hover:bg-red-700">
+          <p className="font-semibold text-gray-700">
+            {totalItems} return{totalItems!==1?"s":""} found
+          </p>
+          <button
+            onClick={exportPDF}
+            className="bg-red-600 text-white px-4 py-2 rounded-xl text-sm flex items-center gap-2 hover:bg-red-700 active:scale-95 transition-all"
+          >
             <Download size={14}/> Export PDF
           </button>
         </div>
-        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
-          <table className="min-w-full text-sm divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>{["Date/Time","Client","Product","Reason","Amount"].map(h=>(
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {data.length===0 ? (
-                <tr><td colSpan={5} className="text-center py-10 text-gray-400">No returns found for this period</td></tr>
-              ) : data.map(r=>(
-                <tr key={r.id} className="hover:bg-red-50">
-                  <td className="px-4 py-2 text-gray-600 text-xs whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                  <td className="px-4 py-2 font-medium">{r.clientes?.nombre||"—"}</td>
-                  <td className="px-4 py-2 text-gray-600">{r.productos?.nombre||"—"}</td>
-                  <td className="px-4 py-2 text-gray-600">{r.motivo||r.observaciones||"—"}</td>
-                  <td className="px-4 py-2 font-semibold text-red-700">{fmtCurrency(r.monto)}</td>
-                </tr>
+
+        {totalItems === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+            <RotateCcw size={40} className="opacity-30" />
+            <p className="text-base font-medium">No returns found for this period</p>
+            <p className="text-sm">Try expanding the date range</p>
+          </div>
+        ) : (
+          <>
+            {/* Card list (mobile-friendly) */}
+            <div className="space-y-3 mb-4">
+              {data.map(r => (
+                <div key={r.id} className="bg-white border border-red-100 rounded-2xl p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="w-2 h-2 bg-red-400 rounded-full flex-shrink-0" />
+                        <span className="font-bold text-gray-900 text-sm truncate">{r.clientName}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-1.5">{fmtDateTime(r.created_at)}</p>
+                      <p className="text-xs text-gray-700 font-medium mb-1">
+                        📦 {r.productNames}
+                      </p>
+                      <p className="text-xs text-gray-500 italic">
+                        Reason: {r.motivo}
+                      </p>
+                      {isAdmin && (
+                        <p className="text-xs text-gray-400 mt-1">Driver: {r.driver}</p>
+                      )}
+                      {r.venta_origen_id && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">
+                          Ref: #{r.venta_origen_id.slice(0,8)}…
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0 text-right">
+                      <span className="text-base font-bold text-red-600">{fmtCurrency(r.monto)}</span>
+                      <div className="text-[10px] text-gray-400 mt-0.5">refunded</div>
+                    </div>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </div>
+
+            {/* Footer total */}
+            <div className="flex justify-end">
+              <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-3 text-right">
+                <div className="text-xs text-red-500 font-medium uppercase tracking-wide">Total Refunded</div>
+                <div className="text-2xl font-bold text-red-700">{fmtCurrency(total)}</div>
+              </div>
+            </div>
+          </>
+        )}
       </>)}
     </div>
   );
