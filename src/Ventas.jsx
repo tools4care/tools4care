@@ -1021,6 +1021,7 @@ const [appMode, setAppMode] = useState('venta'); // 'venta' | 'devolucion'
 const [clientSalesHistory, setClientSalesHistory] = useState([]); // Lista de facturas
 const [selectedInvoice, setSelectedInvoice] = useState(null); // Factura seleccionada
 const [returnQuantities, setReturnQuantities] = useState({}); // { detalle_id: cantidad }
+const [returnType, setReturnType] = useState("cash"); // "cash" | "credit"
 const [returnReason, setReturnReason] = useState("");
 const [processingReturn, setProcessingReturn] = useState(false);
 
@@ -2750,6 +2751,9 @@ function clearSale() {
   setSelectedInvoice(null);
   setReturnQuantities({});
   setReturnReason("");
+  setReturnType("cash");
+  setWalkinDevolucion(false);
+  setWalkinSearch("");
 }
 
   function openChannelModal({ hasPhone, hasEmail }) {
@@ -3138,13 +3142,16 @@ async function handleProcessReturn() {
       .map(it => `• ${it.nombre} x${it.cantidad} = ${fmt(it.cantidad * it.precio_unitario)}`)
       .join('\n');
 
+    const isCredit = returnType === "credit" && selectedClient?.id;
+    const refundLabel = isCredit
+      ? `💳 Store credit of ${fmt(totalRefund)} added to customer account`
+      : `💵 Give back ${fmt(totalRefund)} cash to customer`;
+
     const confirmed = await confirmDialog(
-      `🔄 Confirmar Devolución\n\n` +
+      `🔄 Confirm Return\n\n` +
       `${itemsSummary}\n\n` +
-      `Total a devolver: ${fmt(totalRefund)}\n` +
-      (selectedInvoice.estado_pago === 'pagado'
-        ? `💵 Se entregará ${fmt(totalRefund)} en efectivo al cliente`
-        : `📋 Se reducirá la deuda del cliente en ${fmt(totalRefund)}`)
+      `Total: ${fmt(totalRefund)}\n` +
+      refundLabel
     );
     if (!confirmed) {
       setProcessingReturn(false);
@@ -3162,11 +3169,12 @@ async function handleProcessReturn() {
 
       const { data: rpcResult, error: rpcErr } = await supabase.rpc('procesar_devolucion', {
         p_venta_origen_id: selectedInvoice.id,
-        p_cliente_id: selectedClient.id,  // 🔴 FIX: usar selectedClient.id, NO selectedInvoice.cliente_id
+        p_cliente_id: selectedClient?.id || null,
         p_van_id: van.id,
         p_usuario_id: usuario.id,
-        p_motivo: returnReason || "Devolución en tienda",
+        p_motivo: returnReason || "Return",
         p_items: itemsJson,
+        p_tipo_reembolso: returnType === "credit" && selectedClient?.id ? "credito" : "efectivo",
       });
 
       if (rpcErr) throw rpcErr;
@@ -3217,21 +3225,23 @@ if (rpcResult.requiere_reembolso_efectivo) {
 
     // ===== FALLBACK MANUAL (si el RPC no existe) =====
     
+    const isCredit = returnType === "credit" && selectedClient?.id;
+
     // 2b. Crear registro de devolución en 'ventas'
     const { data: returnSale, error: insertErr } = await supabase
       .from('ventas')
       .insert([{
-        cliente_id: selectedClient.id,  // 🔴 FIX: selectedClient.id
+        cliente_id: selectedClient?.id || null,
         van_id: van.id,
         usuario_id: usuario.id,
         total: totalRefund,
-        total_venta: totalRefund,   // ✅ FIX: necesario para vistas de saldo
-        total_pagado: totalRefund,  // ✅ FIX: necesario para vistas de saldo
+        total_venta: totalRefund,
+        total_pagado: totalRefund,
         tipo: 'devolucion',
         venta_origen_id: selectedInvoice.id,
-        motivo_devolucion: returnReason || "Devolución en tienda",
-        estado_pago: 'reembolsado',
-        notas: `Devolución de factura #${selectedInvoice.id.slice(0, 8)}...`,
+        motivo_devolucion: returnReason || "Return",
+        estado_pago: isCredit ? 'credito_tienda' : 'reembolsado',
+        notas: `Return of invoice #${selectedInvoice.id.slice(0, 8)}… — ${isCredit ? "Store Credit" : "Cash Refund"}`,
       }])
       .select()
       .single();
@@ -3299,29 +3309,44 @@ if (rpcResult.requiere_reembolso_efectivo) {
       }
     }
 
-    // 5b. Ajustar CxC si la venta original fue a crédito
-    if (['pendiente', 'parcial'].includes(selectedInvoice.estado_pago)) {
-      // 🔴 FIX: Usar monto POSITIVO con tipo 'devolucion' 
-      // (el sistema CxC interpreta por tipo, no por signo)
-      const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
-        cliente_id: selectedClient.id,  // 🔴 FIX: selectedClient.id
-        tipo: 'devolucion',
-        monto: totalRefund,  // 🔴 FIX: Positivo, el tipo 'devolucion' indica que reduce
-        venta_id: returnSale.id,
-        usuario_id: usuario.id,
-        fecha: new Date().toISOString(),
-        van_id: van.id,
-        nota: `Devolución de mercancía (Ref: Venta #${selectedInvoice.id.slice(0, 6)})`,
-      }]);
+    // 5b. Ajustar CxC según tipo de devolución y estado de la venta original
+    if (selectedClient?.id) {
+      if (isCredit) {
+        // Store credit → insert as a positive CxC credit (reduces balance)
+        const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
+          cliente_id: selectedClient.id,
+          tipo: 'credito_tienda',
+          monto: totalRefund,
+          venta_id: returnSale.id,
+          usuario_id: usuario.id,
+          fecha: new Date().toISOString(),
+          van_id: van.id,
+          nota: `Store credit — Return of invoice #${selectedInvoice.id.slice(0, 6)}`,
+        }]);
+        if (cxcErr) console.error("Error registrando crédito tienda:", cxcErr);
+        toast.return(`✅ Return processed — ${fmt(totalRefund)} store credit added to ${selectedClient.nombre}'s account.`, 7000);
 
-      if (cxcErr) {
-        console.error("Error en CxC:", cxcErr);
-        // No bloquear — la devolución ya se procesó
+      } else if (['pendiente', 'parcial'].includes(selectedInvoice.estado_pago)) {
+        // Cash refund on a credit sale → reduce the debt
+        const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
+          cliente_id: selectedClient.id,
+          tipo: 'devolucion',
+          monto: totalRefund,
+          venta_id: returnSale.id,
+          usuario_id: usuario.id,
+          fecha: new Date().toISOString(),
+          van_id: van.id,
+          nota: `Cash refund — Return of invoice #${selectedInvoice.id.slice(0, 6)}`,
+        }]);
+        if (cxcErr) console.error("Error en CxC:", cxcErr);
+        toast.return(`✅ Return processed — debt reduced by ${fmt(totalRefund)}. Give ${fmt(totalRefund)} cash back.`, 7000);
+
+      } else {
+        toast.return(`✅ Return processed — give ${fmt(totalRefund)} cash back to the client.`, 6000);
       }
-
-      toast.return(`Return processed — debt reduced by ${fmt(totalRefund)}.`);
     } else {
-      toast.return(`Return processed — give ${fmt(totalRefund)} cash back to the client.`);
+      // Walk-in return, no client account
+      toast.return(`✅ Walk-in return processed — give ${fmt(totalRefund)} cash back.`, 6000);
     }
 
     // Resetear UI
@@ -4240,15 +4265,63 @@ function renderReturnDetails() {
         />
       </div>
 
-      {/* Total de devolución */}
+      {/* Return type selector */}
       {totalReturn > 0 && (
-        <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4 text-center">
-          <div className="text-xs text-orange-600 uppercase font-semibold">Total a Devolver</div>
-          <div className="text-2xl font-bold text-orange-800">{fmt(totalReturn)}</div>
+        <div className="mb-4">
+          <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">Return Type</div>
+          <div className="grid grid-cols-2 gap-2">
+            {/* Cash Refund */}
+            <button
+              onClick={() => setReturnType("cash")}
+              className={`flex flex-col items-center gap-1.5 py-3 px-3 rounded-xl border-2 transition-all ${
+                returnType === "cash"
+                  ? "border-green-500 bg-green-50 shadow-md"
+                  : "border-gray-200 bg-white hover:border-gray-300"
+              }`}
+            >
+              <span className="text-2xl">💵</span>
+              <span className="font-bold text-sm text-gray-900">Cash Refund</span>
+              <span className="text-[10px] text-gray-500 text-center">Give money back to customer</span>
+              {returnType === "cash" && <span className="text-[10px] font-bold text-green-600">✓ Selected</span>}
+            </button>
+
+            {/* Store Credit — only when there's a client */}
+            <button
+              onClick={() => selectedClient?.id ? setReturnType("credit") : null}
+              disabled={!selectedClient?.id}
+              className={`flex flex-col items-center gap-1.5 py-3 px-3 rounded-xl border-2 transition-all ${
+                !selectedClient?.id
+                  ? "border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed"
+                  : returnType === "credit"
+                  ? "border-blue-500 bg-blue-50 shadow-md"
+                  : "border-gray-200 bg-white hover:border-gray-300"
+              }`}
+            >
+              <span className="text-2xl">💳</span>
+              <span className="font-bold text-sm text-gray-900">Store Credit</span>
+              <span className="text-[10px] text-gray-500 text-center">
+                {selectedClient?.id ? "Credit to customer account" : "Requires a customer account"}
+              </span>
+              {returnType === "credit" && <span className="text-[10px] font-bold text-blue-600">✓ Selected</span>}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Total summary */}
+      {totalReturn > 0 && (
+        <div className={`border rounded-xl p-3 mb-4 text-center ${
+          returnType === "credit" ? "bg-blue-50 border-blue-200" : "bg-orange-50 border-orange-200"
+        }`}>
+          <div className="text-xs uppercase font-semibold text-gray-500 mb-1">Total to Return</div>
+          <div className={`text-3xl font-black ${returnType === "credit" ? "text-blue-700" : "text-orange-700"}`}>
+            {fmt(totalReturn)}
+          </div>
           <div className="text-xs text-gray-600 mt-1">
-            {selectedInvoice.estado_pago === 'pagado' 
-              ? '💵 Se devolverá en efectivo' 
-              : '📋 Se reducirá de la deuda'}
+            {returnType === "credit"
+              ? `💳 ${fmt(totalReturn)} will be added as store credit to ${selectedClient?.nombre || "customer"}'s account`
+              : `💵 Give ${fmt(totalReturn)} cash back to customer`
+            }
           </div>
         </div>
       )}
@@ -4256,9 +4329,18 @@ function renderReturnDetails() {
       <button
         onClick={handleProcessReturn}
         disabled={processingReturn || Object.values(returnQuantities).every(q => !q || q === 0)}
-        className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white py-3 rounded-lg font-bold transition-colors text-lg"
+        className={`w-full disabled:bg-gray-300 text-white py-4 rounded-xl font-bold transition-all text-lg shadow-lg ${
+          returnType === "credit"
+            ? "bg-blue-600 hover:bg-blue-700 shadow-blue-200"
+            : "bg-orange-600 hover:bg-orange-700 shadow-orange-200"
+        }`}
       >
-        {processingReturn ? "⏳ Procesando..." : `🔄 Confirmar Devolución (${fmt(totalReturn)})`}
+        {processingReturn
+          ? "⏳ Processing…"
+          : returnType === "credit"
+          ? `💳 Apply Store Credit (${fmt(totalReturn)})`
+          : `💵 Process Cash Refund (${fmt(totalReturn)})`
+        }
       </button>
     </div>
   );
