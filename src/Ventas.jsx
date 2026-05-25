@@ -3237,9 +3237,11 @@ async function handleProcessReturn() {
       van_id: van.id,
     }));
 
-    await supabase.from('devoluciones_detalle').insert(trackingRecords).catch(e => {
-      console.warn('Tracking devoluciones no disponible:', e.message);
-    });
+    try {
+      await supabase.from('devoluciones_detalle').insert(trackingRecords);
+    } catch (e) {
+      console.warn('Tracking devoluciones no disponible:', e?.message);
+    }
 
     // 4b. Actualizar Inventario (Devolver stock)
     for (const item of itemsToReturn) {
