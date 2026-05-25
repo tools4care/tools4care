@@ -3312,6 +3312,17 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         pendingFromThisSale === 0 ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente";
 
       const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
+
+      // 🔴 Require transfer sub-type (Zelle, Cash App, Venmo, Apple Pay)
+      const missingSubType = nonZeroPayments.find(
+        (p) => p.forma === "transferencia" && !p.subMetodo
+      );
+      if (missingSubType) {
+        setPaymentError("⚠️ Please select the transfer type: Zelle, Cash App, Venmo, or Apple Pay.");
+        setSaving(false);
+        return;
+      }
+
       const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2));
 
       let remainingToApply = paidApplied;
@@ -5377,8 +5388,11 @@ function renderStepPayment() {
 
                 {/* Transfer sub-method chips */}
                 {p.forma === "transferencia" && !p?.toAR && (
-                  <div className="pt-1 border-t border-gray-100">
-                    <div className="text-[10px] uppercase text-gray-500 font-semibold mb-1.5 tracking-wide">Via</div>
+                  <div className={`pt-1 border-t ${p.subMetodo ? "border-gray-100" : "border-orange-200 bg-orange-50 rounded-xl px-2 pb-2"}`}>
+                    <div className={`text-[10px] uppercase font-semibold mb-1.5 tracking-wide flex items-center gap-1 ${p.subMetodo ? "text-gray-500" : "text-orange-600"}`}>
+                      {!p.subMetodo && <span>⚠️</span>}
+                      Via {!p.subMetodo && <span className="normal-case font-normal">(required)</span>}
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       {TRANSFER_SUBS.map((s) => {
                         const active = p.subMetodo === s.key;
@@ -5389,7 +5403,9 @@ function renderStepPayment() {
                             className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 shadow-sm border-2 ${
                               active
                                 ? `${s.color} text-white border-transparent shadow-md`
-                                : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
+                                : p.subMetodo
+                                  ? "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
+                                  : "bg-white text-orange-700 border-orange-300 hover:border-orange-500"
                             }`}
                           >
                             {s.label}
