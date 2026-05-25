@@ -25,6 +25,7 @@ import {
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { supabase } from "./supabaseClient";
+import { useStoreMode } from "./hooks/useStoreMode";
 
 /* ── Tab definitions ───────────────────────────────── */
 const items = [
@@ -53,6 +54,7 @@ export default function BottomNav() {
   const [showSaleSheet, setShowSaleSheet] = useState(false);
   const { usuario, setUsuario }       = useUsuario();
   const { van }                       = useVan();
+  const { storeMode, toggle: toggleStoreMode } = useStoreMode();
   const navigate                      = useNavigate();
   const location                      = useLocation();
 
@@ -277,6 +279,33 @@ export default function BottomNav() {
 
               {/* Divider */}
               <div className="h-px bg-gray-100 mx-1 mb-3" />
+
+              {/* Store Mode toggle */}
+              <button
+                onClick={toggleStoreMode}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl mb-3 ring-1 active:scale-[0.98] transition-all ${
+                  storeMode
+                    ? "bg-blue-50 ring-blue-300"
+                    : "bg-gray-50 ring-gray-200"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${storeMode ? "bg-blue-100" : "bg-gray-100"}`}>
+                    <span className="text-xl">{storeMode ? "🏪" : "🚐"}</span>
+                  </div>
+                  <div className="text-left">
+                    <div className={`font-semibold text-sm ${storeMode ? "text-blue-800" : "text-gray-700"}`}>
+                      {storeMode ? "Physical Store Mode" : "Van / Route Mode"}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      {storeMode ? "Print & drawer enabled" : "Tap to enable store features"}
+                    </div>
+                  </div>
+                </div>
+                <div className={`w-11 h-6 rounded-full flex items-center px-0.5 transition-all ${storeMode ? "bg-blue-500" : "bg-gray-300"}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full shadow transition-all ${storeMode ? "translate-x-5" : "translate-x-0"}`} />
+                </div>
+              </button>
 
               {/* User info card */}
               <div className="bg-gray-50 rounded-2xl px-4 py-3 mb-3 flex items-center gap-3">

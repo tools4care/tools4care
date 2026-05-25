@@ -15,6 +15,7 @@ import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 import { v4 as uuidv4 } from 'uuid';
 
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
+import { useStoreMode } from "./hooks/useStoreMode";
 import AgreementModal from "./components/AgreementModal";
 
 import PaymentAgreementsPanel from "./components/PaymentAgreementsPanel";
@@ -1095,6 +1096,14 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
   const [showPOSActions, setShowPOSActions] = useState(false);
   const lastReceiptRef = useRef(null); // stores last receipt payload for reprint
 
+  // ---- PHYSICAL STORE MODE
+  const { storeMode } = useStoreMode();
+
+  // ---- WALK-IN RETURN (devolucion sin cliente)
+  const [walkinDevolucion, setWalkinDevolucion] = useState(false);
+  const [walkinSearch, setWalkinSearch] = useState("");
+  const [walkinLoading, setWalkinLoading] = useState(false);
+
   // ---- SALE BLOCK / OVERRIDE MODAL
   const [saleBlockModal, setSaleBlockModal] = useState(null); // { type, message, resolve }
 
@@ -2009,6 +2018,105 @@ useEffect(() => {
   useEffect(() => {
     if (step === 2) reloadInventory();
   }, [step]);
+
+  /* ---------- Walk-in return: load recent sales without a client ---------- */
+  async function loadWalkinSales(searchTerm = "") {
+    if (!van?.id) return;
+    setWalkinLoading(true);
+    try {
+      let q = supabase
+        .from("ventas")
+        .select("id, created_at, total, total_venta, estado_pago, cliente_id, clientes:cliente_id(nombre)")
+        .eq("van_id", van.id)
+        .eq("tipo", "venta")
+        .is("cliente_id", null)        // walk-in sales (no client)
+        .order("created_at", { ascending: false })
+        .limit(30);
+
+      // If they typed a partial invoice ID, filter by it
+      if (searchTerm.trim().length >= 4) {
+        // Supabase doesn't support LIKE on UUID easily, so we load and filter client-side
+      }
+
+      const { data: ventasData, error } = await q;
+      if (error) throw error;
+
+      if (!ventasData || ventasData.length === 0) {
+        setClientSalesHistory([]);
+        setWalkinLoading(false);
+        return;
+      }
+
+      const ventaIds = ventasData.map(v => v.id);
+
+      // Load details + products
+      const { data: detallesData } = await supabase
+        .from("detalle_ventas")
+        .select("id, venta_id, cantidad, precio_unitario, producto_id")
+        .in("venta_id", ventaIds);
+
+      const productoIds = [...new Set((detallesData || []).map(d => d.producto_id).filter(Boolean))];
+      const { data: productosData } = productoIds.length > 0
+        ? await supabase.from("productos").select("id, nombre").in("id", productoIds)
+        : { data: [] };
+      const productosMap = new Map((productosData || []).map(p => [p.id, p]));
+
+      // Track already-returned quantities
+      let devolucionesMap = new Map();
+      try {
+        const { data: devData } = await supabase
+          .from("devoluciones_detalle")
+          .select("detalle_venta_id, cantidad_devuelta")
+          .in("venta_origen_id", ventaIds);
+        (devData || []).forEach(r => {
+          devolucionesMap.set(r.detalle_venta_id, (devolucionesMap.get(r.detalle_venta_id) || 0) + r.cantidad_devuelta);
+        });
+      } catch { /* tabla no existe aún */ }
+
+      let devolucionesPorVenta = new Map();
+      try {
+        const { data: devVentasData } = await supabase
+          .from("ventas").select("venta_origen_id, total")
+          .eq("tipo", "devolucion").in("venta_origen_id", ventaIds);
+        (devVentasData || []).forEach(r => {
+          devolucionesPorVenta.set(r.venta_origen_id, (devolucionesPorVenta.get(r.venta_origen_id) || 0) + Number(r.total));
+        });
+      } catch { /* ignorar */ }
+
+      let result = ventasData.map(venta => {
+        const detalles = (detallesData || [])
+          .filter(d => d.venta_id === venta.id)
+          .map(d => ({
+            id: d.id,
+            cantidad: d.cantidad,
+            cantidad_devuelta: devolucionesMap.get(d.id) || 0,
+            cantidad_disponible: d.cantidad - (devolucionesMap.get(d.id) || 0),
+            precio_unitario: d.precio_unitario,
+            producto_id: d.producto_id,
+            productos: { id: d.producto_id, nombre: productosMap.get(d.producto_id)?.nombre || "Deleted product" },
+          }));
+        return {
+          ...venta,
+          detalle_ventas: detalles,
+          total_devuelto: devolucionesPorVenta.get(venta.id) || 0,
+          tiene_devoluciones: (devolucionesPorVenta.get(venta.id) || 0) > 0,
+          _isWalkin: true,
+        };
+      });
+
+      // Client-side filter by partial invoice ID
+      if (searchTerm.trim().length >= 4) {
+        result = result.filter(v => v.id.toLowerCase().includes(searchTerm.trim().toLowerCase()));
+      }
+
+      setClientSalesHistory(result);
+    } catch (err) {
+      console.error("Walk-in return load error:", err);
+      setClientSalesHistory([]);
+    } finally {
+      setWalkinLoading(false);
+    }
+  }
 
   /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
   useEffect(() => {
@@ -4524,10 +4632,99 @@ function renderStepClient() {
 
   return (
     <div className="space-y-4">
+
+      {/* ── Walk-in Return mode panel ────────────────── */}
+      {appMode === 'devolucion' && (
+        <div className="bg-orange-50 border-2 border-orange-300 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🔄</span>
+              <div>
+                <div className="font-bold text-orange-900 text-sm">Return Mode Active</div>
+                <div className="text-orange-700 text-xs">Search a customer below, or tap Walk-in for a sale without client</div>
+              </div>
+            </div>
+            <button
+              onClick={() => { setAppMode('venta'); setWalkinDevolucion(false); setClientSalesHistory([]); }}
+              className="text-xs bg-orange-100 hover:bg-orange-200 text-orange-800 font-semibold px-3 py-1.5 rounded-lg transition-colors"
+            >✕ Exit Return Mode</button>
+          </div>
+
+          {/* Walk-in option */}
+          {!walkinDevolucion ? (
+            <button
+              onClick={() => { setWalkinDevolucion(true); loadWalkinSales(""); }}
+              className="w-full flex items-center gap-3 bg-white border-2 border-orange-200 hover:border-orange-400 rounded-xl px-4 py-3 transition-all active:scale-[0.99]"
+            >
+              <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <span className="text-xl">🧾</span>
+              </div>
+              <div className="text-left">
+                <div className="font-bold text-gray-900 text-sm">Walk-in Return (No Client)</div>
+                <div className="text-gray-500 text-xs">Return a sale that was made without a customer account</div>
+              </div>
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={walkinSearch}
+                  onChange={(e) => { setWalkinSearch(e.target.value); loadWalkinSales(e.target.value); }}
+                  placeholder="Search by Invoice # (last 8 chars)…"
+                  className="flex-1 border-2 border-orange-300 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none"
+                  autoFocus
+                />
+                <button
+                  onClick={() => { setWalkinDevolucion(false); setWalkinSearch(""); setClientSalesHistory([]); }}
+                  className="text-xs text-orange-600 underline px-2"
+                >Cancel</button>
+              </div>
+              {walkinLoading && <div className="text-xs text-orange-600 text-center py-2">Loading walk-in sales…</div>}
+              {!walkinLoading && clientSalesHistory.length === 0 && (
+                <div className="text-xs text-gray-500 text-center py-2">No walk-in sales found</div>
+              )}
+              {!walkinLoading && clientSalesHistory.length > 0 && (
+                <div className="space-y-2 max-h-52 overflow-y-auto">
+                  {clientSalesHistory.map(sale => {
+                    const alreadyReturned = (sale.total_devuelto || 0) >= (sale.total || sale.total_venta || 0);
+                    return (
+                      <button
+                        key={sale.id}
+                        onClick={() => { if (!alreadyReturned) setSelectedInvoice(sale); }}
+                        disabled={alreadyReturned}
+                        className={`w-full text-left bg-white border rounded-xl px-3 py-2 text-sm transition-all flex justify-between items-center ${
+                          alreadyReturned ? "opacity-40 cursor-not-allowed border-gray-200"
+                            : selectedInvoice?.id === sale.id ? "border-orange-500 ring-2 ring-orange-200"
+                            : "border-orange-100 hover:border-orange-400"
+                        }`}
+                      >
+                        <div>
+                          <div className="font-mono font-bold text-gray-700 text-xs">#{sale.id.slice(0,8)}…</div>
+                          <div className="text-[10px] text-gray-500">{new Date(sale.created_at).toLocaleString()}</div>
+                          <div className="text-[10px] text-gray-600 mt-0.5">
+                            {(sale.detalle_ventas || []).map(d => d.productos?.nombre).filter(Boolean).join(", ") || "—"}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0 ml-2">
+                          <div className="font-bold text-gray-800">${Number(sale.total || sale.total_venta || 0).toFixed(2)}</div>
+                          {sale.tiene_devoluciones && <div className="text-[9px] text-yellow-700 bg-yellow-100 px-1 rounded">partial return</div>}
+                          {alreadyReturned && <div className="text-[9px] text-gray-500">fully returned</div>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold text-gray-800 flex items-center">
-            👤 Select Client
+            {appMode === 'devolucion' ? '🔍 Search Customer for Return' : '👤 Select Client'}
           </h2>
           {migrationMode && (
             <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
@@ -4615,7 +4812,7 @@ function renderStepClient() {
   type="text"
   placeholder={
     appMode === 'devolucion'
-      ? "🔍 Escribe #devolucion para salir, o busca cliente..."
+      ? "🔍 Type #return to exit, or search customer…"
       : "🔍 Name · Phone · Email · Address · Business..."
   }
   className={`w-full border-2 rounded-lg p-4 text-lg outline-none transition-all ${
@@ -4627,17 +4824,21 @@ function renderStepClient() {
   onChange={(e) => {
     const value = e.target.value;
     
-    // 🆕 DEVOLUCIONES: Detectar código de devolución
-    if (value.trim().toLowerCase() === "#devolucion") {
+    // Activar modo devolución con #return
+    if (value.trim().toLowerCase() === "#return") {
       setAppMode('devolucion');
+      setWalkinDevolucion(false);
       setClientSearch("");
-      toast.return("Modo devolución activado — busca el cliente para ver sus facturas");
+      toast.return("🔄 Return mode ON — search customer or tap 'Walk-in Return'");
       return;
     }
 
-    // Salir del modo devolución si borran todo (opcional)
-    if (appMode === 'devolucion' && value === "") {
-      // setAppMode('venta'); // Descomentar si quieres salida automática
+    // Salir del modo devolución con #return escrito de nuevo o #exit
+    if (appMode === 'devolucion' && (value.trim().toLowerCase() === "#exit")) {
+      setAppMode('venta');
+      setWalkinDevolucion(false);
+      setClientSearch("");
+      return;
     }
 
     setClientSearch(value);
@@ -5938,8 +6139,8 @@ function renderStepPayment() {
 
           <div className="flex-1" />
 
-          {/* Print last receipt */}
-          {lastReceiptRef.current && (
+          {/* Print last receipt — store mode only */}
+          {storeMode && lastReceiptRef.current && (
             <button
               onClick={() => printThermalReceipt(lastReceiptRef.current)}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all"
@@ -5949,14 +6150,16 @@ function renderStepPayment() {
             </button>
           )}
 
-          {/* Open cash drawer */}
-          <button
-            onClick={() => openCashDrawer()}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-all"
-          >
-            <span>💵</span>
-            <span>Drawer</span>
-          </button>
+          {/* Open cash drawer — store mode only */}
+          {storeMode && (
+            <button
+              onClick={() => openCashDrawer()}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-all"
+            >
+              <span>💵</span>
+              <span>Drawer</span>
+            </button>
+          )}
 
           {/* Save sale — only on step 3 */}
           {step === 3 && (
@@ -6144,27 +6347,27 @@ function renderStepPayment() {
 
             {/* Actions grid */}
             <div className="p-5 grid grid-cols-2 gap-3">
-              {/* Print Receipt */}
-              <button
-                onClick={() => {
-                  if (lastReceiptRef.current) printThermalReceipt(lastReceiptRef.current);
-                }}
-                className="flex flex-col items-center gap-2 bg-gray-900 hover:bg-black text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
-              >
-                <span className="text-3xl">🖨️</span>
-                <span className="font-bold text-sm">Print Receipt</span>
-                <kbd className="bg-white/20 text-white/80 rounded px-1.5 py-0.5 text-[10px] font-mono">F6</kbd>
-              </button>
+              {/* Print Receipt — store mode only */}
+              {storeMode && (
+                <button
+                  onClick={() => { if (lastReceiptRef.current) printThermalReceipt(lastReceiptRef.current); }}
+                  className="flex flex-col items-center gap-2 bg-gray-900 hover:bg-black text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
+                >
+                  <span className="text-3xl">🖨️</span>
+                  <span className="font-bold text-sm">Print Receipt</span>
+                </button>
+              )}
 
-              {/* Open Cash Drawer */}
-              <button
-                onClick={() => openCashDrawer()}
-                className="flex flex-col items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
-              >
-                <span className="text-3xl">💵</span>
-                <span className="font-bold text-sm">Open Drawer</span>
-                <kbd className="bg-white/20 text-white/80 rounded px-1.5 py-0.5 text-[10px] font-mono">F5</kbd>
-              </button>
+              {/* Open Cash Drawer — store mode only */}
+              {storeMode && (
+                <button
+                  onClick={() => openCashDrawer()}
+                  className="flex flex-col items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
+                >
+                  <span className="text-3xl">💵</span>
+                  <span className="font-bold text-sm">Open Drawer</span>
+                </button>
+              )}
 
               {/* Send SMS */}
               {lastReceiptRef.current && (selectedClient?.telefono) && (

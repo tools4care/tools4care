@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { usePermisos } from "./hooks/usePermisos";
+import { useStoreMode } from "./hooks/useStoreMode";
 // ICONS Lucide
 import {
   LayoutDashboard,
@@ -53,6 +54,7 @@ export default function Sidebar() {
   const { van, setVan } = useVan();
   const location = useLocation();
   const { isAdmin, isSupervisor, puedeVerModulo, puedeCambiarVan } = usePermisos();
+  const { storeMode, toggle: toggleStoreMode } = useStoreMode();
 
   // ── Main menu filtered by per-user module permissions ──
   const allMenuItems = [
@@ -150,7 +152,25 @@ export default function Sidebar() {
           <LogOut size={20} /> Log out
         </button>
 
-        <div className="text-xs mt-4 text-gray-300">
+        {/* Store Mode toggle */}
+        <button
+          onClick={toggleStoreMode}
+          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all text-sm font-semibold border ${
+            storeMode
+              ? "bg-blue-900/60 border-blue-600 text-blue-200"
+              : "bg-gray-800/60 border-gray-600 text-gray-400"
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <span>{storeMode ? "🏪" : "🚐"}</span>
+            <span>{storeMode ? "Physical Store" : "Van / Route"}</span>
+          </span>
+          <span className={`w-9 h-5 rounded-full flex items-center transition-all px-0.5 ${storeMode ? "bg-blue-500" : "bg-gray-600"}`}>
+            <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${storeMode ? "translate-x-4" : "translate-x-0"}`} />
+          </span>
+        </button>
+
+        <div className="text-xs mt-2 text-gray-300">
           <div className="mb-1 text-gray-400">User:</div>
           <div className="font-semibold truncate">{usuario?.nombre || usuario?.email || "—"}</div>
           <div className="mb-1 mt-2 text-gray-400">VAN:</div>
