@@ -450,6 +450,117 @@ async function sendEmailSmart({ to, subject, html, text }) {
 }
 
 
+/* ========================= Thermal Printer / Cash Drawer ========================= */
+function printThermalReceipt(payload) {
+  const {
+    clientName, creditNumber, dateStr, pointOfSaleName,
+    items = [], saleTotal, paid, change,
+    prevBalance, saleRemaining, newDue,
+  } = payload || {};
+
+  const fmtR = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const divider = "─".repeat(32);
+  const dashed  = "- ".repeat(16);
+
+  const itemsHTML = (items || []).map(it =>
+    `<tr>
+      <td style="max-width:140px;word-break:break-word">${it.name || "—"}</td>
+      <td style="text-align:center">${it.qty}</td>
+      <td style="text-align:right">${fmtR(it.unit)}</td>
+      <td style="text-align:right;font-weight:bold">${fmtR(it.subtotal)}</td>
+    </tr>`
+  ).join("");
+
+  const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<style>
+  @page { size: 80mm auto; margin: 3mm 4mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; font-size: 11px; width: 72mm; margin: 0; color: #000; }
+  .center { text-align: center; }
+  .bold   { font-weight: bold; }
+  .lg     { font-size: 15px; }
+  .xl     { font-size: 20px; font-weight: 900; }
+  .divider{ border-top: 1px dashed #000; margin: 4px 0; }
+  table   { width: 100%; border-collapse: collapse; }
+  th      { font-size: 9px; text-transform: uppercase; border-bottom: 1px solid #000; padding: 1px 2px; }
+  td      { padding: 1px 2px; vertical-align: top; font-size: 10px; }
+  .total-row td { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 3px; }
+  .change-box { background:#000; color:#fff; text-align:center; padding:6px; margin:6px 0; border-radius:3px; }
+  .change-box .label { font-size:10px; letter-spacing:1px; text-transform:uppercase; }
+  .change-box .amount { font-size:26px; font-weight:900; letter-spacing:2px; }
+  .balance-box { border: 2px solid #000; padding: 4px; margin: 4px 0; text-align:center; }
+</style>
+</head><body>
+<div class="center bold" style="font-size:16px;letter-spacing:2px;">${COMPANY_NAME}</div>
+${pointOfSaleName ? `<div class="center" style="font-size:10px;">${pointOfSaleName}</div>` : ""}
+<div class="center" style="font-size:9px;margin-bottom:4px;">${dateStr || new Date().toLocaleString()}</div>
+<div class="divider"></div>
+
+${clientName ? `<div><span class="bold">Customer:</span> ${clientName}${creditNumber ? ` (#${creditNumber})` : ""}</div>` : '<div class="center" style="font-size:10px">Walk-in / Quick Sale</div>'}
+<div class="divider"></div>
+
+<table>
+  <thead><tr>
+    <th style="text-align:left">Item</th>
+    <th>Qty</th>
+    <th style="text-align:right">Price</th>
+    <th style="text-align:right">Total</th>
+  </tr></thead>
+  <tbody>${itemsHTML}</tbody>
+  <tfoot>
+    <tr class="total-row">
+      <td colspan="3">SALE TOTAL</td>
+      <td style="text-align:right">${fmtR(saleTotal)}</td>
+    </tr>
+  </tfoot>
+</table>
+
+<div class="divider"></div>
+<div style="display:flex;justify-content:space-between"><span>Paid:</span><span class="bold">${fmtR(paid)}</span></div>
+${Number(prevBalance||0) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Prev. Balance:</span><span class="bold">${fmtR(prevBalance)}</span></div>` : ""}
+${Number(saleRemaining||0) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Remaining (this sale):</span><span class="bold">${fmtR(saleRemaining)}</span></div>` : ""}
+${Number(newDue||0) > 0 ? `<div class="balance-box"><div style="font-size:9px;letter-spacing:1px;">BALANCE DUE</div><div style="font-size:18px;font-weight:900;">${fmtR(newDue)}</div></div>` : ""}
+
+${Number(change||0) > 0 ? `<div class="change-box"><div class="label">💵 Change to give back</div><div class="amount">${fmtR(change)}</div></div>` : ""}
+
+<div class="divider"></div>
+<div class="center" style="font-size:9px;margin-top:4px;">Thank you for your purchase!</div>
+<div class="center" style="font-size:8px;color:#555;">${COMPANY_EMAIL}</div>
+<div style="height:20mm"></div>
+<script>
+  window.onload = function() {
+    setTimeout(function() {
+      window.print();
+      window.onafterprint = function() { window.close(); };
+    }, 300);
+  };
+</script>
+</body></html>`;
+
+  const w = window.open("", "_blank", "width=400,height=600");
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+  } else {
+    alert("Pop-up blocked. Allow pop-ups for this site to print receipts.");
+  }
+}
+
+function openCashDrawer() {
+  // Standard approach: trigger a minimal print job.
+  // If the cash drawer is connected to the receipt printer (RJ11 port),
+  // it opens automatically when any print job is sent to that printer.
+  const html = `<!DOCTYPE html><html><head>
+    <style>@page{size:80mm 10mm;margin:0}body{width:0;height:0}</style>
+  </head><body>
+    <script>window.onload=function(){window.print();window.onafterprint=function(){window.close();};}<\/script>
+  </body></html>`;
+  const w = window.open("", "_blank", "width=1,height=1");
+  if (w) { w.document.write(html); w.document.close(); }
+}
+
 async function getStockMapForVan(vanId, ids = []) {
   const map = new Map();
   if (!vanId || !Array.isArray(ids) || ids.length === 0) return map;
@@ -979,6 +1090,10 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
   // ---- GUEST CONTACT MODAL (venta sin cliente)
   const [guestContactModal, setGuestContactModal] = useState(null); // { resolve }
+
+  // ---- POS ACTIONS (shown after sale saved: print, SMS, email, drawer)
+  const [showPOSActions, setShowPOSActions] = useState(false);
+  const lastReceiptRef = useRef(null); // stores last receipt payload for reprint
 
   // ---- SALE BLOCK / OVERRIDE MODAL
   const [saleBlockModal, setSaleBlockModal] = useState(null); // { type, message, resolve }
@@ -1895,35 +2010,66 @@ useEffect(() => {
     if (step === 2) reloadInventory();
   }, [step]);
 
-  /* ---------- ⌨️ Desktop keyboard shortcuts ---------- */
+  /* ---------- ⌨️ Keyboard shortcuts ---------- */
   useEffect(() => {
     const handler = (e) => {
-      // F2 = focus client search (step 1)
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const inInput = tag === "input" || tag === "select" || tag === "textarea";
+
+      // F2 = focus client search (any step)
       if (e.key === "F2") {
         e.preventDefault();
-        if (step === 1) {
-          const input = document.querySelector('input[placeholder*="Name"]') ||
-                        document.querySelector('input[placeholder*="Name · Phone"]');
-          if (input) input.focus();
-        }
+        const el = document.getElementById("client-search-input");
+        if (el) { setStep(1); el.focus(); el.select(); }
+        return;
       }
-      // Enter = save sale (step 3, only when not already in an input/select)
-      if (e.key === "Enter" && step === 3 && !saving) {
-        const tag = document.activeElement?.tagName?.toLowerCase();
-        if (tag !== "input" && tag !== "select" && tag !== "textarea") {
-          e.preventDefault();
-          saveSale();
-        }
+
+      // F3 = focus product search (step 2)
+      if (e.key === "F3") {
+        e.preventDefault();
+        const el = document.getElementById("product-search-input");
+        if (el) { setStep(2); el.focus(); el.select(); }
+        return;
       }
-      // Escape = go back one step
+
+      // F4 = save sale (step 3)
+      if (e.key === "F4" && step === 3 && !saving) {
+        e.preventDefault();
+        saveSale();
+        return;
+      }
+
+      // F5 = open cash drawer
+      if (e.key === "F5") {
+        e.preventDefault();
+        openCashDrawer();
+        return;
+      }
+
+      // F6 = print last receipt
+      if (e.key === "F6" && lastReceiptRef.current) {
+        e.preventDefault();
+        printThermalReceipt(lastReceiptRef.current);
+        return;
+      }
+
+      // Enter (outside inputs) = save sale on step 3
+      if (e.key === "Enter" && step === 3 && !saving && !inInput) {
+        e.preventDefault();
+        saveSale();
+        return;
+      }
+
+      // Escape = close POS actions or go back one step
       if (e.key === "Escape") {
+        if (showPOSActions) { setShowPOSActions(false); return; }
         if (step === 3) setStep(2);
         else if (step === 2) setStep(1);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [step, saving]); // eslint-disable-line
+  }, [step, saving, showPOSActions]); // eslint-disable-line
 
   /* ---------- Filtro del buscador ---------- */
  useEffect(() => {
@@ -3707,6 +3853,10 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         window.pendingSaleId = null;
       }
 
+      // ✅ Store receipt for reprint / POS actions
+      lastReceiptRef.current = payload;
+      setShowPOSActions(true);
+
       clearSale();
 
     } catch (err) {
@@ -4474,10 +4624,11 @@ function renderStepClient() {
 
       <div className="relative">
 <input
+  id="client-search-input"
   type="text"
   placeholder={
-    appMode === 'devolucion' 
-      ? "🔍 Escribe #devolucion para salir, o busca cliente..." 
+    appMode === 'devolucion'
+      ? "🔍 Escribe #devolucion para salir, o busca cliente..."
       : "🔍 Name · Phone · Email · Address · Business..."
   }
   className={`w-full border-2 rounded-lg p-4 text-lg outline-none transition-all ${
@@ -4728,7 +4879,15 @@ function renderStepProducts() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
+        {/* Keyboard hints — desktop only */}
+        <div className="hidden lg:flex items-center gap-3 text-xs text-gray-400">
+          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">F3</kbd> Search product</span>
+          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">F2</kbd> Back to client</span>
+          <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">↑↓ Enter</kbd> Navigate & add</span>
+        </div>
+      </div>
 
       {/* ── CART (top) ───────────────────────────────── */}
       {cartSafe.length > 0 && (
@@ -4887,6 +5046,7 @@ function renderStepProducts() {
       {/* ── SEARCH BAR ───────────────────────────────── */}
       <div className="flex gap-2">
         <input
+          id="product-search-input"
           ref={productSearchRef}
           type="text"
           placeholder="🔍 Search by name, code or brand…   ↓ navigate · ↵ add first · Esc clear"
@@ -5535,10 +5695,20 @@ function renderStepPayment() {
 
       {/* ── NAVIGATION ───────────────────────────────── */}
       {/* Keyboard hint — desktop only */}
-      <div className="hidden lg:flex items-center gap-4 text-xs text-gray-400 pt-1">
-        <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600">Enter</kbd> Save Sale</span>
-        <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600">Esc</kbd> Back</span>
-        <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600">F2</kbd> Search customer</span>
+      <div className="hidden lg:flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-400 pt-1 border-t border-gray-100">
+        {[
+          ["Enter / F4", "Save Sale"],
+          ["Esc", "Back"],
+          ["F2", "Search customer"],
+          ["F3", "Search product"],
+          ["F5", "Open drawer"],
+          ["F6", "Reprint receipt"],
+        ].map(([k, v]) => (
+          <span key={k} className="flex items-center gap-1">
+            <kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">{k}</kbd>
+            <span>{v}</span>
+          </span>
+        ))}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 pt-2">
@@ -5878,6 +6048,88 @@ function renderStepPayment() {
             r(null);
           }}
         />
+      )}
+
+      {/* ── POS Actions modal (after sale saved) ── */}
+      {showPOSActions && (
+        <div className="fixed inset-0 z-[990] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-5 text-center">
+              <div className="text-4xl mb-1">✅</div>
+              <div className="text-white font-black text-xl">Sale Saved!</div>
+              <div className="text-green-100 text-sm mt-1">What would you like to do next?</div>
+            </div>
+
+            {/* Actions grid */}
+            <div className="p-5 grid grid-cols-2 gap-3">
+              {/* Print Receipt */}
+              <button
+                onClick={() => {
+                  if (lastReceiptRef.current) printThermalReceipt(lastReceiptRef.current);
+                }}
+                className="flex flex-col items-center gap-2 bg-gray-900 hover:bg-black text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
+              >
+                <span className="text-3xl">🖨️</span>
+                <span className="font-bold text-sm">Print Receipt</span>
+                <kbd className="bg-white/20 text-white/80 rounded px-1.5 py-0.5 text-[10px] font-mono">F6</kbd>
+              </button>
+
+              {/* Open Cash Drawer */}
+              <button
+                onClick={() => openCashDrawer()}
+                className="flex flex-col items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
+              >
+                <span className="text-3xl">💵</span>
+                <span className="font-bold text-sm">Open Drawer</span>
+                <kbd className="bg-white/20 text-white/80 rounded px-1.5 py-0.5 text-[10px] font-mono">F5</kbd>
+              </button>
+
+              {/* Send SMS */}
+              {lastReceiptRef.current && (selectedClient?.telefono) && (
+                <button
+                  onClick={async () => {
+                    const text = composeReceiptMessageEN(lastReceiptRef.current);
+                    await sendSmsIfPossible({ phone: selectedClient.telefono, text });
+                  }}
+                  className="flex flex-col items-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
+                >
+                  <span className="text-3xl">💬</span>
+                  <span className="font-bold text-sm">Send SMS</span>
+                  <span className="text-green-100 text-[10px] truncate max-w-full">{selectedClient?.telefono}</span>
+                </button>
+              )}
+
+              {/* Send Email */}
+              {lastReceiptRef.current && (selectedClient?.email) && (
+                <button
+                  onClick={async () => {
+                    const text = composeReceiptMessageEN(lastReceiptRef.current);
+                    await sendEmailSmart({ to: selectedClient.email, subject: `${COMPANY_NAME} — Receipt`, text });
+                  }}
+                  className="flex flex-col items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
+                >
+                  <span className="text-3xl">📧</span>
+                  <span className="font-bold text-sm">Send Email</span>
+                  <span className="text-blue-100 text-[10px] truncate max-w-full">{selectedClient?.email}</span>
+                </button>
+              )}
+
+              {/* New Sale — spans full width */}
+              <button
+                onClick={() => setShowPOSActions(false)}
+                className="col-span-2 flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
+              >
+                <span className="text-2xl">➕</span>
+                <div className="text-left">
+                  <div className="font-bold text-base">New Sale</div>
+                  <div className="text-emerald-100 text-xs">Start the next transaction</div>
+                </div>
+                <kbd className="ml-auto bg-white/20 text-white/80 rounded px-1.5 py-0.5 text-[10px] font-mono">Esc</kbd>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Channel selection modal ── */}
