@@ -1509,26 +1509,30 @@ function PaymentBreakdownReport({ van, usuario }) {
     setLoading(true); setError(null);
     try {
       const { start, end } = dateRangeBounds(from, to);
-      const dayMap = {}; // iso → { cash, card, transfer, zelle, cashapp, venmo, applepay, count }
+      const dayMap = {};
       const txList = [];
 
       const addDay = (iso) => {
-        if (!dayMap[iso]) dayMap[iso] = { fecha: iso, cash: 0, card: 0, transfer: 0, zelle: 0, cashapp: 0, venmo: 0, applepay: 0, count: 0 };
+        if (!dayMap[iso]) dayMap[iso] = {
+          fecha: iso,
+          cash: 0, card: 0,
+          zelle: 0, cashapp: 0, venmo: 0, applepay: 0, transfer_other: 0,
+          count: 0,
+        };
       };
 
-      /* ─ 1. Ventas (for Cash, Card, and "All" totals) ─ */
-      const needVentas = ["all", "efectivo", "tarjeta"].includes(metodo);
-      if (needVentas) {
+      /* ─ Step 1: ALL ventas in range (always — we need the pago JSON for sub-types) ─ */
+      {
         let q = supabase
           .from("ventas")
-          .select("id,created_at,fecha,pago_efectivo,pago_tarjeta,pago_transferencia,total_venta,cliente_id,clientes:cliente_id(nombre),usuario_id,usuarios:usuario_id(nombre)")
+          .select("id,created_at,fecha,pago_efectivo,pago_tarjeta,pago_transferencia,pago,total_venta,cliente_id,clientes:cliente_id(nombre),usuario_id,usuarios:usuario_id(nombre)")
           .eq("van_id", effectiveVanId)
           .gte("created_at", start)
           .lte("created_at", end)
           .neq("tipo", "devolucion")
           .order("created_at", { ascending: false });
 
-        if (!isAdmin)      q = q.eq("usuario_id", usuario.id);
+        if (!isAdmin)          q = q.eq("usuario_id", usuario.id);
         else if (driverFiltro) q = q.eq("usuario_id", driverFiltro);
 
         const { data: ventas, error: vErr } = await q;
@@ -1537,29 +1541,88 @@ function PaymentBreakdownReport({ van, usuario }) {
         (ventas || []).forEach(v => {
           const iso = String(v.fecha || v.created_at || "").slice(0, 10);
           addDay(iso);
-          const cash     = Number(v.pago_efectivo     || 0);
-          const card     = Number(v.pago_tarjeta      || 0);
-          const transfer = Number(v.pago_transferencia || 0);
 
-          if (metodo === "all" || metodo === "efectivo") dayMap[iso].cash     += cash;
-          if (metodo === "all" || metodo === "tarjeta")  dayMap[iso].card     += card;
-          if (metodo === "all")                          dayMap[iso].transfer += transfer;
-          dayMap[iso].count++;
+          const cash = Number(v.pago_efectivo     || 0);
+          const card = Number(v.pago_tarjeta      || 0);
+          const totalTransfer = Number(v.pago_transferencia || 0);
 
-          const filteredAmt =
-            metodo === "efectivo" ? cash :
-            metodo === "tarjeta"  ? card :
-            cash + card + transfer;
+          // Extract sub-type amounts from JSON column pago.transferencia_detalle
+          const td = v.pago?.transferencia_detalle || {};
+          const zelleAmt    = Number(td.zelle    || 0);
+          const cashappAmt  = Number(td.cashapp  || 0);
+          const venmoAmt    = Number(td.venmo    || 0);
+          const applepayAmt = Number(td.applepay || 0);
+          // Anything not labelled → "other transfer"
+          const classifiedTransfer = zelleAmt + cashappAmt + venmoAmt + applepayAmt;
+          const otherTransfer = Math.max(0, totalTransfer - classifiedTransfer);
+
+          // Decide what to count based on active filter
+          let shouldCount = false;
+          let filteredAmt = 0;
+
+          if (metodo === "all") {
+            shouldCount = (cash + card + totalTransfer) > 0;
+            dayMap[iso].cash          += cash;
+            dayMap[iso].card          += card;
+            dayMap[iso].zelle         += zelleAmt;
+            dayMap[iso].cashapp       += cashappAmt;
+            dayMap[iso].venmo         += venmoAmt;
+            dayMap[iso].applepay      += applepayAmt;
+            dayMap[iso].transfer_other += otherTransfer;
+            filteredAmt = cash + card + totalTransfer;
+          } else if (metodo === "efectivo") {
+            shouldCount = cash > 0;
+            dayMap[iso].cash += cash;
+            filteredAmt = cash;
+          } else if (metodo === "tarjeta") {
+            shouldCount = card > 0;
+            dayMap[iso].card += card;
+            filteredAmt = card;
+          } else if (metodo === "transfer_all") {
+            shouldCount = totalTransfer > 0;
+            dayMap[iso].zelle         += zelleAmt;
+            dayMap[iso].cashapp       += cashappAmt;
+            dayMap[iso].venmo         += venmoAmt;
+            dayMap[iso].applepay      += applepayAmt;
+            dayMap[iso].transfer_other += otherTransfer;
+            filteredAmt = totalTransfer;
+          } else if (metodo === "zelle") {
+            shouldCount = zelleAmt > 0;
+            dayMap[iso].zelle += zelleAmt;
+            filteredAmt = zelleAmt;
+          } else if (metodo === "cashapp") {
+            shouldCount = cashappAmt > 0;
+            dayMap[iso].cashapp += cashappAmt;
+            filteredAmt = cashappAmt;
+          } else if (metodo === "venmo") {
+            shouldCount = venmoAmt > 0;
+            dayMap[iso].venmo += venmoAmt;
+            filteredAmt = venmoAmt;
+          } else if (metodo === "applepay") {
+            shouldCount = applepayAmt > 0;
+            dayMap[iso].applepay += applepayAmt;
+            filteredAmt = applepayAmt;
+          }
+
+          if (shouldCount) dayMap[iso].count++;
 
           if (filteredAmt > 0) {
+            // Build a readable breakdown string for the TX list
             const parts = [];
-            if (cash > 0)     parts.push(`Cash ${fmtCurrency(cash)}`);
-            if (card > 0)     parts.push(`Card ${fmtCurrency(card)}`);
-            if (transfer > 0) parts.push(`Transfer ${fmtCurrency(transfer)}`);
+            if (metodo === "all" || metodo === "efectivo")     { if (cash > 0) parts.push(`💵 ${fmtCurrency(cash)}`); }
+            if (metodo === "all" || metodo === "tarjeta")      { if (card > 0) parts.push(`💳 ${fmtCurrency(card)}`); }
+            if (metodo === "all" || metodo === "transfer_all" || metodo === "zelle")    { if (zelleAmt > 0)    parts.push(`Zelle ${fmtCurrency(zelleAmt)}`); }
+            if (metodo === "all" || metodo === "transfer_all" || metodo === "cashapp")  { if (cashappAmt > 0)  parts.push(`Cash App ${fmtCurrency(cashappAmt)}`); }
+            if (metodo === "all" || metodo === "transfer_all" || metodo === "venmo")    { if (venmoAmt > 0)    parts.push(`Venmo ${fmtCurrency(venmoAmt)}`); }
+            if (metodo === "all" || metodo === "transfer_all" || metodo === "applepay") { if (applepayAmt > 0) parts.push(`Apple Pay ${fmtCurrency(applepayAmt)}`); }
+            if ((metodo === "all" || metodo === "transfer_all") && otherTransfer > 0)  parts.push(`Transfer ${fmtCurrency(otherTransfer)}`);
+
             txList.push({
-              id: v.id, fecha: v.created_at || v.fecha,
-              tipo: "Sale", cliente: v.clientes?.nombre || "—",
-              metodo_display: parts.join(" + ") || "—",
+              id: v.id,
+              fecha: v.created_at || v.fecha,
+              tipo: "Sale",
+              cliente: v.clientes?.nombre || "—",
+              metodo_display: parts.join(" · ") || normMetodoDisplay(v.pago?.metodos?.[0]?.forma || ""),
               amount: filteredAmt,
               driver: v.usuarios?.nombre || "—",
             });
@@ -1567,50 +1630,51 @@ function PaymentBreakdownReport({ van, usuario }) {
         });
       }
 
-      /* ─ 2. Pagos (for Transfer sub-types + "transfer_all" + standalone CxC in "all") ─ */
-      const needPagos = ["all", "transfer_all", "zelle", "cashapp", "venmo", "applepay"].includes(metodo);
-      if (needPagos) {
+      /* ─ Step 2: Standalone CxC pagos (idem_key IS NULL, Transfer - X) ─ */
+      /* These are payments made from the Clients screen, NOT captured in ventas */
+      {
         let pq = supabase
           .from("pagos")
-          .select("id,monto,metodo_pago,fecha_pago,cliente_id,clientes:cliente_id(nombre),idem_key,van_id")
+          .select("id,monto,metodo_pago,fecha_pago,cliente_id,clientes:cliente_id(nombre)")
           .eq("van_id", effectiveVanId)
+          .is("idem_key", null)
+          .like("metodo_pago", "Transfer - %")
           .gte("fecha_pago", start)
           .lte("fecha_pago", end);
 
-        if (isSubType) {
-          // specific sub-type — include both sale-linked AND standalone
-          pq = pq.ilike("metodo_pago", `%${subTypeLabel[metodo]}%`);
-        } else if (metodo === "transfer_all") {
-          // all transfer methods
-          pq = pq.like("metodo_pago", "Transfer - %");
-        } else {
-          // "all" mode — only standalone CxC transfers (sale transfers counted via ventas columns)
-          pq = pq.like("metodo_pago", "Transfer - %").is("idem_key", null);
-        }
+        // For sub-type: only include matching ones
+        if (isSubType) pq = pq.ilike("metodo_pago", `%${subTypeLabel[metodo]}%`);
 
         const { data: pagosData } = await pq;
 
         (pagosData || []).forEach(p => {
           const iso = String(p.fecha_pago || "").slice(0, 10);
+          if (!iso) return;
+
+          // Only add to dayMap if this metodo filter wants it
+          if (metodo === "efectivo" || metodo === "tarjeta") return; // CxC transfers don't match cash/card
+
           addDay(iso);
           const monto = Number(p.monto || 0);
           const mp    = (p.metodo_pago || "").toLowerCase();
           const disp  = normMetodoDisplay(p.metodo_pago);
 
-          if (mp.includes("zelle"))       dayMap[iso].zelle    += monto;
-          else if (mp.includes("cash app") || mp.includes("cashapp")) dayMap[iso].cashapp += monto;
-          else if (mp.includes("venmo"))  dayMap[iso].venmo    += monto;
-          else if (mp.includes("apple pay") || mp.includes("applepay")) dayMap[iso].applepay += monto;
-          else                            dayMap[iso].transfer += monto;
+          const isZ  = mp.includes("zelle");
+          const isCA = mp.includes("cash app") || mp.includes("cashapp");
+          const isV  = mp.includes("venmo");
+          const isAP = mp.includes("apple pay") || mp.includes("applepay");
 
-          // For sub-type mode also bump the generic transfer bucket
-          if (isSubType) dayMap[iso].transfer += 0; // already counted above
-
+          if (isZ)       dayMap[iso].zelle         += monto;
+          else if (isCA) dayMap[iso].cashapp        += monto;
+          else if (isV)  dayMap[iso].venmo          += monto;
+          else if (isAP) dayMap[iso].applepay       += monto;
+          else           dayMap[iso].transfer_other += monto;
           dayMap[iso].count++;
 
           txList.push({
-            id: p.id, fecha: p.fecha_pago,
-            tipo: p.idem_key ? "Sale Payment" : "CxC Payment",
+            id: `cxc_${p.id}`,
+            fecha: p.fecha_pago,
+            tipo: "CxC Payment",
             cliente: p.clientes?.nombre || "—",
             metodo_display: disp,
             amount: monto,
@@ -1619,15 +1683,19 @@ function PaymentBreakdownReport({ van, usuario }) {
         });
       }
 
-      /* ─ 3. Build per-day rows ─ */
+      /* ─ Step 3: Build per-day rows ─ */
       const rows = Object.values(dayMap)
         .sort((a, b) => a.fecha.localeCompare(b.fecha))
         .map(d => {
-          const transferTotal = d.transfer + d.zelle + d.cashapp + d.venmo + d.applepay;
+          const transferTotal = d.zelle + d.cashapp + d.venmo + d.applepay + d.transfer_other;
           const total =
             metodo === "efectivo"    ? d.cash :
             metodo === "tarjeta"     ? d.card :
-            isSubType || metodo === "transfer_all" ? transferTotal :
+            metodo === "zelle"       ? d.zelle :
+            metodo === "cashapp"     ? d.cashapp :
+            metodo === "venmo"       ? d.venmo :
+            metodo === "applepay"    ? d.applepay :
+            metodo === "transfer_all"? transferTotal :
             d.cash + d.card + transferTotal; // all
           return { ...d, transferTotal, total };
         });
@@ -1649,6 +1717,7 @@ function PaymentBreakdownReport({ van, usuario }) {
     venmo:    dayRows.reduce((s, r) => s + r.venmo, 0),
     applepay: dayRows.reduce((s, r) => s + r.applepay, 0),
     transfer: dayRows.reduce((s, r) => s + r.transferTotal, 0),
+    transfer_other: dayRows.reduce((s, r) => s + (r.transfer_other || 0), 0),
     count:    dayRows.reduce((s, r) => s + r.count, 0),
   }), [dayRows]);
 
@@ -1661,7 +1730,7 @@ function PaymentBreakdownReport({ van, usuario }) {
     "Cash App":r.cashapp,
     Venmo:     r.venmo,
     "Apple Pay":r.applepay,
-    Transfer:  r.transfer,
+    Transfer:  r.transfer_other,
   })), [dayRows]);
 
   /* ── Export PDF ── */
@@ -1683,14 +1752,14 @@ function PaymentBreakdownReport({ van, usuario }) {
         r.cashapp  > 0 ? fmtCurrency(r.cashapp)  : "—",
         r.venmo    > 0 ? fmtCurrency(r.venmo)    : "—",
         r.applepay > 0 ? fmtCurrency(r.applepay) : "—",
-        r.transfer > 0 ? fmtCurrency(r.transfer) : "—",
+        r.transfer_other > 0 ? fmtCurrency(r.transfer_other) : "—",
         fmtCurrency(r.total),
       ]),
       foot: [["TOTAL", totals.count,
         fmtCurrency(totals.cash), fmtCurrency(totals.card),
         fmtCurrency(totals.zelle), fmtCurrency(totals.cashapp),
         fmtCurrency(totals.venmo), fmtCurrency(totals.applepay),
-        fmtCurrency(totals.transfer), fmtCurrency(totals.total)]],
+        fmtCurrency(totals.transfer_other), fmtCurrency(totals.total)]],
       styles: { fontSize: 8 },
       headStyles: { fillColor: [37,99,235], textColor: 255, fontStyle: "bold" },
       footStyles: { fillColor: [239,246,255], fontStyle: "bold" },
@@ -1895,7 +1964,7 @@ function PaymentBreakdownReport({ van, usuario }) {
                   {(metodo === "all" || metodo === "transfer_all" || metodo === "cashapp")  && <td className="px-4 py-2.5 text-green-700  font-medium">{r.cashapp  > 0 ? fmtCurrency(r.cashapp)  : <span className="text-gray-300">—</span>}</td>}
                   {(metodo === "all" || metodo === "transfer_all" || metodo === "venmo")    && <td className="px-4 py-2.5 text-sky-700    font-medium">{r.venmo    > 0 ? fmtCurrency(r.venmo)    : <span className="text-gray-300">—</span>}</td>}
                   {(metodo === "all" || metodo === "transfer_all" || metodo === "applepay") && <td className="px-4 py-2.5 text-gray-700   font-medium">{r.applepay > 0 ? fmtCurrency(r.applepay) : <span className="text-gray-300">—</span>}</td>}
-                  {(metodo === "all" || metodo === "transfer_all") && <td className="px-4 py-2.5 text-blue-700 font-medium">{r.transfer > 0 ? fmtCurrency(r.transfer) : <span className="text-gray-300">—</span>}</td>}
+                  {(metodo === "all" || metodo === "transfer_all") && <td className="px-4 py-2.5 text-blue-700 font-medium">{r.transfer_other > 0 ? fmtCurrency(r.transfer_other) : <span className="text-gray-300">—</span>}</td>}
                   <td className="px-4 py-2.5 font-bold text-blue-800">{fmtCurrency(r.total)}</td>
                 </tr>
               ))}
@@ -1910,7 +1979,7 @@ function PaymentBreakdownReport({ van, usuario }) {
                 {(metodo === "all" || metodo === "transfer_all" || metodo === "cashapp")  && <td className="px-4 py-3 text-green-700">{fmtCurrency(totals.cashapp)}</td>}
                 {(metodo === "all" || metodo === "transfer_all" || metodo === "venmo")    && <td className="px-4 py-3 text-sky-700">{fmtCurrency(totals.venmo)}</td>}
                 {(metodo === "all" || metodo === "transfer_all" || metodo === "applepay") && <td className="px-4 py-3 text-gray-700">{fmtCurrency(totals.applepay)}</td>}
-                {(metodo === "all" || metodo === "transfer_all") && <td className="px-4 py-3 text-blue-700">{fmtCurrency(totals.transfer)}</td>}
+                {(metodo === "all" || metodo === "transfer_all") && <td className="px-4 py-3 text-blue-700">{fmtCurrency(totals.transfer_other)}</td>}
                 <td className="px-4 py-3 text-blue-800 text-base">{fmtCurrency(totals.total)}</td>
               </tr>
             </tfoot>
