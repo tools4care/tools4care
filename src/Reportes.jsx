@@ -1483,7 +1483,7 @@ function PaymentBreakdownReport({ van, usuario }) {
   /* ── Load vans + drivers (admin) ── */
   useEffect(() => {
     if (!isAdmin) return;
-    supabase.from("vans").select("id,nombre_van,nombre").order("nombre_van")
+    supabase.from("vans").select("id,nombre_van").order("nombre_van")
       .then(({ data }) => setVans(data || []));
     supabase.from("usuarios").select("id,nombre,email").eq("activo", true)
       .then(({ data }) => setDrivers(data || []));
