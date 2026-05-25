@@ -362,6 +362,30 @@ export default function CierreVan() {
           setAbonosCxC(pagosData || []);
         } catch (_) { /* pagos table unavailable */ }
 
+        // ── Descontar reembolsos en efectivo del día ──────────────────────
+        // Las devoluciones con estado_pago='reembolsado' representan dinero
+        // que SALIÓ de la caja. El crédito de tienda (credito_tienda) no
+        // afecta la caja, por eso solo filtramos 'reembolsado'.
+        try {
+          const { data: devData } = await supabase
+            .from("ventas")
+            .select("created_at, total_venta")
+            .eq("van_id", van.id)
+            .eq("tipo", "devolucion")
+            .eq("estado_pago", "reembolsado")
+            .gte("created_at", p_from + "T00:00:00")
+            .lte("created_at", p_to + "T23:59:59");
+
+          (devData || []).forEach((r) => {
+            const iso = String(r.created_at || "").slice(0, 10);
+            if (!iso || !fechasSeleccionadas.includes(iso)) return;
+            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
+            const monto = Number(r.total_venta || 0);
+            map[iso].cash          = Math.max(0, (map[iso].cash || 0) - monto);
+            map[iso].cashRefunds   = (map[iso].cashRefunds || 0) + monto;
+          });
+        } catch (_) { /* ignorar si falla */ }
+
         setResumenPorFecha(map);
       } catch (err) {
         console.error("❌ Error loading expected totals:", err);
@@ -427,7 +451,7 @@ useEffect(() => {
         // Usar Eastern Time para los rangos
         const { start, end } = easternDayBounds(fecha);
 
-        // Cargar ventas del día (solo para mostrar)
+        // Cargar ventas del día (solo para mostrar — excluir devoluciones)
         const { data: ventas, error: ventasError } = await supabase
           .from("ventas")
           .select(`
@@ -436,6 +460,7 @@ useEffect(() => {
             pago, metodo_pago
           `)
           .eq("van_id", van.id)
+          .neq("tipo", "devolucion")
           .gte("created_at", start)
           .lte("created_at", end)
           .order("created_at", { ascending: false });
@@ -549,7 +574,7 @@ useEffect(() => {
         const cajaRealFecha = totalReal / fechasSeleccionadas.length;
         const discrepanciaFecha = totalCaja - cajaRealFecha;
 
-        // Total de ventas (solo para registro)
+        // Total de ventas (solo para registro — ya excluye devoluciones por el .neq arriba)
         const ventasFecha = ventasPorFecha[fecha] || [];
         const totalVentas = ventasFecha.reduce(
           (sum, v) => sum + Number(v.total_venta || 0),
@@ -1241,22 +1266,24 @@ useEffect(() => {
     });
 
     // 🎯 TOTALES DE COBRADO: usar SOLO el RPC (sin duplicación)
+    // cash ya viene descontado de reembolsos en efectivo (ver loadResumen)
     let totalEfectivo = 0;
     let totalTarjeta = 0;
     let totalTransferencia = 0;
+    let totalCashRefunds = 0;
 
     fechasSeleccionadas.forEach((fecha) => {
       const r = resumenPorFecha[fecha];
       if (!r) return;
-      
-      totalEfectivo += Number(r.cash || 0);
-      totalTarjeta += Number(r.card || 0);
-      totalTransferencia += Number(r.transfer || 0);
-      
+
+      totalEfectivo    += Number(r.cash         || 0);
+      totalTarjeta     += Number(r.card         || 0);
+      totalTransferencia += Number(r.transfer   || 0);
+      totalCashRefunds += Number(r.cashRefunds  || 0);
+
       console.log(`📊 Sumando ${fecha}:`, {
-        cash: r.cash,
-        card: r.card,
-        transfer: r.transfer
+        cash: r.cash, card: r.card, transfer: r.transfer,
+        cashRefunds: r.cashRefunds,
       });
     });
 
@@ -1278,10 +1305,11 @@ useEffect(() => {
     });
 
     return {
-      totalVentas,        // Solo para display
-      totalEfectivo,      // Del RPC ✅
-      totalTarjeta,       // Del RPC ✅
-      totalTransferencia, // Del RPC ✅
+      totalVentas,          // Solo para display (sin devoluciones)
+      totalCashRefunds,     // Suma de reembolsos en efectivo del período
+      totalEfectivo,        // Del RPC ya descontado de reembolsos ✅
+      totalTarjeta,         // Del RPC ✅
+      totalTransferencia,   // Del RPC ✅
       totalOtros: 0,
       totalCaja,
       gastosTotal,
@@ -1576,11 +1604,14 @@ useEffect(() => {
               <div className="mb-2">
                 <p className="text-sm text-gray-600">System Total (from RPC)</p>
                 <p className="text-lg font-bold text-green-800">
-                  {totales.totalEfectivo > 0
-                    ? fmtCurrency(totales.totalEfectivo)
-                    : "$0.00"}
+                  {fmtCurrency(totales.totalEfectivo)}
                 </p>
-                <p className="text-xs text-gray-500 mt-1">
+                {totales.totalCashRefunds > 0 && (
+                  <p className="text-xs text-orange-600 mt-0.5">
+                    🔄 Incl. –{fmtCurrency(totales.totalCashRefunds)} cash refunds already deducted
+                  </p>
+                )}
+                <p className="text-xs text-gray-500 mt-0.5">
                   ✅ No duplications
                 </p>
               </div>
