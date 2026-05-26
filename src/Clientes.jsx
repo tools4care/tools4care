@@ -1866,8 +1866,6 @@ const fetchPage = async (opts = {}) => {
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
 
                 {/* Notes */}
                 <div className="md:col-span-2 mt-2">
@@ -1883,6 +1881,9 @@ const fetchPage = async (opts = {}) => {
                     placeholder="Internal notes about this client — payment behavior, preferences, alerts..."
                   />
                 </div>
+
+              </div>
+            </div>
 
             <div className="p-6 bg-gray-50 border-t-2 border-gray-200 flex gap-4">
               <button
