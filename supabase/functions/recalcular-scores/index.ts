@@ -80,9 +80,11 @@ serve(async (req) => {
         batch.map(async ({ id, score }) => {
           if (!id || typeof score !== "number") { skipped++; return; }
 
+          // The view exposes COALESCE(score_credito, 600) AS score_base
+          // so we must write to score_credito, not score_base
           const { error: upErr } = await supabaseAdmin
             .from("clientes")
-            .update({ score_base: score })
+            .update({ score_credito: score })
             .eq("id", id);
 
           if (upErr) {
