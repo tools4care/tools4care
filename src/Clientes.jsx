@@ -655,6 +655,7 @@ export default function Clientes() {
     email: "",
     negocio: "",
     direccion: { calle: "", ciudad: "", estado: "", zip: "" },
+    notas: "",
   });
 
   // Ref para buscar con atajo
@@ -880,7 +881,8 @@ const fetchPage = async (opts = {}) => {
       telefono: telFmt     || "",
       email:   c?.email    || "",
       negocio: c?.negocio  || "",
-      direccion
+      direccion,
+      notas:   c?.notas    || "",
     });
 
     const estadoUpper = (direccion.estado || "").toUpperCase();
@@ -997,6 +999,7 @@ const fetchPage = async (opts = {}) => {
       email: emailFinal,
       negocio: form.negocio,
       direccion: direccionFinal,
+      notas: (form.notas || "").trim(),
     };
 
     if (!clienteSeleccionado) {
@@ -1866,6 +1869,21 @@ const fetchPage = async (opts = {}) => {
               </div>
             </div>
 
+                {/* Notes */}
+                <div className="md:col-span-2 mt-2">
+                  <label className="flex items-center gap-2 font-bold text-gray-700 mb-2">
+                    📝 Notes
+                  </label>
+                  <textarea
+                    name="notas"
+                    rows={3}
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all resize-none text-sm"
+                    value={form.notas ?? ""}
+                    onChange={handleChange}
+                    placeholder="Internal notes about this client — payment behavior, preferences, alerts..."
+                  />
+                </div>
+
             <div className="p-6 bg-gray-50 border-t-2 border-gray-200 flex gap-4">
               <button
                 type="submit"
@@ -2043,6 +2061,14 @@ function ClienteStatsModal({
                 </div>
               )}
             </div>
+
+            {/* Notes banner — visible at a glance when opening the client */}
+            {cliente.notas && (
+              <div className="mt-2 flex items-start gap-2 bg-amber-400/20 border border-amber-300/40 rounded-lg px-3 py-2">
+                <span className="text-amber-200 text-sm shrink-0">📝</span>
+                <span className="text-amber-100 text-xs leading-relaxed whitespace-pre-wrap">{cliente.notas}</span>
+              </div>
+            )}
           </div>
         </div>
 
