@@ -1796,14 +1796,15 @@ export default function CuentasPorCobrar() {
     return { saldoTotal, avgScore, clientes: total };
   }, [rows, total, globalSaldo]);
 
-  // ── Recalculate scores for ALL clients with a balance ──────────────────────
+  // ── Recalculate scores for ALL clients — uses Edge Function (service_role) ──
+  // so it bypasses RLS and can update clients from any van.
   const recalcularTodosLosScores = async () => {
     if (recalculating) return;
     setRecalculating(true);
     setRecalcProgress({ done: 0, total: 0, updated: 0 });
 
     try {
-      // 1. Fetch ALL CxC clients with a balance (no pagination)
+      // 1. Fetch ALL CxC clients with a balance (any van, no pagination)
       const { data: allClientes, error: fetchErr } = await supabase
         .from("v_cxc_cliente_detalle_ext")
         .select("cliente_id, saldo, limite_politica, score_base")
@@ -1816,14 +1817,12 @@ export default function CuentasPorCobrar() {
       const sixMonthsAgo = dayjs().subtract(6, "month").format("YYYY-MM-DD");
       setRecalcProgress({ done: 0, total: clientes.length, updated: 0 });
 
-      let updatedCount = 0;
+      // 2. Calculate new score for each client (read-only, no RLS issue)
+      const updates: { id: string; score: number }[] = [];
 
-      // 2. Process in batches of 10 to avoid rate limits
       for (let i = 0; i < clientes.length; i++) {
         const c = clientes[i];
-
         try {
-          // Fetch payment history for this client
           const [ventasRes, pagosRes] = await Promise.all([
             supabase
               .from("ventas")
@@ -1837,43 +1836,55 @@ export default function CuentasPorCobrar() {
               .gte("fecha_pago", sixMonthsAgo),
           ]);
 
-          const ventas = ventasRes.data || [];
-          const pagos  = pagosRes.data  || [];
-
           const nuevoScore = calcularNuevoScore({
-            ventas,
-            pagos,
+            ventas: ventasRes.data || [],
+            pagos:  pagosRes.data  || [],
             saldo:  Number(c.saldo || 0),
             limite: Number(c.limite_politica || 0),
           });
 
-          // Only write to DB if score actually changed (±5 tolerance)
+          // Only queue if score changed more than ±5
           if (Math.abs(nuevoScore - Number(c.score_base || 0)) > 5) {
-            const { error: updateErr } = await supabase
-              .from("clientes")
-              .update({ score_base: nuevoScore })
-              .eq("id", c.cliente_id);
-
-            if (updateErr) {
-              // 400 = RLS blocked (client belongs to another van) — skip silently
-              if (!updateErr.code || updateErr.code !== "PGRST204") {
-                console.warn(`⚠️ Could not update score for ${c.cliente_id}:`, updateErr.message || updateErr.code);
-              }
-            } else {
-              updatedCount++;
-            }
+            updates.push({ id: c.cliente_id, score: nuevoScore });
           }
-        } catch (clientErr) {
-          console.warn(`⚠️ Score calc error for client ${c.cliente_id}:`, clientErr);
+        } catch (e) {
+          console.warn(`⚠️ Score calc error for ${c.cliente_id}:`, e);
         }
 
-        setRecalcProgress({ done: i + 1, total: clientes.length, updated: updatedCount });
+        setRecalcProgress({ done: i + 1, total: clientes.length, updated: updates.length });
 
-        // Small pause every 10 clients to avoid hammering the API
-        if ((i + 1) % 10 === 0) await new Promise(r => setTimeout(r, 300));
+        // Small pause every 15 clients to avoid rate limits
+        if ((i + 1) % 15 === 0) await new Promise(r => setTimeout(r, 200));
       }
 
-      toast.success(`✅ Scores recalculated — ${updatedCount} of ${clientes.length} updated`);
+      if (updates.length === 0) {
+        toast.success("✅ All scores are already up to date");
+        return;
+      }
+
+      // 3. Send batch to Edge Function (service_role bypasses RLS — any van)
+      const { data: { session } } = await supabase.auth.getSession();
+      const fnUrl = `${import.meta.env.VITE_SB_FUNCTIONS_URL}/recalcular-scores`;
+
+      const res = await fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ updates }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result?.error || `Edge function returned ${res.status}`);
+      }
+
+      toast.success(
+        `✅ Scores updated — ${result.updated} changed, ${result.skipped} skipped, ${result.errors} errors`
+      );
       setReloadTick(t => t + 1);
     } catch (err) {
       console.error("❌ recalcularTodosLosScores error:", err);
