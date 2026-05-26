@@ -1818,7 +1818,7 @@ export default function CuentasPorCobrar() {
       setRecalcProgress({ done: 0, total: clientes.length, updated: 0 });
 
       // 2. Calculate new score for each client (read-only, no RLS issue)
-      const updates: { id: string; score: number }[] = [];
+      const updates = []; // { id: string, score: number }[]
 
       for (let i = 0; i < clientes.length; i++) {
         const c = clientes[i];
