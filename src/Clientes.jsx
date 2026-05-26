@@ -848,8 +848,26 @@ const fetchPage = async (opts = {}) => {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  /** Helper: open client detail with notas fetched from the real table */
+  async function abrirDetalleCliente(cArg, dArg) {
+    const base = dArg ? { ...cArg, direccion: dArg } : cArg;
+    let notas = base?.notas || "";
+    if (base?.id && !notas) {
+      try {
+        const { data } = await supabase
+          .from("clientes")
+          .select("notas")
+          .eq("id", base.id)
+          .maybeSingle();
+        notas = data?.notas || "";
+      } catch (_) { /* keep empty */ }
+    }
+    setClienteSeleccionado({ ...base, notas });
+    setMostrarStats(true);
+  }
+
   /** ================== EDITAR CLIENTE ================== */
-  function handleEditCliente(cArg) {
+  async function handleEditCliente(cArg) {
     const c = cArg || clienteSeleccionado;
     if (!c) return;
 
@@ -876,13 +894,26 @@ const fetchPage = async (opts = {}) => {
 
     const telFmt = formatPhoneForInput(c?.telefono ?? c?.phone ?? "");
 
+    // notas is not in the clientes_balance_v2 view — fetch directly from clientes table
+    let notas = c?.notas || "";
+    if (c?.id && !c?.notas) {
+      try {
+        const { data: notasData } = await supabase
+          .from("clientes")
+          .select("notas")
+          .eq("id", c.id)
+          .maybeSingle();
+        notas = notasData?.notas || "";
+      } catch (_) { /* fallback to empty */ }
+    }
+
     setForm({
       nombre:  c?.nombre  || "",
       telefono: telFmt     || "",
       email:   c?.email    || "",
       negocio: c?.negocio  || "",
       direccion,
-      notas:   c?.notas    || "",
+      notas,
     });
 
     const estadoUpper = (direccion.estado || "").toUpperCase();
@@ -1388,10 +1419,7 @@ const fetchPage = async (opts = {}) => {
                         {/* Balance y abrir Stats tocando el cuerpo */}
                         <button
                           className="mt-2 w-full text-left bg-white/60 rounded-lg p-3 hover:bg-white/80 transition-all"
-                          onClick={() => {
-                            setClienteSeleccionado(c);
-                            setMostrarStats(true);
-                          }}
+                          onClick={() => abrirDetalleCliente(c)}
                         >
                           <div
                             className={`text-2xl font-bold ${
@@ -1432,10 +1460,7 @@ const fetchPage = async (opts = {}) => {
                     <div
                       key={c.id}
                       className="bg-gradient-to-br from-white to-blue-50 border-2 border-blue-100 rounded-2xl p-5 shadow-lg hover:shadow-xl transition-all cursor-pointer"
-                      onClick={() => {
-                        setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
-                        setMostrarStats(true);
-                      }}
+                      onClick={() => abrirDetalleCliente(c, dObj ? d : dRaw)}
                     >
                       <div className="flex justify-between items-start mb-4">
                         <div className="flex items-center gap-3">
@@ -1542,10 +1567,7 @@ const fetchPage = async (opts = {}) => {
                         <tr
                           key={c.id}
                           className="hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 cursor-pointer transition-all duration-200"
-                          onClick={() => {
-                            setClienteSeleccionado({ ...c, direccion: dObj ? d : dRaw });
-                            setMostrarStats(true);
-                          }}
+                          onClick={() => abrirDetalleCliente(c, dObj ? d : dRaw)}
                         >
                           <td className="px-6 py-4">
                             <div className="flex items-center">
