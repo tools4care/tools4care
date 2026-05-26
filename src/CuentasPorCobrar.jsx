@@ -1729,8 +1729,9 @@ export default function CuentasPorCobrar() {
       try {
         let query = supabase
           .from("v_cxc_cliente_detalle_ext")
-          .select("cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual, telefono, direccion, nombre_negocio", 
-            { count: "exact" });
+          .select("cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual, telefono, direccion, nombre_negocio",
+            { count: "exact" })
+          .gt("saldo", 0); // A/R only shows positive balances — negative = customer credit, not debt
 
         if (q?.trim()) {
           query = query.ilike("cliente_nombre", `%${q.trim()}%`);
@@ -1848,14 +1849,22 @@ export default function CuentasPorCobrar() {
 
           // Only write to DB if score actually changed (±5 tolerance)
           if (Math.abs(nuevoScore - Number(c.score_base || 0)) > 5) {
-            await supabase
+            const { error: updateErr } = await supabase
               .from("clientes")
               .update({ score_base: nuevoScore })
               .eq("id", c.cliente_id);
-            updatedCount++;
+
+            if (updateErr) {
+              // 400 = RLS blocked (client belongs to another van) — skip silently
+              if (!updateErr.code || updateErr.code !== "PGRST204") {
+                console.warn(`⚠️ Could not update score for ${c.cliente_id}:`, updateErr.message || updateErr.code);
+              }
+            } else {
+              updatedCount++;
+            }
           }
         } catch (clientErr) {
-          console.warn(`⚠️ Score calc failed for client ${c.cliente_id}:`, clientErr);
+          console.warn(`⚠️ Score calc error for client ${c.cliente_id}:`, clientErr);
         }
 
         setRecalcProgress({ done: i + 1, total: clientes.length, updated: updatedCount });
