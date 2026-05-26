@@ -149,7 +149,7 @@ function calcularNuevoScore({ ventas = [], pagos = [], saldo = 0, limite = 0 }) 
                   + pagos.reduce((s, p) => s + Number(p.monto || 0), 0);
   const ppr = totalPurchases > 0
     ? totalPaid / totalPurchases
-    : (totalPaid > 0 ? 1.5 : 0); // payments with no purchases = paying old debt = good
+    : (totalPaid > 0 ? 1.5 : 0);
 
   // ── Payment History: % of invoices fully paid ──
   const totalInv   = ventas.length;
@@ -158,6 +158,20 @@ function calcularNuevoScore({ ventas = [], pagos = [], saldo = 0, limite = 0 }) 
 
   // ── Utilization: saldo / limite ──
   const utilPct = limite > 0 ? Math.min(1, saldo / limite) : 0;
+
+  // ── Recency: days since last payment ──
+  const allPayDates = [
+    ...ventas.filter(v => Number(v.total_pagado) > 0)
+             .map(v => new Date(v.fecha || v.created_at || 0)),
+    ...pagos.map(p => new Date(p.fecha_pago || 0)),
+  ].filter(d => !isNaN(d.getTime()) && d.getTime() > 0);
+
+  const lastPayDate = allPayDates.length > 0
+    ? new Date(Math.max(...allPayDates.map(d => d.getTime())))
+    : null;
+  const daysSincePay = lastPayDate
+    ? Math.floor((Date.now() - lastPayDate.getTime()) / 86400000)
+    : 999;
 
   // ── Consistency: months with ANY payment in last 6 ──
   const monthsWithPay = new Set([
@@ -172,21 +186,29 @@ function calcularNuevoScore({ ventas = [], pagos = [], saldo = 0, limite = 0 }) 
     if (monthsWithPay.has(k)) consistCount++;
   }
 
+  // ── Recent 2 months: if both inactive with a balance, extra hit ──
+  let recentInactive = 0;
+  for (let i = 0; i < 2; i++) {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (!monthsWithPay.has(k)) recentInactive++;
+  }
+
   let score = 500;
 
-  // PPR contribution (max ±140)
+  // PPR (40%)
   if      (ppr >= 1.4) score += 140;
   else if (ppr >= 1.2) score += 110;
   else if (ppr >= 1.0) score += 80;
   else if (ppr >= 0.8) score += 40;
   else if (ppr >= 0.5) score += 10;
   else if (ppr >  0  ) score -= 40;
-  else                 score -= 120; // no payments at all → heavy penalty
+  else                 score -= 120;
 
-  // Payment history (max ±63)
+  // Payment history (25%)
   score += Math.round(payHistPct * 125) - 62;
 
-  // Utilization (max ±80)
+  // Utilization (20%)
   if      (utilPct >= 1.0) score -= 80;
   else if (utilPct >= 0.9) score -= 60;
   else if (utilPct >= 0.75) score -= 30;
@@ -194,8 +216,23 @@ function calcularNuevoScore({ ventas = [], pagos = [], saldo = 0, limite = 0 }) 
   else if (utilPct <= 0.3 ) score += 40;
   else                      score += 10;
 
-  // Consistency (max ±45)
+  // Consistency (15%)
   score += Math.round((consistCount / 6) * 90) - 15;
+
+  // ── RECENCY PENALTY: days without paying while holding a balance ──
+  // This is what catches clients like Leonardo who paid months ago and stopped.
+  if (saldo > 0) {
+    if      (daysSincePay > 90) score -= 120; // 3+ months → critical
+    else if (daysSincePay > 60) score -= 80;  // 2+ months → serious
+    else if (daysSincePay > 30) score -= 45;  // 1+ month  → warning
+    else if (daysSincePay > 14) score -= 20;  // 2+ weeks  → mild
+  }
+
+  // ── RECENT INACTIVITY: last 2 months both empty with a balance ──
+  if (saldo > 0) {
+    if      (recentInactive >= 2) score -= 60; // neither of the last 2 months had a payment
+    else if (recentInactive >= 1) score -= 25; // last month had no payment
+  }
 
   return Math.max(300, Math.min(850, Math.round(score)));
 }
