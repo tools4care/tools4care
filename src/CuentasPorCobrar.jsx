@@ -137,6 +137,77 @@ function scoreColor(score) {
   if (s >= 400) return { bg: "bg-orange-100",text: "text-orange-800",border: "border-orange-300"};
   return              { bg: "bg-red-100",   text: "text-red-800",   border: "border-red-300"   };
 }
+
+/**
+ * Calculates a real credit score (300–850) from payment behavior data.
+ * Formula weights: PPR 40% | Payment History 25% | Utilization 20% | Consistency 15%
+ */
+function calcularNuevoScore({ ventas = [], pagos = [], saldo = 0, limite = 0 }) {
+  // ── PPR: total paid ÷ total purchased (last 6 months) ──
+  const totalPurchases = ventas.reduce((s, v) => s + Number(v.total || 0), 0);
+  const totalPaid = ventas.reduce((s, v) => s + Number(v.total_pagado || 0), 0)
+                  + pagos.reduce((s, p) => s + Number(p.monto || 0), 0);
+  const ppr = totalPurchases > 0
+    ? totalPaid / totalPurchases
+    : (totalPaid > 0 ? 1.5 : 0); // payments with no purchases = paying old debt = good
+
+  // ── Payment History: % of invoices fully paid ──
+  const totalInv   = ventas.length;
+  const paidInv    = ventas.filter(v => v.estado_pago === 'pagado').length;
+  const payHistPct = totalInv > 0 ? paidInv / totalInv : 0;
+
+  // ── Utilization: saldo / limite ──
+  const utilPct = limite > 0 ? Math.min(1, saldo / limite) : 0;
+
+  // ── Consistency: months with ANY payment in last 6 ──
+  const monthsWithPay = new Set([
+    ...ventas.filter(v => Number(v.total_pagado) > 0)
+             .map(v => String(v.fecha || v.created_at || '').slice(0, 7)),
+    ...pagos.map(p => String(p.fecha_pago || '').slice(0, 7)),
+  ]);
+  let consistCount = 0;
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (monthsWithPay.has(k)) consistCount++;
+  }
+
+  let score = 500;
+
+  // PPR contribution (max ±140)
+  if      (ppr >= 1.4) score += 140;
+  else if (ppr >= 1.2) score += 110;
+  else if (ppr >= 1.0) score += 80;
+  else if (ppr >= 0.8) score += 40;
+  else if (ppr >= 0.5) score += 10;
+  else if (ppr >  0  ) score -= 40;
+  else                 score -= 120; // no payments at all → heavy penalty
+
+  // Payment history (max ±63)
+  score += Math.round(payHistPct * 125) - 62;
+
+  // Utilization (max ±80)
+  if      (utilPct >= 1.0) score -= 80;
+  else if (utilPct >= 0.9) score -= 60;
+  else if (utilPct >= 0.75) score -= 30;
+  else if (utilPct >= 0.5 ) score -= 10;
+  else if (utilPct <= 0.3 ) score += 40;
+  else                      score += 10;
+
+  // Consistency (max ±45)
+  score += Math.round((consistCount / 6) * 90) - 15;
+
+  return Math.max(300, Math.min(850, Math.round(score)));
+}
+
+/**
+ * Returns true if the stored score looks "stale" based on current utilization.
+ * Used to show a warning indicator in the list.
+ */
+function scoreEstaDesactualizado(scoreBase, utilPct) {
+  // If nearly maxed out but score is still "good", something is off
+  return utilPct >= 90 && Number(scoreBase || 0) >= 550;
+}
 const normalizePhone = (raw) => {
   if (!raw) return "";
   const digits = String(raw).replace(/\D/g, "");
@@ -1407,6 +1478,8 @@ export default function CuentasPorCobrar() {
   };
 
   const [adminMode, setAdminMode] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
+  const [recalcProgress, setRecalcProgress] = useState({ done: 0, total: 0, updated: 0 });
   const [reloadTick, setReloadTick] = useState(0);
 
   // ── Auto-refresh cuando el sync completa con ventas/pagos offline ──
@@ -1685,6 +1758,85 @@ export default function CuentasPorCobrar() {
     return { saldoTotal, avgScore, clientes: total };
   }, [rows, total, globalSaldo]);
 
+  // ── Recalculate scores for ALL clients with a balance ──────────────────────
+  const recalcularTodosLosScores = async () => {
+    if (recalculating) return;
+    setRecalculating(true);
+    setRecalcProgress({ done: 0, total: 0, updated: 0 });
+
+    try {
+      // 1. Fetch ALL CxC clients with a balance (no pagination)
+      const { data: allClientes, error: fetchErr } = await supabase
+        .from("v_cxc_cliente_detalle_ext")
+        .select("cliente_id, saldo, limite_politica, score_base")
+        .gt("saldo", 0)
+        .order("saldo", { ascending: false });
+
+      if (fetchErr) throw fetchErr;
+
+      const clientes = allClientes || [];
+      const sixMonthsAgo = dayjs().subtract(6, "month").format("YYYY-MM-DD");
+      setRecalcProgress({ done: 0, total: clientes.length, updated: 0 });
+
+      let updatedCount = 0;
+
+      // 2. Process in batches of 10 to avoid rate limits
+      for (let i = 0; i < clientes.length; i++) {
+        const c = clientes[i];
+
+        try {
+          // Fetch payment history for this client
+          const [ventasRes, pagosRes] = await Promise.all([
+            supabase
+              .from("ventas")
+              .select("id, fecha, total, estado_pago, total_pagado")
+              .eq("cliente_id", c.cliente_id)
+              .gte("fecha", sixMonthsAgo),
+            supabase
+              .from("pagos")
+              .select("id, fecha_pago, monto")
+              .eq("cliente_id", c.cliente_id)
+              .gte("fecha_pago", sixMonthsAgo),
+          ]);
+
+          const ventas = ventasRes.data || [];
+          const pagos  = pagosRes.data  || [];
+
+          const nuevoScore = calcularNuevoScore({
+            ventas,
+            pagos,
+            saldo:  Number(c.saldo || 0),
+            limite: Number(c.limite_politica || 0),
+          });
+
+          // Only write to DB if score actually changed (±5 tolerance)
+          if (Math.abs(nuevoScore - Number(c.score_base || 0)) > 5) {
+            await supabase
+              .from("clientes")
+              .update({ score_base: nuevoScore })
+              .eq("id", c.cliente_id);
+            updatedCount++;
+          }
+        } catch (clientErr) {
+          console.warn(`⚠️ Score calc failed for client ${c.cliente_id}:`, clientErr);
+        }
+
+        setRecalcProgress({ done: i + 1, total: clientes.length, updated: updatedCount });
+
+        // Small pause every 10 clients to avoid hammering the API
+        if ((i + 1) % 10 === 0) await new Promise(r => setTimeout(r, 300));
+      }
+
+      toast.success(`✅ Scores recalculated — ${updatedCount} of ${clientes.length} updated`);
+      setReloadTick(t => t + 1);
+    } catch (err) {
+      console.error("❌ recalcularTodosLosScores error:", err);
+      toast.error("Error recalculating scores: " + (err.message || String(err)));
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
   const openSimuladorGlobal = () => {
     setSimInit({
       amount: 0,
@@ -1792,6 +1944,26 @@ export default function CuentasPorCobrar() {
                 >
                   ⬆️ Credit Review
                 </button>
+                {adminMode && (
+                  <button
+                    onClick={recalcularTodosLosScores}
+                    disabled={recalculating}
+                    className={`px-3 sm:px-4 py-2 rounded-lg font-semibold shadow-lg text-sm flex-shrink-0 transition-all flex items-center gap-1.5 ${
+                      recalculating
+                        ? "bg-amber-100 text-amber-700 border-2 border-amber-300 cursor-not-allowed"
+                        : "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white"
+                    }`}
+                  >
+                    {recalculating ? (
+                      <>
+                        <span className="animate-spin">⚙️</span>
+                        {recalcProgress.done}/{recalcProgress.total} — {recalcProgress.updated} updated
+                      </>
+                    ) : (
+                      <>⚡ Recalculate Scores</>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1838,6 +2010,7 @@ export default function CuentasPorCobrar() {
               const sc = scoreColor(r.score_base);
               const usePct = r.limite_politica > 0 ? Math.min(100, Math.round((r.saldo / r.limite_politica) * 100)) : 0;
               const addrStr = parseAddr(r.direccion);
+              const stale = scoreEstaDesactualizado(r.score_base, usePct);
               return (
                 <div key={r.cliente_id} className="bg-white border border-gray-200 rounded-2xl shadow-md overflow-hidden">
                   {/* Header */}
@@ -1847,9 +2020,14 @@ export default function CuentasPorCobrar() {
                         <div className="font-bold text-base leading-tight truncate">{r.cliente_nombre}</div>
                         {r.nombre_negocio && <div className="text-xs text-blue-100 mt-0.5 truncate">🏪 {r.nombre_negocio}</div>}
                       </div>
-                      <span className={`flex-shrink-0 text-xs font-bold px-2 py-1 rounded-full border ${sc.bg} ${sc.text} ${sc.border}`}>
-                        {Number(r.score_base ?? 0)}
-                      </span>
+                      <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                        <span className={`text-xs font-bold px-2 py-1 rounded-full border ${sc.bg} ${sc.text} ${sc.border}`}>
+                          {Number(r.score_base ?? 0)}
+                        </span>
+                        {stale && (
+                          <span className="text-[10px] text-amber-300 font-semibold">⚠️ outdated</span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
                       {r.telefono && <span className="text-xs text-blue-100">📞 {r.telefono}</span>}
@@ -1942,6 +2120,7 @@ export default function CuentasPorCobrar() {
                     const sc = scoreColor(r.score_base);
                     const usePct = r.limite_politica > 0 ? Math.min(100, Math.round((r.saldo / r.limite_politica) * 100)) : 0;
                     const addrStr = parseAddr(r.direccion);
+                    const stale = scoreEstaDesactualizado(r.score_base, usePct);
                     return (
                       <tr key={r.cliente_id} className="hover:bg-blue-50/50 transition-colors">
                         <td className="px-5 py-3">
@@ -1967,9 +2146,19 @@ export default function CuentasPorCobrar() {
                         </td>
                         <td className="px-4 py-3 text-right font-bold text-red-600 text-base">{fmt(r.saldo)}</td>
                         <td className="px-4 py-3 text-center">
-                          <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold border ${sc.bg} ${sc.text} ${sc.border}`}>
-                            {Number(r.score_base ?? 0)}
-                          </span>
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold border ${sc.bg} ${sc.text} ${sc.border}`}>
+                              {Number(r.score_base ?? 0)}
+                            </span>
+                            {stale && (
+                              <span
+                                className="text-[10px] text-amber-600 font-semibold flex items-center gap-0.5 cursor-help"
+                                title="Score may be outdated — this customer is maxed out but still has a good score. Click ⚡ Recalculate Scores to update."
+                              >
+                                ⚠️ outdated
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 w-40">
                           <div className="flex items-center gap-2">
