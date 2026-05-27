@@ -69,8 +69,10 @@ function calcularPagoMinimo(balanceAnterior) {
   return Number(Math.min(balanceAnterior, minCalc).toFixed(2));
 }
 
-const COMPANY_NAME = import.meta?.env?.VITE_COMPANY_NAME || "Tools4CareMovil";
-const COMPANY_EMAIL = import.meta?.env?.VITE_COMPANY_EMAIL || "Tools4care@gmail.com";
+const COMPANY_NAME    = import.meta?.env?.VITE_COMPANY_NAME    || "Tools4CareMovil";
+const COMPANY_EMAIL   = import.meta?.env?.VITE_COMPANY_EMAIL   || "Tools4care@gmail.com";
+const COMPANY_PHONE   = import.meta?.env?.VITE_COMPANY_PHONE   || "";
+const COMPANY_ADDRESS = import.meta?.env?.VITE_COMPANY_ADDRESS || "";
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 
 /* ========================= Stripe QR Payment Helpers ========================= */
@@ -458,97 +460,243 @@ function printThermalReceipt(payload) {
     clientName, creditNumber, dateStr, pointOfSaleName,
     items = [], saleTotal, paid, change,
     prevBalance, saleRemaining, newDue,
+    creditLimit, availableBefore, availableAfter,
+    // payment breakdown (populated from saveSale)
+    paymentMethod, pagoEfectivo, pagoTarjeta, pagoTransferencia,
   } = payload || {};
 
   const fmtR = (n) => `$${Number(n || 0).toFixed(2)}`;
-  const divider = "─".repeat(32);
-  const dashed  = "- ".repeat(16);
 
-  const itemsHTML = (items || []).map(it =>
-    `<tr>
-      <td style="max-width:140px;word-break:break-word">${it.name || "—"}</td>
-      <td style="text-align:center">${it.qty}</td>
-      <td style="text-align:right">${fmtR(it.unit)}</td>
-      <td style="text-align:right;font-weight:bold">${fmtR(it.subtotal)}</td>
+  // ── Items table rows ────────────────────────────────────────────────────────
+  const itemsHTML = (items || []).map((it, i) => `
+    <tr style="background:${i % 2 === 0 ? "#fff" : "#f9f9f9"}">
+      <td style="padding:3px 2px;max-width:150px;word-break:break-word;font-size:11px;">${it.name || "—"}</td>
+      <td style="padding:3px 2px;text-align:center;font-size:11px;">${it.qty}</td>
+      <td style="padding:3px 2px;text-align:right;font-size:11px;">${fmtR(it.unit)}</td>
+      <td style="padding:3px 2px;text-align:right;font-weight:bold;font-size:11px;">${fmtR(it.subtotal)}</td>
     </tr>`
   ).join("");
+
+  // ── Payment breakdown rows (only show methods with amount > 0) ───────────────
+  const payRows = [
+    { label: "Cash",         val: pagoEfectivo    },
+    { label: "Card",         val: pagoTarjeta     },
+    { label: "Transfer",     val: pagoTransferencia },
+  ]
+    .filter(r => Number(r.val || 0) > 0)
+    .map(r => `<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">
+      <span style="color:#444;">&nbsp;&nbsp;${r.label}:</span>
+      <span>${fmtR(r.val)}</span>
+    </div>`)
+    .join("");
+
+  // Fallback: if no breakdown available, show single "Paid" line
+  const paymentSection = payRows
+    ? payRows
+    : `<div style="display:flex;justify-content:space-between;font-size:11px;">
+        <span>Paid:</span><span class="bold">${fmtR(paid)}</span>
+       </div>`;
+
+  // ── Receipt number (short, uppercase) ──────────────────────────────────────
+  const receiptNum = saleId ? saleId.slice(0, 8).toUpperCase() : "—";
+
+  // ── Date formatted nicely ──────────────────────────────────────────────────
+  const now = new Date();
+  const displayDate = dateStr || now.toLocaleDateString("en-US", {
+    weekday: "short", year: "numeric", month: "short", day: "numeric"
+  });
+  const displayTime = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 
   const html = `<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8">
 <style>
-  @page { size: 80mm auto; margin: 3mm 4mm; }
+  @page { size: 80mm auto; margin: 2mm 3mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Courier New', monospace; font-size: 11px; width: 72mm; margin: 0; color: #000; }
-  .center { text-align: center; }
-  .bold   { font-weight: bold; }
-  .lg     { font-size: 15px; }
-  .xl     { font-size: 20px; font-weight: 900; }
-  .divider{ border-top: 1px dashed #000; margin: 4px 0; }
-  table   { width: 100%; border-collapse: collapse; }
-  th      { font-size: 9px; text-transform: uppercase; border-bottom: 1px solid #000; padding: 1px 2px; }
-  td      { padding: 1px 2px; vertical-align: top; font-size: 10px; }
-  .total-row td { font-weight: bold; font-size: 13px; border-top: 1px solid #000; padding-top: 3px; }
-  .change-box { background:#000; color:#fff; text-align:center; padding:6px; margin:6px 0; border-radius:3px; }
-  .change-box .label { font-size:10px; letter-spacing:1px; text-transform:uppercase; }
-  .change-box .amount { font-size:26px; font-weight:900; letter-spacing:2px; }
-  .balance-box { border: 2px solid #000; padding: 4px; margin: 4px 0; text-align:center; }
+  body {
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    width: 74mm;
+    margin: 0;
+    color: #000;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .center  { text-align: center; }
+  .right   { text-align: right; }
+  .bold    { font-weight: bold; }
+  .row     { display: flex; justify-content: space-between; padding: 2px 0; }
+  .divider-solid { border-top: 1.5px solid #000; margin: 5px 0; }
+  .divider-dash  { border-top: 1px dashed #555; margin: 4px 0; }
+  table    { width: 100%; border-collapse: collapse; }
+  th       { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+             border-bottom: 1.5px solid #000; border-top: 1.5px solid #000;
+             padding: 3px 2px; background: #000; color: #fff; }
+  .total-row td {
+    font-weight: 900; font-size: 14px;
+    border-top: 1.5px solid #000; padding: 4px 2px;
+  }
+  /* CHANGE box — black background, high contrast */
+  .change-box {
+    background: #000; color: #fff;
+    text-align: center; padding: 7px 4px; margin: 6px 0;
+  }
+  .change-box .lbl  { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; }
+  .change-box .amt  { font-size: 30px; font-weight: 900; letter-spacing: 3px; line-height: 1.1; }
+  /* BALANCE DUE box */
+  .balance-box {
+    border: 2.5px solid #000; padding: 5px; margin: 5px 0; text-align: center;
+  }
+  .balance-box .lbl { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
+  .balance-box .amt { font-size: 22px; font-weight: 900; }
+  /* Credit info */
+  .credit-row { display:flex; justify-content:space-between; font-size:10px; padding:1px 0; }
+  /* Footer */
+  .footer { text-align:center; font-size:10px; margin-top:6px; }
+  .footer .tagline { font-size:11px; font-weight:bold; margin-bottom:2px; }
+  .footer .policy  { font-size:9px; color:#333; margin-top:3px; line-height:1.4; }
 </style>
 </head><body>
-<div class="center bold" style="font-size:16px;letter-spacing:2px;">${COMPANY_NAME}</div>
-${pointOfSaleName ? `<div class="center" style="font-size:10px;">${pointOfSaleName}</div>` : ""}
-<div class="center" style="font-size:9px;margin-bottom:2px;">${dateStr || new Date().toLocaleString()}</div>
-${saleId ? `<div class="center" style="font-size:9px;color:#555;margin-bottom:4px;">Ref: #${saleId.slice(0,8).toUpperCase()}</div>` : ""}
-<div class="divider"></div>
 
-${clientName ? `<div><span class="bold">Customer:</span> ${clientName}${creditNumber ? ` (#${creditNumber})` : ""}</div>` : '<div class="center" style="font-size:10px">Walk-in / Quick Sale</div>'}
-<div class="divider"></div>
+<!-- ═══ HEADER ═══════════════════════════════════════════ -->
+<div class="center bold" style="font-size:19px;letter-spacing:3px;margin-bottom:1px;">${COMPANY_NAME}</div>
+${COMPANY_ADDRESS ? `<div class="center" style="font-size:10px;">${COMPANY_ADDRESS}</div>` : ""}
+${COMPANY_PHONE ? `<div class="center" style="font-size:10px;">Tel: ${COMPANY_PHONE}</div>` : ""}
+<div class="center" style="font-size:10px;">${COMPANY_EMAIL}</div>
 
+<div class="divider-solid"></div>
+
+<!-- ═══ RECEIPT META ══════════════════════════════════════ -->
+<div class="row" style="font-size:10px;">
+  <span>Receipt #: <strong>${receiptNum}</strong></span>
+  <span>${displayTime}</span>
+</div>
+<div style="font-size:10px;margin-bottom:2px;">${displayDate}</div>
+${pointOfSaleName ? `<div style="font-size:10px;">Location: <strong>${pointOfSaleName}</strong></div>` : ""}
+
+<div class="divider-dash"></div>
+
+<!-- ═══ CUSTOMER ══════════════════════════════════════════ -->
+${clientName
+  ? `<div style="font-size:11px;"><strong>Customer:</strong> ${clientName}${creditNumber ? `  •  Acct #${creditNumber}` : ""}</div>`
+  : `<div class="center" style="font-size:11px;color:#444;">— Walk-in / Quick Sale —</div>`
+}
+
+<div class="divider-solid"></div>
+
+<!-- ═══ ITEMS ═════════════════════════════════════════════ -->
 <table>
-  <thead><tr>
-    <th style="text-align:left">Item</th>
-    <th>Qty</th>
-    <th style="text-align:right">Price</th>
-    <th style="text-align:right">Total</th>
-  </tr></thead>
+  <thead>
+    <tr>
+      <th style="text-align:left;width:52%">Description</th>
+      <th style="text-align:center;width:10%">Qty</th>
+      <th style="text-align:right;width:19%">Unit</th>
+      <th style="text-align:right;width:19%">Amount</th>
+    </tr>
+  </thead>
   <tbody>${itemsHTML}</tbody>
   <tfoot>
     <tr class="total-row">
-      <td colspan="3">SALE TOTAL</td>
-      <td style="text-align:right">${fmtR(saleTotal)}</td>
+      <td colspan="2"></td>
+      <td style="text-align:right;font-size:12px;">TOTAL</td>
+      <td style="text-align:right;font-size:16px;">${fmtR(saleTotal)}</td>
     </tr>
   </tfoot>
 </table>
 
-<div class="divider"></div>
-<div style="display:flex;justify-content:space-between"><span>Paid:</span><span class="bold">${fmtR(paid)}</span></div>
-${Number(prevBalance||0) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Prev. Balance:</span><span class="bold">${fmtR(prevBalance)}</span></div>` : ""}
-${Number(saleRemaining||0) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Remaining (this sale):</span><span class="bold">${fmtR(saleRemaining)}</span></div>` : ""}
-${Number(newDue||0) > 0 ? `<div class="balance-box"><div style="font-size:9px;letter-spacing:1px;">BALANCE DUE</div><div style="font-size:18px;font-weight:900;">${fmtR(newDue)}</div></div>` : ""}
+<div class="divider-solid"></div>
 
-${Number(change||0) > 0 ? `<div class="change-box"><div class="label">💵 Change to give back</div><div class="amount">${fmtR(change)}</div></div>` : ""}
+<!-- ═══ PAYMENT ═══════════════════════════════════════════ -->
+<div style="font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Payment Received</div>
+${paymentSection}
+<div class="row bold" style="font-size:12px;border-top:1px solid #aaa;margin-top:3px;padding-top:3px;">
+  <span>Total Paid:</span>
+  <span>${fmtR(paid)}</span>
+</div>
 
-<div class="divider"></div>
-<div class="center" style="font-size:9px;margin-top:4px;">Thank you for your purchase!</div>
-<div class="center" style="font-size:8px;color:#555;">${COMPANY_EMAIL}</div>
-<div style="height:20mm"></div>
-<script>
-  window.onload = function() {
-    setTimeout(function() {
-      window.print();
-      window.onafterprint = function() { window.close(); };
-    }, 300);
-  };
-</script>
+${Number(prevBalance||0) > 0
+  ? `<div class="row" style="font-size:10px;color:#555;margin-top:2px;">
+       <span>Previous Balance:</span><span>${fmtR(prevBalance)}</span>
+     </div>` : ""}
+
+${Number(saleRemaining||0) > 0
+  ? `<div class="row" style="font-size:10px;">
+       <span>Unpaid (this sale):</span><span class="bold">${fmtR(saleRemaining)}</span>
+     </div>` : ""}
+
+<!-- CHANGE — big, obvious -->
+${Number(change||0) > 0
+  ? `<div class="change-box">
+       <div class="lbl">Change Due</div>
+       <div class="amt">${fmtR(change)}</div>
+     </div>`
+  : ""}
+
+<!-- BALANCE DUE — prominent box -->
+${Number(newDue||0) > 0
+  ? `<div class="balance-box">
+       <div class="lbl">⚠ Balance Due</div>
+       <div class="amt">${fmtR(newDue)}</div>
+     </div>`
+  : `<div style="text-align:center;font-size:10px;font-weight:bold;color:#000;padding:4px 0;">✓ Paid in Full</div>`}
+
+<!-- Credit info (only if client has a credit account) -->
+${Number(creditLimit||0) > 0 ? `
+<div class="divider-dash"></div>
+<div style="font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:.5px;margin-bottom:1px;">Credit Account</div>
+<div class="credit-row"><span>Credit Limit:</span><span>${fmtR(creditLimit)}</span></div>
+<div class="credit-row"><span>Available After:</span><span>${fmtR(availableAfter)}</span></div>
+` : ""}
+
+<div class="divider-solid"></div>
+
+<!-- ═══ FOOTER ════════════════════════════════════════════ -->
+<div class="footer">
+  <div class="tagline">★ Thank you for your business! ★</div>
+  <div>${COMPANY_NAME}</div>
+  <div class="policy">
+    Returns accepted within 7 days<br>
+    with original receipt • Unused condition<br>
+    No returns on opened products
+  </div>
+  <div style="margin-top:4px;font-size:9px;color:#555;">${COMPANY_EMAIL}</div>
+</div>
+
+<!-- Feed paper before cut -->
+<div style="height:18mm"></div>
+
 </body></html>`;
 
-  const w = window.open("", "_blank", "width=400,height=600");
-  if (w) {
-    w.document.write(html);
-    w.document.close();
-  } else {
-    alert("Pop-up blocked. Allow pop-ups for this site to print receipts.");
-  }
+  // ── Use hidden iframe so no popup window appears ────────────────────────────
+  // This avoids the "allow pop-ups" issue and feels more seamless.
+  // Chrome will still show its print dialog — to skip it entirely, launch
+  // Chrome with the --kiosk-printing flag (see POS setup guide).
+  const iframe = document.createElement("iframe");
+  iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;";
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow.document;
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  // Small delay to let the iframe render before printing
+  iframe.contentWindow.onload = function () {
+    setTimeout(function () {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        // Fallback: open in new window if iframe print fails
+        const w = window.open("", "_blank", "width=420,height=650");
+        if (w) { w.document.write(html); w.document.close(); }
+      }
+      // Clean up after print dialog closes
+      setTimeout(function () {
+        try { document.body.removeChild(iframe); } catch (_) {}
+      }, 2000);
+    }, 250);
+  };
 }
 
 function openCashDrawer() {
@@ -3865,6 +4013,11 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         creditLimit,
         availableBefore: creditAvailable,
         availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
+        // Payment method breakdown for receipt
+        paymentMethod: metodoPrincipal,
+        pagoEfectivo,
+        pagoTarjeta,
+        pagoTransferencia,
       };
 // 🆕 CREAR ACUERDO DE PAGO si hay crédito
      if (pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady && !pendingAgreementData?.skipped) {
