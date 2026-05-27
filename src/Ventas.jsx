@@ -3758,10 +3758,11 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         }
       }
 
-      const pagoEfectivo = Number((paymentMap.efectivo || 0).toFixed(2));
-      const pagoTarjeta = Number((paymentMap.tarjeta || 0).toFixed(2));
-      const pagoTransf = Number((paymentMap.transferencia || 0).toFixed(2));
-      const pagoOtro = Number((paymentMap.otro || 0).toFixed(2));
+      const pagoEfectivo      = Number((paymentMap.efectivo     || 0).toFixed(2));
+      const pagoTarjeta       = Number((paymentMap.tarjeta      || 0).toFixed(2));
+      const pagoTransf        = Number((paymentMap.transferencia || 0).toFixed(2));
+      const pagoTransferencia = pagoTransf; // alias used in receipt payload
+      const pagoOtro          = Number((paymentMap.otro         || 0).toFixed(2));
 
       const itemsForDb = cartSafe.map((p) => {
         const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
