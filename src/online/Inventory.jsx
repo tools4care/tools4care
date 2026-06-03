@@ -649,14 +649,18 @@ export default function Inventory() {
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <input
-                      className="w-full border rounded-lg px-2 py-1"
-                      placeholder="Badge"
-                      defaultValue={r.deal_badge || "Deal"}
-                      onBlur={(e) =>
-                        onUpdate(r.id, { deal_badge: e.target.value.trim() || "Deal" })
-                      }
-                    />
+                    <select
+                      className="w-full border rounded-lg px-2 py-1 text-sm"
+                      value={r.deal_badge || "Deal"}
+                      onChange={(e) => onUpdate(r.id, { deal_badge: e.target.value })}
+                    >
+                      <option value="Deal">Deal</option>
+                      <option value="Sale">Sale</option>
+                      <option value="Hot">Hot</option>
+                      <option value="OUTLET">🏷️ The Rack (Outlet)</option>
+                      <option value="Refurb">Refurb</option>
+                      <option value="Open Box">Open Box</option>
+                    </select>
                   </td>
                   <td className="px-3 py-2">
                     <input
