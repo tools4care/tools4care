@@ -520,12 +520,19 @@ export default function OnlineCatalog() {
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         {/* Badge */}
                         <div>
-                          <label className="block text-[10px] text-gray-400 mb-1">Badge text</label>
-                          <InlineInput
+                          <label className="block text-[10px] text-gray-400 mb-1">Badge / Type</label>
+                          <select
+                            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-rose-400"
                             value={r.deal_badge || "Deal"}
-                            placeholder="e.g. SUPER DEAL"
-                            onSave={async (v) => onUpdate(r.id, { deal_badge: v.trim() || "Deal" })}
-                          />
+                            onChange={(e) => onUpdate(r.id, { deal_badge: e.target.value })}
+                          >
+                            <option value="Deal">Deal</option>
+                            <option value="Sale">Sale</option>
+                            <option value="Hot">🔥 Hot</option>
+                            <option value="OUTLET">🏷️ The Rack (Outlet)</option>
+                            <option value="Refurb">♻️ Refurb</option>
+                            <option value="Open Box">📦 Open Box</option>
+                          </select>
                         </div>
 
                         {/* Priority */}
