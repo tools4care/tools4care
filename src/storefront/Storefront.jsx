@@ -570,6 +570,7 @@ export default function Storefront() {
   const [settings, setSettings] = useState(null);
 
   const offersRef = useRef(null);
+  const rackRef   = useRef(null);
   const reloadTimeoutRef = useRef(null);
 
   function showToast(name) {
@@ -815,6 +816,13 @@ export default function Storefront() {
     return pick.slice(0, 8);
   }, [allRows]);
 
+  // "The Rack" — máquinas usadas/reacondicionadas/devoluciones (deal_badge = "OUTLET")
+  const rackItems = useMemo(() =>
+    allRows.filter((p) => p.is_deal && (p.deal_badge || "").toUpperCase() === "OUTLET")
+           .sort((a, b) => Number(a.price_online ?? a.price_base ?? 0) - Number(b.price_online ?? b.price_base ?? 0)),
+    [allRows]
+  );
+
   const brands = useMemo(() =>
     ["all", ...new Set(allRows.map((p) => (p.marca || "").toLowerCase()).filter(Boolean))].sort(),
     [allRows]
@@ -897,6 +905,12 @@ export default function Storefront() {
               <a href="#subscriptions" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10">
                 📦 Subscriptions
               </a>
+              {rackItems.length > 0 && (
+                <button onClick={() => rackRef.current?.scrollIntoView({ behavior: "smooth" })}
+                  className="rounded-lg bg-yellow-400 text-gray-900 px-4 py-2 font-bold hover:bg-yellow-300 flex items-center gap-1 animate-pulse">
+                  🏷️ The Rack
+                </button>
+              )}
             </div>
           </div>
           <div className="bg-white/10 rounded-2xl p-3">
@@ -931,6 +945,54 @@ export default function Storefront() {
           <div className="text-gray-500">No deals yet.</div>
         )}
       </section>
+
+      {/* THE RACK — outlet / used / refurb */}
+      {(rackItems.length > 0 || loading) && (
+        <section ref={rackRef} id="the-rack" className="max-w-7xl mx-auto px-4 py-10">
+          {/* Header llamativo */}
+          <div className="relative rounded-2xl overflow-hidden mb-6 bg-gradient-to-r from-gray-900 via-zinc-800 to-gray-900 p-6 shadow-2xl">
+            <div className="absolute inset-0 opacity-10"
+              style={{ backgroundImage: "repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)", backgroundSize: "20px 20px" }} />
+            <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <span className="text-3xl">🏷️</span>
+                  <h2 className="text-3xl font-black text-white tracking-tight">The Rack</h2>
+                  <span className="bg-yellow-400 text-gray-900 text-xs font-black px-2.5 py-1 rounded-full uppercase tracking-wide">
+                    {rackItems.length} items
+                  </span>
+                </div>
+                <p className="text-gray-300 text-sm font-medium max-w-md">
+                  Open-box, refurbished & returned machines — professionally inspected, priced to move fast. <span className="text-yellow-400 font-bold">Don't sleep on it.</span>
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-yellow-400 font-black text-lg">Up to 70% off</div>
+                <div className="text-gray-400 text-xs mt-0.5">While supplies last</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Products grid */}
+          {loading ? (
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {rackItems.map((p) => (
+                <div key={p.id} className="relative">
+                  {/* Badge "The Rack" sobre la tarjeta */}
+                  <div className="absolute top-2 left-2 z-10 bg-gray-900 text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wide shadow-lg">
+                    🏷️ The Rack
+                  </div>
+                  <ProductCard p={p} onAdd={handleAdd} onOpenLightbox={handleOpenLightbox} />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* NEW ARRIVALS */}
       <section className="max-w-7xl mx-auto px-4 pb-2">
