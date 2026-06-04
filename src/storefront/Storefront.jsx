@@ -244,7 +244,7 @@ function CartDrawer({ open, onClose }) {
   return (
     <div className="fixed inset-0 z-[100]">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <aside className="absolute right-0 top-0 h-[100dvh] w-full max-w-md bg-white shadow-2xl border-l flex flex-col">
+      <aside className="absolute right-0 top-0 h-[100dvh] w-full max-w-[min(100vw,28rem)] bg-white shadow-2xl border-l flex flex-col overflow-hidden">
         <div className="p-4 border-b flex items-center justify-between shrink-0">
           <h3 className="text-lg font-semibold">Your cart</h3>
           <button className="rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={onClose}>
