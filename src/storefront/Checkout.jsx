@@ -705,8 +705,8 @@ export default function Checkout() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-gray-50">
-      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+    <div className="min-h-[100dvh] bg-gray-50 w-full overflow-x-hidden">
+      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b px-4 py-3">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold">Checkout</h1>
           <Link to="/storefront" className="text-sm text-emerald-600 hover:underline font-medium">
@@ -714,8 +714,8 @@ export default function Checkout() {
           </Link>
         </div>
       </header>
-      <main className="max-w-4xl mx-auto px-3 py-4 sm:px-4 grid lg:grid-cols-2 gap-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-        <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3 order-2 lg:order-1">
+      <main className="w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 flex flex-col lg:grid lg:grid-cols-2 gap-4 pb-8">
+        <section className="w-full min-w-0 bg-white rounded-2xl shadow-sm p-4 space-y-3 order-2 lg:order-1">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
             <input className="border rounded-lg px-3 py-3 text-base" placeholder="Full name" value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })} required />
@@ -778,7 +778,7 @@ export default function Checkout() {
             </div>
           </div>
         </section>
-        <section className="space-y-4 order-1 lg:order-2">
+        <section className="w-full min-w-0 space-y-4 order-1 lg:order-2">
           {items.length > 0 && (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <h2 className="font-semibold mb-3 flex items-center justify-between">
@@ -1053,7 +1053,7 @@ function AppleGooglePayButton({ total, onPaid, clientSecret }) {
   if (!pr) return null;
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm p-4">
+    <div className="bg-white rounded-2xl shadow-sm p-4 w-full min-w-0 overflow-hidden">
       <PaymentRequestButtonElement
         options={{
           paymentRequest: pr,
@@ -1103,7 +1103,7 @@ function PaymentForm({ onPaid }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+    <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-4 space-y-3 w-full min-w-0 overflow-hidden">
       {/* Spinner visible mientras Stripe carga */}
       {!ready && (
         <div className="flex flex-col items-center justify-center py-8 gap-3">
