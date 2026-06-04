@@ -718,23 +718,23 @@ export default function Checkout() {
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
-            <input className="border rounded-lg px-3 py-2" placeholder="Full name" value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })} required />
+            <input className="border rounded-lg px-3 py-3 text-base" placeholder="Full name" value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })} required />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <input className="border rounded-lg px-3 py-2 sm:col-span-2" placeholder="Email (required)" value={shipping.email} onChange={(e) => setShipping({ ...shipping, email: e.target.value })} required type="email" />
-              <input className="border rounded-lg px-3 py-2" placeholder="Phone (required)" value={shipping.phone} onChange={(e) => setShipping({ ...shipping, phone: formatPhoneUS(e.target.value) })} required type="tel" inputMode="numeric" pattern="\d*" />
+              <input className="border rounded-lg px-3 py-3 text-base sm:col-span-2" placeholder="Email (required)" value={shipping.email} onChange={(e) => setShipping({ ...shipping, email: e.target.value })} required type="email" />
+              <input className="border rounded-lg px-3 py-3 text-base" placeholder="Phone (required)" value={shipping.phone} onChange={(e) => setShipping({ ...shipping, phone: formatPhoneUS(e.target.value) })} required type="tel" inputMode="numeric" pattern="\d*" />
             </div>
-            <input className="border rounded-lg px-3 py-2" placeholder="Address line 1" value={shipping.address1} onChange={(e) => setShipping({ ...shipping, address1: e.target.value })} />
-            <input className="border rounded-lg px-3 py-2" placeholder="Address line 2 (optional)" value={shipping.address2} onChange={(e) => setShipping({ ...shipping, address2: e.target.value })} />
+            <input className="border rounded-lg px-3 py-3 text-base" placeholder="Address line 1" value={shipping.address1} onChange={(e) => setShipping({ ...shipping, address1: e.target.value })} />
+            <input className="border rounded-lg px-3 py-3 text-base" placeholder="Address line 2 (optional)" value={shipping.address2} onChange={(e) => setShipping({ ...shipping, address2: e.target.value })} />
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <input className="border rounded-lg px-3 py-2 col-span-2" placeholder="City" value={shipping.city} onChange={(e) => setShipping({ ...shipping, city: e.target.value })} />
-              <select className="border rounded-lg px-3 py-2" value={shipping.state} onChange={(e) => setShipping({ ...shipping, state: e.target.value })}>
+              <input className="border rounded-lg px-3 py-3 text-base col-span-2" placeholder="City" value={shipping.city} onChange={(e) => setShipping({ ...shipping, city: e.target.value })} />
+              <select className="border rounded-lg px-3 py-3 text-base" value={shipping.state} onChange={(e) => setShipping({ ...shipping, state: e.target.value })}>
                 {US_STATES.map((st) => (
                   <option key={st} value={st}>
                     {st}
                   </option>
                 ))}
               </select>
-              <input className="border rounded-lg px-3 py-2" placeholder="ZIP" value={shipping.zip} onChange={(e) => setShipping({ ...shipping, zip: e.target.value })} />
+              <input className="border rounded-lg px-3 py-3 text-base" placeholder="ZIP" value={shipping.zip} onChange={(e) => setShipping({ ...shipping, zip: e.target.value })} />
             </div>
             <div className="space-y-2">
               <div className="font-medium text-sm">Shipping method</div>
