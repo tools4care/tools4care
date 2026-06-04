@@ -1,5 +1,6 @@
 // src/storefront/Storefront.jsx
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import {
   addToCart,
@@ -182,6 +183,7 @@ function AddedToast({ toasts }) {
 function CartDrawer({ open, onClose }) {
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   const subtotal = useMemo(() => lines.reduce((acc, l) => acc + Number(l.subtotal || 0), 0), [lines]);
 
@@ -323,9 +325,12 @@ function CartDrawer({ open, onClose }) {
             <button className="rounded-xl border px-3 py-3 hover:bg-gray-50 text-sm font-medium" onClick={onClose}>
               Keep shopping
             </button>
-            <a href="/checkout" className="text-center rounded-xl bg-emerald-600 text-white px-3 py-3 hover:bg-emerald-700 text-sm font-bold">
+            <button
+              onClick={() => { onClose(); navigate("/checkout"); }}
+              className="rounded-xl bg-emerald-600 text-white px-3 py-3 hover:bg-emerald-700 text-sm font-bold"
+            >
               Checkout →
-            </a>
+            </button>
           </div>
         </div>
       </aside>
