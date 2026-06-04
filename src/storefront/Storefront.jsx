@@ -242,15 +242,15 @@ function CartDrawer({ open, onClose }) {
   return (
     <div className="fixed inset-0 z-[100]">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <aside className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl border-l flex flex-col">
-        <div className="p-4 border-b flex items-center justify-between">
+      <aside className="absolute right-0 top-0 h-[100dvh] w-full max-w-md bg-white shadow-2xl border-l flex flex-col">
+        <div className="p-4 border-b flex items-center justify-between shrink-0">
           <h3 className="text-lg font-semibold">Your cart</h3>
           <button className="rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={onClose}>
             Close
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3">
+        <div className="flex-1 overflow-y-auto p-3 overscroll-contain">
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-gray-400 mt-4 justify-center">
               <span className="animate-spin">⟳</span> Loading…
@@ -314,17 +314,17 @@ function CartDrawer({ open, onClose }) {
           )}
         </div>
 
-        <div className="border-t p-3">
+        <div className="border-t p-3 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           <div className="flex items-center justify-between text-sm mb-3">
             <span className="text-gray-600">Items: {lines.reduce((a, l) => a + Number(l.qty || 0), 0)}</span>
             <span className="font-bold text-lg">{fmtPrice(subtotal)}</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <button className="rounded-xl border px-3 py-2.5 hover:bg-gray-50 text-sm font-medium" onClick={onClose}>
+            <button className="rounded-xl border px-3 py-3 hover:bg-gray-50 text-sm font-medium" onClick={onClose}>
               Keep shopping
             </button>
-            <a href="/checkout" className="text-center rounded-xl bg-blue-600 text-white px-3 py-2.5 hover:bg-blue-700 text-sm font-semibold">
-              Go to checkout →
+            <a href="/checkout" className="text-center rounded-xl bg-emerald-600 text-white px-3 py-3 hover:bg-emerald-700 text-sm font-bold">
+              Checkout →
             </a>
           </div>
         </div>

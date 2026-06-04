@@ -705,16 +705,16 @@ export default function Checkout() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b px-4 py-3">
+    <div className="min-h-[100dvh] bg-gray-50">
+      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold">Checkout</h1>
-          <Link to="/storefront" className="text-sm text-blue-600 hover:underline">
+          <Link to="/storefront" className="text-sm text-emerald-600 hover:underline font-medium">
             ← Keep shopping
           </Link>
         </div>
       </header>
-      <main className="max-w-4xl mx-auto p-4 grid lg:grid-cols-2 gap-4">
+      <main className="max-w-4xl mx-auto px-3 py-4 sm:px-4 grid lg:grid-cols-2 gap-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
         <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
@@ -925,12 +925,17 @@ export default function Checkout() {
     />
   </Elements>
 ) : (
-  <div className="bg-white rounded-2xl p-4 shadow-sm">
-    {loading || creating
-      ? "Preparing payment…"
-      : items.length === 0
-        ? "Add items to cart to pay."
-        : "Update shipping/details to pay."}
+  <div className="bg-white rounded-2xl p-6 shadow-sm">
+    {loading || creating ? (
+      <div className="flex flex-col items-center gap-3 py-4">
+        <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-gray-500 font-medium">Preparing your payment…</p>
+      </div>
+    ) : items.length === 0 ? (
+      <p className="text-gray-500 text-sm">Add items to cart to pay.</p>
+    ) : (
+      <p className="text-gray-500 text-sm">Complete shipping details above to enable payment.</p>
+    )}
   </div>
 )}
         </section>
@@ -1066,7 +1071,9 @@ function PaymentForm({ onPaid }) {
   const stripe = useStripe();
   const elements = useElements();
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!stripe || !elements) return;
@@ -1094,13 +1101,34 @@ function PaymentForm({ onPaid }) {
     }
     setLoading(false);
   };
+
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
-      <PaymentElement />
+      {/* Spinner visible mientras Stripe carga */}
+      {!ready && (
+        <div className="flex flex-col items-center justify-center py-8 gap-3">
+          <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-gray-500">Loading secure payment form…</p>
+        </div>
+      )}
+      {/* PaymentElement siempre presente pero oculto hasta que esté listo */}
+      <div className={ready ? "" : "hidden"}>
+        <PaymentElement onReady={() => setReady(true)} />
+      </div>
       {error && <div className="p-2 bg-red-50 text-red-700 rounded text-sm">{error}</div>}
-      <button disabled={!stripe || loading} className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-semibold">
-        {loading ? "Processing…" : "Pay now"}
-      </button>
+      {ready && (
+        <button
+          disabled={!stripe || loading}
+          className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white py-3 font-semibold text-base transition-colors"
+        >
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Processing…
+            </span>
+          ) : "Pay now 🔒"}
+        </button>
+      )}
     </form>
   );
 }
