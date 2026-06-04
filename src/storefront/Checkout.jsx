@@ -715,7 +715,7 @@ export default function Checkout() {
         </div>
       </header>
       <main className="max-w-4xl mx-auto px-3 py-4 sm:px-4 grid lg:grid-cols-2 gap-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-        <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+        <section className="bg-white rounded-2xl shadow-sm p-4 space-y-3 order-2 lg:order-1">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
             <input className="border rounded-lg px-3 py-3 text-base" placeholder="Full name" value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })} required />
@@ -778,14 +778,14 @@ export default function Checkout() {
             </div>
           </div>
         </section>
-        <section className="space-y-4">
+        <section className="space-y-4 order-1 lg:order-2">
           {items.length > 0 && (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <h2 className="font-semibold mb-3 flex items-center justify-between">
                 <span>Items in cart</span>
                 <span className="bg-blue-100 text-blue-800 text-sm px-2 py-1 rounded-full">{items.length}</span>
               </h2>
-              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-60 lg:max-h-96 overflow-y-auto pr-1">
                 {items.map((item) => {
                   const producto = item.producto || {};
                   const nombre = producto.nombre || `Product #${item.producto_id}`;
