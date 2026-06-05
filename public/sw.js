@@ -1,7 +1,7 @@
 // public/sw.js — cache ligero tipo "app shell"
 // No cachea llamadas a Supabase para que los datos siempre estén frescos.
 
-const VERSION = "t4c-sw-v1";
+const VERSION = "t4c-sw-v2";
 const APP_SHELL = [
   "/",
   "/storefront",
