@@ -22,27 +22,16 @@ import OnlineLayout from "./online/OnlineLayout";
 import OnlineDashboard from "./online/OnlineDashboard";
 import Orders from "./admin/Orders";
 import OnlineCatalog from "./online/OnlineCatalog";
-import Checkout from "./storefront/Checkout";
 import OnlineDiscounts from "./online/Discounts";
 
 import { NetworkIndicator } from "./components/NetworkIndicator";
 import { SyncProvider, useSyncGlobal } from "./hooks/SyncContext";
 import { SyncToast } from "./components/SyncToast";
-import { ToastProvider } from "./hooks/useToast";
 
-// === Storefront público ===
-import Storefront from "./storefront/Storefront";
-import AuthCallback from "./storefront/AuthCallback";
-
-// 🆕 Payment pages
-import PaymentSuccess from "./PaymentSuccess";
-import PaymentCancelled from "./PaymentCancelled";
-
-import { UsuarioProvider, useUsuario } from "./UsuarioContext";
-import VanProvider, { useVan } from "./hooks/VanContext";
+import { useUsuario } from "./UsuarioContext";
+import { useVan } from "./hooks/VanContext";
 
 
-// Suplidores
 import Suplidores from "./Suplidores";
 
 // 💰 Comisiones (NUEVO)
@@ -59,111 +48,6 @@ import TaxConfig from './pages/TaxConfig'
 import CreateTenantManual from './admin/CreateTenantManual';
 import ListaEmergencia from './ListaEmergencia';
 
-// Componente de carga profesional
-const LoadingScreen = () => {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      {/* Decorative elements */}
-      <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-blue-400/20 to-indigo-400/20 rounded-full blur-3xl"></div>
-      <div className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-purple-400/20 to-pink-400/20 rounded-full blur-3xl"></div>
-
-      {/* Contenedor principal de la animación */}
-      <div className="relative z-10 text-center">
-        {/* Logo con efecto de brillo animado */}
-        <div className="mb-8">
-          <div className="relative w-32 h-32 mx-auto">
-            {/* Efecto de brillo circular */}
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl opacity-20 animate-pulse"></div>
-            
-            {/* Logo SVG con animación de suavizado */}
-            <svg className="w-20 h-20 text-white absolute inset-0 m-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05A2.5 2.5 0 0115.95 16H17a1 1 0 001-1v-5a1 1 0 00-.293-.707l-2-2A1 1 0 0015 7h-1z" />
-            </svg>
-          </div>
-        </div>
-
-        {/* Título con animación de desvanecimiento gradual */}
-        <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-6 animate-fade-in" style={{ animationDuration: '1.5s' }}>
-          TOOLS4CARE
-        </h1>
-
-        {/* Línea divisoria animada */}
-        <div className="w-64 h-px bg-gradient-to-r from-transparent via-blue-400 to-transparent mx-auto mb-6 animate-shimmer" style={{ animationDuration: '2s' }}></div>
-
-        {/* Texto de carga con animación de desvanecimiento */}
-        <p className="text-lg text-gray-600 font-medium mb-8 animate-fade-in" style={{ animationDuration: '1.5s', animationDelay: '0.3s' }}>
-          Cargando Sistema de Ventas...
-        </p>
-
-        {/* Efecto de partículas modernas */}
-        <div className="flex justify-center space-x-4 mb-8">
-          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style={{ animationDuration: '1.5s', animationDelay: '0s' }}></div>
-          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" style={{ animationDuration: '1.5s', animationDelay: '0.2s' }}></div>
-          <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" style={{ animationDuration: '1.5s', animationDelay: '0.4s' }}></div>
-        </div>
-
-        {/* Efecto de carga progresiva */}
-        <div className="w-64 h-1 bg-gray-200 rounded-full mx-auto overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full animate-progress" style={{ animationDuration: '2.5s' }}></div>
-        </div>
-
-        {/* Efectos de fondo adicionales sutiles */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-20 left-20 w-1 h-1 bg-blue-300 rounded-full animate-float" style={{ animationDuration: '6s' }}></div>
-          <div className="absolute top-40 right-32 w-1 h-1 bg-indigo-300 rounded-full animate-float" style={{ animationDuration: '7s', animationDelay: '1s' }}></div>
-          <div className="absolute bottom-32 left-40 w-1 h-1 bg-purple-300 rounded-full animate-float" style={{ animationDuration: '8s', animationDelay: '2s' }}></div>
-          <div className="absolute bottom-20 right-20 w-1 h-1 bg-pink-300 rounded-full animate-float" style={{ animationDuration: '9s', animationDelay: '3s' }}></div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Estilos CSS para las animaciones profesionales
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes fade-in {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  
-  @keyframes progress {
-    from { width: 0%; }
-    to { width: 100%; }
-  }
-  
-  @keyframes shimmer {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
-  }
-  
-  @keyframes float {
-    0% { transform: translateY(0) translateX(0); opacity: 0; }
-    10% { opacity: 1; }
-    90% { opacity: 1; }
-    100% { transform: translateY(-100px) translateX(30px); opacity: 0; }
-  }
-  
-  .animate-fade-in {
-    animation: fade-in;
-  }
-  
-  .animate-progress {
-    animation: progress;
-  }
-  
-  .animate-shimmer {
-    background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.5), transparent);
-    background-size: 200% 100%;
-    animation: shimmer;
-  }
-  
-  .animate-float {
-    animation: float;
-  }
-`;
-document.head.appendChild(style);
 
 function PrivateRoute({ children }) {
   const { usuario, cargando } = useUsuario();
@@ -257,22 +141,12 @@ function LayoutPrivado() {
 
 export default function App() {
   return (
-    <ToastProvider>
-    <UsuarioProvider>
-      <VanProvider>
-        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>}>
-        <Routes>
-          {/* --- Público: tienda --- */}
-          <Route path="/storefront" element={<Storefront />} />
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>}>
+    <Routes>
+          {/* Aliases de storefront (redirigen) */}
           <Route path="/shop" element={<Navigate to="/storefront" replace />} />
           <Route path="/store" element={<Navigate to="/storefront" replace />} />
-          <Route path="/checkout" element={<Checkout />} />
           <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-
-          {/* Payment Success/Cancel Pages */}
-          <Route path="/payment-success" element={<PaymentSuccess />} />
-          <Route path="/payment-cancelled" element={<PaymentCancelled />} />
 
           {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />
@@ -350,10 +224,7 @@ export default function App() {
 
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
-        </Routes>
-        </Suspense>
-      </VanProvider>
-    </UsuarioProvider>
-    </ToastProvider>
+    </Routes>
+    </Suspense>
   );
 }
