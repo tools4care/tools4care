@@ -858,14 +858,14 @@ export default function Storefront() {
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
           >
             {logoUrl ? (
-              <img src={logoUrl} alt={siteName} className="h-7 w-auto object-contain"
+              <img src={logoUrl} alt={siteName} className="h-8 w-auto object-contain"
                 onError={(e) => (e.currentTarget.style.display = "none")} />
             ) : (
-              <svg width="24" height="24" viewBox="0 0 24 24" className="text-blue-600">
-                <path fill="currentColor" d="M12 2l3.5 7H22l-6 4.5L19 21l-7-4.5L5 21l3-7.5L2 12h6.5z" />
-              </svg>
+              <img src="/icons/icon-192.png" alt="Tools4Care" className="h-8 w-8 rounded-lg object-contain" />
             )}
-            <span className="truncate max-w-[160px] hidden sm:block">{siteName}</span>
+            <span className="truncate max-w-[160px] font-bold text-blue-700 tracking-tight hidden sm:block">
+              {siteName || "TOOLS4CARE"}
+            </span>
           </button>
 
           <div className="flex-1">
