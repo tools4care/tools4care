@@ -581,20 +581,7 @@
     </style>
   </head>
   <body>
-    <!-- Loading Screen -->
-    <div id="loading-screen">
-      <div class="loading-logo">
-        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="50" cy="50" r="45" fill="none" stroke="white" stroke-width="3" opacity="0.3"/>
-          <circle cx="50" cy="50" r="35" fill="white" opacity="0.9"/>
-          <text x="50" y="60" font-size="30" font-weight="bold" fill="#667eea" text-anchor="middle">T4C</text>
-        </svg>
-      </div>
-      <div class="loading-spinner"></div>
-      <div class="loading-text">Cargando Sistema de Ventas...</div>
-    </div>
-
-    <!-- Offline Indicator -->
+    <!-- Offline Indicator (solo POS, no storefront) -->
     <div id="offline-indicator" class="offline-indicator">
       📵 Sin conexión - Trabajando en modo offline
     </div>
@@ -604,16 +591,8 @@
 
     <!-- Service Worker Registration -->
     <script>
-      // Remove loading screen when app loads
-      window.addEventListener('load', () => {
-        const loadingScreen = document.getElementById('loading-screen');
-        setTimeout(() => {
-          loadingScreen.classList.add('fade-out');
-          setTimeout(() => {
-            loadingScreen.style.display = 'none';
-          }, 500);
-        }, 1000);
-      });
+      // Detectar si estamos en el storefront (rutas del cliente)
+      const _isStorefront = /^\/(storefront|checkout|auth\/callback|payment-success|payment-cancelled)/.test(window.location.pathname);
 
       // Service Worker Registration
       if ('serviceWorker' in navigator) {
@@ -642,8 +621,9 @@
         });
       }
 
-      // Online/Offline Status
+      // Online/Offline Status — solo para el POS, nunca en storefront
       function updateOnlineStatus() {
+        if (_isStorefront) return; // clientes no ven el banner offline
         const offlineIndicator = document.getElementById('offline-indicator');
         if (!navigator.onLine) {
           offlineIndicator.classList.add('show');
@@ -654,12 +634,12 @@
 
       window.addEventListener('online', () => {
         updateOnlineStatus();
-        console.log('🌐 Conexión restaurada');
+        if (!_isStorefront) console.log('🌐 Conexión restaurada');
       });
 
       window.addEventListener('offline', () => {
         updateOnlineStatus();
-        console.log('📵 Sin conexión - Modo offline activado');
+        if (!_isStorefront) console.log('📵 Sin conexión - Modo offline activado');
       });
 
       // Check initial status
