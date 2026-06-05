@@ -715,7 +715,7 @@ export default function Checkout() {
         </div>
       </header>
       <main className="w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 flex flex-col lg:grid lg:grid-cols-2 gap-4 pb-8">
-        <section className="w-full min-w-0 bg-white rounded-2xl shadow-sm p-4 space-y-3 order-2 lg:order-1">
+        <section className="w-full min-w-0 bg-white rounded-2xl shadow-sm p-4 space-y-3 order-1 lg:order-1">
           <h2 className="font-semibold">Shipping</h2>
           <div className="grid grid-cols-1 gap-3">
             <input className="border rounded-lg px-3 py-3 text-base" placeholder="Full name" value={shipping.name} onChange={(e) => setShipping({ ...shipping, name: e.target.value })} required />
@@ -778,7 +778,7 @@ export default function Checkout() {
             </div>
           </div>
         </section>
-        <section className="w-full min-w-0 space-y-4 order-1 lg:order-2">
+        <section className="w-full min-w-0 space-y-4 order-2 lg:order-2">
           {items.length > 0 && (
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <h2 className="font-semibold mb-3 flex items-center justify-between">
