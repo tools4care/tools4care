@@ -1730,11 +1730,14 @@ export default function CuentasPorCobrar() {
         let query = supabase
           .from("v_cxc_cliente_detalle_ext")
           .select("cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual, telefono, direccion, nombre_negocio",
-            { count: "exact" })
-          .gt("saldo", 0); // A/R only shows positive balances — negative = customer credit, not debt
+            { count: "exact" });
 
         if (q?.trim()) {
+          // Con búsqueda: mostrar cualquier cliente que coincida (incluso saldo $0)
           query = query.ilike("cliente_nombre", `%${q.trim()}%`);
+        } else {
+          // Sin búsqueda: solo clientes con saldo pendiente (vista A/R normal)
+          query = query.gt("saldo", 0);
         }
 
         if (scoreFilter !== "ALL") {
