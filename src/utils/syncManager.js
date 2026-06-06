@@ -68,13 +68,24 @@ export async function sincronizarVentasPendientes() {
           const { error: itemsError } = await supabase
             .from('detalle_ventas')
             .insert(
-              venta.items.map(item => ({
-                venta_id: ventaId,
-                producto_id: item.producto_id,
-                cantidad: item.cantidad,
-                precio_unitario: item.precio_unit ?? item.precio_unitario ?? 0,
-                descuento: item.descuento_pct ?? 0,
-              }))
+              venta.items.map(item => {
+                const base = Number(item.precio_unit ?? item.precio_unitario ?? 0);
+                const pct  = Number(item.descuento_pct ?? 0);
+                const qty  = Number(item.cantidad ?? 1);
+                const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
+                // subtotal ya guardado en el item (post-fix) o lo calculamos aquí
+                const subtotal = Number(item.subtotal) > 0
+                  ? Number(item.subtotal)
+                  : Number((finalUnit * qty).toFixed(2));
+                return {
+                  venta_id: ventaId,
+                  producto_id: item.producto_id,
+                  cantidad: qty,
+                  precio_unitario: base,
+                  descuento: pct,
+                  subtotal,
+                };
+              })
             );
 
           if (itemsError) {
