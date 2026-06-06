@@ -3645,13 +3645,19 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
             // Items con campos de descuento compatibles con detalle_ventas
             items: cartSafe.map((p) => {
               const meta = p._pricing || { base: p.precio_unitario, pct: 0 };
+              const base = Number(meta.base || p.precio_unitario || 0);
+              const pct  = Number(meta.pct || p._manualDescuento || 0);
+              // precio final real que pagó el cliente
+              const finalUnit = Number((base * (1 - pct / 100)).toFixed(2));
+              const qty = Number(p.cantidad);
               return {
                 producto_id: p.producto_id,
                 nombre: p.nombre,
-                cantidad: Number(p.cantidad),
-                precio_unitario: Number(meta.base || p.precio_unitario || 0),
-                precio_unit: Number(meta.base || p.precio_unitario || 0),
-                descuento_pct: Number(meta.pct || 0),
+                cantidad: qty,
+                precio_unitario: base,             // base (para referencia)
+                precio_unit: base,
+                descuento_pct: pct,
+                subtotal: Number((finalUnit * qty).toFixed(2)), // real
               };
             }),
             // Pagos originales para referencia
@@ -3870,13 +3876,20 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         const { error: detalleErr } = await supabase
           .from('detalle_ventas')
           .insert(
-            itemsForDb.map((it) => ({
-              venta_id: ventaId,
-              producto_id: it.producto_id,
-              cantidad: it.cantidad,
-              precio_unitario: it.precio_unit,
-              descuento: it.descuento_pct || 0,
-            }))
+            itemsForDb.map((it) => {
+              // precio_unitario = base price, descuento = pct, subtotal = lo que realmente pagó
+              const pct = Number(it.descuento_pct || 0);
+              const finalUnit = Number((it.precio_unit * (1 - pct / 100)).toFixed(2));
+              const subtotal = Number((finalUnit * it.cantidad).toFixed(2));
+              return {
+                venta_id: ventaId,
+                producto_id: it.producto_id,
+                cantidad: it.cantidad,
+                precio_unitario: it.precio_unit,   // base (antes del descuento)
+                descuento: pct,
+                subtotal,                           // precio real pagado × cantidad
+              };
+            })
           );
 
         if (detalleErr) {

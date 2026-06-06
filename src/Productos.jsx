@@ -327,7 +327,7 @@ function PestañaVentas({ productoId }) {
 
       const { data: det } = await supabase
         .from("detalle_ventas")
-        .select("venta_id, cantidad, precio_unitario, subtotal")
+        .select("venta_id, cantidad, precio_unitario, descuento, subtotal")
         .eq("producto_id", productoId);
 
       if (!det || det.length === 0) { setLoading(false); return; }
@@ -345,8 +345,13 @@ function PestañaVentas({ productoId }) {
         if (!v) return null;
         const fecha = v.fecha || v.created_at || "";
         const qty = Number(d.cantidad || 0);
-        const unitPrice = Number(d.precio_unitario || 0);
-        const total = Number(d.subtotal || qty * unitPrice || 0);
+        const base = Number(d.precio_unitario || 0);
+        const pct  = Number(d.descuento || 0);
+        // si tiene subtotal guardado lo usa; si no (registros viejos) aplica el descuento
+        const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
+        const total = Number(d.subtotal) > 0
+          ? Number(d.subtotal)
+          : Number((finalUnit * qty).toFixed(2));
         return {
           venta_id: d.venta_id,
           qty,

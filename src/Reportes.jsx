@@ -1134,7 +1134,7 @@ function ProductosReport({ van, usuario }) {
       // ── Step 2: get detalle_ventas for those IDs (no ambiguous join) ──
       const { data: detalles, error: dErr } = await supabase
         .from("detalle_ventas")
-        .select("cantidad, precio_unitario, subtotal, producto_id, productos:producto_id(id, nombre)")
+        .select("cantidad, precio_unitario, descuento, subtotal, producto_id, productos:producto_id(id, nombre)")
         .in("venta_id", ventaIds);
       if (dErr) throw dErr;
 
@@ -1144,8 +1144,16 @@ function ProductosReport({ van, usuario }) {
         const p = r.productos;
         if (!p) return;
         if (!map[p.id]) map[p.id] = { id:p.id, nombre:p.nombre, totalQty:0, totalRevenue:0 };
-        map[p.id].totalQty     += Number(r.cantidad  || 0);
-        map[p.id].totalRevenue += Number(r.subtotal  || 0);
+        const qty  = Number(r.cantidad || 0);
+        const base = Number(r.precio_unitario || 0);
+        const pct  = Number(r.descuento || 0);
+        const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
+        // subtotal guardado = precio real; si es NULL (registros viejos) aplica descuento
+        const revenue = Number(r.subtotal) > 0
+          ? Number(r.subtotal)
+          : Number((finalUnit * qty).toFixed(2));
+        map[p.id].totalQty     += qty;
+        map[p.id].totalRevenue += revenue;
       });
       setData(Object.values(map).sort((a,b) => b.totalQty - a.totalQty));
       setSearched(true);
