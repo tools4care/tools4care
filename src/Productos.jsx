@@ -355,7 +355,7 @@ function PestañaVentas({ productoId }) {
         return {
           venta_id: d.venta_id,
           qty,
-          unitPrice,
+          unitPrice: base,
           total,
           fecha,
           mes: fecha.slice(0, 7),
