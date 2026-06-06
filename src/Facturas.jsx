@@ -121,7 +121,7 @@ function normalizeDetalleRows(rows, productosMap) {
     const pid = d.producto_id ?? d.producto ?? d.id;
     const prod = productosMap?.get?.(pid);
 
-    const unit =
+    const base =
       d.precio_unitario != null
         ? Number(d.precio_unitario)
         : d.precio_unit != null
@@ -132,10 +132,25 @@ function normalizeDetalleRows(rows, productosMap) {
         ? Number(d.unit_price)
         : 0;
 
+    const qty = Number(d.cantidad || 1);
+    const pct = Number(d.descuento ?? 0);
+
+    // precio_unitario_real = lo que realmente se cobró por unidad
+    // Si hay subtotal guardado, se usa. Si no, se aplica el descuento al base.
+    const subtotalGuardado = Number(d.subtotal ?? 0);
+    const unitReal = subtotalGuardado > 0
+      ? Number((subtotalGuardado / qty).toFixed(2))
+      : pct > 0
+        ? Number((base * (1 - pct / 100)).toFixed(2))
+        : base;
+
     return {
       producto_id: pid,
-      cantidad: Number(d.cantidad || 1),
-      precio_unitario: Number(unit || 0),
+      cantidad: qty,
+      precio_unitario: unitReal,      // precio real cobrado por unidad
+      precio_base: base,              // precio de lista (antes del descuento)
+      descuento: pct,
+      subtotal: Number((unitReal * qty).toFixed(2)),
       productos: prod
         ? { nombre: prod.nombre, codigo: prod.codigo }
         : d.productos
@@ -234,10 +249,9 @@ function buildFacturaPDF(factura) {
       const codigo = d.productos?.codigo || "N/A";
       const nombre = d.productos?.nombre || d.producto_nombre || d.producto_id || "-";
       const qty = Number(d.cantidad || 1);
-      const unit = Number(
-        d.precio_unitario != null ? d.precio_unitario : d.precio_unit != null ? d.precio_unit : 0
-      );
-      const sub = unit * qty;
+      // precio_unitario ya viene normalizado (con descuento aplicado) desde normalizeDetalleRows
+      const unit = Number(d.precio_unitario ?? d.precio_unit ?? 0);
+      const sub = Number(d.subtotal ?? unit * qty);
       subtotalAcumulado += sub;
       return [codigo, nombre, qty, "$" + unit.toFixed(2), "$" + sub.toFixed(2)];
     });
@@ -383,8 +397,9 @@ function buildFullInvoiceHTML(factura) {
         const codigo = d.productos?.codigo || "N/A";
         const nombre = d.productos?.nombre || d.producto_nombre || "-";
         const qty = Number(d.cantidad || 1);
+        // precio_unitario ya viene normalizado (con descuento aplicado) desde normalizeDetalleRows
         const unit = Number(d.precio_unitario ?? d.precio_unit ?? 0);
-        const sub = qty * unit;
+        const sub = Number(d.subtotal ?? unit * qty);
         subtotal += sub;
         return `
           <tr>
@@ -654,7 +669,7 @@ export default function Facturas() {
       try {
         const { data } = await supabase
           .from("detalle_ventas")
-          .select("producto_id,cantidad,precio_unitario, productos(nombre,codigo)")
+          .select("producto_id,cantidad,precio_unitario,descuento,subtotal,productos(nombre,codigo)")
           .eq("venta_id", ventaId);
         rows = data || [];
       } catch {}
@@ -710,7 +725,7 @@ export default function Facturas() {
         try {
           const { data } = await supabase
             .from("detalle_ventas")
-            .select("producto_id,cantidad,precio_unitario, productos(nombre,codigo)")
+            .select("producto_id,cantidad,precio_unitario,descuento,subtotal,productos(nombre,codigo)")
             .eq("venta_id", ventaId);
           rows = data || [];
         } catch {}
@@ -741,7 +756,7 @@ export default function Facturas() {
         try {
           const { data } = await supabase
             .from("detalle_ventas")
-            .select("producto_id,cantidad,precio_unitario,productos(nombre,codigo)")
+            .select("producto_id,cantidad,precio_unitario,descuento,subtotal,productos(nombre,codigo)")
             .eq("venta_id", f.id);
           rows = data || [];
         } catch {}
@@ -785,7 +800,7 @@ export default function Facturas() {
         try {
           const { data } = await supabase
             .from("detalle_ventas")
-            .select("producto_id,cantidad,precio_unitario,productos(nombre,codigo)")
+            .select("producto_id,cantidad,precio_unitario,descuento,subtotal,productos(nombre,codigo)")
             .eq("venta_id", f.id);
           rows = data || [];
         } catch {}
@@ -1376,8 +1391,9 @@ export default function Facturas() {
                 ) : (
                   <div className="space-y-2">
                     {(facturaSeleccionada.detalle_ventas || []).map((item, idx) => {
-                      const unit = Number(item.precio_unitario != null ? item.precio_unitario : item.precio_unit || 0);
-                      const subtotal = unit * Number(item.cantidad || 1);
+                      // precio_unitario ya viene normalizado (con descuento) desde normalizeDetalleRows
+                      const unit = Number(item.precio_unitario ?? item.precio_unit ?? 0);
+                      const subtotal = Number(item.subtotal ?? unit * Number(item.cantidad || 1));
                       return (
                         <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
                           <div className="flex justify-between items-start">
