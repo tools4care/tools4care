@@ -453,8 +453,11 @@ function DetalleVentaModal({ venta, loading, productos, onClose, getNombreClient
   if (!venta) return null;
 
   const totalProductos = productos.reduce((sum, p) => {
-    const unit = Number(p.precio_unit ?? p.precio_unitario ?? 0);
-    const sub = p.subtotal != null ? Number(p.subtotal) : unit * Number(p.cantidad || 0);
+    const qty  = Number(p.cantidad || 0);
+    const base = Number(p.precio_unit ?? p.precio_unitario ?? 0);
+    const pct  = Number(p.descuento ?? 0);
+    const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
+    const sub  = Number(p.subtotal) > 0 ? Number(p.subtotal) : finalUnit * qty;
     return sum + sub;
   }, 0);
 
@@ -2101,7 +2104,7 @@ export default function Dashboard() {
     if (ids.length > 0) {
       const { data: det2 } = await supabase
         .from("detalle_ventas")
-        .select("producto_id,cantidad,precio_unitario,subtotal")
+        .select("producto_id,cantidad,precio_unitario,descuento,subtotal")
         .in("venta_id", ids);
       det = det2 || [];
     }
@@ -2109,9 +2112,12 @@ export default function Dashboard() {
     const qtyMap     = new Map();
     const revenueMap = new Map();
     (det || []).forEach((r) => {
-      const pid = r.producto_id;
-      const qty = Number(r.cantidad || 0);
-      const rev = Number(r.subtotal || 0) || qty * Number(r.precio_unitario || 0);
+      const pid  = r.producto_id;
+      const qty  = Number(r.cantidad || 0);
+      const base = Number(r.precio_unitario || 0);
+      const pct  = Number(r.descuento || 0);
+      const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
+      const rev  = Number(r.subtotal) > 0 ? Number(r.subtotal) : finalUnit * qty;
       qtyMap.set(pid, (qtyMap.get(pid) || 0) + qty);
       revenueMap.set(pid, (revenueMap.get(pid) || 0) + rev);
     });
