@@ -178,6 +178,9 @@ export default function CierreVan() {
 
   // ── Abonos CxC (para desglose de transferencias — display only) ──
   const [abonosCxC, setAbonosCxC] = useState([]);
+  const [cxcResumen, setCxcResumen] = useState({
+    deudaNueva: 0, reducciones: 0, pagosDeuda: 0, cambioNeto: 0,
+  });
 
   // ── Post-close report dialog ──
   const [showPostCloseDialog, setShowPostCloseDialog] = useState(false);
@@ -370,18 +373,15 @@ export default function CierreVan() {
           });
         } catch (_) { /* pago_otro unavailable */ }
 
-        // Pagos CxC standalone desde pantalla Clientes (formato "Transfer - Zelle", etc.)
-        // idem_key IS NULL + metodo empieza con "Transfer - " → la pantalla Clientes los guarda así.
-        // Los pagos offline de ventas (syncManager) también tienen idem_key NULL pero con metodo
-        // genérico ("Cash", "efectivo") — esos YA están en el RPC, no los tocamos.
-        // Solo añadimos los que tienen prefijo "Transfer - " porque esos NO los cubre el RPC.
+        // Pagos CxC standalone desde pantalla Clientes.
+        // `idem` identifica pagos directos de CxC; pagos aplicados dentro de una
+        // venta usan `idem_key` y ya están incluidos en los totales de la venta.
         try {
           const { data: pagosData } = await supabase
             .from("pagos")
             .select("id, monto, metodo_pago, fecha_pago, cliente_id, clientes:cliente_id(nombre)")
             .eq("van_id", van.id)
-            .is("idem_key", null)
-            .like("metodo_pago", "Transfer - %")
+            .not("idem", "is", null)
             .gte("fecha_pago", p_from + "T00:00:00")
             .lte("fecha_pago", p_to + "T23:59:59");
 
@@ -389,7 +389,9 @@ export default function CierreVan() {
             const iso = String(p.fecha_pago || "").slice(0, 10);
             if (!iso) return;
             if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
-            map[iso].transfer += Number(p.monto || 0);
+            const amount = Number(p.monto || 0);
+            const method = normalizeCloseoutMethod(p.metodo_pago);
+            map[iso][method] = Number(map[iso][method] || 0) + amount;
           });
 
           setAbonosCxC(pagosData || []);
@@ -418,6 +420,29 @@ export default function CierreVan() {
             map[iso][`${method}Refunds`] = Number(map[iso][`${method}Refunds`] || 0) + monto;
           });
         } catch (_) { /* ignorar si falla */ }
+
+        // CxC movement summary: informational only; never added to cash twice.
+        try {
+          const [{ data: salesForAr }, { data: debtPayments }, { data: arMoves }] = await Promise.all([
+            supabase.from("ventas")
+              .select("total_venta,total_pagado")
+              .eq("van_id", van.id).neq("tipo", "devolucion")
+              .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
+            supabase.from("pagos")
+              .select("monto").eq("van_id", van.id)
+              .gte("fecha_pago", p_from + "T00:00:00").lte("fecha_pago", p_to + "T23:59:59"),
+            supabase.from("cxc_movimientos")
+              .select("monto,tipo").eq("van_id", van.id)
+              .in("tipo", ["devolucion", "credito_tienda"])
+              .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
+          ]);
+          const deudaNueva = (salesForAr || []).reduce(
+            (s, v) => s + Math.max(0, Number(v.total_venta || 0) - Number(v.total_pagado || 0)), 0
+          );
+          const pagosDeuda = (debtPayments || []).reduce((s, p) => s + Number(p.monto || 0), 0);
+          const reducciones = (arMoves || []).reduce((s, m) => s + Number(m.monto || 0), 0);
+          setCxcResumen({ deudaNueva, reducciones, pagosDeuda, cambioNeto: deudaNueva - reducciones - pagosDeuda });
+        } catch (_) { /* summary is optional */ }
 
         setResumenPorFecha(map);
       } catch (err) {
@@ -601,7 +626,8 @@ useEffect(() => {
         const totalEfectivo = Number(r.cash || 0);
         const totalTarjeta = Number(r.card || 0);
         const totalTransferencia = Number(r.transfer || 0);
-        const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
+        const totalOtros = Number(r.other || 0);
+        const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
 
         // Distribución simple del real: igual para cada día
         const cajaRealFecha = totalReal / fechasSeleccionadas.length;
@@ -623,7 +649,7 @@ useEffect(() => {
             total_efectivo: totalEfectivo,
             total_tarjeta: totalTarjeta,
             total_transferencia: totalTransferencia,
-            total_otros: Number(r.other || 0),
+            total_otros: totalOtros,
             caja_real: cajaRealFecha,
             discrepancia: discrepanciaFecha,
             observaciones: observacionesCompletas,
@@ -861,6 +887,13 @@ useEffect(() => {
           totales.diferencia > 0
             ? fmtCurrency(totales.diferencia)
             : "$0.00",
+        ],
+        ["New A/R Debt from Sales", fmtCurrency(cxcResumen.deudaNueva)],
+        ["A/R Reduced by Returns", fmtCurrency(cxcResumen.reducciones)],
+        ["Payments Applied to Old Debt", fmtCurrency(cxcResumen.pagosDeuda)],
+        [
+          "Net A/R Change",
+          `${cxcResumen.cambioNeto > 0 ? "+" : ""}${fmtCurrency(cxcResumen.cambioNeto)}`,
         ],
       ];
 
@@ -1472,6 +1505,20 @@ useEffect(() => {
     return result;
   }, [ventasPorFecha, abonosCxC]);
 
+  const checkTotalSistema = useMemo(() => {
+    const fromSales = Object.values(ventasPorFecha).flat().reduce((total, venta) => {
+      const methods = Array.isArray(venta.pago?.metodos) ? venta.pago.metodos : [];
+      return total + methods
+        .filter((m) => m.forma === "cheque")
+        .reduce((sum, m) => sum + Number(m.monto || 0), 0);
+    }, 0);
+    const fromCxC = abonosCxC.reduce((total, payment) => {
+      const method = String(payment.metodo_pago || "").toLowerCase();
+      return total + (method.includes("check") || method.includes("cheque") ? Number(payment.monto || 0) : 0);
+    }, 0);
+    return fromSales + fromCxC;
+  }, [ventasPorFecha, abonosCxC]);
+
   /* ========================= Chart Data ========================= */
   const datosMetodosPago = useMemo(() => {
     return [
@@ -1603,6 +1650,25 @@ useEffect(() => {
                 className="bg-blue-100 text-blue-800 px-3 py-1 rounded-lg font-medium text-sm"
               >
                 {formatUS(fecha)}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Accounts Receivable movement summary */}
+        <div className="bg-white rounded-xl shadow-lg border border-indigo-200 p-4 sm:p-6 mb-6">
+          <h3 className="text-lg font-bold text-indigo-900 mb-1">Accounts Receivable Movement</h3>
+          <p className="text-xs text-gray-500 mb-4">Informational summary. These amounts are not added twice to the closeout.</p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              ["New debt from sales", cxcResumen.deudaNueva, "text-amber-700 bg-amber-50 border-amber-200"],
+              ["A/R reduced by returns", cxcResumen.reducciones, "text-blue-700 bg-blue-50 border-blue-200"],
+              ["Payments applied to old debt", cxcResumen.pagosDeuda, "text-green-700 bg-green-50 border-green-200"],
+              ["Net A/R change", cxcResumen.cambioNeto, cxcResumen.cambioNeto > 0 ? "text-red-700 bg-red-50 border-red-200" : "text-green-700 bg-green-50 border-green-200"],
+            ].map(([label, value, cls]) => (
+              <div key={label} className={`rounded-xl border p-3 ${cls}`}>
+                <div className="text-[11px] font-semibold uppercase">{label}</div>
+                <div className="text-xl font-black mt-1">{value > 0 && label === "Net A/R change" ? "+" : ""}{fmtCurrency(value)}</div>
               </div>
             ))}
           </div>
@@ -1829,6 +1895,11 @@ useEffect(() => {
                     ? fmtCurrency(totales.totalOtros)
                     : "$0.00"}
                 </p>
+                {checkTotalSistema > 0 && (
+                  <p className="text-xs font-semibold text-amber-700 mt-1">
+                    Includes {fmtCurrency(checkTotalSistema)} in checks
+                  </p>
+                )}
               </div>
 
               <div>
