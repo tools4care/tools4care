@@ -78,6 +78,12 @@ const fmtCurrency = (n) => {
   })}`;
 };
 
+function sanitizeMoneyInput(value) {
+  const clean = String(value || "").replace(/[^\d.]/g, "");
+  const [whole, ...decimals] = clean.split(".");
+  return decimals.length ? `${whole}.${decimals.join("").slice(0, 2)}` : whole;
+}
+
 const getPaymentMethodColor = (method) => {
   return PAYMENT_METHODS[method]?.color || "#9E9E9E";
 };
@@ -1745,8 +1751,8 @@ useEffect(() => {
                     className="border rounded-lg px-3 py-2 text-sm min-w-0" />
                   <div className="relative">
                     <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                    <input type="number" step="0.01" min="0" placeholder="0.00" value={g.monto}
-                      onChange={(e) => updateGasto(g._key, "monto", e.target.value)}
+                    <input type="text" inputMode="decimal" pattern="[0-9]*[.]?[0-9]{0,2}" placeholder="0.00" value={g.monto}
+                      onChange={(e) => updateGasto(g._key, "monto", sanitizeMoneyInput(e.target.value))}
                       className="border rounded-lg pl-6 pr-2 py-2 text-sm w-full font-semibold" />
                   </div>
                   <button type="button" onClick={() => removeGasto(g._key)}
@@ -1850,8 +1856,10 @@ useEffect(() => {
                   </span>
                   <input
                     type="text"
+                    inputMode="decimal"
+                    pattern="[0-9]*[.]?[0-9]{0,2}"
                     value={cashInput}
-                    onChange={(e) => setCashInput(e.target.value)}
+                    onChange={(e) => setCashInput(sanitizeMoneyInput(e.target.value))}
                     className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                     placeholder="0.00"
                   />
@@ -1901,8 +1909,10 @@ useEffect(() => {
                   </span>
                   <input
                     type="text"
+                    inputMode="decimal"
+                    pattern="[0-9]*[.]?[0-9]{0,2}"
                     value={cardInput}
-                    onChange={(e) => setCardInput(e.target.value)}
+                    onChange={(e) => setCardInput(sanitizeMoneyInput(e.target.value))}
                     className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="0.00"
                   />
@@ -1981,9 +1991,11 @@ useEffect(() => {
                   </span>
                   <input
                     type="text"
+                    inputMode="decimal"
+                    pattern="[0-9]*[.]?[0-9]{0,2}"
                     value={transferInput}
                     onChange={(e) =>
-                      setTransferInput(e.target.value)
+                      setTransferInput(sanitizeMoneyInput(e.target.value))
                     }
                     className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                     placeholder="0.00"
@@ -2036,8 +2048,10 @@ useEffect(() => {
                   </span>
                   <input
                     type="text"
+                    inputMode="decimal"
+                    pattern="[0-9]*[.]?[0-9]{0,2}"
                     value={otherInput}
-                    onChange={(e) => setOtherInput(e.target.value)}
+                    onChange={(e) => setOtherInput(sanitizeMoneyInput(e.target.value))}
                     className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     placeholder="0.00"
                   />
@@ -2100,7 +2114,7 @@ useEffect(() => {
                       </select>
                       <input
                         type="text"
-                        placeholder="Descripción"
+                        placeholder="Description"
                         value={g.descripcion}
                         onChange={(e) => updateGasto(g._key, "descripcion", e.target.value)}
                         className="border rounded-lg px-3 py-1.5 text-sm flex-1 min-w-0"
@@ -2108,12 +2122,12 @@ useEffect(() => {
                       <div className="relative w-28 shrink-0">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">$</span>
                         <input
-                          type="number"
-                          step="0.01"
-                          min="0"
+                          type="text"
+                          inputMode="decimal"
+                          pattern="[0-9]*[.]?[0-9]{0,2}"
                           placeholder="0.00"
                           value={g.monto}
-                          onChange={(e) => updateGasto(g._key, "monto", e.target.value)}
+                          onChange={(e) => updateGasto(g._key, "monto", sanitizeMoneyInput(e.target.value))}
                           className="border rounded-lg pl-6 pr-2 py-1.5 text-sm w-full font-semibold"
                         />
                       </div>
@@ -2740,13 +2754,15 @@ useEffect(() => {
                         </button>
                         <input
                           type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           value={String(
                             cashCounts[denom.value] || 0
                           ).padStart(1, "0")}
                           onChange={(e) =>
                             updateCashCount(
                               denom.value,
-                              e.target.value
+                              e.target.value.replace(/\D/g, "")
                             )
                           }
                           className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
@@ -2839,13 +2855,15 @@ useEffect(() => {
                         </button>
                         <input
                           type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           value={String(
                             cardCounts[denom.value] || 0
                           ).padStart(1, "0")}
                           onChange={(e) =>
                             updateCardCount(
                               denom.value,
-                              e.target.value
+                              e.target.value.replace(/\D/g, "")
                             )
                           }
                           className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
@@ -2975,11 +2993,11 @@ useEffect(() => {
                         <div className="relative flex-1">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
                           <input
-                            type="number"
-                            min="0"
-                            step="0.01"
+                            type="text"
+                            inputMode="decimal"
+                            pattern="[0-9]*[.]?[0-9]{0,2}"
                             value={transferCounts[type.value] || 0}
-                            onChange={(e) => updateTransferCount(type.value, e.target.value)}
+                            onChange={(e) => updateTransferCount(type.value, sanitizeMoneyInput(e.target.value))}
                             className="w-full pl-7 pr-3 py-1.5 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                           />
                         </div>
@@ -3071,13 +3089,15 @@ useEffect(() => {
                         </button>
                         <input
                           type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           value={String(
                             otherCounts[denom.value] || 0
                           ).padStart(1, "0")}
                           onChange={(e) =>
                             updateOtherCount(
                               denom.value,
-                              e.target.value
+                              e.target.value.replace(/\D/g, "")
                             )
                           }
                           className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
