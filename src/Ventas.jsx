@@ -1174,8 +1174,19 @@ const [clientSalesHistory, setClientSalesHistory] = useState([]); // Lista de fa
 const [selectedInvoice, setSelectedInvoice] = useState(null); // Factura seleccionada
 const [returnQuantities, setReturnQuantities] = useState({}); // { detalle_id: cantidad }
 const [returnType, setReturnType] = useState("cash"); // "cash" | "credit"
+const [refundMethod, setRefundMethod] = useState("efectivo");
 const [returnReason, setReturnReason] = useState("");
 const [processingReturn, setProcessingReturn] = useState(false);
+
+// Safest default: unpaid/partially-paid invoices reduce A/R instead of
+// pretending money was returned. Paid invoices default to a real refund.
+useEffect(() => {
+  if (!selectedInvoice) return;
+  const invoiceTotal = Number(selectedInvoice.total_venta ?? selectedInvoice.total ?? 0);
+  const invoicePaid = Number(selectedInvoice.total_pagado || 0);
+  const hasOutstandingBalance = invoiceTotal - invoicePaid > 0.005;
+  setReturnType(hasOutstandingBalance && selectedClient?.id ? "credit" : "cash");
+}, [selectedInvoice?.id, selectedClient?.id]);
 
 
   const [step, setStep] = useState(1);
@@ -3322,9 +3333,16 @@ async function handleProcessReturn() {
       .join('\n');
 
     const isCredit = returnType === "credit" && selectedClient?.id;
+    const paidOnOriginal = Number(selectedInvoice.total_pagado || 0);
+    if (!isCredit && totalRefund > paidOnOriginal + 0.005) {
+      throw new Error(
+        `This invoice only has ${fmt(paidOnOriginal)} paid. ` +
+        `Use "Reduce A/R" because no money should leave the business for the unpaid portion.`
+      );
+    }
     const refundLabel = isCredit
-      ? `💳 Store credit of ${fmt(totalRefund)} added to customer account`
-      : `💵 Give back ${fmt(totalRefund)} cash to customer`;
+      ? `📉 Reduce customer A/R balance by ${fmt(totalRefund)} — no money leaves the business`
+      : `💸 Refund ${fmt(totalRefund)} via ${refundMethod}`;
 
     const confirmed = await confirmDialog(
       `🔄 Confirm Return\n\n` +
@@ -3353,7 +3371,8 @@ async function handleProcessReturn() {
         venta_origen_id: selectedInvoice.id,
         motivo_devolucion: returnReason || "Return",
         estado_pago: isCredit ? 'credito_tienda' : 'reembolsado',
-        notas: `Return of invoice #${selectedInvoice.id.slice(0, 8)}… — ${isCredit ? "Store Credit" : "Cash Refund"}`,
+        metodo_pago: isCredit ? null : refundMethod,
+        notas: `Return of invoice #${selectedInvoice.id.slice(0, 8)}… — ${isCredit ? "A/R Reduction (no money returned)" : `Money Refund (${refundMethod})`}`,
       }])
       .select()
       .single();
@@ -3426,22 +3445,7 @@ async function handleProcessReturn() {
     // 5b. Ajustar CxC según tipo de devolución y estado de la venta original
     if (selectedClient?.id) {
       if (isCredit) {
-        // Store credit → insert as a positive CxC credit (reduces balance)
-        const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
-          cliente_id: selectedClient.id,
-          tipo: 'credito_tienda',
-          monto: totalRefund,
-          venta_id: returnSale.id,
-          usuario_id: usuario.id,
-          fecha: new Date().toISOString(),
-          van_id: van.id,
-          nota: `Store credit — Return of invoice #${selectedInvoice.id.slice(0, 6)}`,
-        }]);
-        if (cxcErr) console.error("Error registrando crédito tienda:", cxcErr);
-        toast.return(`✅ Return processed — ${fmt(totalRefund)} store credit added to ${selectedClient.nombre}'s account.`, 7000);
-
-      } else if (['pendiente', 'parcial'].includes(selectedInvoice.estado_pago)) {
-        // Cash refund on a credit sale → reduce the debt
+        // A/R reduction: product was unpaid, so no money leaves the business.
         const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
           cliente_id: selectedClient.id,
           tipo: 'devolucion',
@@ -3450,17 +3454,17 @@ async function handleProcessReturn() {
           usuario_id: usuario.id,
           fecha: new Date().toISOString(),
           van_id: van.id,
-          nota: `Cash refund — Return of invoice #${selectedInvoice.id.slice(0, 6)}`,
+          nota: `A/R reduction — Return of invoice #${selectedInvoice.id.slice(0, 6)} — no money returned`,
         }]);
-        if (cxcErr) console.error("Error en CxC:", cxcErr);
-        toast.return(`✅ Return processed — debt reduced by ${fmt(totalRefund)}. Give ${fmt(totalRefund)} cash back.`, 7000);
+        if (cxcErr) console.error("Error registrando crédito tienda:", cxcErr);
+        toast.return(`✅ Return processed — debt reduced by ${fmt(totalRefund)}. No money leaves the business.`, 7000);
 
       } else {
-        toast.return(`✅ Return processed — give ${fmt(totalRefund)} cash back to the client.`, 6000);
+        toast.return(`✅ Return processed — refund ${fmt(totalRefund)} via ${refundMethod}.`, 6000);
       }
     } else {
       // Walk-in return, no client account
-      toast.return(`✅ Walk-in return processed — give ${fmt(totalRefund)} cash back.`, 6000);
+      toast.return(`✅ Walk-in return processed — refund ${fmt(totalRefund)} via ${refundMethod}.`, 6000);
     }
 
     // Resetear UI
@@ -4433,7 +4437,7 @@ function renderReturnDetails() {
         <div className="mb-4">
           <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">Return Type</div>
           <div className="grid grid-cols-2 gap-2">
-            {/* Cash Refund */}
+            {/* Money Refund */}
             <button
               onClick={() => setReturnType("cash")}
               className={`flex flex-col items-center gap-1.5 py-3 px-3 rounded-xl border-2 transition-all ${
@@ -4442,13 +4446,13 @@ function renderReturnDetails() {
                   : "border-gray-200 bg-white hover:border-gray-300"
               }`}
             >
-              <span className="text-2xl">💵</span>
-              <span className="font-bold text-sm text-gray-900">Cash Refund</span>
-              <span className="text-[10px] text-gray-500 text-center">Give money back to customer</span>
+              <span className="text-2xl">💸</span>
+              <span className="font-bold text-sm text-gray-900">Refund Money</span>
+              <span className="text-[10px] text-gray-500 text-center">Money actually leaves the business</span>
               {returnType === "cash" && <span className="text-[10px] font-bold text-green-600">✓ Selected</span>}
             </button>
 
-            {/* Store Credit — only when there's a client */}
+            {/* A/R reduction — only when there's a client */}
             <button
               onClick={() => selectedClient?.id ? setReturnType("credit") : null}
               disabled={!selectedClient?.id}
@@ -4460,14 +4464,29 @@ function renderReturnDetails() {
                   : "border-gray-200 bg-white hover:border-gray-300"
               }`}
             >
-              <span className="text-2xl">💳</span>
-              <span className="font-bold text-sm text-gray-900">Store Credit</span>
+              <span className="text-2xl">📉</span>
+              <span className="font-bold text-sm text-gray-900">Reduce A/R</span>
               <span className="text-[10px] text-gray-500 text-center">
-                {selectedClient?.id ? "Credit to customer account" : "Requires a customer account"}
+                {selectedClient?.id ? "Reduce debt — no money returned" : "Requires a customer account"}
               </span>
               {returnType === "credit" && <span className="text-[10px] font-bold text-blue-600">✓ Selected</span>}
             </button>
           </div>
+          {returnType === "cash" && (
+            <div className="mt-3">
+              <label className="block text-xs font-bold text-gray-700 mb-1">Refund method</label>
+              <select
+                value={refundMethod}
+                onChange={(e) => setRefundMethod(e.target.value)}
+                className="w-full border-2 border-orange-200 rounded-xl p-2.5 bg-white text-sm font-semibold"
+              >
+                <option value="efectivo">Cash</option>
+                <option value="tarjeta">Card</option>
+                <option value="transferencia">Transfer / Zelle / Venmo / Cash App</option>
+                <option value="otro">Other</option>
+              </select>
+            </div>
+          )}
         </div>
       )}
 
@@ -4482,8 +4501,8 @@ function renderReturnDetails() {
           </div>
           <div className="text-xs text-gray-600 mt-1">
             {returnType === "credit"
-              ? `💳 ${fmt(totalReturn)} will be added as store credit to ${selectedClient?.nombre || "customer"}'s account`
-              : `💵 Give ${fmt(totalReturn)} cash back to customer`
+              ? `📉 ${fmt(totalReturn)} reduces ${selectedClient?.nombre || "customer"}'s debt. No cash leaves the business.`
+              : `💸 Refund ${fmt(totalReturn)} via ${refundMethod}`
             }
           </div>
         </div>
@@ -4501,8 +4520,8 @@ function renderReturnDetails() {
         {processingReturn
           ? "⏳ Processing…"
           : returnType === "credit"
-          ? `💳 Apply Store Credit (${fmt(totalReturn)})`
-          : `💵 Process Cash Refund (${fmt(totalReturn)})`
+          ? `📉 Reduce A/R (${fmt(totalReturn)})`
+          : `💸 Process Money Refund (${fmt(totalReturn)})`
         }
       </button>
     </div>

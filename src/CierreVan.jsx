@@ -84,6 +84,19 @@ const getPaymentMethodLabel = (method) => {
   return PAYMENT_METHODS[method]?.label || method;
 };
 
+function normalizeCloseoutMethod(raw) {
+  const value = String(raw || "").toLowerCase();
+  if (value.includes("cash") || value.includes("efectivo")) return "cash";
+  if (value.includes("card") || value.includes("tarjeta")) return "card";
+  if (
+    value.includes("transfer") || value.includes("zelle") ||
+    value.includes("venmo") || value.includes("cash app") ||
+    value.includes("cashapp") || value.includes("apple pay") ||
+    value.includes("applepay")
+  ) return "transfer";
+  return "other";
+}
+
 // Formato US MM/DD/YYYY a partir de 'YYYY-MM-DD'
 function formatUS(isoDay) {
   if (!isoDay) return "—";
@@ -332,10 +345,30 @@ export default function CierreVan() {
             cash: Number(r.cash_expected ?? 0),
             card: Number(r.card_expected ?? 0),
             transfer: Number(r.transfer_expected ?? 0),
+            other: Number(r.other_expected ?? 0),
           };
 
           console.log(`💰 Totales para ${iso}:`, map[iso]);
         });
+
+        // The legacy RPC does not expose pago_otro. Add it explicitly so
+        // checks/other payment methods are not silently omitted.
+        try {
+          const { data: otherSales } = await supabase
+            .from("ventas")
+            .select("fecha, created_at, pago_otro")
+            .eq("van_id", van.id)
+            .neq("tipo", "devolucion")
+            .gte("fecha", p_from + "T00:00:00")
+            .lte("fecha", p_to + "T23:59:59");
+
+          (otherSales || []).forEach((sale) => {
+            const iso = String(sale.fecha || sale.created_at || "").slice(0, 10);
+            if (!iso || !fechasSeleccionadas.includes(iso)) return;
+            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
+            map[iso].other = Number(map[iso].other || 0) + Number(sale.pago_otro || 0);
+          });
+        } catch (_) { /* pago_otro unavailable */ }
 
         // Pagos CxC standalone desde pantalla Clientes (formato "Transfer - Zelle", etc.)
         // idem_key IS NULL + metodo empieza con "Transfer - " → la pantalla Clientes los guarda así.
@@ -362,14 +395,12 @@ export default function CierreVan() {
           setAbonosCxC(pagosData || []);
         } catch (_) { /* pagos table unavailable */ }
 
-        // ── Descontar reembolsos en efectivo del día ──────────────────────
-        // Las devoluciones con estado_pago='reembolsado' representan dinero
-        // que SALIÓ de la caja. El crédito de tienda (credito_tienda) no
-        // afecta la caja, por eso solo filtramos 'reembolsado'.
+        // Descontar únicamente devoluciones donde realmente salió dinero.
+        // Las reducciones de CxC usan credito_tienda y no afectan el cierre.
         try {
           const { data: devData } = await supabase
             .from("ventas")
-            .select("created_at, total_venta")
+            .select("created_at, total_venta, metodo_pago")
             .eq("van_id", van.id)
             .eq("tipo", "devolucion")
             .eq("estado_pago", "reembolsado")
@@ -379,10 +410,12 @@ export default function CierreVan() {
           (devData || []).forEach((r) => {
             const iso = String(r.created_at || "").slice(0, 10);
             if (!iso || !fechasSeleccionadas.includes(iso)) return;
-            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
+            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
             const monto = Number(r.total_venta || 0);
-            map[iso].cash          = Math.max(0, (map[iso].cash || 0) - monto);
-            map[iso].cashRefunds   = (map[iso].cashRefunds || 0) + monto;
+            const method = normalizeCloseoutMethod(r.metodo_pago);
+            map[iso][method] = Number(map[iso][method] || 0) - monto;
+            map[iso].refunds = Number(map[iso].refunds || 0) + monto;
+            map[iso][`${method}Refunds`] = Number(map[iso][`${method}Refunds`] || 0) + monto;
           });
         } catch (_) { /* ignorar si falla */ }
 
@@ -590,7 +623,7 @@ useEffect(() => {
             total_efectivo: totalEfectivo,
             total_tarjeta: totalTarjeta,
             total_transferencia: totalTransferencia,
-            total_otros: 0,
+            total_otros: Number(r.other || 0),
             caja_real: cajaRealFecha,
             discrepancia: discrepanciaFecha,
             observaciones: observacionesCompletas,
@@ -1265,12 +1298,12 @@ useEffect(() => {
       totalVentas += Number(venta.total_venta || 0);
     });
 
-    // 🎯 TOTALES DE COBRADO: usar SOLO el RPC (sin duplicación)
-    // cash ya viene descontado de reembolsos en efectivo (ver loadResumen)
+    // TOTALES DE COBRADO: RPC + ajustes, netos de reembolsos reales.
     let totalEfectivo = 0;
     let totalTarjeta = 0;
     let totalTransferencia = 0;
-    let totalCashRefunds = 0;
+    let totalOtros = 0;
+    let totalRefunds = 0;
 
     fechasSeleccionadas.forEach((fecha) => {
       const r = resumenPorFecha[fecha];
@@ -1279,19 +1312,20 @@ useEffect(() => {
       totalEfectivo    += Number(r.cash         || 0);
       totalTarjeta     += Number(r.card         || 0);
       totalTransferencia += Number(r.transfer   || 0);
-      totalCashRefunds += Number(r.cashRefunds  || 0);
+      totalOtros       += Number(r.other        || 0);
+      totalRefunds     += Number(r.refunds      || 0);
 
       console.log(`📊 Sumando ${fecha}:`, {
-        cash: r.cash, card: r.card, transfer: r.transfer,
-        cashRefunds: r.cashRefunds,
+        cash: r.cash, card: r.card, transfer: r.transfer, other: r.other,
+        refunds: r.refunds,
       });
     });
 
-    const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia;
+    const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
     const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
     // Cash neto = efectivo esperado - gastos del conductor
     const efectivoNeto = totalEfectivo - gastosTotal;
-    const totalCajaNeto = efectivoNeto + totalTarjeta + totalTransferencia;
+    const totalCajaNeto = efectivoNeto + totalTarjeta + totalTransferencia + totalOtros;
     const totalReal = cashReal + cardReal + transferReal + otherReal;
     const diferencia = Math.abs(totalCajaNeto - totalReal);
 
@@ -1306,11 +1340,11 @@ useEffect(() => {
 
     return {
       totalVentas,          // Solo para display (sin devoluciones)
-      totalCashRefunds,     // Suma de reembolsos en efectivo del período
+      totalCashRefunds: totalRefunds, // Compatibilidad con el bloque visual existente
       totalEfectivo,        // Del RPC ya descontado de reembolsos ✅
       totalTarjeta,         // Del RPC ✅
       totalTransferencia,   // Del RPC ✅
-      totalOtros: 0,
+      totalOtros,
       totalCaja,
       gastosTotal,
       efectivoNeto,
@@ -1608,7 +1642,7 @@ useEffect(() => {
                 </p>
                 {totales.totalCashRefunds > 0 && (
                   <p className="text-xs text-orange-600 mt-0.5">
-                    🔄 Incl. –{fmtCurrency(totales.totalCashRefunds)} cash refunds already deducted
+                    🔄 Incl. –{fmtCurrency(totales.totalCashRefunds)} real refunds already deducted
                   </p>
                 )}
                 <p className="text-xs text-gray-500 mt-0.5">
