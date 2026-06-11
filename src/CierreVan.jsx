@@ -415,7 +415,12 @@ export default function CierreVan() {
             if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
             const amount = Number(p.monto || 0);
             const method = normalizeCloseoutMethod(p.metodo_pago);
-            map[iso][method] = Number(map[iso][method] || 0) + amount;
+            // The closeout RPC already includes standalone CxC cash, card and
+            // transfer payments. It has no "other" bucket, so only supplement
+            // checks/other here to avoid counting standard methods twice.
+            if (method === "other") {
+              map[iso].other = Number(map[iso].other || 0) + amount;
+            }
           });
 
           setAbonosCxC(pagosData || []);
