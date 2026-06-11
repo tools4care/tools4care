@@ -32,6 +32,9 @@ const PAYMENT_METHODS = {
   otro: { label: "Other", color: "#FF9800", icon: "💰" },
 };
 
+const getExpenseCategoryLabel = (value) =>
+  EXPENSE_CATEGORIES_VAN.find((category) => category.value === value)?.label || value || "—";
+
 /* ========================= Helpers de fecha / formato (Eastern Time) ==================== */
 
 // Función para obtener fecha actual en Eastern Time
@@ -360,13 +363,19 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
   const byMethod = useMemo(() => {
     const map = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
     ventas.forEach((v) => {
-      const m = (v.metodo_pago || "otro").toLowerCase();
-      const key = Object.keys(map).find((k) => m.includes(k)) || "otro";
-      map[key] += Number(v.total_pagado || v.total_venta || 0);
+      map.efectivo += Number(v.pago_efectivo || 0);
+      map.tarjeta += Number(v.pago_tarjeta || 0);
+      map.transferencia += Number(v.pago_transferencia || 0);
+      map.otro += Number(v.pago_otro || 0);
     });
     pagos.forEach((p) => {
-      const m = (p.metodo || "otro").toLowerCase();
-      const key = Object.keys(map).find((k) => m.includes(k)) || "otro";
+      const m = String(p.metodo || "").toLowerCase();
+      const key =
+        m.includes("cash") || m.includes("efectivo") ? "efectivo" :
+        m.includes("card") || m.includes("tarjeta") ? "tarjeta" :
+        m.includes("transfer") || m.includes("zelle") || m.includes("venmo") ||
+        m.includes("cash app") || m.includes("cashapp") || m.includes("apple pay") ? "transferencia" :
+        "otro";
       map[key] += Number(p.monto || 0);
     });
     return map;
@@ -406,7 +415,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       const gastosRows = gastosValidos.map((g) => `
         <tr>
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${formatUS(g.fecha)}</td>
-          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;text-transform:capitalize;">${g.categoria || ""}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${getExpenseCategoryLabel(g.categoria)}</td>
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.descripcion || ""}</td>
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;font-weight:bold;color:#c2410c;text-align:right;">${fmtCurrency(g.monto)}</td>
         </tr>`).join("");
@@ -630,7 +639,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       doc.text("Driver Expenses", 14, gastosY);
       const gastosRows = gastos.map((g) => [
         formatUS(g.fecha),
-        g.categoria || "—",
+        getExpenseCategoryLabel(g.categoria),
         g.descripcion || "—",
         fmtCurrency(Number(g.monto) || 0),
       ]);
@@ -1042,7 +1051,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                         {localGastos.map((g, i) => (
                           <tr key={g.id || i} className="hover:bg-orange-50/50">
                             <td className="px-3 py-2 text-gray-600 text-xs whitespace-nowrap">{formatUS(g.fecha)}</td>
-                            <td className="px-3 py-2 capitalize text-gray-700">{g.categoria || "—"}</td>
+                            <td className="px-3 py-2 text-gray-700">{getExpenseCategoryLabel(g.categoria)}</td>
                             <td className="px-3 py-2 text-gray-700">{g.descripcion || "—"}</td>
                             <td className="px-3 py-2 font-bold text-orange-700">{fmtCurrency(g.monto)}</td>
                             <td className="px-2 py-2">
@@ -1148,10 +1157,12 @@ function HistorialCierres({ van, usuario }) {
           .from("ventas")
           .select(`
             id, created_at, total_venta, total_pagado, estado_pago, metodo_pago, pago,
+            pago_efectivo, pago_tarjeta, pago_transferencia, pago_otro, tipo,
             cliente_id, clientes:cliente_id(nombre),
             usuario_id, usuarios:usuario_id(nombre)
           `)
           .eq("van_id", van.id)
+          .neq("tipo", "devolucion")
           .gte("created_at", start)
           .lte("created_at", end)
           .order("created_at", { ascending: false });
@@ -1163,9 +1174,11 @@ function HistorialCierres({ van, usuario }) {
             .from("ventas")
             .select(`
               id, created_at, total_venta, total_pagado, estado_pago, metodo_pago, pago,
+              pago_efectivo, pago_tarjeta, pago_transferencia, pago_otro, tipo,
               cliente_id, clientes:cliente_id(nombre)
             `)
             .eq("van_id", van.id)
+            .neq("tipo", "devolucion")
             .gte("created_at", start)
             .lte("created_at", end)
             .order("created_at", { ascending: false });
@@ -1178,16 +1191,17 @@ function HistorialCierres({ van, usuario }) {
       let pagosRows = [];
       let pagosProbeOk = false;
       for (const col of ["metodo_pago", "metodo", "forma_pago"]) {
-        const sel = `id, monto, ${col}, created_at, cliente_id, clientes:cliente_id(nombre)`;
+        const sel = `id, monto, ${col}, fecha_pago, idem, cliente_id, clientes:cliente_id(nombre)`;
         const { data: p, error: pErr } = await supabase
           .from("pagos")
           .select(sel)
           .eq("van_id", van.id)
-          .gte("created_at", start)
-          .lte("created_at", end)
-          .order("created_at", { ascending: false });
+          .not("idem", "is", null)
+          .gte("fecha_pago", start)
+          .lte("fecha_pago", end)
+          .order("fecha_pago", { ascending: false });
         if (!pErr) {
-          pagosRows = (p || []).map(r => ({ ...r, metodo: r[col] || "—" }));
+          pagosRows = (p || []).map(r => ({ ...r, created_at: r.fecha_pago, metodo: r[col] || "—" }));
           pagosProbeOk = true;
           break;
         }
@@ -1197,12 +1211,13 @@ function HistorialCierres({ van, usuario }) {
       if (!pagosProbeOk) {
         const { data: p } = await supabase
           .from("pagos")
-          .select("id, monto, created_at, cliente_id, clientes:cliente_id(nombre)")
+          .select("id, monto, fecha_pago, idem, cliente_id, clientes:cliente_id(nombre)")
           .eq("van_id", van.id)
-          .gte("created_at", start)
-          .lte("created_at", end)
-          .order("created_at", { ascending: false });
-        pagosRows = (p || []).map(r => ({ ...r, metodo: "Payment" }));
+          .not("idem", "is", null)
+          .gte("fecha_pago", start)
+          .lte("fecha_pago", end)
+          .order("fecha_pago", { ascending: false });
+        pagosRows = (p || []).map(r => ({ ...r, created_at: r.fecha_pago, metodo: "Payment" }));
       }
       const pagos = pagosRows;
 
