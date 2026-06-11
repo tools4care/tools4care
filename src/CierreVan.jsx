@@ -39,6 +39,8 @@ import {
   MoreHorizontal,
   CreditCard,
   Printer,
+  Camera,
+  ExternalLink,
 } from "lucide-react";
 import { useToast } from "./hooks/useToast";
 
@@ -175,6 +177,7 @@ export default function CierreVan() {
   // ── Gastos del conductor (multi-día) ──
   const [gastos, setGastos] = useState([]);
   const [gastosLoading, setGastosLoading] = useState(false);
+  const [gastoUploading, setGastoUploading] = useState(null);
 
   // ── Abonos CxC (para desglose de transferencias — display only) ──
   const [abonosCxC, setAbonosCxC] = useState([]);
@@ -195,7 +198,7 @@ export default function CierreVan() {
     (async () => {
       const { data } = await supabase
         .from("gastos_conductor")
-        .select("id, fecha, categoria, descripcion, monto")
+        .select("id, fecha, categoria, descripcion, monto, factura_url")
         .eq("van_id", van.id)
         .in("fecha", fechasSeleccionadas)
         .order("fecha", { ascending: true });
@@ -217,6 +220,7 @@ export default function CierreVan() {
         categoria: "combustible",
         descripcion: "",
         monto: "",
+        factura_url: null,
       },
     ]);
   }
@@ -229,6 +233,26 @@ export default function CierreVan() {
     setGastos((prev) =>
       prev.map((g) => (g._key === key ? { ...g, [field]: value } : g))
     );
+  }
+
+  async function uploadGastoFactura(key, file) {
+    if (!file || !van?.id) return;
+    setGastoUploading(key);
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+      const path = `${van.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage
+        .from("expense-receipts")
+        .upload(path, file, { upsert: false, contentType: file.type });
+      if (error) throw error;
+      const { data } = supabase.storage.from("expense-receipts").getPublicUrl(path);
+      updateGasto(key, "factura_url", data.publicUrl);
+      toast.success("Receipt photo attached");
+    } catch (error) {
+      toast.error(`Could not upload receipt: ${error.message}`);
+    } finally {
+      setGastoUploading(null);
+    }
   }
 
   const totalGastos = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
@@ -601,12 +625,12 @@ useEffect(() => {
 
       // Guardar gastos del conductor
       const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+      await supabase
+        .from("gastos_conductor")
+        .delete()
+        .eq("van_id", van.id)
+        .in("fecha", fechasSeleccionadas);
       if (gastosValidos.length) {
-        await supabase
-          .from("gastos_conductor")
-          .delete()
-          .eq("van_id", van.id)
-          .in("fecha", fechasSeleccionadas);
         await supabase.from("gastos_conductor").insert(
           gastosValidos.map((g) => ({
             van_id: van.id,
@@ -614,6 +638,7 @@ useEffect(() => {
             categoria: g.categoria,
             descripcion: g.descripcion || "",
             monto: Number(g.monto) || 0,
+            factura_url: g.factura_url || null,
           }))
         );
       }
@@ -628,10 +653,14 @@ useEffect(() => {
         const totalTransferencia = Number(r.transfer || 0);
         const totalOtros = Number(r.other || 0);
         const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
+        const gastosFecha = gastosValidos
+          .filter((g) => (g.fecha || fechasSeleccionadas[0]) === fecha)
+          .reduce((sum, g) => sum + Number(g.monto || 0), 0);
+        const totalCajaNeto = totalCaja - gastosFecha;
 
         // Distribución simple del real: igual para cada día
         const cajaRealFecha = totalReal / fechasSeleccionadas.length;
-        const discrepanciaFecha = totalCaja - cajaRealFecha;
+        const discrepanciaFecha = totalCajaNeto - cajaRealFecha;
 
         // Total de ventas (solo para registro — ya excluye devoluciones por el .neq arriba)
         const ventasFecha = ventasPorFecha[fecha] || [];
@@ -697,7 +726,7 @@ useEffect(() => {
         <tr>
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.fecha || ""}</td>
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;text-transform:capitalize;">${g.categoria || ""}</td>
-          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.descripcion || ""}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.descripcion || ""}${g.factura_url ? ` · <a href="${g.factura_url}">View receipt</a>` : ""}</td>
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;font-weight:bold;color:#c2410c;text-align:right;">${fmtCurrency(g.monto)}</td>
         </tr>`).join("");
 
@@ -1035,7 +1064,7 @@ useEffect(() => {
         const gastosTableBody = gastosValidos.map((g) => [
           g.fecha || fechasSeleccionadas[0],
           g.categoria || "otro",
-          g.descripcion || "",
+          `${g.descripcion || ""}${g.factura_url ? " (receipt attached)" : ""}`,
           fmtCurrency(g.monto),
         ]);
         gastosTableBody.push(["", "", "TOTAL", fmtCurrency(gastosTotal)]);
@@ -1674,11 +1703,95 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* Payment Methods Panel */}
+        {/* Step 1: Expenses before counting money */}
+        <div className="bg-white rounded-xl shadow-lg border-2 border-orange-200 p-4 sm:p-6 mb-6">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <div className="text-xs font-black uppercase tracking-wider text-orange-500">Step 1</div>
+              <h3 className="text-lg font-bold text-orange-900">Record Today&apos;s Expenses</h3>
+              <p className="text-xs text-orange-700 mt-1">
+                Expenses remain recorded as money received, but are subtracted from the cash you should physically have.
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="text-xs text-orange-500 font-semibold uppercase">Expenses</div>
+              <div className="text-xl font-extrabold text-orange-700">{fmtCurrency(totalGastos)}</div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {gastosLoading ? (
+              <div className="text-sm text-gray-400 py-3 text-center">Loading expenses…</div>
+            ) : gastos.length === 0 ? (
+              <div className="text-sm text-gray-400 py-3 text-center border-2 border-dashed rounded-xl">
+                No expenses recorded
+              </div>
+            ) : gastos.map((g) => (
+              <div key={g._key} className="border border-orange-100 bg-orange-50/40 rounded-xl p-3">
+                <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr_120px_auto] gap-2">
+                  <select value={g.categoria} onChange={(e) => updateGasto(g._key, "categoria", e.target.value)}
+                    className="border rounded-lg px-2 py-2 text-sm bg-white">
+                    {EXPENSE_CATEGORIES_VAN.map((c) => (
+                      <option key={c.value} value={c.value}>{c.icon} {c.label}</option>
+                    ))}
+                  </select>
+                  <input type="text" placeholder="Expense description" value={g.descripcion}
+                    onChange={(e) => updateGasto(g._key, "descripcion", e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm min-w-0" />
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                    <input type="number" step="0.01" min="0" placeholder="0.00" value={g.monto}
+                      onChange={(e) => updateGasto(g._key, "monto", e.target.value)}
+                      className="border rounded-lg pl-6 pr-2 py-2 text-sm w-full font-semibold" />
+                  </div>
+                  <button type="button" onClick={() => removeGasto(g._key)}
+                    className="p-2 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  {fechasSeleccionadas.length > 1 && (
+                    <select value={g.fecha} onChange={(e) => updateGasto(g._key, "fecha", e.target.value)}
+                      className="border rounded-lg px-2 py-1.5 text-xs bg-white">
+                      {fechasSeleccionadas.map((f) => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  )}
+                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-orange-300 bg-white text-orange-700 text-xs font-semibold cursor-pointer hover:bg-orange-50">
+                    <Camera size={14} />
+                    {gastoUploading === g._key ? "Uploading…" : g.factura_url ? "Replace receipt photo" : "Attach receipt photo"}
+                    <input type="file" accept="image/*" capture="environment" className="hidden"
+                      disabled={gastoUploading === g._key}
+                      onChange={(e) => uploadGastoFactura(g._key, e.target.files?.[0])} />
+                  </label>
+                  {g.factura_url && (
+                    <a href={g.factura_url} target="_blank" rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">
+                      <ExternalLink size={13} /> View receipt
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+            <button type="button" onClick={addGasto}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-orange-300 text-orange-600 hover:bg-orange-50 text-sm font-semibold">
+              <Plus size={15} /> Add expense
+            </button>
+          </div>
+
+          <div className="mt-4 bg-orange-50 rounded-xl p-3 border border-orange-200 text-sm space-y-1">
+            <div className="flex justify-between"><span>Gross cash received:</span><strong>{fmtCurrency(totales.totalEfectivo)}</strong></div>
+            <div className="flex justify-between text-orange-700"><span>Less recorded expenses:</span><strong>–{fmtCurrency(totales.gastosTotal)}</strong></div>
+            <div className="flex justify-between font-black pt-2 border-t border-orange-200 text-green-800">
+              <span>Cash expected in hand:</span><span>{fmtCurrency(totales.efectivoNeto)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Step 2: Payment Methods Panel */}
         <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6 mb-6">
-          <h3 className="text-lg font-bold text-gray-800 mb-4">
-            Payment Methods Count (Combined Total)
-          </h3>
+          <div className="text-xs font-black uppercase tracking-wider text-blue-500">Step 2</div>
+          <h3 className="text-lg font-bold text-gray-800 mb-1">Count the Money You Have</h3>
+          <p className="text-xs text-gray-500 mb-4">Cash expected already considers the expenses entered above.</p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Cash */}
@@ -1702,10 +1815,16 @@ useEffect(() => {
               </div>
 
               <div className="mb-2">
-                <p className="text-sm text-gray-600">System Total (from RPC)</p>
+                <p className="text-sm text-gray-600">Gross Cash Received</p>
                 <p className="text-lg font-bold text-green-800">
                   {fmtCurrency(totales.totalEfectivo)}
                 </p>
+                {totales.gastosTotal > 0 && (
+                  <div className="mt-2 p-2 rounded-lg bg-white/70 border border-green-200 text-xs">
+                    <div className="flex justify-between text-orange-700"><span>Expenses:</span><strong>–{fmtCurrency(totales.gastosTotal)}</strong></div>
+                    <div className="flex justify-between text-green-800 font-black border-t mt-1 pt-1"><span>Expected in hand:</span><span>{fmtCurrency(totales.efectivoNeto)}</span></div>
+                  </div>
+                )}
                 {totales.totalCashRefunds > 0 && (
                   <p className="text-xs text-orange-600 mt-0.5">
                     🔄 Incl. –{fmtCurrency(totales.totalCashRefunds)} real refunds already deducted
@@ -1718,7 +1837,7 @@ useEffect(() => {
 
               <div>
                 <p className="text-sm text-gray-600">
-                  What I Have
+                  Cash I Physically Have
                 </p>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
@@ -1928,7 +2047,7 @@ useEffect(() => {
           <div className="flex flex-col gap-4">
 
             {/* ── Gastos del Conductor ── */}
-            <div className="border-2 border-orange-200 rounded-xl overflow-hidden">
+            <div className="hidden">
               <div className="bg-orange-50 px-4 py-3 flex items-center justify-between">
                 <div>
                   <div className="font-bold text-orange-900 text-sm">⛽ Gastos del Conductor</div>
