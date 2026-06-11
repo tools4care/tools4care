@@ -16,13 +16,13 @@ import { useToast } from "./hooks/useToast";
 
 /* ========================= Constants ========================= */
 const EXPENSE_CATEGORIES_VAN = [
-  { value: "combustible",     label: "Combustible",  icon: "⛽" },
-  { value: "comida",          label: "Comida",        icon: "🍔" },
-  { value: "peaje",           label: "Peaje / Toll",  icon: "🛣️" },
+  { value: "combustible",     label: "Fuel",          icon: "⛽" },
+  { value: "comida",          label: "Meals",         icon: "🍔" },
+  { value: "peaje",           label: "Tolls",         icon: "🛣️" },
   { value: "estacionamiento", label: "Parking",       icon: "🅿️" },
-  { value: "mantenimiento",   label: "Mantenimiento", icon: "🔧" },
-  { value: "materiales",      label: "Materiales",    icon: "📦" },
-  { value: "otro",            label: "Otro",          icon: "💸" },
+  { value: "mantenimiento",   label: "Maintenance",   icon: "🔧" },
+  { value: "materiales",      label: "Supplies",      icon: "📦" },
+  { value: "otro",            label: "Other",         icon: "💸" },
 ];
 
 const PAYMENT_METHODS = {
@@ -86,6 +86,24 @@ function formatUS(isoDay) {
 // 'YYYY-MM-DD' del día local actual (Eastern Time)
 function localTodayISO() {
   return easternToYMD(new Date());
+}
+
+function sanitizeMoneyInput(value) {
+  const clean = String(value || "").replace(/[^\d.]/g, "");
+  const [whole, ...decimals] = clean.split(".");
+  return decimals.length ? `${whole}.${decimals.join("").slice(0, 2)}` : whole;
+}
+
+function isOtherPaymentMethod(method) {
+  const value = String(method || "").toLowerCase();
+  return !(
+    value.includes("cash") || value.includes("efectivo") ||
+    value.includes("card") || value.includes("tarjeta") ||
+    value.includes("transfer") || value.includes("zelle") ||
+    value.includes("venmo") || value.includes("cash app") ||
+    value.includes("cashapp") || value.includes("apple pay") ||
+    value.includes("applepay")
+  );
 }
 
 /* ========================= Custom Hook ========================= */
@@ -159,30 +177,43 @@ function usePrecloseRows(vanId, diasAtras = 21) {
               card_expected: Number(r.card_expected ?? r.card ?? 0),
               transfer_expected: Number(r.transfer_expected ?? r.transfer ?? 0),
               mix_unallocated: Number(r.mix_unallocated ?? r.mix ?? 0),
+              other_expected: 0,
             };
           });
 
-        // Pagos CxC standalone desde pantalla Clientes (formato "Transfer - Zelle", etc.)
-        // Solo los de prefijo "Transfer - " — los genéricos ("Cash", "efectivo") ya están en el RPC.
+        // The RPC already includes cash/card/transfer. Add sales and direct CxC
+        // checks/other separately because the legacy RPC has no other bucket.
         try {
-          const { data: pagosData } = await supabase
-            .from("pagos")
-            .select("monto, metodo_pago, fecha_pago")
-            .eq("van_id", vanId)
-            .is("idem_key", null)
-            .like("metodo_pago", "Transfer - %")
-            .gte("fecha_pago", p_from + "T00:00:00")
-            .lte("fecha_pago", p_to + "T23:59:59");
-
-          (pagosData || []).forEach((p) => {
+          const [{ data: otherSales }, { data: directPayments }] = await Promise.all([
+            supabase.from("ventas")
+              .select("fecha, created_at, pago_otro")
+              .eq("van_id", vanId).neq("tipo", "devolucion")
+              .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
+            supabase.from("pagos")
+              .select("monto, metodo_pago, fecha_pago")
+              .eq("van_id", vanId).not("idem", "is", null)
+              .gte("fecha_pago", p_from + "T00:00:00").lte("fecha_pago", p_to + "T23:59:59"),
+          ]);
+          (otherSales || []).forEach((sale) => {
+            const iso = String(sale.fecha || sale.created_at || "").slice(0, 10);
+            if (!iso) return;
+            let row = normalized.find((r) => r.dia === iso);
+            if (!row) {
+              row = { dia: iso, cash_expected: 0, card_expected: 0, transfer_expected: 0, mix_unallocated: 0, other_expected: 0 };
+              normalized.push(row);
+            }
+            row.other_expected += Number(sale.pago_otro || 0);
+          });
+          (directPayments || []).forEach((p) => {
+            if (!isOtherPaymentMethod(p.metodo_pago)) return;
             const iso = String(p.fecha_pago || "").slice(0, 10);
             if (!iso) return;
             let row = normalized.find((r) => r.dia === iso);
             if (!row) {
-              row = { dia: iso, cash_expected: 0, card_expected: 0, transfer_expected: 0, mix_unallocated: 0 };
+              row = { dia: iso, cash_expected: 0, card_expected: 0, transfer_expected: 0, mix_unallocated: 0, other_expected: 0 };
               normalized.push(row);
             }
-            row.transfer_expected += Number(p.monto || 0);
+            row.other_expected += Number(p.monto || 0);
           });
         } catch (_) { /* pagos table unavailable */ }
 
@@ -216,7 +247,7 @@ function usePrecloseRows(vanId, diasAtras = 21) {
 
         // Filtrar días sin transacciones o que ya tienen cierre
         const filtered = normalized.filter((r) => {
-            const total = r.cash_expected + r.card_expected + r.transfer_expected + r.mix_unallocated;
+            const total = r.cash_expected + r.card_expected + r.transfer_expected + r.mix_unallocated + r.other_expected;
             const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
             const hasCierre = fechasConCierre.has(r.dia);
             const hasTransactions = total > 0;
@@ -974,9 +1005,9 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                       <label className="block text-xs text-gray-500 mb-1">Amount</label>
                       <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                        <input type="number" step="0.01" min="0" placeholder="0.00"
+                        <input type="text" inputMode="decimal" pattern="[0-9]*[.]?[0-9]{0,2}" placeholder="0.00"
                           value={newGasto.monto}
-                          onChange={(e) => setNewGasto((p) => ({ ...p, monto: e.target.value }))}
+                          onChange={(e) => setNewGasto((p) => ({ ...p, monto: sanitizeMoneyInput(e.target.value) }))}
                           className="w-full border border-gray-300 rounded-lg pl-6 pr-2 py-1.5 text-sm font-semibold" />
                       </div>
                     </div>
@@ -1494,18 +1525,19 @@ export default function PreCierreVan() {
         acc.card += Number(r.card_expected || 0);
         acc.transfer += Number(r.transfer_expected || 0);
         acc.mix += Number(r.mix_unallocated || 0);
+        acc.other += Number(r.other_expected || 0);
         acc.invoices += Number(invoices[d] || 0);
         
         return acc;
       },
-      { cash: 0, card: 0, transfer: 0, mix: 0, invoices: 0 }
+      { cash: 0, card: 0, transfer: 0, mix: 0, other: 0, invoices: 0 }
     );
 
     console.log('💰 Totales calculados para fechas seleccionadas:', result);
     return result;
   }, [selected, rows, invoices]);
 
-  const totalExpected = sum.cash + sum.card + sum.transfer + sum.mix;
+  const totalExpected = sum.cash + sum.card + sum.transfer + sum.mix + sum.other;
   const canProcess = selected.length > 0 && totalExpected > 0;
 
   // Procesar cierre
@@ -1566,27 +1598,29 @@ export default function PreCierreVan() {
       doc.setFontSize(10);
       
       const totalesData = [
-        ["Date", "Cash", "Card", "Transfer", "Mix", "Total", "Invoices"],
+        ["Date", "Cash", "Card", "Transfer", "Checks / Other", "Mix", "Total", "Invoices"],
         ...selected.map(d => {
           const r = rows.find(x => x.dia === d);
           const dayTotal = (r?.cash_expected || 0) + (r?.card_expected || 0) + 
-                          (r?.transfer_expected || 0) + (r?.mix_unallocated || 0);
+                          (r?.transfer_expected || 0) + (r?.other_expected || 0) + (r?.mix_unallocated || 0);
           return [
             formatUS(d),
             fmtCurrency(r?.cash_expected || 0),
             fmtCurrency(r?.card_expected || 0),
             fmtCurrency(r?.transfer_expected || 0),
+            fmtCurrency(r?.other_expected || 0),
             fmtCurrency(r?.mix_unallocated || 0),
             fmtCurrency(dayTotal),
             invoices[d] || 0
           ];
         }),
-        ["", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", ""],
         [
           "Totals", 
           fmtCurrency(sum.cash), 
           fmtCurrency(sum.card), 
           fmtCurrency(sum.transfer), 
+          fmtCurrency(sum.other),
           fmtCurrency(sum.mix),
           fmtCurrency(totalExpected),
           sum.invoices
@@ -1631,6 +1665,7 @@ export default function PreCierreVan() {
       { name: "Cash", value: sum.cash, color: getPaymentMethodColor("efectivo") },
       { name: "Card", value: sum.card, color: getPaymentMethodColor("tarjeta") },
       { name: "Transfer", value: sum.transfer, color: getPaymentMethodColor("transferencia") },
+      { name: "Checks / Other", value: sum.other, color: "#D97706" },
       { name: "Mix", value: sum.mix, color: getPaymentMethodColor("otro") },
     ].filter(item => item.value > 0);
   }, [sum]);
@@ -1647,6 +1682,7 @@ export default function PreCierreVan() {
           cash: r?.cash_expected || 0,
           card: r?.card_expected || 0,
           transfer: r?.transfer_expected || 0,
+          other: r?.other_expected || 0,
           mix: r?.mix_unallocated || 0,
           invoices: invoices[d] || 0
         };
@@ -1781,6 +1817,10 @@ export default function PreCierreVan() {
                     <span className="font-medium text-purple-700">{fmtCurrency(sum.transfer)}</span>
                   </div>
                   <div className="flex justify-between">
+                    <span className="text-gray-600">Checks / Other:</span>
+                    <span className="font-medium text-orange-700">{fmtCurrency(sum.other)}</span>
+                  </div>
+                  <div className="flex justify-between">
                     <span className="text-gray-600">Mix:</span>
                     <span className="font-medium text-amber-700">{fmtCurrency(sum.mix)}</span>
                   </div>
@@ -1879,6 +1919,7 @@ export default function PreCierreVan() {
                     <Bar dataKey="card" fill="#2196F3" stackId="a" radius={[0, 0, 0, 0]} />
                     <Bar dataKey="transfer" fill="#9C27B0" stackId="a" radius={[0, 0, 0, 0]} />
                     <Bar dataKey="mix" fill="#FF9800" stackId="a" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="other" fill="#D97706" stackId="a" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1946,6 +1987,9 @@ export default function PreCierreVan() {
                       Transfer
                     </th>
                     <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Checks / Other
+                    </th>
+                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Mix
                     </th>
                     <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1958,7 +2002,7 @@ export default function PreCierreVan() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {rows.map((row) => {
-                    const total = row.cash_expected + row.card_expected + row.transfer_expected + row.mix_unallocated;
+                    const total = row.cash_expected + row.card_expected + row.transfer_expected + row.other_expected + row.mix_unallocated;
                     const isSelected = selected.includes(row.dia);
                     
                     return (
@@ -1992,6 +2036,9 @@ export default function PreCierreVan() {
                         </td>
                         <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-purple-600 font-semibold">
                           {fmtCurrency(row.transfer_expected)}
+                        </td>
+                        <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-amber-600 font-semibold">
+                          {fmtCurrency(row.other_expected)}
                         </td>
                         <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-amber-600 font-semibold">
                           {fmtCurrency(row.mix_unallocated)}
