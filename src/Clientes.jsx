@@ -2330,6 +2330,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [monto, setMonto] = useState("");
   const [metodo, setMetodo] = useState("Cash");
   const [subMetodo, setSubMetodo] = useState(null);
+  const [checkReference, setCheckReference] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [paymentDone, setPaymentDone] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
@@ -2686,8 +2687,13 @@ let restante = pago;
 
       const pagoAplicado = round2(Math.min(montoIngresado, saldoActualUI));
       const cambioDevuelto = round2(montoIngresado - pagoAplicado);
+      if (metodo === "Check" && !checkReference.trim()) {
+        throw new Error("Enter the check number or reference.");
+      }
       const metodoPagoFinal = metodo === "Transfer" && subMetodo
         ? `Transfer - ${TRANSFER_SUBS.find(s => s.key === subMetodo)?.label || subMetodo}`
+        : metodo === "Check"
+        ? `Check - ${checkReference.trim()}`
         : metodo;
 
       // ── MODO OFFLINE: guardar en cola local ───────────────────
@@ -2742,7 +2748,8 @@ let restante = pago;
 
       if (!rpcOk) {
         const { error: insErr } = await supabase.from("pagos").insert([{
-          cliente_id: cliente.id, van_id: van.id, monto: pagoAplicado, metodo_pago: metodoPagoFinal, fecha_pago: new Date().toISOString(),
+          cliente_id: cliente.id, van_id: van.id, monto: pagoAplicado, metodo_pago: metodoPagoFinal,
+          referencia: metodo === "Check" ? checkReference.trim() : null, fecha_pago: new Date().toISOString(),
         }]);
         if (insErr) throw insErr;
       }
@@ -2753,6 +2760,7 @@ let restante = pago;
       await aplicarCuotasDirect(cliente.id, pagoAplicado);
       // limpiar input
       setMonto("");
+      setCheckReference("");
       setApplyCardFee(false);
 
       // refrescar CxC/tabla + cuotas
@@ -2858,6 +2866,7 @@ let restante = pago;
                       <option value="Cash">💵 Cash</option>
                       <option value="Card">💳 Card</option>
                       <option value="Transfer">🏦 Transfer</option>
+                      <option value="Check">🧾 Check</option>
                     </select>
                     {metodo === "Card" && (
                       <button type="button" onClick={handleGenerateQR}
@@ -2882,6 +2891,19 @@ let restante = pago;
                           );
                         })}
                       </div>
+                    </div>
+                  )}
+                  {metodo === "Check" && (
+                    <div className="mt-3 pt-3 border-t border-amber-200">
+                      <label className="text-[11px] uppercase text-amber-700 font-bold mb-1 block">
+                        Check number / reference
+                      </label>
+                      <input
+                        value={checkReference}
+                        onChange={(e) => setCheckReference(e.target.value)}
+                        placeholder="Example: 1042 · Bank name"
+                        className="w-full border-2 border-amber-200 rounded-xl px-4 py-3 bg-amber-50 focus:border-amber-500 outline-none"
+                      />
                     </div>
                   )}
                   {metodo === "Card" && (
@@ -3311,4 +3333,4 @@ let restante = pago;
       )}
     </>
   );
-} 
+}

@@ -43,6 +43,7 @@ const PAYMENT_METHODS = [
   { key: "efectivo",      label: "💵 Cash" },
   { key: "tarjeta",       label: "💳 Card" },
   { key: "transferencia", label: "🏦 Transfer" },
+  { key: "cheque",        label: "🧾 Check" },
   { key: "otro",          label: "💰 Other" },
 ];
 
@@ -3613,7 +3614,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
           const estadoPago_offline = pendingFromSale_offline === 0 ? "pagado" : paidForSale_offline > 0 ? "parcial" : "pendiente";
 
           const nonZeroPays_offline = payments.filter((p) => Number(p.monto) > 0);
-          const payMap_offline = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+          const payMap_offline = { efectivo: 0, tarjeta: 0, transferencia: 0, cheque: 0, otro: 0 };
           for (const p of nonZeroPays_offline) {
             if (payMap_offline[p.forma] !== undefined) payMap_offline[p.forma] += Number(p.monto || 0);
           }
@@ -3636,7 +3637,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
             pago_efectivo: Number((payMap_offline.efectivo || 0).toFixed(2)),
             pago_tarjeta: Number((payMap_offline.tarjeta || 0).toFixed(2)),
             pago_transferencia: Number((payMap_offline.transferencia || 0).toFixed(2)),
-            pago_otro: Number((payMap_offline.otro || 0).toFixed(2)),
+            pago_otro: Number(((payMap_offline.otro || 0) + (payMap_offline.cheque || 0)).toFixed(2)),
             // JSON de pago completo
             pago: {
               metodos: nonZeroPays_offline,
@@ -3743,6 +3744,14 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
         setSaving(false);
         return;
       }
+      const missingCheckReference = nonZeroPayments.find(
+        (p) => p.forma === "cheque" && !String(p.referencia || "").trim()
+      );
+      if (missingCheckReference) {
+        setPaymentError("⚠️ Please enter the check number or reference.");
+        setSaving(false);
+        return;
+      }
 
       const paidApplied = Number((paidForSaleNow + payOldDebtNow).toFixed(2));
 
@@ -3761,7 +3770,7 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
       const metodoPrincipal =
         metodosAplicados.length === 1 ? (metodosAplicados[0].forma || "mix") : "mix";
 
-      const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 };
+      const paymentMap = { efectivo: 0, tarjeta: 0, transferencia: 0, cheque: 0, otro: 0 };
       for (const p of metodosAplicados) {
         if (paymentMap[p.forma] !== undefined) {
           paymentMap[p.forma] += Number(p.monto || 0);
@@ -3772,7 +3781,7 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
       const pagoTarjeta       = Number((paymentMap.tarjeta      || 0).toFixed(2));
       const pagoTransf        = Number((paymentMap.transferencia || 0).toFixed(2));
       const pagoTransferencia = pagoTransf; // alias used in receipt payload
-      const pagoOtro          = Number((paymentMap.otro         || 0).toFixed(2));
+      const pagoOtro          = Number(((paymentMap.otro || 0) + (paymentMap.cheque || 0)).toFixed(2));
 
       const itemsForDb = cartSafe.map((p) => {
         const meta = p._pricing || { base: p.precio_unitario, pct: 0, bulkMin: null, bulkPrice: null };
@@ -6069,6 +6078,21 @@ function renderStepPayment() {
                         </span>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {p.forma === "cheque" && !p?.toAR && (
+                  <div className="pt-2 border-t border-amber-200 bg-amber-50 rounded-xl px-3 pb-3">
+                    <label className="block text-[11px] uppercase font-bold text-amber-700 mb-1">
+                      Check number / reference
+                    </label>
+                    <input
+                      type="text"
+                      value={p.referencia || ""}
+                      onChange={(e) => handleChangePayment(i, "referencia", e.target.value)}
+                      placeholder="Example: Check #1042 · Bank name"
+                      className="w-full border-2 border-amber-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-amber-500 outline-none"
+                    />
                   </div>
                 )}
 
