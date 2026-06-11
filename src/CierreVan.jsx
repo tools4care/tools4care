@@ -46,13 +46,13 @@ import { useToast } from "./hooks/useToast";
 
 /* ========================= Gastos Conductor ========================= */
 const EXPENSE_CATEGORIES_VAN = [
-  { value: "combustible",     label: "Combustible",     icon: "⛽" },
-  { value: "comida",          label: "Comida",          icon: "🍔" },
-  { value: "peaje",           label: "Peaje / Toll",    icon: "🛣️" },
-  { value: "estacionamiento", label: "Estacionamiento", icon: "🅿️" },
-  { value: "mantenimiento",   label: "Mantenimiento",   icon: "🔧" },
-  { value: "materiales",      label: "Materiales",      icon: "📦" },
-  { value: "otro",            label: "Otro",            icon: "💸" },
+  { value: "combustible",     label: "Fuel",             icon: "⛽" },
+  { value: "comida",          label: "Meals",            icon: "🍔" },
+  { value: "peaje",           label: "Tolls",            icon: "🛣️" },
+  { value: "estacionamiento", label: "Parking",          icon: "🅿️" },
+  { value: "mantenimiento",   label: "Maintenance",      icon: "🔧" },
+  { value: "materiales",      label: "Supplies",         icon: "📦" },
+  { value: "otro",            label: "Other",            icon: "💸" },
 ];
 
 /* ========================= Constants ========================= */
