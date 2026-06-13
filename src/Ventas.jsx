@@ -3690,6 +3690,14 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
 
       const pendingFromThisSale = Math.max(0, saleTotalWithTax - totalSettledForSaleNow);
 
+      if (!selectedClient?.id && pendingFromThisSale > 0.005) {
+        setPaymentError(
+          `Select a customer to send ${fmt(pendingFromThisSale)} to A/R, or collect the remaining balance before saving.`
+        );
+        setSaving(false);
+        return;
+      }
+
       const estadoPago =
         pendingFromThisSale === 0 ? "pagado" : totalSettledForSaleNow > 0 ? "parcial" : "pendiente";
 
