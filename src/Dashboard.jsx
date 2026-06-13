@@ -1122,6 +1122,70 @@ function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo,
   );
 }
 
+/* ---------- Daily action center ---------- */
+function DailyActionCenter({ loading, actions, onOpen }) {
+  const visible = actions.filter((action) => action.count > 0);
+
+  return (
+    <section className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900">Today&apos;s Priorities</h2>
+          <p className="text-xs text-slate-500">Items that need attention across the business</p>
+        </div>
+        {!loading && (
+          <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+            visible.length ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+          }`}>
+            {visible.length ? `${visible.length} areas to review` : "All clear"}
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map((item) => (
+            <div key={item} className="h-28 rounded-2xl bg-slate-100 animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {actions.map((action) => {
+            const Icon = action.icon;
+            const active = action.count > 0;
+            return (
+              <button
+                key={action.key}
+                type="button"
+                onClick={() => onOpen(action.path)}
+                className={`text-left rounded-2xl border p-3.5 sm:p-4 transition-all active:scale-[0.98] ${
+                  active
+                    ? `${action.bg} ${action.border} hover:shadow-md`
+                    : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                    active ? action.iconBg : "bg-slate-200 text-slate-500"
+                  }`}>
+                    <Icon size={18} />
+                  </div>
+                  <ChevronRight size={17} className="text-slate-400 mt-1" />
+                </div>
+                <div className={`text-2xl font-black mt-3 ${active ? action.valueColor : "text-slate-500"}`}>
+                  {action.count}
+                </div>
+                <div className="text-xs sm:text-sm font-bold text-slate-800 leading-tight">{action.label}</div>
+                <div className="text-[11px] text-slate-500 mt-1 leading-tight">{action.detail}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ---------- KPI Detail Modal ---------- */
 // Wrapper: evita renderizar el inner cuando type es null (permite usar hooks sin violar reglas)
 function KpiDetailModal(props) {
@@ -1966,6 +2030,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
 
 /* ==================== DASHBOARD MEJORADO ==================== */
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { usuario } = useUsuario();
   const { van } = useVan();
   const { toast, confirm } = useToast();
@@ -1997,6 +2062,13 @@ export default function Dashboard() {
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
 
   const [clientes, setClientes] = useState([]);
+  const [dailyActions, setDailyActions] = useState({
+    loading: true,
+    pendingCloseouts: 0,
+    debtClients: 0,
+    debtTotal: 0,
+    dueSubscriptions: 0,
+  });
 
   const [metricas, setMetricas] = useState({
     promedioDiario: 0,
@@ -2022,12 +2094,14 @@ export default function Dashboard() {
       cargarDatos(van.id, rangeDays);
       cargarStockVan(van.id);
       cargarRutasBarberias(van.id, fechaRutaSeleccionada);
+      cargarPrioridades(van.id);
     } else {
       setVentas([]);
       setVentasSerie([]);
       setProductosTop([]);
       setStockVan([]);
       setRutasBarberias([]);
+      setDailyActions((prev) => ({ ...prev, loading: false, pendingCloseouts: 0, dueSubscriptions: 0 }));
       setLoading(false);
     }
   }, [van?.id, rangeDays, fechaRutaSeleccionada]);
@@ -2041,6 +2115,41 @@ export default function Dashboard() {
   async function cargarClientes() {
     const { data } = await supabase.from("clientes").select("id, nombre");
     setClientes(data || []);
+  }
+
+  async function cargarPrioridades(vanId) {
+    setDailyActions((prev) => ({ ...prev, loading: true }));
+    const today = dayjs().format("YYYY-MM-DD");
+    const from = dayjs().subtract(20, "day").format("YYYY-MM-DD");
+
+    try {
+      const [salesResult, closeoutsResult, debtResult, subscriptionsResult] = await Promise.all([
+        supabase.from("ventas").select("fecha").eq("van_id", vanId).gte("fecha", from),
+        supabase.from("cierres_dia").select("fecha").eq("van_id", vanId).gte("fecha", from),
+        supabase.from("v_cxc_cliente_detalle_ext").select("saldo").gt("saldo", 0.01),
+        supabase
+          .from("subscription_clientes")
+          .select("id, proxima_entrega")
+          .eq("estado", "activa")
+          .lte("proxima_entrega", today),
+      ]);
+
+      const closedDates = new Set((closeoutsResult.data || []).map((row) => String(row.fecha).slice(0, 10)));
+      const saleDates = new Set((salesResult.data || []).map((row) => String(row.fecha).slice(0, 10)));
+      const pendingCloseouts = [...saleDates].filter((date) => !closedDates.has(date)).length;
+      const debtRows = debtResult.data || [];
+
+      setDailyActions({
+        loading: false,
+        pendingCloseouts,
+        debtClients: debtRows.length,
+        debtTotal: debtRows.reduce((sum, row) => sum + Number(row.saldo || 0), 0),
+        dueSubscriptions: (subscriptionsResult.data || []).length,
+      });
+    } catch (error) {
+      console.error("Error loading daily priorities:", error);
+      setDailyActions((prev) => ({ ...prev, loading: false }));
+    }
   }
 
   function getNombreCliente(id) {
@@ -2477,6 +2586,56 @@ export default function Dashboard() {
   const rutasCompletadas = rutasBarberias.filter(r => r.visitada).length;
   const rutasPendientes = rutasBarberias.length - rutasCompletadas;
   const progresoRuta = rutasBarberias.length > 0 ? (rutasCompletadas / rutasBarberias.length * 100) : 0;
+  const priorityActions = [
+    {
+      key: "closeouts",
+      label: "Days awaiting closeout",
+      detail: dailyActions.pendingCloseouts ? "Review and close recorded sales" : "No pending sales days",
+      count: dailyActions.pendingCloseouts,
+      path: "/cierres",
+      icon: Clock,
+      bg: "bg-blue-50",
+      border: "border-blue-200",
+      iconBg: "bg-blue-600 text-white",
+      valueColor: "text-blue-700",
+    },
+    {
+      key: "debt",
+      label: "Customers with balance",
+      detail: dailyActions.debtClients ? `${fmtMoney(dailyActions.debtTotal)} outstanding` : "No outstanding balances",
+      count: dailyActions.debtClients,
+      path: "/cxc",
+      icon: DollarSign,
+      bg: "bg-amber-50",
+      border: "border-amber-200",
+      iconBg: "bg-amber-500 text-white",
+      valueColor: "text-amber-700",
+    },
+    {
+      key: "subscriptions",
+      label: "Subscriptions due",
+      detail: dailyActions.dueSubscriptions ? "Deliveries due today or overdue" : "No deliveries due",
+      count: dailyActions.dueSubscriptions,
+      path: "/suscripciones",
+      icon: ShoppingCart,
+      bg: "bg-violet-50",
+      border: "border-violet-200",
+      iconBg: "bg-violet-600 text-white",
+      valueColor: "text-violet-700",
+    },
+    {
+      key: "stock",
+      label: "Critical stock items",
+      detail: metricas.productosUrgentes ? "Restock before the next route" : "No urgent stock issues",
+      count: metricas.productosUrgentes || 0,
+      path: "/inventario",
+      icon: Package,
+      bg: "bg-red-50",
+      border: "border-red-200",
+      iconBg: "bg-red-600 text-white",
+      valueColor: "text-red-700",
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6">
@@ -2520,6 +2679,12 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        <DailyActionCenter
+          loading={dailyActions.loading || loading}
+          actions={priorityActions}
+          onOpen={navigate}
+        />
 
         {/* Daily Route */}
         <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
