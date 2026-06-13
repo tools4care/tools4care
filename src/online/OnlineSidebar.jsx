@@ -6,7 +6,7 @@ const NAV = [
   {
     to: "/online",
     end: true,
-    label: "Resumen",
+    label: "Overview",
     icon: (
       <svg width="17" height="17" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
         <rect x="3" y="3" width="7" height="7" rx="1.5" />
@@ -18,7 +18,7 @@ const NAV = [
   },
   {
     to: "/online/orders",
-    label: "Pedidos",
+    label: "Orders",
     icon: (
       <svg width="17" height="17" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
         <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
@@ -29,7 +29,7 @@ const NAV = [
   },
   {
     to: "/online/catalog",
-    label: "Catálogo",
+    label: "Catalog",
     icon: (
       <svg width="17" height="17" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
         <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
@@ -39,7 +39,7 @@ const NAV = [
   },
   {
     to: "/online/discounts",
-    label: "Cupones",
+    label: "Discounts",
     icon: (
       <svg width="17" height="17" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
         <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" />
@@ -49,9 +49,9 @@ const NAV = [
   },
 ];
 
-export default function OnlineSidebar() {
+export default function OnlineSidebar({ mobile = false, onNavigate }) {
   return (
-    <aside className="w-[220px] shrink-0 border-r bg-white flex flex-col h-full">
+    <aside className={`${mobile ? "w-[286px] h-full shadow-2xl" : "w-[236px] h-screen sticky top-0"} shrink-0 border-r border-slate-200 bg-white flex flex-col`}>
       {/* Brand */}
       <div className="px-4 py-5 border-b">
         <div className="flex items-center gap-2.5">
@@ -63,8 +63,8 @@ export default function OnlineSidebar() {
             </svg>
           </div>
           <div>
-            <div className="text-sm font-bold text-gray-900 leading-tight">Tienda Online</div>
-            <div className="text-[10px] text-gray-400 leading-tight">Panel Admin</div>
+            <div className="text-sm font-bold text-gray-900 leading-tight">Online Store</div>
+            <div className="text-[10px] text-gray-400 leading-tight">Admin workspace</div>
           </div>
         </div>
       </div>
@@ -76,6 +76,7 @@ export default function OnlineSidebar() {
             key={item.to}
             to={item.to}
             end={item.end}
+            onClick={onNavigate}
             className={({ isActive }) =>
               `flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                 isActive
@@ -98,6 +99,7 @@ export default function OnlineSidebar() {
       <div className="px-2 pb-4 space-y-0.5 border-t pt-3">
         <NavLink
           to="/van"
+          onClick={onNavigate}
           className={({ isActive }) =>
             `flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
               isActive
@@ -122,7 +124,7 @@ export default function OnlineSidebar() {
                 <circle cx="5.5" cy="18.5" r="2.5" />
                 <circle cx="18.5" cy="18.5" r="2.5" />
               </svg>
-              Cambiar VAN
+              Change VAN
             </>
           )}
         </NavLink>
@@ -144,7 +146,7 @@ export default function OnlineSidebar() {
           >
             <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
           </svg>
-          Cerrar sesión
+          Log out
         </button>
       </div>
     </aside>

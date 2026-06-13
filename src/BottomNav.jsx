@@ -33,12 +33,12 @@ const items = [
   { to: "/ventas",   label: "Sales",     icon: ShoppingCart,  color: "#059669", activeColor: "#059669", activeBg: "bg-emerald-50" },
   { to: "/productos",label: "Products",  icon: Box,           color: "#a21caf", activeColor: "#a21caf", activeBg: "bg-purple-50"  },
   { to: "/clientes", label: "Customers", icon: Users,         color: "#d97706", activeColor: "#d97706", activeBg: "bg-amber-50"   },
-  { to: "/cxc",      label: "Accounts",  icon: CreditCard,    color: "#0ea5e9", activeColor: "#0ea5e9", activeBg: "bg-sky-50"     },
   { action: "more",  label: "More",      icon: MoreHorizontal,color: "#64748b", activeColor: "#64748b", activeBg: "bg-slate-50"   },
 ];
 
 /* ── More menu grid ────────────────────────────────── */
 const MORE_ITEMS = [
+  { path: "/cxc",        label: "Accounts",     icon: CreditCard,    iconColor: "#0284c7", bg: "bg-sky-50",     ring: "ring-sky-200"    },
   { path: "/inventario", label: "Inventory",    icon: ClipboardList, iconColor: "#6366f1", bg: "bg-indigo-50",  ring: "ring-indigo-200" },
   { path: "/facturas",   label: "Invoicing",    icon: FileText,      iconColor: "#9333ea", bg: "bg-purple-50",  ring: "ring-purple-200" },
   { path: "/cierres",    label: "Van Closeout", icon: Truck,         iconColor: "#059669", bg: "bg-emerald-50", ring: "ring-emerald-200" },
@@ -89,7 +89,10 @@ export default function BottomNav() {
   return (
     <>
       {/* ── Bottom tab bar ──────────────────────────────── */}
-      <nav className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 shadow-lg z-50 flex justify-around items-center h-16 lg:hidden">
+      <nav
+        className="fixed bottom-2 left-2 right-2 bg-white/95 border border-slate-200/80 shadow-[0_12px_35px_rgba(15,23,42,0.18)] z-50 flex justify-around items-center h-[66px] rounded-2xl lg:hidden backdrop-blur-md overflow-hidden"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
         {items.map(({ to, label, icon: Icon, action, color, activeColor, activeBg }) => {
           /* "More" button */
           if (action === "more") {
@@ -102,7 +105,7 @@ export default function BottomNav() {
                 }`}
               >
                 {showMore && (
-                  <span className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-slate-500" />
+                  <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] rounded-b-full bg-slate-500" />
                 )}
                 <div className={`p-1.5 rounded-xl transition-colors ${showMore ? activeBg : ""}`}>
                   <Icon size={21} color={showMore ? color : "#9ca3af"} />
@@ -124,7 +127,7 @@ export default function BottomNav() {
                 className="flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors relative"
               >
                 {isActive && (
-                  <span className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-emerald-500" />
+                  <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] rounded-b-full bg-emerald-500" />
                 )}
                 <div className={`p-1.5 rounded-xl transition-colors ${isActive ? activeBg : ""}`}>
                   <Icon size={21} color={isActive ? activeColor : "#9ca3af"} />
@@ -148,7 +151,7 @@ export default function BottomNav() {
                 <>
                   {isActive && (
                     <span
-                      className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full"
+                      className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] rounded-b-full"
                       style={{ backgroundColor: activeColor }}
                     />
                   )}
@@ -242,11 +245,11 @@ export default function BottomNav() {
       {/* ── More sheet ──────────────────────────────────── */}
       {showMore && (
         <div
-          className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center"
+          className="fixed inset-0 z-[60] bg-slate-950/55 backdrop-blur-[2px] flex items-end sm:items-center justify-center"
           onClick={() => setShowMore(false)}
         >
           <div
-            className="bg-white w-full sm:w-[420px] rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col"
+            className="bg-slate-50 w-full sm:w-[440px] rounded-t-[28px] sm:rounded-[28px] shadow-2xl overflow-hidden max-h-[92vh] flex flex-col border border-white"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drag handle */}
@@ -255,19 +258,23 @@ export default function BottomNav() {
             </div>
 
             {/* Header */}
-            <div className="px-5 pt-1 pb-3 text-center flex-shrink-0">
-              <h2 className="font-bold text-gray-800 text-lg">More</h2>
+            <div className="px-5 pt-1 pb-3 flex items-end justify-between flex-shrink-0">
+              <div>
+                <h2 className="font-extrabold text-slate-900 text-lg">Workspace</h2>
+                <p className="text-[11px] text-slate-500">More tools and account options</p>
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tools4Care</div>
             </div>
 
             {/* Scrollable content */}
             <div className="overflow-y-auto flex-1 px-4 pb-2">
               {/* 3-col icon grid */}
-              <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="grid grid-cols-3 gap-2.5 mb-3">
                 {MORE_ITEMS.map(({ path, label, icon: Icon, iconColor, bg, ring }) => (
                   <button
                     key={path}
                     onClick={() => handleNav(path)}
-                    className={`flex flex-col items-center justify-center gap-2 p-4 rounded-2xl ${bg} ring-1 ${ring} active:scale-95 transition-all`}
+                    className={`flex flex-col items-center justify-center gap-2 min-h-[104px] p-3 rounded-2xl ${bg} ring-1 ${ring} active:scale-[0.97] transition-transform`}
                   >
                     <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center">
                       <Icon size={22} color={iconColor} />
