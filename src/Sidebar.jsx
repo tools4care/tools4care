@@ -23,6 +23,8 @@ import {
   Star,
   Receipt,
   CalendarCheck,
+  ChevronRight,
+  MapPin,
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -32,19 +34,20 @@ function NavLink({ to, icon, text, location }) {
   return (
     <Link
       to={to}
-      className={`flex items-center gap-3 px-3 py-2.5 lg:py-3 rounded-xl font-medium transition-all duration-200 ${
+      className={`group relative flex items-center gap-3 px-2.5 py-2 rounded-xl font-medium transition-colors duration-150 ${
         isActive
-          ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg text-white"
-          : "hover:bg-[#23395d] hover:text-white text-gray-300"
+          ? "bg-white/10 text-white ring-1 ring-white/10"
+          : "hover:bg-white/[0.06] hover:text-white text-slate-300"
       }`}
     >
-      <div className={`flex-shrink-0 transition-transform duration-200 ${isActive ? "scale-110" : ""}`}>
+      {isActive && <span className="absolute -left-3.5 top-2 bottom-2 w-1 rounded-r-full bg-cyan-400" />}
+      <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+        isActive ? "bg-white/10" : "bg-white/[0.04] group-hover:bg-white/[0.08]"
+      }`}>
         {icon}
       </div>
-      <span className="text-sm lg:text-[15px] font-semibold truncate">{text}</span>
-      {isActive && (
-        <div className="ml-auto w-2 h-2 bg-white rounded-full flex-shrink-0" />
-      )}
+      <span className="text-sm font-semibold truncate">{text}</span>
+      <ChevronRight size={14} className={`ml-auto transition-all ${isActive ? "opacity-80" : "opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0"}`} />
     </Link>
   );
 }
@@ -87,15 +90,21 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="bg-[#162941] text-white min-h-screen w-[220px] lg:w-[260px] flex flex-col justify-between py-5 px-3 lg:px-4 transition-all duration-300">
-      <div>
+    <aside className="sticky top-0 bg-gradient-to-b from-[#10243d] via-[#132b47] to-[#0d2036] text-white h-screen w-[248px] xl:w-[268px] flex flex-col px-3.5 py-4 shadow-xl shadow-slate-900/10">
+      <div className="min-h-0 flex-1 flex flex-col">
         {/* ── Brand ── */}
-        <div className="font-bold text-lg lg:text-xl mb-6 ml-1 tracking-wide">
-          🛠 TOOLS4CARE
+        <div className="flex items-center gap-3 px-1.5 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-600 shadow-lg shadow-blue-950/40 flex items-center justify-center text-lg">
+            🛠
+          </div>
+          <div>
+            <div className="font-black text-[17px] tracking-wide leading-tight">TOOLS4CARE</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400 mt-0.5">Sales workspace</div>
+          </div>
         </div>
 
         {/* ── Role badge ── */}
-        <div className="mb-4 mx-1">
+        <div className="mb-3 mx-1">
           <span
             className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
               isAdmin
@@ -111,7 +120,8 @@ export default function Sidebar() {
         </div>
 
         {/* ── Main nav ── */}
-        <nav className="flex flex-col gap-1.5">
+        <div className="px-2 mb-1.5 text-[10px] text-slate-500 font-bold uppercase tracking-[0.18em]">Workspace</div>
+        <nav className="flex flex-col gap-0.5 overflow-y-auto pr-1 pb-3 sidebar-scroll">
           {menuBase.map(({ to, icon, text }) => (
             <NavLink key={to} to={to} icon={icon} text={text} location={location} />
           ))}
@@ -119,8 +129,8 @@ export default function Sidebar() {
           {/* ── Admin-only section ── */}
           {isAdmin && (
             <>
-              <div className="h-px bg-gray-600 my-2" />
-              <div className="text-xs text-gray-400 px-3 py-1 font-semibold uppercase tracking-wide flex items-center gap-1">
+              <div className="h-px bg-white/10 my-2" />
+              <div className="text-[10px] text-slate-500 px-2 py-1 font-bold uppercase tracking-[0.18em] flex items-center gap-1.5">
                 <Shield size={10} /> Admin
               </div>
               {adminMenu.map(({ to, icon, text }) => (
@@ -132,7 +142,18 @@ export default function Sidebar() {
       </div>
 
       {/* ── Bottom: VAN + logout + user info ── */}
-      <div className="mt-6 flex flex-col gap-3">
+      <div className="pt-3 mt-1 border-t border-white/10 flex flex-col gap-2">
+        <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl bg-black/10">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center font-bold">
+            {(usuario?.nombre || usuario?.email || "?")[0].toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-xs truncate">{usuario?.nombre || usuario?.email || "—"}</div>
+            <div className="text-[10px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
+              <MapPin size={9} /> {van?.nombre_van || van?.nombre || "No VAN"}
+            </div>
+          </div>
+        </div>
         {puedeCambiarVan && (
           <button
             onClick={() => {
@@ -140,22 +161,22 @@ export default function Sidebar() {
               localStorage.removeItem("van");
               window.location.href = "/van";
             }}
-            className="w-full bg-yellow-400 hover:bg-yellow-500 text-black py-2.5 lg:py-3 px-3 rounded-xl font-bold text-sm lg:text-base transition-all hover:shadow-lg"
+            className="w-full bg-amber-400/10 hover:bg-amber-400/20 text-amber-200 border border-amber-300/20 py-2 px-3 rounded-xl font-semibold text-xs transition-colors"
           >
             Change VAN
           </button>
         )}
         <button
           onClick={handleLogout}
-          className="w-full bg-red-600 hover:bg-red-700 py-2.5 lg:py-3 px-3 rounded-xl font-bold text-sm lg:text-base flex items-center gap-2 justify-center transition-all hover:shadow-lg"
+          className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-400/15 py-2 px-3 rounded-xl font-semibold text-xs flex items-center gap-2 justify-center transition-colors"
         >
-          <LogOut size={20} /> Log out
+          <LogOut size={15} /> Log out
         </button>
 
         {/* Store Mode toggle */}
         <button
           onClick={toggleStoreMode}
-          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all text-sm font-semibold border ${
+          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-colors text-xs font-semibold border ${
             storeMode
               ? "bg-blue-900/60 border-blue-600 text-blue-200"
               : "bg-gray-800/60 border-gray-600 text-gray-400"
@@ -170,12 +191,6 @@ export default function Sidebar() {
           </span>
         </button>
 
-        <div className="text-xs mt-2 text-gray-300">
-          <div className="mb-1 text-gray-400">User:</div>
-          <div className="font-semibold truncate">{usuario?.nombre || usuario?.email || "—"}</div>
-          <div className="mb-1 mt-2 text-gray-400">VAN:</div>
-          <div className="font-semibold">{van?.nombre_van || "—"}</div>
-        </div>
       </div>
     </aside>
   );
