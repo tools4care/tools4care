@@ -12,7 +12,7 @@ import autoTable from "jspdf-autotable";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
-  CreditCard, Filter,
+  CreditCard, Filter, ShieldCheck, Wallet, ReceiptText,
 } from "lucide-react";
 
 /* ========================= Helpers ========================= */
@@ -64,6 +64,7 @@ const CHART_COLORS = ["#2196F3", "#4CAF50", "#9C27B0", "#FF9800", "#F44336", "#0
 /* ========================= Tab Config ========================= */
 const TABS = [
   { id: "cierre_diario",    label: "Daily Closeout", icon: DollarSign,   color: "text-indigo-600" },
+  { id: "ledger",           label: "Financial Ledger", icon: ShieldCheck, color: "text-emerald-600" },
   { id: "ventas",           label: "Sales Detail",   icon: ShoppingCart, color: "text-green-600" },
   { id: "pagos_breakdown",  label: "Payments",       icon: CreditCard,   color: "text-blue-600"   },
   { id: "devoluciones",     label: "Returns",        icon: RotateCcw,    color: "text-red-600" },
@@ -120,6 +121,137 @@ function DateFilterBar({ from, to, onFrom, onTo, onSearch, loading, extraLabel }
 function ErrorBox({ msg }) {
   if (!msg) return null;
   return <div className="text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm">{msg}</div>;
+}
+
+/* ========================= FINANCIAL LEDGER ========================= */
+function FinancialLedgerReport({ van }) {
+  const [from, setFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 6);
+    return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  });
+  const [to, setTo] = useState(getToday());
+  const [days, setDays] = useState([]);
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [searched, setSearched] = useState(false);
+
+  const search = async () => {
+    if (!van?.id) return;
+    setLoading(true); setError(null);
+    try {
+      const [{ data: daily, error: dailyErr }, { data: detail, error: detailErr }] = await Promise.all([
+        supabase.from("v_financial_ledger_daily").select("*")
+          .eq("van_id", van.id).gte("business_date", from).lte("business_date", to)
+          .order("business_date", { ascending: true }),
+        supabase.from("v_financial_ledger").select("entry_key,business_date,occurred_at,event_type,payment_method,amount,direction,affects_cash,description,source_table")
+          .eq("van_id", van.id).gte("business_date", from).lte("business_date", to)
+          .order("occurred_at", { ascending: false }).limit(500),
+      ]);
+      if (dailyErr) throw dailyErr;
+      if (detailErr) throw detailErr;
+      setDays(daily || []);
+      setEntries(detail || []);
+      setSearched(true);
+    } catch (e) {
+      setError(e.message || "Could not load financial ledger.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const totals = useMemo(() => days.reduce((a, d) => ({
+    moneyIn: a.moneyIn + Number(d.money_in || 0),
+    refunds: a.refunds + Number(d.refunds || 0),
+    expenses: a.expenses + Number(d.expenses || 0),
+    net: a.net + Number(d.net_cash_movement || 0),
+    ar: a.ar + Number(d.net_ar_change || 0),
+    entries: a.entries + Number(d.cash_entries || 0),
+  }), { moneyIn: 0, refunds: 0, expenses: 0, net: 0, ar: 0, entries: 0 }), [days]);
+
+  const typeLabel = (type) => ({
+    sale_payment: "Sale payment",
+    ar_payment: "Direct A/R payment",
+    money_refund: "Money refund",
+    expense: "Expense",
+    ar_increase: "A/R increase",
+    ar_reduction: "A/R reduction",
+    store_credit_devolucion: "Store credit created",
+    store_credit_aplicado_venta: "Store credit applied",
+  }[type] || String(type || "").replaceAll("_", " "));
+
+  return (
+    <div>
+      <DateFilterBar from={from} to={to} onFrom={setFrom} onTo={setTo} onSearch={search} loading={loading} />
+      <ErrorBox msg={error} />
+
+      <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+        <div className="font-bold flex items-center gap-2"><ShieldCheck size={17}/> Canonical financial source</div>
+        <p className="text-xs mt-1 text-emerald-800">
+          Combines sale payments, direct A/R payments, real refunds, expenses and non-cash account movements.
+          Payments generated inside a sale are excluded from direct A/R payments to prevent duplication.
+        </p>
+      </div>
+
+      {searched && (<>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+          <SummaryCard label="Money In" value={fmtCurrency(totals.moneyIn)} color="green" icon={DollarSign} sub={`${totals.entries} money entries`} />
+          <SummaryCard label="Money Refunds" value={fmtCurrency(totals.refunds)} color="red" icon={RotateCcw} />
+          <SummaryCard label="Expenses" value={fmtCurrency(totals.expenses)} color="amber" icon={ReceiptText} />
+          <SummaryCard label="Net Cash Movement" value={fmtCurrency(totals.net)} color={totals.net >= 0 ? "emerald" : "red"} icon={Wallet} />
+          <SummaryCard label="Net A/R Change" value={`${totals.ar > 0 ? "+" : ""}${fmtCurrency(totals.ar)}`} color={totals.ar > 0 ? "red" : "blue"} icon={CreditCard} />
+        </div>
+
+        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl mb-6">
+          <table className="min-w-full text-sm divide-y divide-gray-200">
+            <thead className="bg-emerald-50">
+              <tr>{["Date","Money In","Refunds","Expenses","Net Movement","Cash (net)","Card (net)","Transfer (net)","Checks (net)","Other (net)","Net A/R"].map(h =>
+                <th key={h} className="px-3 py-3 text-left text-[11px] font-bold text-emerald-800 uppercase tracking-wide">{h}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {days.length === 0 ? <tr><td colSpan={11} className="py-10 text-center text-gray-400">No ledger entries found</td></tr> :
+                days.map(d => <tr key={d.business_date} className="hover:bg-gray-50">
+                  <td className="px-3 py-2.5 font-semibold">{fmtDate(d.business_date)}</td>
+                  <td className="px-3 py-2.5 text-green-700 font-semibold">{fmtCurrency(d.money_in)}</td>
+                  <td className="px-3 py-2.5 text-red-600">{fmtCurrency(d.refunds)}</td>
+                  <td className="px-3 py-2.5 text-amber-700">{fmtCurrency(d.expenses)}</td>
+                  <td className="px-3 py-2.5 font-bold text-slate-900">{fmtCurrency(d.net_cash_movement)}</td>
+                  <td className="px-3 py-2.5">{fmtCurrency(d.cash)}</td>
+                  <td className="px-3 py-2.5">{fmtCurrency(d.card)}</td>
+                  <td className="px-3 py-2.5">{fmtCurrency(d.transfer)}</td>
+                  <td className="px-3 py-2.5">{fmtCurrency(d.checks)}</td>
+                  <td className="px-3 py-2.5">{fmtCurrency(d.other)}</td>
+                  <td className={`px-3 py-2.5 font-semibold ${Number(d.net_ar_change) > 0 ? "text-red-600" : "text-blue-700"}`}>{fmtCurrency(d.net_ar_change)}</td>
+                </tr>)}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b bg-slate-50">
+            <h3 className="font-bold text-slate-800">Audit trail</h3>
+            <p className="text-xs text-slate-500">Latest 500 movements in the selected period.</p>
+          </div>
+          <div className="max-h-[460px] overflow-auto divide-y divide-gray-100">
+            {entries.map(e => <div key={e.entry_key} className="px-4 py-3 flex items-center gap-3 text-sm">
+              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${e.affects_cash ? Number(e.amount) >= 0 ? "bg-green-500" : "bg-red-500" : "bg-blue-400"}`} />
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-slate-800">{typeLabel(e.event_type)}</div>
+                <div className="text-xs text-slate-500 truncate">{fmtDateTime(e.occurred_at)} · {e.description || e.source_table}</div>
+              </div>
+              <div className="text-right">
+                <div className={`font-bold ${Number(e.amount) >= 0 ? "text-green-700" : "text-red-600"}`}>{Number(e.amount) > 0 ? "+" : ""}{fmtCurrency(e.amount)}</div>
+                <div className="text-[10px] uppercase text-slate-400">{e.payment_method || (e.affects_cash ? "money" : "non-cash")}</div>
+              </div>
+            </div>)}
+          </div>
+        </div>
+      </>)}
+    </div>
+  );
 }
 
 /* ========================= 0. CIERRE DIARIO REPORT ========================= */
@@ -2274,6 +2406,7 @@ export default function Reportes() {
             {(() => { const t=TABS.find(x=>x.id===activeTab); const I=t?.icon; return (<>{I&&<I size={20} className={t?.color}/>}<h2 className="text-lg font-bold text-gray-800">{t?.label}</h2></>); })()}
           </div>
           {activeTab==="cierre_diario"    && <CierreDiarioReport      van={van} usuario={usuario}/>}
+          {activeTab==="ledger"           && <FinancialLedgerReport   van={van}/>}
           {activeTab==="ventas"          && <VentasReport           van={van} usuario={usuario}/>}
           {activeTab==="pagos_breakdown" && <PaymentBreakdownReport van={van} usuario={usuario}/>}
           {activeTab==="devoluciones"    && <DevolucionesReport     van={van} usuario={usuario}/>}
