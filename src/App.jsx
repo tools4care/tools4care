@@ -126,9 +126,22 @@ function LayoutInterior() {
         <Sidebar />
       </div>
       <main className="flex-1 pt-4 pb-20 px-2 sm:px-6 transition-all duration-300">
-        <Outlet />
+        <Suspense fallback={<RouteLoading />}>
+          <Outlet />
+        </Suspense>
       </main>
       <BottomNav />
+    </div>
+  );
+}
+
+function RouteLoading() {
+  return (
+    <div className="min-h-[55vh] flex items-center justify-center" role="status" aria-live="polite">
+      <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 shadow-sm border border-slate-200">
+        <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-200 border-b-blue-600" />
+        <span className="text-sm font-semibold text-slate-600">Opening...</span>
+      </div>
     </div>
   );
 }

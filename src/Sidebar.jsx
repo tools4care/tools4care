@@ -29,11 +29,23 @@ import {
 
 const ICON_SIZE = 22;
 
+let salesPreload;
+function preloadSales() {
+  if (!salesPreload) {
+    salesPreload = import("./Ventas").catch(() => {
+      salesPreload = null;
+    });
+  }
+  return salesPreload;
+}
+
 function NavLink({ to, icon, text, location }) {
   const isActive = location.pathname === to || location.pathname.startsWith(to + "/");
   return (
     <Link
       to={to}
+      onPointerEnter={to === "/ventas" ? preloadSales : undefined}
+      onPointerDown={to === "/ventas" ? preloadSales : undefined}
       className={`group relative flex items-center gap-3 px-2.5 py-2 rounded-xl font-medium transition-colors duration-150 ${
         isActive
           ? "bg-white/10 text-white ring-1 ring-white/10"
