@@ -8,19 +8,19 @@ import Login from "./Login";
 import VanSelector from "./components/VanSelector";
 const Dashboard = lazy(() => import("./Dashboard"));
 const Clientes = lazy(() => import("./Clientes"));
-import Productos from "./Productos";
+const Productos = lazy(() => import("./Productos"));
 const Inventario = lazy(() => import("./Inventario"));
 const Ventas = lazy(() => import("./Ventas"));
-import CierreVan from "./CierreVan";
-import PreCierreVan from "./PreCierreVan";
-import Facturas from "./Facturas";
+const CierreVan = lazy(() => import("./CierreVan"));
+const PreCierreVan = lazy(() => import("./PreCierreVan"));
+const Facturas = lazy(() => import("./Facturas"));
 const CuentasPorCobrar = lazy(() => import("./CuentasPorCobrar.jsx"));
 import CreditoSimulador from "./CreditoSimulador";
 
 // === Online ===
 import OnlineLayout from "./online/OnlineLayout";
 import OnlineDashboard from "./online/OnlineDashboard";
-import Orders from "./admin/Orders";
+const Orders = lazy(() => import("./admin/Orders"));
 import OnlineCatalog from "./online/OnlineCatalog";
 import OnlineDiscounts from "./online/Discounts";
 

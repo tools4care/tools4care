@@ -88,24 +88,24 @@ export default function GlobalSearch() {
 
         setGroups([
           {
-            key: "clients", label: "Customers", icon: Users, path: "/clientes",
-            rows: (clients.data || []).map((row) => ({ id: row.id, title: row.nombre || "Customer", detail: row.negocio || row.telefono || row.email || "" })),
+            key: "clients", label: "Customers", icon: Users,
+            rows: (clients.data || []).map((row) => ({ id: row.id, path: `/clientes?client=${row.id}`, title: row.nombre || "Customer", detail: row.negocio || row.telefono || row.email || "" })),
           },
           {
-            key: "products", label: "Products", icon: Package, path: "/productos",
-            rows: (products.data || []).map((row) => ({ id: row.id, title: row.nombre || "Product", detail: [row.codigo, row.marca, money(row.precio)].filter(Boolean).join(" · ") })),
+            key: "products", label: "Products", icon: Package,
+            rows: (products.data || []).map((row) => ({ id: row.id, path: `/productos?product=${row.id}`, title: row.nombre || "Product", detail: [row.codigo, row.marca, money(row.precio)].filter(Boolean).join(" · ") })),
           },
           {
-            key: "sales", label: "Sales / invoices", icon: FileText, path: "/facturas",
-            rows: (sales.data || []).map((row) => ({ id: row.id, title: row.numero_factura || `Invoice #${row.id.slice(0, 8)}`, detail: `${String(row.fecha || "").slice(0, 10)} · ${money(row.total_venta ?? row.total)} · ${row.estado_pago || ""}` })),
+            key: "sales", label: "Sales / invoices", icon: FileText,
+            rows: (sales.data || []).map((row) => ({ id: row.id, path: `/facturas?invoice=${row.id}`, title: row.numero_factura || `Invoice #${row.id.slice(0, 8)}`, detail: `${String(row.fecha || "").slice(0, 10)} · ${money(row.total_venta ?? row.total)} · ${row.estado_pago || ""}` })),
           },
           {
-            key: "payments", label: "Payments", icon: CreditCard, path: "/cxc",
-            rows: (payments.data || []).map((row) => ({ id: row.id, title: `${money(row.monto)} · ${row.metodo_pago || "Payment"}`, detail: `${String(row.fecha_pago || "").slice(0, 10)}${row.referencia ? ` · ${row.referencia}` : ""}` })),
+            key: "payments", label: "Payments", icon: CreditCard,
+            rows: (payments.data || []).map((row) => ({ id: row.id, path: row.cliente_id ? `/clientes?client=${row.cliente_id}` : "/cxc", title: `${money(row.monto)} · ${row.metodo_pago || "Payment"}`, detail: `${String(row.fecha_pago || "").slice(0, 10)}${row.referencia ? ` · ${row.referencia}` : ""}` })),
           },
           {
-            key: "orders", label: "Online orders", icon: ShoppingBag, path: "/online/orders",
-            rows: (orders.data || []).map((row) => ({ id: row.id, title: row.name || row.email || `Order #${row.id.slice(0, 8)}`, detail: `${money(row.amount_total)} · ${row.status || ""}` })),
+            key: "orders", label: "Online orders", icon: ShoppingBag,
+            rows: (orders.data || []).map((row) => ({ id: row.id, path: `/online/orders?order=${row.id}`, title: row.name || row.email || `Order #${row.id.slice(0, 8)}`, detail: `${money(row.amount_total)} · ${row.status || ""}` })),
           },
         ].filter((group) => group.rows.length));
       } finally {
@@ -168,7 +168,7 @@ export default function GlobalSearch() {
                         <div className="flex items-center gap-2 px-2 mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500"><Icon size={14} /> {group.label}</div>
                         <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100">
                           {group.rows.map((row) => (
-                            <button key={`${group.key}-${row.id}`} onClick={() => go(group.path)} className="w-full text-left px-3.5 py-3 hover:bg-blue-50 flex items-center gap-3 transition-colors">
+                            <button key={`${group.key}-${row.id}`} onClick={() => go(row.path)} className="w-full text-left px-3.5 py-3 hover:bg-blue-50 flex items-center gap-3 transition-colors">
                               <div className="min-w-0 flex-1"><div className="font-semibold text-slate-900 truncate">{row.title}</div><div className="text-xs text-slate-500 truncate mt-0.5">{row.detail}</div></div>
                               <ArrowRight size={16} className="text-slate-400 shrink-0" />
                             </button>
