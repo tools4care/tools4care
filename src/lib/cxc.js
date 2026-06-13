@@ -30,7 +30,7 @@ export async function getCxcCliente(clienteId) {
   // 2) ¿Hay límite manual?
   const { data: cli, error: errCli } = await supabase
     .from("clientes")
-    .select("limite_manual")
+    .select("limite_manual, saldo_a_favor")
     .eq("id", clienteId)
     .maybeSingle();
 
@@ -41,6 +41,7 @@ export async function getCxcCliente(clienteId) {
       limite: limitePolitica,
       disponible: disponibleVista,
       limite_manual_aplicado: false,
+      saldo_favor: 0,
     };
   }
 
@@ -56,6 +57,7 @@ export async function getCxcCliente(clienteId) {
     limite: limiteEfectivo,
     disponible,
     limite_manual_aplicado: Boolean(hayManual),
+    saldo_favor: Math.max(0, Number(cli?.saldo_a_favor || 0)),
   };
 }
 

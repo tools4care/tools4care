@@ -1206,6 +1206,7 @@ useEffect(() => {
   const [cxcLimit, setCxcLimit] = useState(null);
   const [cxcAvailable, setCxcAvailable] = useState(null);
   const [cxcBalance, setCxcBalance] = useState(null);
+  const [clientStoreCredit, setClientStoreCredit] = useState(0);
 
   // ---- Modo Migración
   const [migrationMode, setMigrationMode] = useState(false);
@@ -1823,6 +1824,7 @@ if (appMode === 'devolucion') {
         setCxcLimit(null);
         setCxcAvailable(null);
         setCxcBalance(null);
+        setClientStoreCredit(0);
         return;
       }
       const info = await getCxcCliente(id);
@@ -1830,6 +1832,7 @@ if (appMode === 'devolucion') {
       setCxcLimit(info.limite);
       setCxcAvailable(info.disponible);
       setCxcBalance(info.saldo);
+      setClientStoreCredit(Math.max(0, Number(info.saldo_favor || 0)));
     }
 
     function onFocus() { refreshCxC(); }
@@ -2622,7 +2625,7 @@ useEffect(() => {
   // Solo recalcula cuando cambian: carrito, pagos, balance CxC, o cliente.
   // Antes recalculaban en CADA render (al abrir QR, escribir nota, etc.)
   const {
-    balanceBefore, oldDebt, totalAPagar,
+    balanceBefore, oldDebt, grossTotalDue, storeCreditApplied, totalAPagar,
     paidToOldDebt, paidForSale, paidApplied,
     pagoMinimo, cubrioMinimo, faltaParaMinimo,
     change, mostrarAdvertencia, balanceAfter, amountToCredit,
@@ -2635,17 +2638,23 @@ useEffect(() => {
         : Number(getClientBalance(selectedClient));
     const balanceBefore = Math.max(0, Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0);
     const oldDebt       = balanceBefore;
-    const totalAPagar   = oldDebt + saleTotalWithTax;
+    const grossTotalDue = oldDebt + saleTotalWithTax;
+    const storeCreditApplied = selectedClient?.id && !isOffline
+      ? Math.min(Math.max(0, Number(clientStoreCredit || 0)), grossTotalDue)
+      : 0;
+    const totalAPagar = Math.max(0, grossTotalDue - storeCreditApplied);
+    const effectivePaid = paid + storeCreditApplied;
 
     // FIFO: primero se paga la deuda vieja, luego la venta nueva
-    const paidToOldDebt = Math.min(paid, oldDebt);
-    const paidForSale   = Math.min(saleTotalWithTax, Math.max(0, paid - paidToOldDebt));
+    const paidToOldDebt = Math.min(effectivePaid, oldDebt);
+    const paidForSale   = Math.min(saleTotalWithTax, Math.max(0, effectivePaid - paidToOldDebt));
     const paidApplied   = paidToOldDebt + paidForSale;
 
     // Pago mínimo requerido esta visita
     const pagoMinimo      = calcularPagoMinimo(oldDebt);
-    const cubrioMinimo    = pagoMinimo === 0 || paid >= pagoMinimo;
-    const faltaParaMinimo = Math.max(0, pagoMinimo - paid);
+    const creditAppliedToDebt = Math.min(storeCreditApplied, oldDebt);
+    const cubrioMinimo    = pagoMinimo === 0 || paid + creditAppliedToDebt >= pagoMinimo;
+    const faltaParaMinimo = Math.max(0, pagoMinimo - paid - creditAppliedToDebt);
 
     const change             = Math.max(0, paid - totalAPagar);
     const mostrarAdvertencia = paid > totalAPagar;
@@ -2668,14 +2677,14 @@ useEffect(() => {
     const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
     return {
-      balanceBefore, oldDebt, totalAPagar,
+      balanceBefore, oldDebt, grossTotalDue, storeCreditApplied, totalAPagar,
       paidToOldDebt, paidForSale, paidApplied,
       pagoMinimo, cubrioMinimo, faltaParaMinimo,
       change, mostrarAdvertencia, balanceAfter, amountToCredit,
       clientScore, showCreditPanel, computedLimit,
       creditLimit, creditAvailable, excesoCredito,
     };
-  }, [saleTotalWithTax, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has]);
+  }, [saleTotalWithTax, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has, clientStoreCredit, isOffline]);
 
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
@@ -2700,7 +2709,7 @@ useEffect(() => {
   ) {
     // ⚠️ VERIFICAR: Solo auto-fill si acabamos de entrar al paso 3
     // y el campo nunca ha sido tocado manualmente
-    const roundedTotal = Number(saleTotalWithTax.toFixed(2));
+    const roundedTotal = Number(totalAPagar.toFixed(2));
     setPayments([{ ...payments[0], monto: roundedTotal }]);
     setPaymentAutoFilled(true);
   }
@@ -2714,7 +2723,7 @@ useEffect(() => {
   if (step === 3 && paymentAutoFilled && payments.length > 1) {
     setPaymentAutoFilled(false);
   }
-}, [step, totalAPagar, payments.length, paymentAutoFilled, saleTotalWithTax]);
+}, [step, totalAPagar, payments.length, paymentAutoFilled]);
   /* ========== STRIPE QR FUNCTIONS (🆕 CON FEE) ========== */
 
   // 📱 Genera QR para pago con Stripe
@@ -2897,6 +2906,7 @@ function clearSale() {
   setClientSearch("");
   setClients([]);
   setSelectedClient(null);
+  setClientStoreCredit(0);
   setProductSearch("");
   setProducts([]);
   setTopProducts([]);
@@ -3335,6 +3345,14 @@ async function handleProcessReturn() {
 
     const isCredit = returnType === "credit" && selectedClient?.id;
     const paidOnOriginal = Number(selectedInvoice.total_pagado || 0);
+    let debtReduction = 0;
+    let storeCreditCreated = 0;
+    if (isCredit) {
+      const account = await getCxcCliente(selectedClient.id);
+      const currentDebt = Math.max(0, Number(account?.saldo || 0));
+      debtReduction = Math.min(currentDebt, totalRefund);
+      storeCreditCreated = Math.max(0, Number((totalRefund - debtReduction).toFixed(2)));
+    }
     if (!isCredit && totalRefund > paidOnOriginal + 0.005) {
       throw new Error(
         `This invoice only has ${fmt(paidOnOriginal)} paid. ` +
@@ -3342,7 +3360,11 @@ async function handleProcessReturn() {
       );
     }
     const refundLabel = isCredit
-      ? `📉 Reduce customer A/R balance by ${fmt(totalRefund)} — no money leaves the business`
+      ? [
+          debtReduction > 0 ? `📉 Reduce customer A/R by ${fmt(debtReduction)}` : null,
+          storeCreditCreated > 0 ? `🎁 Create ${fmt(storeCreditCreated)} customer store credit` : null,
+          `No money leaves the business`,
+        ].filter(Boolean).join("\n")
       : `💸 Refund ${fmt(totalRefund)} via ${refundMethod}`;
 
     const confirmed = await confirmDialog(
@@ -3446,19 +3468,39 @@ async function handleProcessReturn() {
     // 5b. Ajustar CxC según tipo de devolución y estado de la venta original
     if (selectedClient?.id) {
       if (isCredit) {
-        // A/R reduction: product was unpaid, so no money leaves the business.
-        const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
-          cliente_id: selectedClient.id,
-          tipo: 'devolucion',
-          monto: totalRefund,
-          venta_id: returnSale.id,
-          usuario_id: usuario.id,
-          fecha: new Date().toISOString(),
-          van_id: van.id,
-          nota: `A/R reduction — Return of invoice #${selectedInvoice.id.slice(0, 6)} — no money returned`,
-        }]);
-        if (cxcErr) console.error("Error registrando crédito tienda:", cxcErr);
-        toast.return(`✅ Return processed — debt reduced by ${fmt(totalRefund)}. No money leaves the business.`, 7000);
+        if (debtReduction > 0) {
+          const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
+            cliente_id: selectedClient.id,
+            tipo: 'devolucion',
+            monto: debtReduction,
+            venta_id: returnSale.id,
+            usuario_id: usuario.id,
+            fecha: new Date().toISOString(),
+            van_id: van.id,
+            nota: `A/R reduction — Return of invoice #${selectedInvoice.id.slice(0, 6)} — no money returned`,
+          }]);
+          if (cxcErr) throw cxcErr;
+        }
+
+        if (storeCreditCreated > 0) {
+          const { error: creditErr } = await supabase.rpc('agregar_credito_favor_cliente', {
+            p_cliente_id: selectedClient.id,
+            p_monto: storeCreditCreated,
+            p_tipo: 'devolucion',
+            p_venta_id: returnSale.id,
+            p_usuario_id: usuario.id,
+            p_van_id: van.id,
+            p_nota: `Excess from return of invoice #${selectedInvoice.id.slice(0, 6)}`,
+          });
+          if (creditErr) throw creditErr;
+          setClientStoreCredit((value) => Number((Number(value || 0) + storeCreditCreated).toFixed(2)));
+        }
+
+        const resultParts = [
+          debtReduction > 0 ? `debt reduced by ${fmt(debtReduction)}` : null,
+          storeCreditCreated > 0 ? `${fmt(storeCreditCreated)} saved as customer credit` : null,
+        ].filter(Boolean).join(" and ");
+        toast.return(`✅ Return processed — ${resultParts}. No money leaves the business.`, 8000);
 
       } else {
         toast.return(`✅ Return processed — refund ${fmt(totalRefund)} via ${refundMethod}.`, 6000);
@@ -3709,18 +3751,25 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
 
       // ✅ FIFO dentro de saveSale
 const oldDebtNow         = Math.max(0, balanceBefore);
-const payOldDebtNow      = Math.min(paid, oldDebtNow);          // viejo primero
-const paidForSaleNow     = Math.min(saleTotal, Math.max(0, paid - payOldDebtNow)); // luego nuevo
-const totalAPagarNow     = oldDebtNow + saleTotal;
+const creditToOldDebtNow = Math.min(storeCreditApplied, oldDebtNow);
+const creditForSaleNow   = Math.min(saleTotalWithTax, Math.max(0, storeCreditApplied - creditToOldDebtNow));
+const remainingOldDebtNow = Math.max(0, oldDebtNow - creditToOldDebtNow);
+const payOldDebtNow      = Math.min(paid, remainingOldDebtNow); // dinero real: deuda vieja primero
+const paidForSaleNow     = Math.min(
+  Math.max(0, saleTotalWithTax - creditForSaleNow),
+  Math.max(0, paid - payOldDebtNow)
+);
+const totalSettledForSaleNow = Number((creditForSaleNow + paidForSaleNow).toFixed(2));
+const totalAPagarNow     = Math.max(0, oldDebtNow + saleTotalWithTax - storeCreditApplied);
 const changeNow          = Math.max(0, paid - totalAPagarNow);
 
 // ✅ Validar pago mínimo antes de guardar
 const pagoMinimoReq = calcularPagoMinimo(oldDebtNow);
-if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
+if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
   const ok = await confirmDialog(
     `Minimum payment required: ${fmt(pagoMinimoReq)}`,
     {
-      detail: `Balance: ${fmt(oldDebtNow)} · Client pays: ${fmt(paid)} · Short by: ${fmt(pagoMinimoReq - paid)}. Authorize exception?`,
+      detail: `Balance: ${fmt(oldDebtNow)} · Payment/credit applied: ${fmt(paid + creditToOldDebtNow)} · Short by: ${fmt(pagoMinimoReq - paid - creditToOldDebtNow)}. Authorize exception?`,
       confirmLabel: "Authorize & Save",
       danger: true,
     }
@@ -3728,10 +3777,10 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
   if (!ok) { setSaving(false); return; }
 }
 
-      const pendingFromThisSale = Math.max(0, saleTotal - paidForSaleNow);
+      const pendingFromThisSale = Math.max(0, saleTotalWithTax - totalSettledForSaleNow);
 
       const estadoPago =
-        pendingFromThisSale === 0 ? "pagado" : paidForSaleNow > 0 ? "parcial" : "pendiente";
+        pendingFromThisSale === 0 ? "pagado" : totalSettledForSaleNow > 0 ? "parcial" : "pendiente";
 
       const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
 
@@ -3827,6 +3876,9 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
   total_ingresado: Number(paid.toFixed(2)),
   aplicado_venta: Number(paidForSaleNow.toFixed(2)),
   aplicado_deuda: Number(payOldDebtNow.toFixed(2)),
+  credito_favor_aplicado: Number(storeCreditApplied.toFixed(2)),
+  credito_favor_aplicado_venta: Number(creditForSaleNow.toFixed(2)),
+  credito_favor_aplicado_deuda: Number(creditToOldDebtNow.toFixed(2)),
   cambio: Number(changeNow.toFixed(2)),
   ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
   transaction_id: transactionId, // 🆕 UUID para deduplicación
@@ -3840,7 +3892,7 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
     usuario_id: usuario.id,
     total_venta: Number(saleTotalWithTax.toFixed(2)),  // ✅ includes tax when enabled
     total: Number(saleTotalWithTax.toFixed(2)),        // ✅ MANTENER POR COMPATIBILIDAD
-    total_pagado: Number(paidForSaleNow.toFixed(2)),
+    total_pagado: totalSettledForSaleNow,
           estado_pago: estadoPago,
           pago: { ...pagoJson, tax_rate: taxEnabled ? taxRate : 0, tax_amount: taxEnabled ? taxAmount : 0, subtotal: Number(saleTotal.toFixed(2)) },
           pago_efectivo: pagoEfectivo,
@@ -3855,6 +3907,37 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
 
       if (insErr) throw insErr;
       const ventaId = ventaRow.id;
+
+      if (storeCreditApplied > 0 && selectedClient?.id) {
+        const { data: creditResult, error: creditErr } = await supabase.rpc('aplicar_credito_favor_cliente', {
+          p_cliente_id: selectedClient.id,
+          p_monto: Number(storeCreditApplied.toFixed(2)),
+          p_venta_id: ventaId,
+          p_usuario_id: usuario.id,
+          p_van_id: van.id,
+          p_nota: `Applied automatically to sale #${ventaId.slice(0, 8)}`,
+        });
+        if (creditErr) throw creditErr;
+        const applied = Number(creditResult?.[0]?.aplicado || 0);
+        if (Math.abs(applied - storeCreditApplied) > 0.005) {
+          throw new Error(`Customer credit changed while saving. Expected ${fmt(storeCreditApplied)}, applied ${fmt(applied)}.`);
+        }
+        setClientStoreCredit(Math.max(0, Number(creditResult?.[0]?.saldo_resultante || 0)));
+      }
+
+      if (creditToOldDebtNow > 0 && selectedClient?.id) {
+        const { error: creditDebtErr } = await supabase.from('cxc_movimientos').insert([{
+          cliente_id: selectedClient.id,
+          tipo: 'devolucion',
+          monto: Number(creditToOldDebtNow.toFixed(2)),
+          venta_id: null,
+          usuario_id: usuario.id,
+          fecha: new Date().toISOString(),
+          van_id: van.id,
+          nota: `Customer store credit applied to prior A/R during sale #${ventaId.slice(0, 8)} — no money received`,
+        }]);
+        if (creditDebtErr) throw creditDebtErr;
+      }
 
       for (const item of cartSafe) {
         try {
@@ -4016,7 +4099,7 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
       }
 
       const prevDue = Math.max(0, balanceBefore);
-      const balancePost = balanceBefore + saleTotal - (paidForSaleNow + payOldDebtNow);
+      const balancePost = balanceBefore + saleTotalWithTax - (totalSettledForSaleNow + payOldDebtNow + creditToOldDebtNow);
       const newDue = Math.max(0, balancePost);
 
       const payload = {
@@ -4031,8 +4114,9 @@ if (pagoMinimoReq > 0 && paid < pagoMinimoReq) {
           unit: p.precio_unitario,
           subtotal: p.cantidad * p.precio_unitario,
         })),
-        saleTotal,
+        saleTotal: saleTotalWithTax,
         paid: paidForSaleNow + payOldDebtNow,
+        storeCreditApplied,
         change: changeNow,
         prevBalance: prevDue,
         saleRemaining: pendingFromThisSale,
@@ -4840,6 +4924,12 @@ function renderStepClient() {
                   <div className="text-lg font-bold text-gray-600 mt-1">$0.00</div>
                 </div>
               )}
+              {clientStoreCredit > 0 && (
+                <div className="text-center bg-green-50 border-2 border-green-300 rounded-xl p-3">
+                  <div className="text-[10px] text-green-700 font-bold uppercase tracking-wide">Store Credit</div>
+                  <div className="text-lg font-bold text-green-800 mt-1">{fmt(clientStoreCredit)}</div>
+                </div>
+              )}
             </div>
           )}
 
@@ -4850,7 +4940,7 @@ function renderStepClient() {
                 type="button"
                 onClick={async () => {
                   const info = await getCxcCliente(selectedClient.id);
-                  if (info) { setCxcLimit(info.limite); setCxcAvailable(info.disponible); setCxcBalance(info.saldo); }
+                  if (info) { setCxcLimit(info.limite); setCxcAvailable(info.disponible); setCxcBalance(info.saldo); setClientStoreCredit(Number(info.saldo_favor || 0)); }
                 }}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg"
               >🔄 Refresh credit</button>
@@ -4888,7 +4978,7 @@ function renderStepClient() {
             className="text-sm text-blue-700 hover:text-blue-900 underline underline-offset-2 flex items-center gap-1"
             onClick={async () => {
               const info = await getCxcCliente(selectedClient?.id);
-              if (info) { setCxcLimit(info.limite); setCxcAvailable(info.disponible); setCxcBalance(info.saldo); }
+              if (info) { setCxcLimit(info.limite); setCxcAvailable(info.disponible); setCxcBalance(info.saldo); setClientStoreCredit(Number(info.saldo_favor || 0)); }
             }}
           >🔄 Refresh credit</button>
           <button
@@ -5720,7 +5810,7 @@ function renderStepProducts() {
       </div>
 
       {/* Credit quick-bar: shows only when cart has items and client has a balance — concise, no duplication */}
-      {selectedClient?.id && (balanceBefore > 0 || amountToCredit > 0) && cartSafe.length > 0 && (
+      {selectedClient?.id && (balanceBefore > 0 || amountToCredit > 0 || storeCreditApplied > 0) && cartSafe.length > 0 && (
         <div className="flex flex-wrap gap-2 text-xs">
           {balanceBefore > 0 && (
             <span className="bg-red-50 border border-red-200 text-red-700 font-semibold px-3 py-1.5 rounded-lg">
@@ -5730,6 +5820,11 @@ function renderStepProducts() {
           {amountToCredit > 0 && (
             <span className="bg-amber-50 border border-amber-200 text-amber-700 font-semibold px-3 py-1.5 rounded-lg">
               → A/R: {fmt(amountToCredit)}
+            </span>
+          )}
+          {storeCreditApplied > 0 && (
+            <span className="bg-green-50 border border-green-300 text-green-800 font-semibold px-3 py-1.5 rounded-lg">
+              🎁 Store credit applied: -{fmt(storeCreditApplied)}
             </span>
           )}
           <span className={`border font-semibold px-3 py-1.5 rounded-lg ${creditAvailableAfter >= 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-red-50 border-red-200 text-red-700"}`}>
@@ -5820,10 +5915,21 @@ function renderStepPayment() {
             )}
           </div>
           <div className="text-right">
-            <div className="text-slate-300 text-xs uppercase tracking-wide">{balanceBefore > 0 ? "Total Owed" : "Total"}</div>
+            <div className="text-slate-300 text-xs uppercase tracking-wide">{storeCreditApplied > 0 ? "Due After Store Credit" : balanceBefore > 0 ? "Total Owed" : "Total"}</div>
             <div className="text-white font-extrabold text-xl lg:text-3xl">{fmt(totalAPagar)}</div>
+            {storeCreditApplied > 0 && <div className="text-green-300 text-xs">Original total: {fmt(grossTotalDue)}</div>}
           </div>
         </div>
+
+        {storeCreditApplied > 0 && (
+          <div className="bg-green-50 border-b border-green-200 px-4 py-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="font-bold text-green-800">🎁 Customer store credit applied automatically</div>
+              <div className="text-xs text-green-700">This is not counted as cash, card, transfer, check, or other income.</div>
+            </div>
+            <div className="text-xl font-extrabold text-green-800">-{fmt(storeCreditApplied)}</div>
+          </div>
+        )}
 
         {/* Metrics grid */}
         {(() => {
@@ -6545,6 +6651,7 @@ function renderStepPayment() {
           setCxcLimit(info.limite);
           setCxcAvailable(info.disponible);
           setCxcBalance(info.saldo);
+          setClientStoreCredit(Number(info.saldo_favor || 0));
         }
       } catch (refreshErr) {
         console.warn("Error refreshing credit:", refreshErr);
