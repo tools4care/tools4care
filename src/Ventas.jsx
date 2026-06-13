@@ -3378,136 +3378,46 @@ async function handleProcessReturn() {
       return;
     }
 
-    // ===== IMPLEMENTACIÓN DIRECTA (sin RPC) =====
+    const returnTransactionId = uuidv4();
+    const { data: returnResult, error: returnError } = await supabase.rpc(
+      "procesar_devolucion_transaccional",
+      {
+        p_transaction_id: returnTransactionId,
+        p_venta_origen_id: selectedInvoice.id,
+        p_cliente_id: selectedClient?.id || null,
+        p_van_id: van.id,
+        p_usuario_id: usuario.id,
+        p_tipo_devolucion: isCredit ? "credit" : "refund",
+        p_metodo_reembolso: isCredit ? null : refundMethod,
+        p_motivo: returnReason || "Return",
+        p_items: itemsToReturn.map((item) => ({
+          detalle_venta_id: item.detalle_venta_id,
+          cantidad: item.cantidad,
+        })),
+      }
+    );
+    if (returnError) throw returnError;
 
-    // 2b. Crear registro de devolución en 'ventas'
-    const { data: returnSale, error: insertErr } = await supabase
-      .from('ventas')
-      .insert([{
-        cliente_id: selectedClient?.id || null,
-        van_id: van.id,
-        usuario_id: usuario.id,
-        total: totalRefund,
-        total_venta: totalRefund,
-        total_pagado: totalRefund,
-        tipo: 'devolucion',
-        venta_origen_id: selectedInvoice.id,
-        motivo_devolucion: returnReason || "Return",
-        estado_pago: isCredit ? 'credito_tienda' : 'reembolsado',
-        metodo_pago: isCredit ? null : refundMethod,
-        notas: `Return of invoice #${selectedInvoice.id.slice(0, 8)}… — ${isCredit ? "A/R Reduction (no money returned)" : `Money Refund (${refundMethod})`}`,
-      }])
-      .select()
-      .single();
-
-    if (insertErr) throw insertErr;
-
-    // 3b. Crear detalles de la devolución
-    const detallesReturn = itemsToReturn.map(item => ({
-      venta_id: returnSale.id,
-      producto_id: item.producto_id,
-      cantidad: item.cantidad,
-      precio_unitario: item.precio_unitario,
-      descuento: 0,
-    }));
-
-    const { error: detErr } = await supabase.from('detalle_ventas').insert(detallesReturn);
-    if (detErr) console.error("Error insertando detalles devolución:", detErr);
-
-    // 3c. 🆕 Registrar en tracking de devoluciones
-    const trackingRecords = itemsToReturn.map(item => ({
-      venta_origen_id: selectedInvoice.id,
-      venta_devolucion_id: returnSale.id,
-      detalle_venta_id: item.detalle_venta_id,
-      producto_id: item.producto_id,
-      cantidad_devuelta: item.cantidad,
-      precio_unitario: item.precio_unitario,
-      motivo: returnReason || "Devolución en tienda",
-      usuario_id: usuario.id,
-      van_id: van.id,
-    }));
-
-    try {
-      await supabase.from('devoluciones_detalle').insert(trackingRecords);
-    } catch (e) {
-      console.warn('Tracking devoluciones no disponible:', e?.message);
+    const result = returnResult?.[0];
+    if (!result?.venta_devolucion_id) {
+      throw new Error("The transactional return did not return a return ID.");
     }
 
-    // 4b. Actualizar Inventario (Devolver stock)
-    for (const item of itemsToReturn) {
-      try {
-        await supabase.rpc('incrementar_stock_van', {
-          p_van_id: van.id,
-          p_producto_id: item.producto_id,
-          p_cantidad: item.cantidad,
-        });
-      } catch {
-        // Fallback manual
-        const { data: currentStock } = await supabase
-          .from('stock_van')
-          .select('cantidad')
-          .eq('van_id', van.id)
-          .eq('producto_id', item.producto_id)
-          .single();
+    const finalTotal = Number(result.total_devolucion || totalRefund);
+    const finalDebtReduction = Number(result.deuda_reducida || 0);
+    const finalStoreCredit = Number(result.credito_favor_creado || 0);
+    setClientStoreCredit(Math.max(0, Number(result.saldo_favor_resultante || 0)));
 
-        if (currentStock) {
-          await supabase
-            .from('stock_van')
-            .update({ cantidad: currentStock.cantidad + item.cantidad })
-            .eq('van_id', van.id)
-            .eq('producto_id', item.producto_id);
-        } else {
-          // Si no existía, crearlo
-          await supabase
-            .from('stock_van')
-            .insert({ van_id: van.id, producto_id: item.producto_id, cantidad: item.cantidad });
-        }
-      }
-    }
-
-    // 5b. Ajustar CxC según tipo de devolución y estado de la venta original
-    if (selectedClient?.id) {
-      if (isCredit) {
-        if (debtReduction > 0) {
-          const { error: cxcErr } = await supabase.from('cxc_movimientos').insert([{
-            cliente_id: selectedClient.id,
-            tipo: 'devolucion',
-            monto: debtReduction,
-            venta_id: returnSale.id,
-            usuario_id: usuario.id,
-            fecha: new Date().toISOString(),
-            van_id: van.id,
-            nota: `A/R reduction — Return of invoice #${selectedInvoice.id.slice(0, 6)} — no money returned`,
-          }]);
-          if (cxcErr) throw cxcErr;
-        }
-
-        if (storeCreditCreated > 0) {
-          const { error: creditErr } = await supabase.rpc('agregar_credito_favor_cliente', {
-            p_cliente_id: selectedClient.id,
-            p_monto: storeCreditCreated,
-            p_tipo: 'devolucion',
-            p_venta_id: returnSale.id,
-            p_usuario_id: usuario.id,
-            p_van_id: van.id,
-            p_nota: `Excess from return of invoice #${selectedInvoice.id.slice(0, 6)}`,
-          });
-          if (creditErr) throw creditErr;
-          setClientStoreCredit((value) => Number((Number(value || 0) + storeCreditCreated).toFixed(2)));
-        }
-
-        const resultParts = [
-          debtReduction > 0 ? `debt reduced by ${fmt(debtReduction)}` : null,
-          storeCreditCreated > 0 ? `${fmt(storeCreditCreated)} saved as customer credit` : null,
-        ].filter(Boolean).join(" and ");
-        toast.return(`✅ Return processed — ${resultParts}. No money leaves the business.`, 8000);
-
-      } else {
-        toast.return(`✅ Return processed — refund ${fmt(totalRefund)} via ${refundMethod}.`, 6000);
-      }
+    if (isCredit) {
+      const resultParts = [
+        finalDebtReduction > 0 ? `debt reduced by ${fmt(finalDebtReduction)}` : null,
+        finalStoreCredit > 0 ? `${fmt(finalStoreCredit)} saved as customer credit` : null,
+      ].filter(Boolean).join(" and ");
+      toast.return(`✅ Return processed — ${resultParts}. No money leaves the business.`, 8000);
+    } else if (selectedClient?.id) {
+      toast.return(`✅ Return processed — refund ${fmt(finalTotal)} via ${refundMethod}.`, 6000);
     } else {
-      // Walk-in return, no client account
-      toast.return(`✅ Walk-in return processed — refund ${fmt(totalRefund)} via ${refundMethod}.`, 6000);
+      toast.return(`✅ Walk-in return processed — refund ${fmt(finalTotal)} via ${refundMethod}.`, 6000);
     }
 
     // Resetear UI
