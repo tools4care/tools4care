@@ -1,5 +1,5 @@
 // src/BottomNav.jsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   Home,
@@ -49,6 +49,16 @@ const MORE_ITEMS = [
   { path: "/emergencia",    label: "Essentials",    icon: AlertTriangle, iconColor: "#2563eb", bg: "bg-blue-50",    ring: "ring-blue-200"   },
 ];
 
+let salesPreload;
+function preloadSales() {
+  if (!salesPreload) {
+    salesPreload = import("./Ventas").catch(() => {
+      salesPreload = null;
+    });
+  }
+  return salesPreload;
+}
+
 export default function BottomNav() {
   const [showMore, setShowMore]       = useState(false);
   const [showSaleSheet, setShowSaleSheet] = useState(false);
@@ -59,6 +69,17 @@ export default function BottomNav() {
   const location                      = useLocation();
 
   const onVentas = location.pathname === "/ventas";
+
+  useEffect(() => {
+    if (onVentas || navigator.connection?.saveData) return undefined;
+    const start = () => preloadSales();
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(start, { timeout: 2500 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(start, 900);
+    return () => window.clearTimeout(id);
+  }, [onVentas]);
 
   /* ── Logout ───────────────────────────────────────── */
   const handleLogout = async () => {
@@ -124,6 +145,7 @@ export default function BottomNav() {
               <button
                 key={to}
                 onClick={handleSalesTap}
+                onPointerDown={preloadSales}
                 className="flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors relative"
               >
                 {isActive && (
