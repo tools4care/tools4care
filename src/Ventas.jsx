@@ -3665,6 +3665,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
           // Preparar venta para guardar localmente — mismos campos que el insert online
           const ventaOffline = {
             // Identificación
+            transaction_id: transactionId,
             cliente_id: selectedClient?.id ?? null,
             van_id: van.id,
             usuario_id: usuario.id,
@@ -3884,195 +3885,47 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
   transaction_id: transactionId, // 🆕 UUID para deduplicación
 };
 
-      const { data: ventaRow, error: insErr } = await supabase
-  .from('ventas')
-  .insert([{
-    cliente_id: selectedClient?.id ?? null,
-    van_id: van.id ?? null,
-    usuario_id: usuario.id,
-    total_venta: Number(saleTotalWithTax.toFixed(2)),  // ✅ includes tax when enabled
-    total: Number(saleTotalWithTax.toFixed(2)),        // ✅ MANTENER POR COMPATIBILIDAD
-    total_pagado: totalSettledForSaleNow,
-          estado_pago: estadoPago,
-          pago: { ...pagoJson, tax_rate: taxEnabled ? taxRate : 0, tax_amount: taxEnabled ? taxAmount : 0, subtotal: Number(saleTotal.toFixed(2)) },
-          pago_efectivo: pagoEfectivo,
-          pago_tarjeta: pagoTarjeta,
-          pago_transferencia: pagoTransf,
-          pago_otro: pagoOtro,
-          metodo_pago: metodoPrincipal,
-          notas: [notes, saleOverrideRef.current].filter(Boolean).join("\n") || null,
-        }])
-        .select('id')
-        .single();
+      const transactionItems = itemsForDb.map((it) => {
+        const pct = Number(it.descuento_pct || 0);
+        const finalUnit = Number((it.precio_unit * (1 - pct / 100)).toFixed(2));
+        return {
+          producto_id: it.producto_id,
+          cantidad: it.cantidad,
+          precio_unitario: it.precio_unit,
+          descuento: pct,
+          subtotal: Number((finalUnit * it.cantidad).toFixed(2)),
+        };
+      });
 
-      if (insErr) throw insErr;
-      const ventaId = ventaRow.id;
-
-      if (storeCreditApplied > 0 && selectedClient?.id) {
-        const { data: creditResult, error: creditErr } = await supabase.rpc('aplicar_credito_favor_cliente', {
-          p_cliente_id: selectedClient.id,
-          p_monto: Number(storeCreditApplied.toFixed(2)),
-          p_venta_id: ventaId,
-          p_usuario_id: usuario.id,
+      const montoParaCxC = Number(payOldDebtNow.toFixed(2));
+      const { data: transactionResult, error: transactionError } = await supabase.rpc(
+        "guardar_venta_transaccional",
+        {
+          p_transaction_id: transactionId,
+          p_cliente_id: selectedClient?.id ?? null,
           p_van_id: van.id,
-          p_nota: `Applied automatically to sale #${ventaId.slice(0, 8)}`,
-        });
-        if (creditErr) throw creditErr;
-        const applied = Number(creditResult?.[0]?.aplicado || 0);
-        if (Math.abs(applied - storeCreditApplied) > 0.005) {
-          throw new Error(`Customer credit changed while saving. Expected ${fmt(storeCreditApplied)}, applied ${fmt(applied)}.`);
+          p_usuario_id: usuario.id,
+          p_total: Number(saleTotalWithTax.toFixed(2)),
+          p_total_pagado: totalSettledForSaleNow,
+          p_estado_pago: estadoPago,
+          p_metodo_pago: metodoPrincipal,
+          p_pago: { ...pagoJson, tax_rate: taxEnabled ? taxRate : 0, tax_amount: taxEnabled ? taxAmount : 0, subtotal: Number(saleTotal.toFixed(2)) },
+          p_pago_efectivo: pagoEfectivo,
+          p_pago_tarjeta: pagoTarjeta,
+          p_pago_transferencia: pagoTransf,
+          p_pago_otro: pagoOtro,
+          p_notas: [notes, saleOverrideRef.current].filter(Boolean).join("\n") || null,
+          p_items: transactionItems,
+          p_deuda_nueva: Number(pendingFromThisSale.toFixed(2)),
+          p_pago_deuda_anterior: montoParaCxC,
+          p_credito_favor_aplicado: Number(storeCreditApplied.toFixed(2)),
+          p_credito_favor_a_deuda: Number(creditToOldDebtNow.toFixed(2)),
         }
-        setClientStoreCredit(Math.max(0, Number(creditResult?.[0]?.saldo_resultante || 0)));
-      }
-
-      if (creditToOldDebtNow > 0 && selectedClient?.id) {
-        const { error: creditDebtErr } = await supabase.from('cxc_movimientos').insert([{
-          cliente_id: selectedClient.id,
-          tipo: 'devolucion',
-          monto: Number(creditToOldDebtNow.toFixed(2)),
-          venta_id: null,
-          usuario_id: usuario.id,
-          fecha: new Date().toISOString(),
-          van_id: van.id,
-          nota: `Customer store credit applied to prior A/R during sale #${ventaId.slice(0, 8)} — no money received`,
-        }]);
-        if (creditDebtErr) throw creditDebtErr;
-      }
-
-      for (const item of cartSafe) {
-        try {
-          const { data: stockActual } = await supabase
-            .from('stock_van')
-            .select('cantidad')
-            .eq('van_id', van.id)
-            .eq('producto_id', item.producto_id)
-            .single();
-
-          if (stockActual && stockActual.cantidad >= item.cantidad) {
-            const nuevaCantidad = stockActual.cantidad - item.cantidad;
-            
-            const { error: updateErr } = await supabase
-              .from('stock_van')
-              .update({ cantidad: nuevaCantidad })
-              .eq('van_id', van.id)
-              .eq('producto_id', item.producto_id);
-
-            if (updateErr) {
-              console.error(`Error descontando stock del producto ${item.producto_id}:`, updateErr);
-            }
-          } else {
-            console.warn(`Stock insuficiente para producto ${item.producto_id}`);
-          }
-        } catch (err) {
-          console.error(`Error descontando stock:`, err);
-        }
-      }
-
-      if (ventaId && itemsForDb.length > 0) {
-        const { error: detalleErr } = await supabase
-          .from('detalle_ventas')
-          .insert(
-            itemsForDb.map((it) => {
-              // precio_unitario = base price, descuento = pct, subtotal = lo que realmente pagó
-              const pct = Number(it.descuento_pct || 0);
-              const finalUnit = Number((it.precio_unit * (1 - pct / 100)).toFixed(2));
-              const subtotal = Number((finalUnit * it.cantidad).toFixed(2));
-              return {
-                venta_id: ventaId,
-                producto_id: it.producto_id,
-                cantidad: it.cantidad,
-                precio_unitario: it.precio_unit,   // base (antes del descuento)
-                descuento: pct,
-                subtotal,                           // precio real pagado × cantidad
-              };
-            })
-          );
-
-        if (detalleErr) {
-          console.error('Error insertando detalle de venta:', detalleErr);
-          throw new Error(`Error guardando productos: ${detalleErr.message}`);
-        }
-      }
-
-      if (pendingFromThisSale > 0 && selectedClient?.id && ventaId) {
-        try {
-          await supabase.rpc("cxc_crear_ajuste_por_venta", {
-            p_cliente_id: selectedClient.id,
-            p_venta_id: ventaId,
-            p_monto: Number(pendingFromThisSale.toFixed(2)),
-            p_van_id: van.id,
-            p_usuario_id: usuario.id,
-            p_nota: "Saldo de venta no pagado",
-          });
-        } catch (e) {
-          console.warn("RPC cxc_crear_ajuste_por_venta no disponible, uso fallback directo:", e?.message || e);
-          const { error: e2 } = await supabase
-            .from("cxc_movimientos")
-            .upsert(
-              [{
-                cliente_id: selectedClient.id,
-                tipo: "venta",
-                monto: Number(pendingFromThisSale.toFixed(2)),
-                usuario_id: usuario.id ?? null,
-                fecha: new Date().toISOString(),
-                venta_id: ventaId,
-              }],
-              { onConflict: "venta_id" }
-            );
-          if (e2) console.error("Fallback CxC upsert error:", e2.message || e2);
-        }
-      }
-
-         const montoParaCxC = Number(payOldDebtNow.toFixed(2));
-
-      if (montoParaCxC > 0 && selectedClient?.id) {
-        // 🔐 Id de idempotencia para no duplicar pagos si algo reintenta
-        let idemKey = null;
-        try {
-          // Navegadores modernos
-          if (typeof crypto !== "undefined" && crypto.randomUUID) {
-            idemKey = crypto.randomUUID();
-          }
-        } catch (e) {
-          console.warn("No se pudo generar randomUUID, idem_key queda null:", e);
-        }
-
-        // 💰 1) Registrar el pago REAL en tabla `pagos`
-     const { error: pagoCxCErr } = await supabase
-  .from("pagos")
-  .insert([
-    {
-      venta_id: null,
-      cliente_id: selectedClient.id,
-      van_id: van.id ?? null,
-      usuario_id: usuario.id ?? null,
-      fecha_pago: new Date().toISOString(),
-      monto: montoParaCxC,
-      metodo_pago: metodoPrincipal,
-      referencia: `Pago CxC dentro de venta ${ventaId}`,
-      notas: "Pago a cuenta por cobrar aplicado desde pantalla de ventas",
-      idem_key: idemKey,
-      transaction_id: transactionId, // 🆕 Mismo UUID que la venta
-    },
-  ]);
-
-        if (pagoCxCErr) {
-          console.error("❌ Error insertando pago CxC en tabla pagos:", pagoCxCErr);
-
-          // 🔁 Fallback: si por alguna razón falla, usamos tu flujo viejo
-          // para no romper la app (pero idealmente esto no debería ejecutarse casi nunca)
-          try {
-            await registrarPagoCxC({
-              cliente_id: selectedClient.id,
-              monto: montoParaCxC,
-              metodo: metodoPrincipal,
-              van_id: van.id,
-            });
-          } catch (fallbackErr) {
-            console.error("❌ Error también en registrarPagoCxC fallback:", fallbackErr);
-          }
-        }
-      }
+      );
+      if (transactionError) throw transactionError;
+      const ventaId = transactionResult?.[0]?.venta_id;
+      if (!ventaId) throw new Error("The transactional sale did not return a sale ID.");
+      setClientStoreCredit(Math.max(0, Number(transactionResult?.[0]?.credito_favor_restante || 0)));
 
       // APLICAR PAGO A CUOTAS — directo, sin el caché RPC que puede silenciar el error
       if (montoParaCxC > 0) {
