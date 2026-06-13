@@ -1,5 +1,6 @@
 // src/admin/Orders.jsx
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import {
   Package, RefreshCw, Search, Filter, Download, X, ChevronDown,
@@ -506,6 +507,7 @@ function OrderDetailDrawer({ open, onClose, orderId, onStatusChange }) {
    Orders main page
 ═══════════════════════════════════════════════════ */
 export default function Orders() {
+  const location = useLocation();
   const [rows,        setRows]        = useState([]);
   const [page,        setPage]        = useState(1);
   const [total,       setTotal]       = useState(0);
@@ -595,6 +597,11 @@ export default function Orders() {
     setDetailId(id);
     setDetailOpen(true);
   }
+
+  useEffect(() => {
+    const orderId = new URLSearchParams(location.search).get("order");
+    if (orderId) openDetail(orderId);
+  }, [location.search]);
 
   function exportCSV() {
     const header = ["id","created_at","name","email","phone","status","amount_total","currency","payment_intent_id"];

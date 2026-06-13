@@ -620,6 +620,21 @@ export default function Productos() {
     cargarProductos();
   }, [debounced, pagina]);
 
+  useEffect(() => {
+    const productId = new URLSearchParams(location.search).get("product");
+    if (!productId) return;
+    let cancelled = false;
+    supabase
+      .from("productos")
+      .select("*, suplidor:suplidor_id(nombre)")
+      .eq("id", productId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled && data) abrirModal(data);
+      });
+    return () => { cancelled = true; };
+  }, [location.search]);
+
   async function cargarProductos() {
     setLoading(true);
     const mySeq = ++searchSeq.current;

@@ -5,6 +5,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
+import { useLocation } from "react-router-dom";
 
 /* ===================== Iconos SVG ===================== */
 const IconInvoice = () => (
@@ -510,6 +511,7 @@ function buildFullInvoiceHTML(factura) {
 
 /* ===================== MAIN ===================== */
 export default function Facturas() {
+  const location = useLocation();
   const { usuario } = useUsuario();
   const { van } = useVan();
   const { toast } = useToast();
@@ -573,6 +575,16 @@ export default function Facturas() {
     cargarEstadisticas();
     // eslint-disable-next-line
   }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda, periodoStats, vanFiltro]);
+
+  useEffect(() => {
+    const invoiceId = new URLSearchParams(location.search).get("invoice");
+    if (!invoiceId) return;
+    let cancelled = false;
+    supabase.from("facturas_ext").select("*").eq("id", invoiceId).maybeSingle().then(({ data }) => {
+      if (!cancelled && data) setFacturaSeleccionada(data);
+    });
+    return () => { cancelled = true; };
+  }, [location.search]);
 
   // Resetear selección cuando cambian los filtros o pagina
   useEffect(() => {
