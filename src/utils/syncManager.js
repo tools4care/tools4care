@@ -31,6 +31,54 @@ export async function sincronizarVentasPendientes() {
     // Sincronizar cada venta
     for (const venta of ventasPendientes) {
       try {
+        // New offline sales carry a stable transaction_id and can be synced
+        // atomically. Legacy pending sales continue through the fallback below.
+        if (venta.transaction_id) {
+          const total = Number(venta.total_venta ?? venta.total ?? 0);
+          const totalPaid = Number(venta.total_pagado ?? 0);
+          const items = (venta.items || []).map((item) => {
+            const base = Number(item.precio_unit ?? item.precio_unitario ?? 0);
+            const pct = Number(item.descuento_pct ?? 0);
+            const qty = Number(item.cantidad ?? 1);
+            const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
+            return {
+              producto_id: item.producto_id,
+              cantidad: qty,
+              precio_unitario: base,
+              descuento: pct,
+              subtotal: Number(item.subtotal) > 0 ? Number(item.subtotal) : Number((finalUnit * qty).toFixed(2)),
+            };
+          });
+
+          const { data: txRows, error: txError } = await supabase.rpc('guardar_venta_transaccional', {
+            p_transaction_id: venta.transaction_id,
+            p_cliente_id: venta.cliente_id ?? null,
+            p_van_id: venta.van_id,
+            p_usuario_id: venta.usuario_id,
+            p_total: total,
+            p_total_pagado: totalPaid,
+            p_estado_pago: venta.estado_pago || 'pendiente',
+            p_metodo_pago: venta.metodo_pago || null,
+            p_pago: venta.pago || {},
+            p_pago_efectivo: Number(venta.pago_efectivo || 0),
+            p_pago_tarjeta: Number(venta.pago_tarjeta || 0),
+            p_pago_transferencia: Number(venta.pago_transferencia || 0),
+            p_pago_otro: Number(venta.pago_otro || 0),
+            p_notas: venta.notas || '[OFFLINE SYNC]',
+            p_items: items,
+            p_deuda_nueva: venta.cliente_id ? Math.max(0, Number((total - totalPaid).toFixed(2))) : 0,
+            p_pago_deuda_anterior: 0,
+            p_credito_favor_aplicado: 0,
+            p_credito_favor_a_deuda: 0,
+          });
+          if (txError) throw txError;
+
+          await marcarVentaSincronizada(venta._offline_id);
+          sincronizadas++;
+          resultados.push({ id: venta._offline_id, success: true, ventaId: txRows?.[0]?.venta_id, atomic: true });
+          continue;
+        }
+
         // ── Insertar venta con todos los campos que usa el insert online ──
         const { data: ventaData, error: ventaError } = await supabase
           .from('ventas')
