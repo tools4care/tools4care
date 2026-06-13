@@ -42,6 +42,7 @@ const Reportes = lazy(() => import('./Reportes'));
 
 // 📦 Suscripciones
 const Suscripciones = lazy(() => import('./Suscripciones'));
+const GlobalSearch = lazy(() => import('./components/GlobalSearch'));
 
 // 🧾 Tax / Impuestos
 import TaxConfig from './pages/TaxConfig'
@@ -120,6 +121,7 @@ function LayoutInterior() {
         onSyncNow={sincronizarAhora}
       />
       <SyncToast />
+      <Suspense fallback={null}><GlobalSearch /></Suspense>
       <div className="hidden lg:block">
         <Sidebar />
       </div>

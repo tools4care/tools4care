@@ -2114,8 +2114,6 @@ function ClienteStatsModal({
 }) {
   if (!open || !cliente) return null;
 
-  const [mostrarTodas, setMostrarTodas] = useState(false);
-
   const comprasPorMes = {};
   let lifetimeTotal = 0;
   (resumen.ventas || []).forEach(v => {
@@ -2137,16 +2135,6 @@ function ClienteStatsModal({
   const limite = Number(resumen?.cxc?.limite ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const saldo = Number(resumen?.balance ?? 0);
-
-  const ventasFiltradas = mesSeleccionado 
-    ? (resumen.ventas || []).filter(v => v.fecha?.startsWith(mesSeleccionado))
-    : (resumen.ventas || []);
-  
-  const ventasMostrar = mostrarTodas 
-    ? ventasFiltradas 
-    : ventasFiltradas.slice(0, 10);
-  
-  const hayMasVentas = ventasFiltradas.length > 10;
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -2309,7 +2297,6 @@ function ClienteStatsModal({
                 value={mesSeleccionado || ""}
                 onChange={e => {
                   setMesSeleccionado(e.target.value || null);
-                  setMostrarTodas(false);
                 }}
               >
                 <option value="">All months</option>
@@ -2345,87 +2332,6 @@ function ClienteStatsModal({
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            </div>
-
-            {/* Tabla ventas con límite de 10 */}
-            <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-2xl p-6 mb-6 border-2 border-gray-200 shadow-lg">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="font-bold text-gray-900 flex items-center gap-2 text-xl">
-                  <FileText size={24} />
-                  Sales History {mesSeleccionado ? `for ${mesSeleccionado}` : "(all)"}
-                  <span className="text-sm font-normal text-gray-500">
-                    ({ventasMostrar.length} of {ventasFiltradas.length})
-                  </span>
-                </h4>
-                
-                {hayMasVentas && (
-                  <button
-                    onClick={() => setMostrarTodas(!mostrarTodas)}
-                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all shadow-md"
-                  >
-                    {mostrarTodas ? (
-                      <>
-                        <ChevronUp size={16} />
-                        Show Less
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown size={16} />
-                        View All ({ventasFiltradas.length})
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-
-              {ventasFiltradas.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="bg-gray-200 rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center shadow-inner">
-                    <FileText className="text-gray-400" size={32} />
-                  </div>
-                  <p className="text-gray-700 font-bold text-lg mb-1">No sales found</p>
-                  <p className="text-gray-500">This client hasn't made any purchases yet</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto -mx-6 sm:mx-0">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b-2 border-gray-300 bg-gray-100">
-                        <th className="text-left py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Order ID</th>
-                        <th className="text-left py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Date</th>
-                        <th className="text-right py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Total</th>
-                        <th className="text-right py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Paid</th>
-                        <th className="text-center py-3 px-4 font-bold text-gray-700 text-sm uppercase tracking-wide">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ventasMostrar.map((v) => (
-                        <tr key={v.id} className="border-b border-gray-200 hover:bg-white transition-colors">
-                          <td className="py-3 px-4">
-                            <span className="font-mono text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-lg font-bold">{v.id.slice(0, 8)}…</span>
-                          </td>
-                          <td className="py-3 px-4 text-gray-800 font-medium">{v.fecha?.slice(0, 10)}</td>
-                          <td className="py-3 px-4 text-right font-bold text-gray-900">${(v.total_venta || 0).toFixed(2)}</td>
-                          <td className="py-3 px-4 text-right font-bold text-green-700">${(v.total_pagado || 0).toFixed(2)}</td>
-                          <td className="py-3 px-4 text-center">
-                            <span
-                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold shadow-sm ${
-                                v.estado_pago === "Paid"
-                                  ? "bg-green-500 text-white"
-                                  : v.estado_pago === "Partial"
-                                  ? "bg-yellow-500 text-white"
-                                  : "bg-gray-400 text-white"
-                              }`}
-                            >
-                              {v.estado_pago || "Pending"}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
 
             {/* Acciones secundarias */}
