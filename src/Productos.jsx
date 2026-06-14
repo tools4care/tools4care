@@ -714,15 +714,13 @@ export default function Productos() {
   const handleBarcodeScanned = (code) => {
     const raw = (code || '').trim();
     if (!raw) return;
-    // Strip leading zeros so "0010181055935" and "010181055935" both find the same product
-    const normalized = raw.replace(/^0+/, '') || raw;
     setShowScanner(false);
     setTimeout(() => {
       const searchInput = document.querySelector('input[placeholder="Search by code, name, brand, category..."]');
       if (searchInput) { searchInput.focus(); searchInput.select(); }
     }, 300);
     setPagina(1);
-    setBusqueda(normalized);
+    setBusqueda(raw);
   };
 
   function handleBuscar(e) {
