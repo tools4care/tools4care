@@ -150,25 +150,31 @@ export default function CierreVan() {
 
     // Probe column name for payment method (varies by schema)
     for (const col of ["metodo_pago", "metodo", "forma_pago"]) {
-      const { data, error } = await supabase
+      let query = supabase
         .from("pagos")
         .select(`id, monto, ${col}, idem_key, created_at, cliente_id, clientes:cliente_id(nombre)`)
         .eq("van_id", van.id)
         .gte("created_at", start)
         .lte("created_at", end)
         .order("created_at", { ascending: false });
+      const priorCutoff = cierresPreviosPorFecha[fecha]?.lastClosedAt;
+      if (priorCutoff) query = query.gt("created_at", priorCutoff);
+      const { data, error } = await query;
       if (!error) {
         return (data || []).map((r) => ({ ...r, metodo_pago: r[col] || "transferencia" }));
       }
     }
     // Fallback: fetch without method column
-    const { data } = await supabase
+    let fallbackQuery = supabase
       .from("pagos")
       .select("id, monto, idem_key, created_at, cliente_id, clientes:cliente_id(nombre)")
       .eq("van_id", van.id)
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false });
+    const priorCutoff = cierresPreviosPorFecha[fecha]?.lastClosedAt;
+    if (priorCutoff) fallbackQuery = fallbackQuery.gt("created_at", priorCutoff);
+    const { data } = await fallbackQuery;
     return (data || []).map((r) => ({ ...r, metodo_pago: "transferencia" }));
   }
 
@@ -207,6 +213,7 @@ export default function CierreVan() {
         .select("id, fecha, categoria, descripcion, monto, factura_url")
         .eq("van_id", van.id)
         .in("fecha", fechasSeleccionadas)
+        .is("cierre_id", null)
         .order("fecha", { ascending: true });
       setGastos(
         (data || []).map((g) => ({ ...g, _key: g.id, _saved: true }))
@@ -265,6 +272,7 @@ export default function CierreVan() {
 
   // ✅ FUENTE DE VERDAD: Totales del RPC (sin duplicación)
   const [resumenPorFecha, setResumenPorFecha] = useState({});
+  const [cierresPreviosPorFecha, setCierresPreviosPorFecha] = useState({});
 
   // Payment method input states
   const [cashInput, setCashInput] = useState("");
@@ -332,7 +340,7 @@ export default function CierreVan() {
     if (fechasSeleccionadas.length > 0 && van?.id) {
       cargarDatosMultiplesFechas();
     }
-  }, [fechasSeleccionadas, van?.id]);
+  }, [fechasSeleccionadas, van?.id, cierresPreviosPorFecha]);
 
   // ✅ SOLUCIÓN: Usar SOLO el RPC para los totales esperados
   useEffect(() => {
@@ -350,6 +358,31 @@ export default function CierreVan() {
         );
 
         console.log('📊 Cargando totales desde RPC para:', { p_from, p_to });
+
+        const { data: cierresPrevios, error: cierresPreviosError } = await supabase
+          .from("cierres_dia")
+          .select("fecha, created_at, periodo_hasta, numero_cierre, total_efectivo, total_tarjeta, total_transferencia, total_otros")
+          .eq("van_id", van.id)
+          .in("fecha", fechasSeleccionadas);
+        if (cierresPreviosError) throw cierresPreviosError;
+
+        const previousMap = {};
+        (cierresPrevios || []).forEach((c) => {
+          const iso = String(c.fecha || "").slice(0, 10);
+          if (!previousMap[iso]) {
+            previousMap[iso] = { cash: 0, card: 0, transfer: 0, other: 0, count: 0, maxNumber: 0, lastClosedAt: null };
+          }
+          const prior = previousMap[iso];
+          prior.cash += Number(c.total_efectivo || 0);
+          prior.card += Number(c.total_tarjeta || 0);
+          prior.transfer += Number(c.total_transferencia || 0);
+          prior.other += Number(c.total_otros || 0);
+          prior.count += 1;
+          prior.maxNumber = Math.max(prior.maxNumber, Number(c.numero_cierre || 0));
+          const cutoff = c.periodo_hasta || c.created_at;
+          if (cutoff && (!prior.lastClosedAt || cutoff > prior.lastClosedAt)) prior.lastClosedAt = cutoff;
+        });
+        setCierresPreviosPorFecha(previousMap);
 
         // 🎯 CLAVE: Este RPC calcula correctamente sin duplicar
         const { data, error } = await supabase.rpc(
@@ -479,6 +512,20 @@ export default function CierreVan() {
           setCxcResumen({ deudaNueva, reducciones, pagosDeuda, cambioNeto: deudaNueva - reducciones - pagosDeuda });
         } catch (_) { /* summary is optional */ }
 
+        // El RPC devuelve el acumulado del día. Restar todos los cierres
+        // anteriores deja únicamente los movimientos del próximo corte.
+        fechasSeleccionadas.forEach((iso) => {
+          if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
+          const prior = previousMap[iso];
+          if (!prior) return;
+          map[iso].cash = Math.max(0, Number(map[iso].cash || 0) - prior.cash);
+          map[iso].card = Math.max(0, Number(map[iso].card || 0) - prior.card);
+          map[iso].transfer = Math.max(0, Number(map[iso].transfer || 0) - prior.transfer);
+          map[iso].other = Math.max(0, Number(map[iso].other || 0) - prior.other);
+          map[iso].previousClosures = prior.count;
+          map[iso].lastClosedAt = prior.lastClosedAt;
+        });
+
         setResumenPorFecha(map);
       } catch (err) {
         console.error("❌ Error loading expected totals:", err);
@@ -524,7 +571,7 @@ useEffect(() => {
   };
 
   cargarTodas();
-}, [fechasSeleccionadas, van?.id]);
+}, [fechasSeleccionadas, van?.id, cierresPreviosPorFecha]);
 
   // ✅ Cargar ventas SOLO para mostrar la lista (NO para calcular totales)
   const cargarDatosMultiplesFechas = async () => {
@@ -545,7 +592,7 @@ useEffect(() => {
         const { start, end } = easternDayBounds(fecha);
 
         // Cargar ventas del día (solo para mostrar — excluir devoluciones)
-        const { data: ventas, error: ventasError } = await supabase
+        let ventasQuery = supabase
           .from("ventas")
           .select(`
             id, created_at, total_venta, total_pagado, estado_pago,
@@ -557,6 +604,9 @@ useEffect(() => {
           .gte("created_at", start)
           .lte("created_at", end)
           .order("created_at", { ascending: false });
+        const priorCutoff = cierresPreviosPorFecha[fecha]?.lastClosedAt;
+        if (priorCutoff) ventasQuery = ventasQuery.gt("created_at", priorCutoff);
+        const { data: ventas, error: ventasError } = await ventasQuery;
 
         if (ventasError) throw ventasError;
         ventasTemp[fecha] = ventas || [];
@@ -640,7 +690,8 @@ useEffect(() => {
         .from("gastos_conductor")
         .delete()
         .eq("van_id", van.id)
-        .in("fecha", fechasSeleccionadas);
+        .in("fecha", fechasSeleccionadas)
+        .is("cierre_id", null);
       if (gastosValidos.length) {
         await supabase.from("gastos_conductor").insert(
           gastosValidos.map((g) => ({
@@ -680,7 +731,9 @@ useEffect(() => {
           0
         );
 
-        return supabase.from("cierres_dia").upsert([
+        const now = new Date().toISOString();
+        const previous = cierresPreviosPorFecha[fecha] || {};
+        return supabase.from("cierres_dia").insert([
           {
             van_id: van.id,
             fecha: fecha,
@@ -694,9 +747,12 @@ useEffect(() => {
             discrepancia: discrepanciaFecha,
             observaciones: observacionesCompletas,
             cerrado: true,
-            created_at: new Date().toISOString(),
+            created_at: now,
+            periodo_desde: previous.lastClosedAt || `${fecha}T00:00:00-04:00`,
+            periodo_hasta: now,
+            numero_cierre: Math.max(Number(previous.maxNumber || 0), Number(previous.count || 0)) + 1,
           },
-        ]);
+        ]).select("id, fecha").single();
       });
 
       const results = await Promise.all(cierresPromises);
@@ -705,6 +761,16 @@ useEffect(() => {
       if (errors.length > 0) {
         throw new Error(`Failed to close ${errors.length} dates`);
       }
+
+      await Promise.all(results.map((result) => {
+        const cierre = result.data;
+        if (!cierre?.id) return Promise.resolve();
+        return supabase.from("gastos_conductor")
+          .update({ cierre_id: cierre.id })
+          .eq("van_id", van.id)
+          .eq("fecha", cierre.fecha)
+          .is("cierre_id", null);
+      }));
 
       setMensaje(`Successfully closed ${fechasSeleccionadas.length} dates`);
       setTipoMensaje("success");
