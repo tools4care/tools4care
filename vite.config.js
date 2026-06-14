@@ -28,6 +28,14 @@ export default defineConfig({
             if (id.includes('lucide')) return 'icons';
             if (id.includes('react-dom') || id.includes('react-router')) return 'react-vendor';
             if (id.includes('localforage') || id.includes('idb')) return 'storage';
+            if (id.includes('jspdf') || id.includes('html2canvas')) return 'pdf';
+            if (id.includes('@stripe')) return 'stripe';
+            if (id.includes('qrcode') || id.includes('@zxing') || id.includes('quagga')) return 'scanning';
+            if (id.includes('tesseract.js')) return 'ocr';
+            if (id.includes('framer-motion')) return 'animation';
+            if (id.includes('date-fns') || id.includes('dayjs')) return 'dates';
+            if (id.includes('downshift')) return 'search-ui';
+            if (id.includes('/uuid/')) return 'uuid';
             return 'vendor';
           }
         }

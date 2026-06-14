@@ -3,7 +3,7 @@
 // Se inicializa una sola vez en LayoutPrivado y cualquier pantalla
 // puede suscribirse a onSyncComplete para refrescarse automáticamente.
 
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { useVan } from './VanContext';
 import { useUsuario } from '../UsuarioContext';
@@ -245,11 +245,10 @@ export function SyncProvider({ children }) {
   // Cargar pendientes y backups al montar
   useEffect(() => {
     obtenerFechaUltimoBackup().then(f => { if (f) setLastSync(f); });
-    contarPendientes();
     obtenerBackupsGuardados().then(setBackupsMeta);
-  }, [contarPendientes]);
+  }, []);
 
-  const value = {
+  const value = useMemo(() => ({
     syncing,
     lastSync,
     ventasPendientes,
@@ -257,7 +256,7 @@ export function SyncProvider({ children }) {
     historialBackups: backupsMeta,  // ← lista de backups automáticos (metadata)
     sincronizarAhora: () => sincronizarTodo({ silencioso: false }),
     onSyncComplete,   // ← las vistas usan esto para auto-refresh
-  };
+  }), [syncing, lastSync, ventasPendientes, syncError, backupsMeta, sincronizarTodo, onSyncComplete]);
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;
 }
