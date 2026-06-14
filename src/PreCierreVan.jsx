@@ -137,10 +137,11 @@ function usePrecloseRows(vanId, diasAtras = 21) {
 
         console.log("📅 Fetching pre-close rows for van:", vanId, "from:", p_from, "to:", p_to);
 
-        // Obtener las fechas que ya tienen cierres
+        // Obtener cierres previos. Un mismo día puede tener varios cortes; los
+        // importes ya cerrados se restan del total acumulado del día.
         const { data: cierres, error: cierresError } = await supabase
           .from('cierres_dia')
-          .select('fecha')
+          .select('fecha, created_at, periodo_hasta, total_efectivo, total_tarjeta, total_transferencia, total_otros, numero_cierre')
           .eq('van_id', vanId)
           .gte('fecha', p_from)
           .lte('fecha', p_to);
@@ -150,8 +151,22 @@ function usePrecloseRows(vanId, diasAtras = 21) {
           throw new Error(cierresError.message);
         }
 
-        const fechasConCierre = new Set(cierres?.map(c => c.fecha) || []);
-        console.log("🔒 Fechas con cierre:", Array.from(fechasConCierre));
+        const cierresPorFecha = {};
+        (cierres || []).forEach((c) => {
+          const iso = String(c.fecha || "").slice(0, 10);
+          if (!iso) return;
+          if (!cierresPorFecha[iso]) {
+            cierresPorFecha[iso] = { cash: 0, card: 0, transfer: 0, other: 0, count: 0, lastClosedAt: null };
+          }
+          const acc = cierresPorFecha[iso];
+          acc.cash += Number(c.total_efectivo || 0);
+          acc.card += Number(c.total_tarjeta || 0);
+          acc.transfer += Number(c.total_transferencia || 0);
+          acc.other += Number(c.total_otros || 0);
+          acc.count += 1;
+          const cutoff = c.periodo_hasta || c.created_at;
+          if (cutoff && (!acc.lastClosedAt || cutoff > acc.lastClosedAt)) acc.lastClosedAt = cutoff;
+        });
 
         // ✅ Llamar al RPC que calcula correctamente sin duplicación
         const { data, error: rpcError } = await supabase.rpc(
@@ -248,20 +263,27 @@ function usePrecloseRows(vanId, diasAtras = 21) {
           }
         } catch (_) { /* ventas table unavailable */ }
 
-        // Filtrar días sin transacciones o que ya tienen cierre
+        // Restar lo ya incluido en cierres anteriores del mismo día.
+        normalized.forEach((row) => {
+          const prior = cierresPorFecha[row.dia];
+          if (!prior) return;
+          row.cash_expected = Math.max(0, row.cash_expected - prior.cash);
+          row.card_expected = Math.max(0, row.card_expected - prior.card);
+          row.transfer_expected = Math.max(0, row.transfer_expected - prior.transfer);
+          row.other_expected = Math.max(0, row.other_expected - prior.other);
+          row.previous_closures = prior.count;
+          row.last_closed_at = prior.lastClosedAt;
+        });
+
+        // Filtrar únicamente días que todavía tienen movimientos sin cerrar.
         const filtered = normalized.filter((r) => {
             const total = r.cash_expected + r.card_expected + r.transfer_expected + r.mix_unallocated + r.other_expected;
             const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
-            const hasCierre = fechasConCierre.has(r.dia);
             const hasTransactions = total > 0;
 
-            if (isValid && !hasCierre && hasTransactions) {
+            if (isValid && hasTransactions) {
               console.log(`✅ Día válido: ${r.dia} - Total: $${total.toFixed(2)}`);
               return true;
-            }
-
-            if (isValid && hasCierre) {
-              console.log(`🔒 Día omitido (ya cerrado): ${r.dia}`);
             }
 
             return false;
@@ -1138,7 +1160,7 @@ function HistorialCierres({ van, usuario }) {
     }
   };
 
-  const generatePreview = async (fechas, previewObservaciones = "") => {
+  const generatePreview = async (fechas, previewObservaciones = "", period = null) => {
     if (!van?.id || !fechas.length) return;
     setGenerating(true);
     setError(null);
@@ -1147,8 +1169,10 @@ function HistorialCierres({ van, usuario }) {
       const sorted = [...fechas].sort();
       const firstDate = sorted[0];
       const lastDate = sorted[sorted.length - 1];
-      const { start } = easternDayBounds(firstDate);
-      const { end } = easternDayBounds(lastDate);
+      const firstBounds = easternDayBounds(firstDate);
+      const lastBounds = easternDayBounds(lastDate);
+      const start = period?.start || firstBounds.start;
+      const end = period?.end || lastBounds.end;
 
       // Fetch ventas — try with usuario join first, fall back without if FK not set up
       let ventas = [];
@@ -1256,7 +1280,11 @@ function HistorialCierres({ van, usuario }) {
   };
 
   const handleGenerateCustom = () => generatePreview([from, to]);
-  const handleViewCierre = (cierre) => generatePreview([cierre.fecha], cierre.observaciones || "");
+  const handleViewCierre = (cierre) => generatePreview(
+    [cierre.fecha],
+    cierre.observaciones || "",
+    { start: cierre.periodo_desde, end: cierre.periodo_hasta || cierre.created_at }
+  );
 
   return (
     <div>
@@ -1332,7 +1360,14 @@ function HistorialCierres({ van, usuario }) {
                       + Number(c.total_otro || c.other || 0);
                     return (
                       <tr key={c.id} className="hover:bg-blue-50">
-                        <td className="px-4 py-3 font-medium text-gray-900">{formatUS(c.fecha)}</td>
+                        <td className="px-4 py-3 font-medium text-gray-900">
+                          <div>{formatUS(c.fecha)} · Close #{c.numero_cierre || 1}</div>
+                          <div className="text-[11px] font-normal text-gray-400">
+                            {new Date(c.periodo_hasta || c.created_at).toLocaleTimeString("en-US", {
+                              timeZone: "America/New_York", hour: "2-digit", minute: "2-digit",
+                            })}
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-green-700 font-medium">{fmtCurrency(c.total_efectivo || c.cash)}</td>
                         <td className="px-4 py-3 text-blue-700 font-medium">{fmtCurrency(c.total_tarjeta || c.card)}</td>
                         <td className="px-4 py-3 text-purple-700 font-medium">{fmtCurrency(c.total_transferencia || c.transfer)}</td>
@@ -1429,7 +1464,7 @@ export default function PreCierreVan() {
       const out = {};
       await Promise.all(
         faltan.map(async (r) => {
-          const c = await countVentasDia(van.id, r.dia);
+          const c = await countVentasDia(van.id, r.dia, r.last_closed_at);
           out[r.dia] = c;
         })
       );
@@ -1472,7 +1507,7 @@ export default function PreCierreVan() {
   }, [selected]);
 
   // Función para contar ventas por día (usa easternDayBounds)
-  const countVentasDia = useCallback(async (van_id, diaISO) => {
+  const countVentasDia = useCallback(async (van_id, diaISO, lastClosedAt = null) => {
     if (!van_id || !diaISO) return 0;
 
     // Usar Eastern Time para el rango del día
@@ -1484,7 +1519,7 @@ export default function PreCierreVan() {
     const dateCols = ["created_at", "fecha", "fecha_venta"];
 
     for (const col of dateCols) {
-      const { count, error, status } = await supabase
+      let query = supabase
         .from("ventas")
         .select("id", { count: "exact", head: true })
         .eq("van_id", van_id)
@@ -1492,6 +1527,8 @@ export default function PreCierreVan() {
         .gte(col, start)
         .lte(col, end)
         .is("cierre_id", null);
+      if (lastClosedAt) query = query.gt(col, lastClosedAt);
+      const { count, error, status } = await query;
 
       // status 200 y count numérico ⇒ lo tomamos como bueno
       if (!error && typeof count === "number") {
@@ -2036,11 +2073,18 @@ export default function PreCierreVan() {
                           />
                         </td>
                         <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {formatUS(row.dia)}
-                          {row.dia === todayISO && (
-                            <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
-                              Today
-                            </span>
+                          <div>
+                            {formatUS(row.dia)}
+                            {row.dia === todayISO && (
+                              <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                                Today
+                              </span>
+                            )}
+                          </div>
+                          {row.previous_closures > 0 && (
+                            <div className="text-[11px] text-indigo-600 mt-1">
+                              New activity after {row.previous_closures} previous close{row.previous_closures === 1 ? "" : "s"}
+                            </div>
                           )}
                         </td>
                         <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">
