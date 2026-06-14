@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState, lazy, Suspense, useCallback } from "react";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import { useToast } from "./hooks/useToast";
+import { useVan } from "./hooks/VanContext";
+import { useUsuario } from "./UsuarioContext";
 import { supabase } from "./supabaseClient";
+import { logAudit } from "./lib/auditLog";
 import dayjs from "dayjs";
 import {
   ResponsiveContainer,
@@ -1496,6 +1499,8 @@ function SimuladorCreditoModal({ onClose, initialAmount, initialMonths, customer
 /* ====================== Main Component ====================== */
 export default function CuentasPorCobrar() {
   const { toast } = useToast();
+  const { van } = useVan();
+  const { usuario } = useUsuario();
   const [q, setQ] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1664,11 +1669,21 @@ export default function CuentasPorCobrar() {
   async function approveLimitIncrease(clienteId, newLimit) {
     setApprovingId(clienteId);
     try {
+      const oldRow = creditReviewData.find(c => c.cliente_id === clienteId);
       const { error } = await supabase
         .from("clientes")
         .update({ limite_manual: newLimit })
         .eq("id", clienteId);
       if (error) throw error;
+      logAudit({
+        usuario, van,
+        accion: "credit_limit_change",
+        entidadTipo: "cliente",
+        entidadId: clienteId,
+        before: { limite_manual: oldRow?.limite_manual ?? null },
+        after: { limite_manual: newLimit },
+        nota: oldRow?.cliente_nombre || null,
+      });
       setCreditReviewData(prev => prev.filter(c => c.cliente_id !== clienteId));
       setReloadTick(t => t + 1);
     } catch (e) {
@@ -1717,6 +1732,16 @@ export default function CuentasPorCobrar() {
       toast.error("Error saving: " + error.message);
       return;
     }
+
+    logAudit({
+      usuario, van,
+      accion: "credit_limit_change",
+      entidadTipo: "cliente",
+      entidadId: edit.id,
+      before: { limite_manual: edit.manual ?? null },
+      after: { limite_manual: value },
+      nota: edit.nombre || null,
+    });
 
     setEdit((e) => ({ ...e, open: false }));
     setReloadTick((t) => t + 1);

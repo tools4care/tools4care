@@ -36,6 +36,7 @@ const Suplidores = lazy(() => import("./Suplidores"));
 // 💰 Comisiones (NUEVO)
 const ComisionesPage = lazy(() => import('./pages/ComisionesPage'));
 const UsuariosAdmin = lazy(() => import("./pages/UsuariosAdmin"));
+const AuditoriaLog = lazy(() => import("./pages/AuditoriaLog"));
 
 // 📊 Reportes (NUEVO)
 const Reportes = lazy(() => import('./Reportes'));
@@ -223,6 +224,9 @@ export default function App() {
 
             {/* 👥 USUARIOS (ADMIN) */}
             <Route path="usuarios" element={<AdminRoute><UsuariosAdmin /></AdminRoute>} />
+
+            {/* 📜 AUDITORÍA (ADMIN) */}
+            <Route path="auditoria" element={<AdminRoute><AuditoriaLog /></AdminRoute>} />
 
             {/* 📊 REPORTES (NUEVO) */}
             <Route path="reportes" element={<Reportes />} />
