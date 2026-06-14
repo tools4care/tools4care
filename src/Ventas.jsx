@@ -1,34 +1,25 @@
 // src/Ventas.jsx - PARTE 1 DE 3 (Imports, Constantes, Helpers)
-import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import { lazy, Suspense, useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useToast } from "./hooks/useToast";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { usePermisos } from "./hooks/usePermisos";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { BarcodeScanner } from "./BarcodeScanner";
-import QRCode from "qrcode"; // npm install qrcode
 import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
 import { evaluarReglasCredito, generarPlanPago, buildPaymentAgreementSMS } from "./lib/creditRulesEngine";
 import { getAcuerdosResumen, crearAcuerdo, aplicarPagoAAcuerdos, actualizarVencidas, getDiasDeudaMasVieja, isAgreementSystemAvailable } from "./lib/paymentAgreements";
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
-import { v4 as uuidv4 } from 'uuid';
-
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
-import AgreementModal from "./components/AgreementModal";
-
-import PaymentAgreementsPanel from "./components/PaymentAgreementsPanel";
-import CreditRiskPanel from "./components/CreditRiskPanel";
-
-import ClientPaymentView from "./components/ClientPaymentView";
+const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
+const AgreementModal = lazy(() => import("./components/AgreementModal"));
+const CreditRiskPanel = lazy(() => import("./components/CreditRiskPanel"));
+const ClientPaymentView = lazy(() => import("./components/ClientPaymentView"));
 
 
 // MODO OFFLINE
 import { useOffline } from "./hooks/useOffline";
-import { useSync } from "./hooks/useSync";
-import { useSyncGlobal } from "./hooks/SyncContext";
-import { NetworkIndicator } from "./components/NetworkIndicator";
 import {
   guardarVentaOffline,
   guardarInventarioVan,
@@ -185,6 +176,7 @@ async function checkStripeCheckoutStatus(sessionId) {
 
 async function generateQRCode(text) {
   try {
+    const { default: QRCode } = await import("qrcode");
     const qrDataUrl = await QRCode.toDataURL(text, {
       width: 300,
       margin: 2,
@@ -1097,18 +1089,8 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
 
   // HOOKS MODO OFFLINE
   const { isOffline } = useOffline();
-  const { sincronizar, ventasPendientes: ventasPendientesLocal } = useSync();
 
   // Usar el sync global (ya activo en LayoutPrivado — no crear instancia duplicada)
-  const {
-    syncing: syncingData,
-    lastSync,
-    ventasPendientes: ventasPendientesSync,
-    syncError,
-    sincronizarAhora,
-  } = useSyncGlobal();
-
-  const ventasPendientes = ventasPendientesSync || ventasPendientesLocal;
 // 🆕 PENDING SALES EN LA NUBE (reemplaza localStorage)  // <--- AGREGA //
   const {
     pendingSales: cloudPendingSales,
@@ -3378,7 +3360,7 @@ async function handleProcessReturn() {
       return;
     }
 
-    const returnTransactionId = uuidv4();
+    const returnTransactionId = makeUUID();
     const { data: returnResult, error: returnError } = await supabase.rpc(
       "procesar_devolucion_transaccional",
       {
@@ -3499,7 +3481,7 @@ if (esCreditoSignificativo && agreementSystemReady && !pendingAgreementData) {
    
 
      // 🆕 Generar transaction_id único para esta transacción física
-  const transactionId = uuidv4();
+  const transactionId = makeUUID();
   console.log('💳 Transaction ID generado:', transactionId);
 /* ========== AGENTE DE CRÉDITO: VALIDACIÓN PREVIA A GUARDAR ========== */
 // Si la venta actual se paga completa (no se extiende crédito nuevo), omitir alertas de riesgo
@@ -4724,18 +4706,22 @@ function renderStepClient() {
           )}
 
           {/* Credit risk panel */}
-          <div className="px-4 pb-4">
-            <CreditRiskPanel
-              clientRisk={clientRisk}
-              creditProfile={creditProfile}
-              reglasCredito={reglasCredito}
-              cxcBalance={cxcBalance}
-              cxcLimit={cxcLimit}
-              cxcAvailable={cxcAvailable}
-              saleTotal={saleTotal}
-              onRefresh={() => runCreditAgent(selectedClient.id, saleTotal)}
-            />
-          </div>
+          {clientRisk && (
+            <div className="px-4 pb-4">
+              <Suspense fallback={null}>
+                <CreditRiskPanel
+                  clientRisk={clientRisk}
+                  creditProfile={creditProfile}
+                  reglasCredito={reglasCredito}
+                  cxcBalance={cxcBalance}
+                  cxcLimit={cxcLimit}
+                  cxcAvailable={cxcAvailable}
+                  saleTotal={saleTotal}
+                  onRefresh={() => runCreditAgent(selectedClient.id, saleTotal)}
+                />
+              </Suspense>
+            </div>
+          )}
         </div>
 
         {/* Devolucion: invoice list + return details */}
@@ -5619,11 +5605,13 @@ function renderStepProducts() {
 
       {/* ── SCANNER MODAL ────────────────────────────── */}
       {showScanner && (
-        <BarcodeScanner
-          onScan={handleBarcodeScanned}
-          onClose={() => setShowScanner(false)}
-          isActive={showScanner}
-        />
+        <Suspense fallback={null}>
+          <BarcodeScanner
+            onScan={handleBarcodeScanned}
+            onClose={() => setShowScanner(false)}
+            isActive={showScanner}
+          />
+        </Suspense>
       )}
     </div>
   );
@@ -6038,16 +6026,18 @@ function renderStepPayment() {
 
       {/* ── PAYMENT AGREEMENTS ───────────────────────── */}
       {selectedClient?.id && (
-        <ClientPaymentView
-          compact
-          clienteId={selectedClient.id}
-          clienteName={`${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim()}
-          balanceActual={balanceBefore}
-          ventaHoy={saleTotal}
-          montoAPagar={paid}
-          pagoMinimo={pagoMinimo}
-          acuerdosData={acuerdosResumen}
-        />
+        <Suspense fallback={null}>
+          <ClientPaymentView
+            compact
+            clienteId={selectedClient.id}
+            clienteName={`${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim()}
+            balanceActual={balanceBefore}
+            ventaHoy={saleTotal}
+            montoAPagar={paid}
+            pagoMinimo={pagoMinimo}
+            acuerdosData={acuerdosResumen}
+          />
+        </Suspense>
       )}
 
       {/* ── NAVIGATION ───────────────────────────────── */}
@@ -6195,20 +6185,11 @@ function renderStepPayment() {
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
       <div className="w-full max-w-4xl mx-auto">
         
-        {/* Indicador de red y sync — flota en esquina inferior derecha */}
-        <NetworkIndicator
-          syncing={syncingData}
-          ventasPendientes={ventasPendientes}
-          lastSync={lastSync}
-          syncError={syncError}
-          onSyncNow={sincronizarAhora}
-        />
-
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 lg:pb-20">
           {modalPendingSales && renderPendingSalesModal()}
           {showQRModal && renderQRModal()}
 
-        <AgreementModal
+        {!!pendingAgreementData?.waiting && <Suspense fallback={null}><AgreementModal
             isOpen={!!pendingAgreementData?.waiting}
             onClose={() => {
               setPendingAgreementData(null);
@@ -6230,7 +6211,7 @@ function renderStepPayment() {
             clientName={pendingAgreementData?.clientName || ''}
             saldoActual={pendingAgreementData?.saldoActual || 0}
             reglasCredito={reglasCredito}
-          />
+          /></Suspense>}
 
           {step === 1 && renderStepClient()}
           {step === 2 && renderStepProducts()}
