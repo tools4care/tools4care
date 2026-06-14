@@ -5,9 +5,8 @@ import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import { usePermisos } from "./hooks/usePermisos";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import jsPDF from "jspdf";
 import QRCode from "qrcode";
-import autoTable from "jspdf-autotable";
+import { loadPdfLibs } from "./utils/lazyPdf";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
@@ -1253,6 +1252,7 @@ const fetchPage = async (opts = {}) => {
 
   async function generatePDF() {
     if (!clienteSeleccionado) return;
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     const businessName = "Tools4Care";
     const businessAddress = "108 Lafayette St, Salem, MA 01970";

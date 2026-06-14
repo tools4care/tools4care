@@ -7,8 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, PieChart, Pie, Cell, Legend,
 } from "recharts";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { loadPdfLibs } from "./utils/lazyPdf";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
@@ -421,7 +420,8 @@ function CierreDiarioReport({ van }) {
   }), { vendido:0, cobrado:0, efectivo:0, tarjeta:0, transferencia:0, otro:0, total_efectivo:0, total_tarjeta:0, total_transferencia:0, total_otro:0, cxc_extra:0, reembolsos:0, cheques:0, pagos_deuda:0, reducciones:0, pendiente:0 }), [rows]);
   const netArChange = totals.pendiente - totals.reducciones - totals.pagos_deuda;
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF({ orientation: "landscape" });
     doc.setFillColor(79, 70, 229); doc.rect(0, 0, 297, 22, "F");
     doc.setTextColor(255,255,255); doc.setFontSize(14);
@@ -695,7 +695,8 @@ function VentasReport({ van, usuario }) {
     return Object.entries(map).sort(([a],[b]) => a.localeCompare(b)).map(([day, total]) => ({ day: fmtDate(day), total }));
   }, [data]);
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFillColor(25, 118, 210); doc.rect(0, 0, 210, 28, "F");
     doc.setTextColor(255,255,255); doc.setFontSize(16);
@@ -901,7 +902,8 @@ function DevolucionesReport({ van, usuario }) {
   const arReduced = useMemo(() => data.filter(r => !r.isMoneyRefund).reduce((s, r) => s + r.monto, 0), [data]);
   const totalItems = useMemo(() => data.length, [data]);
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFillColor(220,38,38); doc.rect(0,0,210,28,"F");
     doc.setTextColor(255,255,255); doc.setFontSize(16);
@@ -1095,7 +1097,8 @@ function PagosAtrasadosReport({ van, usuario }) {
     return Object.values(map).sort((a,b) => b.totalOwed - a.totalOwed).slice(0,10);
   }, [data]);
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFillColor(217,119,6); doc.rect(0,0,210,28,"F");
     doc.setTextColor(255,255,255); doc.setFontSize(16);
@@ -1245,7 +1248,8 @@ function TopClientesReport({ van, usuario }) {
 
   const top10Chart = sorted.slice(0,10).map(c => ({ name:(c.nombre||"—").split(" ")[0], total:c.totalCompras, balance:c.balance }));
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFillColor(37,99,235); doc.rect(0,0,210,28,"F");
     doc.setTextColor(255,255,255); doc.setFontSize(16);
@@ -1396,7 +1400,8 @@ function ProductosReport({ van, usuario }) {
 
   const top10 = data.slice(0,10).map(p => ({ name:(p.nombre||"—").slice(0,18), qty:p.totalQty, revenue:p.totalRevenue }));
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFillColor(124,58,237); doc.rect(0,0,210,28,"F");
     doc.setTextColor(255,255,255); doc.setFontSize(16);
@@ -1562,7 +1567,8 @@ function GananciasReport({ van, usuario }) {
     revenue:p.totalRevenue,
   }));
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFillColor(5,150,105); doc.rect(0,0,210,28,"F");
     doc.setTextColor(255,255,255); doc.setFontSize(16);
@@ -2048,7 +2054,8 @@ function PaymentBreakdownReport({ van, usuario }) {
   })), [dayRows]);
 
   /* ── Export PDF ── */
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF({ orientation: "landscape" });
     const label = METODO_OPTIONS.find(m => m.value === metodo)?.label || "All";
     doc.setFillColor(37, 99, 235); doc.rect(0, 0, 297, 22, "F");

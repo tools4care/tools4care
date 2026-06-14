@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { loadPdfLibs } from "./utils/lazyPdf";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { useLocation } from "react-router-dom";
@@ -184,7 +183,8 @@ async function fetchDetalleFromVenta(ventaId) {
 }
 
 /* ===================== PDF ===================== */
-function buildFacturaPDF(factura) {
+async function buildFacturaPDF(factura) {
+  const { jsPDF, autoTable } = await loadPdfLibs();
   const doc = new jsPDF("p", "pt", "a4");
   const azul = "#0B4A6F";
   const gris = "#F4F6FB";
@@ -357,13 +357,13 @@ function buildFacturaPDF(factura) {
   return doc;
 }
 
-function descargarPDFFactura(factura) {
-  const doc = buildFacturaPDF(factura);
+async function descargarPDFFactura(factura) {
+  const doc = await buildFacturaPDF(factura);
   doc.save(`Invoice_${factura.numero_factura || factura.id}.pdf`);
 }
 
-function getPDFBase64(factura) {
-  const doc = buildFacturaPDF(factura);
+async function getPDFBase64(factura) {
+  const doc = await buildFacturaPDF(factura);
   const dataUri = doc.output("datauristring");
   return dataUri.split(",")[1];
 }
@@ -747,7 +747,7 @@ export default function Facturas() {
         facturaProcesada = { ...facturaProcesada, detalle_ventas: normalizeDetalleRows(rows) };
       }
       
-      descargarPDFFactura(facturaProcesada);
+      await descargarPDFFactura(facturaProcesada);
       
       // Pequeña pausa para que el navegador gestione el diálogo de descarga
       await new Promise(resolve => setTimeout(resolve, 1000));
