@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { lazy, Suspense, useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
 import { usePermisos } from "./hooks/usePermisos";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { BarcodeScanner } from "./BarcodeScanner";
 import { useToast } from "./hooks/useToast";
+const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
 // Generate a unique in-store product code (12-digit, starts with 2 = internal UPC-A range)
 function generateProductCode() {
@@ -589,7 +589,6 @@ export default function Productos() {
 
   // 🆕 ESCÁNER MEJORADO
   const [showScanner, setShowScanner] = useState(false);
-  const scannerRef = useRef(null);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -1130,32 +1129,13 @@ export default function Productos() {
 
       {/* 🆕 ESCÁNER MEJORADO */}
       {showScanner && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex flex-col">
-          <div className="p-4 bg-black text-white flex justify-between items-center">
-            <h3 className="text-lg font-bold">Scan Barcode</h3>
-            <button 
-              onClick={() => setShowScanner(false)}
-              className="text-white text-2xl"
-            >
-              ×
-            </button>
-          </div>
-          
-          <div className="flex-1 relative overflow-hidden">
+        <Suspense fallback={null}>
             <BarcodeScanner
               onScan={handleBarcodeScanned}
               onClose={() => setShowScanner(false)}
               isActive={showScanner}
-              ref={scannerRef}
             />
-            
-            {/* MENSAJES DE INSTRUCCIONES */}
-            <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white p-4 text-center">
-              <p className="text-sm mb-2">Position the barcode within the frame</p>
-              <p className="text-xs opacity-75">Hold your device steady and ensure good lighting</p>
-            </div>
-          </div>
-        </div>
+        </Suspense>
       )}
 
       {/* LISTA DE PRODUCTOS */}

@@ -1,14 +1,14 @@
 // src/Inventario.jsx
-import { useEffect, useMemo, useState, useRef } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
-import AgregarStockModal from "./AgregarStockModal";
-import ModalTraspasoStock from "./ModalTraspasoStock";
-import InvoiceImporter from "./InvoiceImporter";
-import { BarcodeScanner } from "./BarcodeScanner";
 import { useOffline } from "./hooks/useOffline";
 import { guardarInventarioVan, obtenerInventarioVan } from "./utils/offlineDB";
 import { usePermisos } from "./hooks/usePermisos";
+const AgregarStockModal = lazy(() => import("./AgregarStockModal"));
+const ModalTraspasoStock = lazy(() => import("./ModalTraspasoStock"));
+const InvoiceImporter = lazy(() => import("./InvoiceImporter"));
+const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
 const PAGE_SIZE = 100;
 
@@ -590,31 +590,31 @@ export default function Inventory() {
       </div>
 
       {/* ── Modals ───────────────────────────────────────────── */}
-      <AgregarStockModal
-        abierto={modalOpen}
-        cerrar={() => setModalOpen(false)}
-        tipo={selected.tipo}
-        ubicacionId={selected.id}
-        onSuccess={() => { setPage(0); setRefresh((r) => r + 1); }}
-      />
-      <ModalTraspasoStock
-        abierto={modalTransferOpen}
-        cerrar={() => setModalTransferOpen(false)}
-        ubicaciones={locations}
-        ubicacionActual={selected}
-        onSuccess={() => { setPage(0); setRefresh((r) => r + 1); }}
-      />
+      {modalOpen && <Suspense fallback={null}><AgregarStockModal
+          abierto
+          cerrar={() => setModalOpen(false)}
+          tipo={selected.tipo}
+          ubicacionId={selected.id}
+          onSuccess={() => { setPage(0); setRefresh((r) => r + 1); }}
+        /></Suspense>}
+      {modalTransferOpen && <Suspense fallback={null}><ModalTraspasoStock
+          abierto
+          cerrar={() => setModalTransferOpen(false)}
+          ubicaciones={locations}
+          ubicacionActual={selected}
+          onSuccess={() => { setPage(0); setRefresh((r) => r + 1); }}
+        /></Suspense>}
       {showScanner && (
-        <BarcodeScanner
+        <Suspense fallback={null}><BarcodeScanner
           onScan={handleBarcodeScanned}
           onClose={() => setShowScanner(false)}
           isActive={showScanner}
-        />
+        /></Suspense>
       )}
       {invoiceImporterOpen && (
-        <InvoiceImporter
+        <Suspense fallback={null}><InvoiceImporter
           onClose={() => { setInvoiceImporterOpen(false); setPage(0); setRefresh((r) => r + 1); }}
-        />
+        /></Suspense>
       )}
     </div>
   );
