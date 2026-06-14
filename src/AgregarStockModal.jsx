@@ -1,8 +1,8 @@
 // src/AgregarStockModal.jsx
-import { useState, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useNavigate } from "react-router-dom";
-import { BarcodeScanner } from "./BarcodeScanner";
+const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
 /* ===================== Helpers de búsqueda (fast-path escáner) ===================== */
 const isLikelyScan = (s) => !!s && s.length >= 6 && !/\s/.test(s);
@@ -550,7 +550,7 @@ export default function AgregarStockModal({
 
       {/* ── Camera barcode scanner (mobile/tablet) ── */}
       {showScanner && (
-        <BarcodeScanner
+        <Suspense fallback={null}><BarcodeScanner
           isActive={showScanner}
           onScan={(code) => {
             setBusqueda(normBarcode(code));
@@ -560,7 +560,7 @@ export default function AgregarStockModal({
             setTimeout(() => busquedaInputRef.current?.focus(), 150);
           }}
           onClose={() => setShowScanner(false)}
-        />
+        /></Suspense>
       )}
     </div>
   );
