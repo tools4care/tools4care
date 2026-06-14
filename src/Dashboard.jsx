@@ -1157,7 +1157,7 @@ function DailyActionCenter({ loading, actions, onOpen }) {
               <button
                 key={action.key}
                 type="button"
-                onClick={() => onOpen(action.path)}
+                onClick={() => onOpen(action)}
                 className={`text-left rounded-2xl border p-3.5 sm:p-4 transition-all active:scale-[0.98] ${
                   active
                     ? `${action.bg} ${action.border} hover:shadow-md`
@@ -2640,7 +2640,7 @@ export default function Dashboard() {
       label: "Critical stock items",
       detail: metricas.productosUrgentes ? "Restock before the next route" : "No urgent stock issues",
       count: metricas.productosUrgentes || 0,
-      path: "/inventario",
+      onClick: () => setShowAllLow(true),
       icon: Package,
       bg: "bg-red-50",
       border: "border-red-200",
@@ -2695,7 +2695,7 @@ export default function Dashboard() {
         <DailyActionCenter
           loading={dailyActions.loading || loading}
           actions={priorityActions}
-          onOpen={navigate}
+          onOpen={(action) => action.onClick ? action.onClick() : navigate(action.path)}
         />
 
         {/* Daily Route */}
