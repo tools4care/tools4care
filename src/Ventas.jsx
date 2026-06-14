@@ -10,6 +10,8 @@ import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
 import { evaluarReglasCredito, generarPlanPago, buildPaymentAgreementSMS } from "./lib/creditRulesEngine";
 import { getAcuerdosResumen, crearAcuerdo, aplicarPagoAAcuerdos, actualizarVencidas, getDiasDeudaMasVieja, isAgreementSystemAvailable } from "./lib/paymentAgreements";
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
+import { computeSaleFinancials, calcularPagoMinimo, policyLimit, getClientBalance, r2 } from "./lib/saleFinancials";
+import { logAudit } from "./lib/auditLog";
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
@@ -48,18 +50,6 @@ const TRANSFER_SUBS = [
 
 const STORAGE_KEY = "pending_sales";
 // Migration mode is toggled via the admin-only button — no secret code needed
-
-// ============ CRÉDITO ROTATIVO — PAGO MÍNIMO ============
-const PAGO_MINIMO_PCT   = 0.20;   // 20% del balance anterior
-const PAGO_MINIMO_FIJO  = 30.00;  // o $30, lo que sea MAYOR
-const PAGO_MINIMO_SKIP_SI_BALANCE_MENOR_A = 10; // si debe menos de $10, no exigir mínimo
-
-function calcularPagoMinimo(balanceAnterior) {
-  if (!balanceAnterior || balanceAnterior < PAGO_MINIMO_SKIP_SI_BALANCE_MENOR_A) return 0;
-  // El mínimo nunca puede exceder lo que el cliente debe
-  const minCalc = Math.max(balanceAnterior * PAGO_MINIMO_PCT, PAGO_MINIMO_FIJO);
-  return Number(Math.min(balanceAnterior, minCalc).toFixed(2));
-}
 
 const COMPANY_NAME    = import.meta?.env?.VITE_COMPANY_NAME    || "Tools4CareMovil";
 const COMPANY_EMAIL   = import.meta?.env?.VITE_COMPANY_EMAIL   || "Tools4care@gmail.com";
@@ -190,27 +180,11 @@ async function generateQRCode(text) {
 }
 
 /* ========================= Helpers de negocio ========================= */
-function policyLimit(score) {
-  const s = Number(score ?? 600);
-  if (s < 500) return 0;
-  if (s < 550) return 30;
-  if (s < 600) return 80;
-  if (s < 650) return 150;
-  if (s < 700) return 200;
-  if (s < 750) return 350;
-  if (s < 800) return 500;
-  return 800;
-}
-
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-}
-
-function r2(n) {
-  return Math.round(Number(n || 0) * 100) / 100;
 }
 
 function unitPriceFromProduct({ base, pct, bulkMin, bulkPrice }, qty) {
@@ -270,11 +244,6 @@ function computeUnitPriceFromRow(row, qty = 1) {
     { base, pct: pr.pct, bulkMin: pr.bulkMin, bulkPrice: pr.bulkPrice },
     qty
   );
-}
-
-function getClientBalance(c) {
-  if (!c) return 0;
-  return Number(c._saldo_real ?? c.balance ?? c.saldo_total ?? c.saldo ?? 0);
 }
 
 function getCreditNumber(c) {
@@ -2613,60 +2582,17 @@ useEffect(() => {
     change, mostrarAdvertencia, balanceAfter, amountToCredit,
     clientScore, showCreditPanel, computedLimit,
     creditLimit, creditAvailable, excesoCredito,
-  } = useMemo(() => {
-    const balanceBeforeRaw =
-      cxcBalance != null && !Number.isNaN(Number(cxcBalance))
-        ? Number(cxcBalance)
-        : Number(getClientBalance(selectedClient));
-    const balanceBefore = Math.max(0, Number.isFinite(balanceBeforeRaw) ? balanceBeforeRaw : 0);
-    const oldDebt       = balanceBefore;
-    const grossTotalDue = oldDebt + saleTotalWithTax;
-    const storeCreditApplied = selectedClient?.id && !isOffline
-      ? Math.min(Math.max(0, Number(clientStoreCredit || 0)), grossTotalDue)
-      : 0;
-    const totalAPagar = Math.max(0, grossTotalDue - storeCreditApplied);
-    const effectivePaid = paid + storeCreditApplied;
-
-    // FIFO: primero se paga la deuda vieja, luego la venta nueva
-    const paidToOldDebt = Math.min(effectivePaid, oldDebt);
-    const paidForSale   = Math.min(saleTotalWithTax, Math.max(0, effectivePaid - paidToOldDebt));
-    const paidApplied   = paidToOldDebt + paidForSale;
-
-    // Pago mínimo requerido esta visita
-    const pagoMinimo      = calcularPagoMinimo(oldDebt);
-    const creditAppliedToDebt = Math.min(storeCreditApplied, oldDebt);
-    const cubrioMinimo    = pagoMinimo === 0 || paid + creditAppliedToDebt >= pagoMinimo;
-    const faltaParaMinimo = Math.max(0, pagoMinimo - paid - creditAppliedToDebt);
-
-    const change             = Math.max(0, paid - totalAPagar);
-    const mostrarAdvertencia = paid > totalAPagar;
-
-    const balanceAfter   = Math.max(0, balanceBefore + saleTotalWithTax - paidApplied);
-    const amountToCredit = Math.max(0, balanceAfter - balanceBefore);
-
-    const clientScore    = Number(selectedClient?.score_credito ?? 600);
-    const showCreditPanel = !!selectedClient && !!selectedClient.id &&
-                            (clientHistory.has || balanceBefore !== 0);
-    const computedLimit  = policyLimit(clientScore);
-    const creditLimit    = showCreditPanel ? Number(cxcLimit ?? computedLimit) : 0;
-    const creditAvailable = showCreditPanel
-      ? Number(
-          cxcAvailable != null && !Number.isNaN(Number(cxcAvailable))
-            ? cxcAvailable
-            : Math.max(0, creditLimit - balanceBefore)
-        )
-      : 0;
-    const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
-
-    return {
-      balanceBefore, oldDebt, grossTotalDue, storeCreditApplied, totalAPagar,
-      paidToOldDebt, paidForSale, paidApplied,
-      pagoMinimo, cubrioMinimo, faltaParaMinimo,
-      change, mostrarAdvertencia, balanceAfter, amountToCredit,
-      clientScore, showCreditPanel, computedLimit,
-      creditLimit, creditAvailable, excesoCredito,
-    };
-  }, [saleTotalWithTax, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has, clientStoreCredit, isOffline]);
+  } = useMemo(() => computeSaleFinancials({
+    saleTotalWithTax,
+    paid,
+    cxcBalance,
+    selectedClient,
+    cxcLimit,
+    cxcAvailable,
+    clientHistoryHas: clientHistory.has,
+    clientStoreCredit,
+    isOffline,
+  }), [saleTotalWithTax, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has, clientStoreCredit, isOffline]);
 
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
@@ -3390,6 +3316,24 @@ async function handleProcessReturn() {
     const finalStoreCredit = Number(result.credito_favor_creado || 0);
     setClientStoreCredit(Math.max(0, Number(result.saldo_favor_resultante || 0)));
 
+    logAudit({
+      usuario, van,
+      accion: "sale_return",
+      entidadTipo: "venta",
+      entidadId: selectedInvoice.id,
+      extra: {
+        venta_devolucion_id: result.venta_devolucion_id,
+        tipo: isCredit ? "credit" : "refund",
+        metodo_reembolso: isCredit ? null : refundMethod,
+        motivo: returnReason || "Return",
+        items: itemsToReturn.map((item) => ({ detalle_venta_id: item.detalle_venta_id, cantidad: item.cantidad })),
+        totalDevolucion: finalTotal,
+        deudaReducida: finalDebtReduction,
+        creditoFavorCreado: finalStoreCredit,
+      },
+      nota: selectedClient?.nombre || null,
+    });
+
     if (isCredit) {
       const resultParts = [
         finalDebtReduction > 0 ? `debt reduced by ${fmt(finalDebtReduction)}` : null,
@@ -3826,6 +3770,26 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       const ventaId = transactionResult?.[0]?.venta_id;
       if (!ventaId) throw new Error("The transactional sale did not return a sale ID.");
       setClientStoreCredit(Math.max(0, Number(transactionResult?.[0]?.credito_favor_restante || 0)));
+
+      // Audit: discretionary (manual) line-item discounts
+      const manualDiscountLines = cartSafe
+        .filter((p) => Number(p._manualDescuento) > 0)
+        .map((p) => ({
+          producto_id: p.producto_id,
+          nombre: p.nombre,
+          manualDescuentoPct: Number(p._manualDescuento),
+          cantidad: Number(p.cantidad),
+        }));
+      if (manualDiscountLines.length > 0) {
+        logAudit({
+          usuario, van,
+          accion: "discount_applied",
+          entidadTipo: "venta",
+          entidadId: ventaId,
+          extra: { lines: manualDiscountLines },
+          nota: selectedClient?.nombre || null,
+        });
+      }
 
       // APLICAR PAGO A CUOTAS — directo, sin el caché RPC que puede silenciar el error
       if (montoParaCxC > 0) {

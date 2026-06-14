@@ -4,8 +4,7 @@ import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { useToast } from "./hooks/useToast";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { loadPdfLibs } from "./utils/lazyPdf";
 
 /* ======================= Utilidades ======================= */
 const NO_CLIENTE = "Quick sale / No client";
@@ -155,7 +154,7 @@ async function calcularCierreCompleto(van_id, fecha) {
 }
 
 /* ======================= PDF ======================= */
-function generarPDFCierreDia({
+async function generarPDFCierreDia({
   van,
   fecha,
   ventas = [],
@@ -163,6 +162,7 @@ function generarPDFCierreDia({
   logoDataUrl,
   mode = "download",
 }) {
+  const { jsPDF, autoTable } = await loadPdfLibs();
   const doc = new jsPDF("p", "pt", "a4");
   const azul = "#0B4A6F",
     gris = "#333",
@@ -974,7 +974,7 @@ function PreCierre({ onCerrar, onCancelar }) {
         }),
       ]);
       const logo = await loadImageAsDataURL("/logo.png");
-      generarPDFCierreDia({
+      await generarPDFCierreDia({
         van,
         fecha: selFecha,
         ventas: ventas || [],

@@ -18,8 +18,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { loadPdfLibs } from "./utils/lazyPdf";
 import { format } from "date-fns";
 import {
   DollarSign,
@@ -910,7 +909,7 @@ useEffect(() => {
   };
 
   /* ========================= PDF Generation ========================= */
-  const handleGenerarPDF = () => {
+  const handleGenerarPDF = async () => {
     const totalVentas = Object.values(ventasPorFecha).reduce(
       (sum, arr) =>
         sum +
@@ -925,6 +924,7 @@ useEffect(() => {
     }
 
     try {
+      const { jsPDF, autoTable } = await loadPdfLibs();
       const doc = new jsPDF();
       const businessName = "Tools4Care";
       const reportTitle = "Van Multi-Day Closure Report";

@@ -5,8 +5,7 @@ import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { loadPdfLibs } from "./utils/lazyPdf";
 import {
   DollarSign, FileText, Download, RefreshCw, CheckCircle, AlertCircle,
   Calculator, Calendar, TrendingUp, AlertTriangle, X, Plus, Minus, Send, MoreHorizontal, CreditCard,
@@ -585,7 +584,8 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     win.document.close();
   };
 
-  const handlePDF = () => {
+  const handlePDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFillColor(25, 118, 210);
     doc.rect(0, 0, 210, 28, "F");
@@ -1615,7 +1615,7 @@ export default function PreCierreVan() {
   }, [selected, canProcess, navigate]);
 
   // Generar PDF
-  const handleGenerarPDF = useCallback(() => {
+  const handleGenerarPDF = useCallback(async () => {
     if (!selected.length) {
       setMensaje("No dates selected to generate report");
       setTipoMensaje("warning");
@@ -1623,6 +1623,7 @@ export default function PreCierreVan() {
     }
 
     try {
+      const { jsPDF, autoTable } = await loadPdfLibs();
       const doc = new jsPDF();
       const businessName = "Tools4Care";
       const reportTitle = "Pre-Closure Report";

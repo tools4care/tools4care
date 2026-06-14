@@ -14,8 +14,7 @@ import {
   Download,
   FileText
 } from "lucide-react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { loadPdfLibs } from "./utils/lazyPdf";
 
 export default function ReporteDia() {
   const [ventas, setVentas] = useState([]);
@@ -138,7 +137,8 @@ export default function ReporteDia() {
   }
 
   // Export to PDF
-  function exportarPDF() {
+  async function exportarPDF() {
+    const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     // Logo or Title
     doc.setFontSize(18);
