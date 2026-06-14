@@ -1,11 +1,10 @@
 // React JSX transform handled by @vitejs/plugin-react — no explicit import needed here
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
-import UsuariosAdmin from "./pages/UsuariosAdmin";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
-import Login from "./Login";
-import VanSelector from "./components/VanSelector";
+const Login = lazy(() => import("./Login"));
+const VanSelector = lazy(() => import("./components/VanSelector"));
 const Dashboard = lazy(() => import("./Dashboard"));
 const Clientes = lazy(() => import("./Clientes"));
 const Productos = lazy(() => import("./Productos"));
@@ -15,14 +14,14 @@ const CierreVan = lazy(() => import("./CierreVan"));
 const PreCierreVan = lazy(() => import("./PreCierreVan"));
 const Facturas = lazy(() => import("./Facturas"));
 const CuentasPorCobrar = lazy(() => import("./CuentasPorCobrar.jsx"));
-import CreditoSimulador from "./CreditoSimulador";
+const CreditoSimulador = lazy(() => import("./CreditoSimulador"));
 
 // === Online ===
-import OnlineLayout from "./online/OnlineLayout";
-import OnlineDashboard from "./online/OnlineDashboard";
+const OnlineLayout = lazy(() => import("./online/OnlineLayout"));
+const OnlineDashboard = lazy(() => import("./online/OnlineDashboard"));
 const Orders = lazy(() => import("./admin/Orders"));
-import OnlineCatalog from "./online/OnlineCatalog";
-import OnlineDiscounts from "./online/Discounts";
+const OnlineCatalog = lazy(() => import("./online/OnlineCatalog"));
+const OnlineDiscounts = lazy(() => import("./online/Discounts"));
 
 import { NetworkIndicator } from "./components/NetworkIndicator";
 import { SyncProvider, useSyncGlobal } from "./hooks/SyncContext";
@@ -32,10 +31,11 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 
 
-import Suplidores from "./Suplidores";
+const Suplidores = lazy(() => import("./Suplidores"));
 
 // 💰 Comisiones (NUEVO)
-import ComisionesPage from './pages/ComisionesPage';
+const ComisionesPage = lazy(() => import('./pages/ComisionesPage'));
+const UsuariosAdmin = lazy(() => import("./pages/UsuariosAdmin"));
 
 // 📊 Reportes (NUEVO)
 const Reportes = lazy(() => import('./Reportes'));
@@ -45,9 +45,9 @@ const Suscripciones = lazy(() => import('./Suscripciones'));
 const GlobalSearch = lazy(() => import('./components/GlobalSearch'));
 
 // 🧾 Tax / Impuestos
-import TaxConfig from './pages/TaxConfig'
-import CreateTenantManual from './admin/CreateTenantManual';
-import ListaEmergencia from './ListaEmergencia';
+const TaxConfig = lazy(() => import('./pages/TaxConfig'));
+const CreateTenantManual = lazy(() => import('./admin/CreateTenantManual'));
+const ListaEmergencia = lazy(() => import('./ListaEmergencia'));
 
 
 function PrivateRoute({ children }) {

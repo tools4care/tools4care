@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import dayjs from "dayjs";
@@ -31,7 +31,7 @@ import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import { useToast } from "./hooks/useToast";
 import SyncStatusWidget from "./components/SyncStatusWidget";
-import BackupManagerModal from "./components/BackupManagerModal";
+const BackupManagerModal = lazy(() => import("./components/BackupManagerModal"));
 
 /* ---------- Helpers ---------- */
 function fmtMoney(n) {
@@ -2092,19 +2092,31 @@ export default function Dashboard() {
   useEffect(() => {
     if (van?.id) {
       cargarDatos(van.id, rangeDays);
-      cargarStockVan(van.id);
-      cargarRutasBarberias(van.id, fechaRutaSeleccionada);
-      cargarPrioridades(van.id);
     } else {
       setVentas([]);
       setVentasSerie([]);
       setProductosTop([]);
-      setStockVan([]);
-      setRutasBarberias([]);
-      setDailyActions((prev) => ({ ...prev, loading: false, pendingCloseouts: 0, dueSubscriptions: 0 }));
       setLoading(false);
     }
-  }, [van?.id, rangeDays, fechaRutaSeleccionada]);
+  }, [van?.id, rangeDays]);
+
+  useEffect(() => {
+    if (van?.id) {
+      cargarStockVan(van.id);
+      cargarPrioridades(van.id);
+    } else {
+      setStockVan([]);
+      setDailyActions((prev) => ({ ...prev, loading: false, pendingCloseouts: 0, dueSubscriptions: 0 }));
+    }
+  }, [van?.id]);
+
+  useEffect(() => {
+    if (van?.id) {
+      cargarRutasBarberias(van.id, fechaRutaSeleccionada);
+    } else {
+      setRutasBarberias([]);
+    }
+  }, [van?.id, fechaRutaSeleccionada]);
 
   useEffect(() => {
     if (ventas.length > 0 || stockVan.length >= 0) {
@@ -3505,13 +3517,17 @@ export default function Dashboard() {
         fechaSeleccionada={fechaRutaSeleccionada}
         onRefresh={() => cargarRutasBarberias(van.id, fechaRutaSeleccionada)}
       />
-      <BackupManagerModal
-        open={showBackupModal}
-        onClose={() => setShowBackupModal(false)}
-        vanId={van?.id}
-        vanNombre={van?.nombre || van?.nombre_van || `Van ${van?.id}`}
-        usuarioId={usuario?.id}
-      />
+      {showBackupModal && (
+        <Suspense fallback={null}>
+          <BackupManagerModal
+            open
+            onClose={() => setShowBackupModal(false)}
+            vanId={van?.id}
+            vanNombre={van?.nombre || van?.nombre_van || `Van ${van?.id}`}
+            usuarioId={usuario?.id}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
