@@ -25,6 +25,7 @@ import {
   CalendarCheck,
   ChevronRight,
   MapPin,
+  ScrollText,
 } from "lucide-react";
 
 const ICON_SIZE = 22;
@@ -94,6 +95,7 @@ export default function Sidebar() {
     { to: "/online",   icon: <Globe   size={ICON_SIZE} className="text-sky-400"    />, text: "Online Store" },
     { to: "/tax",      icon: <Receipt size={ICON_SIZE} className="text-amber-400"  />, text: "Tax / Impuestos" },
     { to: "/usuarios", icon: <Shield  size={ICON_SIZE} className="text-purple-400" />, text: "Users" },
+    { to: "/auditoria", icon: <ScrollText size={ICON_SIZE} className="text-rose-400" />, text: "Audit Log" },
   ];
 
   function handleLogout() {

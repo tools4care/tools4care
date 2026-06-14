@@ -2,6 +2,9 @@ import { lazy, Suspense, useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useLocation, useNavigate } from "react-router-dom";
 import { usePermisos } from "./hooks/usePermisos";
+import { useUsuario } from "./UsuarioContext";
+import { useVan } from "./hooks/VanContext";
+import { logAudit } from "./lib/auditLog";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useToast } from "./hooks/useToast";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
@@ -556,6 +559,9 @@ async function addStockSeleccionado(productoId, productoActual) {
 
 export default function Productos() {
   const { puedeCrearProductos, puedeEditarProductos, puedeEliminarProductos } = usePermisos();
+  const { usuario } = useUsuario();
+  const { van } = useVan();
+  const productoOriginalRef = useRef(null);
   const { toast, confirm } = useToast();
   const PAGE_SIZE = 20; // Reducido para móviles
   const [productos, setProductos] = useState([]);
@@ -756,6 +762,9 @@ export default function Productos() {
   }
 
   function abrirModal(prod) {
+    productoOriginalRef.current = prod?.id
+      ? { precio: Number(prod.precio || 0), descuento_pct: prod.descuento_pct ?? null }
+      : null;
     setProductoActual({
       ...prod,
       cantidad_inicial: "",
@@ -916,6 +925,18 @@ export default function Productos() {
         setMensaje(error.message?.toLowerCase().includes("unique") ? "Error: This code/UPC is already in use. Please use another one." : "Error: " + error.message);
         setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
         return;
+      }
+      const before = productoOriginalRef.current;
+      if (before && (before.precio !== dataProducto.precio || before.descuento_pct !== dataProducto.descuento_pct)) {
+        logAudit({
+          usuario, van,
+          accion: "price_edit",
+          entidadTipo: "producto",
+          entidadId: productoActual.id,
+          before: { precio: before.precio, descuento_pct: before.descuento_pct },
+          after: { precio: dataProducto.precio, descuento_pct: dataProducto.descuento_pct },
+          nota: dataProducto.nombre || null,
+        });
       }
       savedMessage = "Product updated successfully.";
     } else {
