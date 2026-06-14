@@ -10,6 +10,13 @@ const ModalTraspasoStock = lazy(() => import("./ModalTraspasoStock"));
 const InvoiceImporter = lazy(() => import("./InvoiceImporter"));
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
+function barcodeVariants(value) {
+  const code = String(value || "").trim().replace(/\s+/g, "").toLowerCase();
+  if (!code) return [];
+  const withoutLeadingZeros = code.replace(/^0+/, "") || "0";
+  return [...new Set([code, withoutLeadingZeros, `0${code}`])];
+}
+
 const PAGE_SIZE = 100;
 
 function stockBadge(qty) {
@@ -211,9 +218,11 @@ export default function Inventory() {
     if (!term.trim()) { setDbSearchResults(null); return; }
     setIsSearchingDB(true); setError("");
     try {
+      const variants = barcodeVariants(term);
+      const codeFilters = variants.map((code) => `codigo.ilike.%${code}%`).join(",");
       const { data: productos, error: pErr } = await supabase.from("productos")
         .select("id,codigo,nombre,marca,size")
-        .or(`codigo.ilike.%${term}%,nombre.ilike.%${term}%,marca.ilike.%${term}%`)
+        .or(`${codeFilters},nombre.ilike.%${term}%,marca.ilike.%${term}%`)
         .limit(100);
       if (pErr) throw pErr;
       if (!productos?.length) { setDbSearchResults([]); return; }
@@ -239,9 +248,10 @@ export default function Inventory() {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     const term = search.trim();
     if (!term) { setDbSearchResults(null); setIsSearchingDB(false); return; }
+    const variants = barcodeVariants(term);
     const mem = inventory.filter(it => {
       const p = it.productos || {};
-      return (p.codigo || "").toLowerCase().includes(term.toLowerCase())
+      return variants.some((code) => (p.codigo || "").toLowerCase().includes(code))
           || (p.nombre || "").toLowerCase().includes(term.toLowerCase())
           || (p.marca  || "").toLowerCase().includes(term.toLowerCase());
     });
@@ -255,9 +265,10 @@ export default function Inventory() {
   const filteredInventory = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return inventory;
+    const variants = barcodeVariants(term);
     const mem = inventory.filter(it => {
       const p = it.productos || {};
-      return (p.codigo || "").toLowerCase().includes(term)
+      return variants.some((code) => (p.codigo || "").toLowerCase().includes(code))
           || (p.nombre || "").toLowerCase().includes(term)
           || (p.marca  || "").toLowerCase().includes(term);
     });
@@ -265,8 +276,7 @@ export default function Inventory() {
   }, [inventory, search, dbSearchResults]);
 
   const handleBarcodeScanned = (code) => {
-    let c = code.replace(/^0+/, ""); if (!c) c = "0";
-    setSearch(c); setShowScanner(false);
+    setSearch(String(code || "").trim()); setShowScanner(false);
   };
 
   /* ─── Render ─────────────────────────────────────────────── */

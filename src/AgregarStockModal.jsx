@@ -16,13 +16,6 @@ function barcodeVariants(code) {
   return [...new Set([s, stripped])].filter(Boolean);
 }
 
-// Normaliza código escaneado para búsqueda: usa la versión sin ceros al inicio
-// para que ILIKE %stripped% encuentre tanto "010181055935" como "10181055935"
-function normBarcode(code) {
-  const s = norm(code);
-  return s.replace(/^0+/, "") || s;
-}
-
 export default function AgregarStockModal({
   abierto,
   cerrar,
@@ -98,14 +91,12 @@ export default function AgregarStockModal({
 
     let prodQuery = supabase.from("productos").select("id, nombre, marca, codigo").limit(50);
 
-    // Para búsqueda por código usamos la versión sin ceros al inicio para que
-    // "%10181055935%" encuentre tanto "010181055935" como "10181055935" en la DB
-    const filtroCode = normBarcode(filtro);
+    const codeFilters = barcodeVariants(filtro).map((code) => `codigo.ilike.%${code}%`).join(",");
 
-    if (modoBusqueda === "codigo")      prodQuery = prodQuery.ilike("codigo", `%${filtroCode}%`);
+    if (modoBusqueda === "codigo")      prodQuery = prodQuery.or(codeFilters);
     else if (modoBusqueda === "nombre") prodQuery = prodQuery.ilike("nombre", `%${filtro}%`);
     else if (modoBusqueda === "marca")  prodQuery = prodQuery.ilike("marca", `%${filtro}%`);
-    else prodQuery = prodQuery.or(`codigo.ilike.%${filtroCode}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`);
+    else prodQuery = prodQuery.or(`${codeFilters},nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`);
 
     const { data: productosData, error: prodErr } = await prodQuery;
     if (!isLatest(qid)) return;
@@ -138,8 +129,9 @@ export default function AgregarStockModal({
     setLoading(false);
 
     const filtroLC = filtro.toLowerCase();
+    const filtroVariants = barcodeVariants(filtroLC);
     const exact = opcionesTodas.find((opt) =>
-      opt.codigo?.toLowerCase() === filtroLC ||
+      filtroVariants.includes(opt.codigo?.toLowerCase()) ||
       opt.nombre?.toLowerCase() === filtroLC ||
       opt.marca?.toLowerCase() === filtroLC
     );
@@ -553,7 +545,7 @@ export default function AgregarStockModal({
         <Suspense fallback={null}><BarcodeScanner
           isActive={showScanner}
           onScan={(code) => {
-            setBusqueda(normBarcode(code));
+            setBusqueda(norm(code));
             setSeleccion(null);
             setMensaje("");
             setShowScanner(false);
