@@ -31,6 +31,7 @@ import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import { useToast } from "./hooks/useToast";
 import SyncStatusWidget from "./components/SyncStatusWidget";
+import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 const BackupManagerModal = lazy(() => import("./components/BackupManagerModal"));
 
 /* ---------- Helpers ---------- */
@@ -1365,7 +1366,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
-                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} labelFormatter={(l) => dayjs(l).format("MMM D")} {...CHART_TOOLTIP_STYLE} />
                     <ReferenceLine y={metricas.promedioDiario} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: 'avg', position: 'insideTopRight', fill: '#f59e0b', fontSize: 10 }} />
                     <Bar dataKey="total" radius={[4, 4, 0, 0]}>
                       {ventasSerie.map((d, i) => (
@@ -1391,7 +1392,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
                     </defs>
                     <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
-                    <Tooltip formatter={(v) => [fmtMoney(v), "Cumulative"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Cumulative"]} labelFormatter={(l) => dayjs(l).format("MMM D")} {...CHART_TOOLTIP_STYLE} />
                     <Area type="monotone" dataKey="cumulative" stroke="#06b6d4" strokeWidth={2.5} fill="url(#gCumul)" dot={false} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -1432,7 +1433,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
-                    <Tooltip formatter={(v, n) => [n === "revenue" ? fmtMoney(v) : v + " orders", n === "revenue" ? "Revenue" : "Orders"]} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v, n) => [n === "revenue" ? fmtMoney(v) : v + " orders", n === "revenue" ? "Revenue" : "Orders"]} {...CHART_TOOLTIP_STYLE} />
                     <Bar dataKey="revenue" fill={metricas.crecimiento >= 0 ? '#10b981' : '#ef4444'} radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1446,7 +1447,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
                   <BarChart data={weekData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                     <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={42} />
-                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} {...CHART_TOOLTIP_STYLE} />
                     <Bar dataKey="revenue" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1531,7 +1532,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
                         <YAxis type="category" dataKey="nombre" tick={{ fontSize: 11, fill: '#374151', fontWeight: 500 }} axisLine={false} tickLine={false} width={70} />
                         <Tooltip
                           formatter={(v) => [fmtMoney(v), "Deuda"]}
-                          contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }}
+                          {...CHART_TOOLTIP_STYLE}
                         />
                         <Bar dataKey="deuda" fill="#f97316" radius={[0, 6, 6, 0]}>
                           {deudaReal.top.slice(0,5).map((_, idx) => {
@@ -1567,7 +1568,7 @@ function KpiDetailModalInner({ type, ventas, ventasSerie, metricas, rangeDays, h
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
-                    <Tooltip formatter={(v) => [v, "Clients"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v) => [v, "Clients"]} labelFormatter={(l) => dayjs(l).format("MMM D")} {...CHART_TOOLTIP_STYLE} />
                     <Bar dataKey="clients" fill="#a855f7" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1792,7 +1793,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${v}`} width={40} />
-                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Revenue"]} labelFormatter={(l) => dayjs(l).format("MMM D")} {...CHART_TOOLTIP_STYLE} />
                     <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1831,7 +1832,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
                         <Pie data={payBreakdown} dataKey="value" cx="50%" cy="50%" innerRadius={30} outerRadius={55} paddingAngle={3}>
                           {payBreakdown.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                         </Pie>
-                        <Tooltip formatter={(v, n) => [v + " orders", n]} contentStyle={{ borderRadius: 10, fontSize: 12 }} />
+                        <Tooltip formatter={(v, n) => [v + " orders", n]} {...CHART_TOOLTIP_STYLE} />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
@@ -1862,7 +1863,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={30} />
-                    <Tooltip formatter={(v) => [v, "Orders"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v) => [v, "Orders"]} labelFormatter={(l) => dayjs(l).format("MMM D")} {...CHART_TOOLTIP_STYLE} />
                     <Bar dataKey="orders" fill="#10b981" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1951,7 +1952,7 @@ function SalesDetailModal({ type, ventas, ventasSerie, productosTop, metricas, r
                     <CartesianGrid strokeDasharray="0" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="fecha" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v.toFixed(0)}`} width={46} />
-                    <Tooltip formatter={(v) => [fmtMoney(v), "Avg Ticket"]} labelFormatter={(l) => dayjs(l).format("MMM D")} contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                    <Tooltip formatter={(v) => [fmtMoney(v), "Avg Ticket"]} labelFormatter={(l) => dayjs(l).format("MMM D")} {...CHART_TOOLTIP_STYLE} />
                     {avgTicket > 0 && <ReferenceLine y={avgTicket} stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: 'avg', position: 'insideTopRight', fill: '#f59e0b', fontSize: 10 }} />}
                     <Line type="monotone" dataKey="avgTicket" stroke="#8b5cf6" strokeWidth={2.5} dot={false} connectNulls />
                   </LineChart>
@@ -2650,19 +2651,19 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900 p-3 sm:p-6">
       <div className="w-full max-w-[1600px] mx-auto space-y-6">
-        
+
         {/* Header Mejorado */}
-        <div className="bg-white rounded-3xl shadow-xl p-6">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl p-6">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
             <div>
               <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
                 Dashboard
               </h1>
-              <p className="text-gray-600 text-sm">
+              <p className="text-gray-600 dark:text-slate-400 text-sm">
                 {van?.nombre || van?.nombre_van ? (
-                  <span className="inline-flex items-center gap-2 bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full font-semibold">
+                  <span className="inline-flex items-center gap-2 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-3 py-1.5 rounded-full font-semibold">
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
                       <path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05A2.5 2.5 0 0115.95 16H17a1 1 0 001-1v-5a1 1 0 00-.293-.707l-2-2A1 1 0 0015 7h-1z" />
@@ -2681,7 +2682,7 @@ export default function Dashboard() {
                   className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
                     rangeDays === d
                       ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg scale-105"
-                      : "bg-white text-gray-700 border-2 border-gray-200 hover:border-blue-400 hover:shadow-md"
+                      : "bg-white dark:bg-slate-700 text-gray-700 dark:text-slate-200 border-2 border-gray-200 dark:border-slate-600 hover:border-blue-400 hover:shadow-md"
                   }`}
                   onClick={() => setRangeDays(d)}
                 >

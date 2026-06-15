@@ -5,6 +5,7 @@ import { loadPdfLibs } from "./utils/lazyPdf";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { useLocation } from "react-router-dom";
+import { SkeletonCard } from "./components/ui/Skeleton";
 
 /* ===================== Iconos SVG ===================== */
 const IconInvoice = () => (
@@ -856,23 +857,23 @@ export default function Facturas() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-3 sm:p-6 pb-24">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900 p-3 sm:p-6 pb-24">
       <div className="w-full max-w-[1600px] mx-auto space-y-6">
-        
+
         {/* Header Mejorado */}
-        <div className="bg-white rounded-3xl shadow-xl p-6">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl p-6">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6">
             <div>
               <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2 flex items-center gap-3">
                 <IconInvoice />
                 Invoices
               </h1>
-              <p className="text-gray-600 text-sm">
+              <p className="text-gray-600 dark:text-slate-400 text-sm">
                 Manage and download your invoices
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <div className="text-sm text-gray-600 bg-blue-100 px-4 py-2 rounded-full font-semibold">
+              <div className="text-sm text-gray-600 dark:text-slate-300 bg-blue-100 dark:bg-blue-900/40 px-4 py-2 rounded-full font-semibold">
                 Page {pagina} / {totalPaginas}
               </div>
               <button
@@ -1032,10 +1033,10 @@ export default function Facturas() {
 
         
                 {/* Tabla / Cards */}
-        <div className="bg-white rounded-3xl shadow-xl">
-          <div className="p-6 border-b border-gray-100">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl">
+          <div className="p-6 border-b border-gray-100 dark:border-slate-700">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold text-gray-800">Invoice List</h2>
+              <h2 className="text-xl font-bold text-gray-800 dark:text-slate-100">Invoice List</h2>
               <div className="text-sm text-gray-500">
                 Showing <span className="font-semibold text-gray-800">{facturas.length}</span> of <span className="font-semibold text-gray-800">{totalVentas}</span>
               </div>
@@ -1086,9 +1087,8 @@ export default function Facturas() {
           </div>
 
           {loading ? (
-            <div className="p-12 text-center">
-              <div className="inline-block w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-              <div className="text-blue-700 font-semibold">Loading invoices...</div>
+            <div className="p-4 space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
             </div>
           ) : facturas.length === 0 ? (
             <div className="p-12 text-center">
@@ -1102,50 +1102,50 @@ export default function Facturas() {
               <div className="hidden md:block overflow-x-auto">
                 <table className="min-w-full">
                   <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
+                    <tr className="bg-gray-50 dark:bg-slate-900 border-b border-gray-100 dark:border-slate-700">
                       <th className="p-4 w-12 text-center">
                          <label className="cursor-pointer relative flex items-center justify-center">
                             <input type="checkbox" className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={isSelectAll} onChange={toggleSelectAll} />
                          </label>
                       </th>
                       <th className="p-4 text-left">
-                        <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
+                        <div className="flex items-center gap-2 text-sm font-bold text-gray-700 dark:text-slate-300">
                           <IconInvoice />
                           Number
                         </div>
                       </th>
-                      <th className="p-4 text-left text-sm font-bold text-gray-700">
+                      <th className="p-4 text-left text-sm font-bold text-gray-700 dark:text-slate-300">
                         <div className="flex items-center gap-2">
                           <IconCalendar />
                           Date
                         </div>
                       </th>
-                      <th className="p-4 text-left text-sm font-bold text-gray-700">
+                      <th className="p-4 text-left text-sm font-bold text-gray-700 dark:text-slate-300">
                         <div className="flex items-center gap-2">
                           <IconUser />
                           Client
                         </div>
                       </th>
-                      <th className="p-4 text-right text-sm font-bold text-gray-700">
+                      <th className="p-4 text-right text-sm font-bold text-gray-700 dark:text-slate-300">
                         <div className="flex items-center justify-end gap-2">
                           <IconDollar />
                           Total
                         </div>
                       </th>
-                      <th className="p-4 text-left text-sm font-bold text-gray-700">
+                      <th className="p-4 text-left text-sm font-bold text-gray-700 dark:text-slate-300">
                         <div className="flex items-center gap-2">
                           <IconTruck />
                           VAN
                         </div>
                       </th>
-                      <th className="p-4 text-center text-sm font-bold text-gray-700">Status</th>
+                      <th className="p-4 text-center text-sm font-bold text-gray-700 dark:text-slate-300">Status</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
                     {facturas.map((f) => (
                       <tr
                         key={f.id}
-                        className={`hover:bg-blue-50 cursor-pointer transition-all group ${selectedIds.has(f.id) ? 'bg-blue-50' : ''}`}
+                        className={`hover:bg-blue-50 dark:hover:bg-slate-700 dark:text-slate-200 cursor-pointer transition-all group ${selectedIds.has(f.id) ? 'bg-blue-50 dark:bg-blue-950/40' : ''}`}
                         onClick={(e) => {
                              // Evitar conflicto con click en checkbox
                             if (e.target.type !== 'checkbox') setFacturaSeleccionada(f);

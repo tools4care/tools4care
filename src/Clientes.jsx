@@ -8,6 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import QRCode from "qrcode";
 import { loadPdfLibs } from "./utils/lazyPdf";
 import { useLocation, useNavigate } from "react-router-dom";
+import Avatar from "./components/ui/Avatar";
 import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
   MapPin, Building2, Calendar, TrendingUp, X, Check, ChevronsLeft,
@@ -1307,16 +1308,16 @@ const fetchPage = async (opts = {}) => {
 
   /* -------------------- UI -------------------- */
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
         {/* Header Mejorado */}
-        <div className="bg-white rounded-3xl shadow-xl p-6 mb-6">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl p-6 mb-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
               <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
                 Client Management
               </h1>
-              <p className="text-gray-600 text-sm">Manage your clients and track their payments</p>
+              <p className="text-gray-600 dark:text-slate-400 text-sm">Manage your clients and track their payments</p>
             </div>
             <div className="flex items-center gap-3">
               {clienteSeleccionado?.id && (
@@ -1389,14 +1390,14 @@ const fetchPage = async (opts = {}) => {
         </div>
 
         {/* Main card */}
-        <div className="bg-white rounded-3xl shadow-xl border-2 border-gray-200 overflow-hidden">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl border-2 border-gray-200 dark:border-slate-700 overflow-hidden">
           {/* Search */}
-          <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50 border-b-2 border-gray-200">
+          <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50 dark:from-slate-900 dark:to-slate-900 border-b-2 border-gray-200 dark:border-slate-700">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
               <input
                 ref={searchRef}
-                className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white shadow-sm text-base font-medium"
+                className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-300 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white dark:bg-slate-900 dark:text-slate-100 shadow-sm text-base font-medium"
                 placeholder="Search clients by name, phone, email, business or address..."
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value ?? "")}
@@ -1597,16 +1598,16 @@ const fetchPage = async (opts = {}) => {
               {/* Desktop View - Table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gradient-to-r from-gray-50 to-blue-50 border-b-2 border-gray-200">
+                  <thead className="bg-gradient-to-r from-gray-50 to-blue-50 dark:from-slate-900 dark:to-slate-900 border-b-2 border-gray-200 dark:border-slate-700">
                     <tr>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Client Info</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Contact</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Address</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Balance</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Actions</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wider">Client Info</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wider">Contact</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wider">Address</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wider">Balance</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
                     {clientes.map((c) => {
                       // Dirección: aceptar string u objeto
                       const dRaw = c.direccion;
@@ -1623,18 +1624,16 @@ const fetchPage = async (opts = {}) => {
                       return (
                         <tr
                           key={c.id}
-                          className="hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 cursor-pointer transition-all duration-200"
+                          className="hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 dark:hover:from-slate-700 dark:hover:to-slate-700 cursor-pointer transition-all duration-200"
                           onClick={() => abrirDetalleCliente(c, dObj ? d : dRaw)}
                         >
                           <td className="px-6 py-4">
                             <div className="flex items-center">
-                              <div className="bg-gradient-to-br from-blue-500 to-indigo-500 rounded-xl p-2 mr-3 shadow-md">
-                                <User size={18} className="text-white" />
-                              </div>
+                              <Avatar name={c.nombre || "?"} className="mr-3" />
                               <div>
-                                <div className="text-sm font-bold text-gray-900">{c.nombre}</div>
+                                <div className="text-sm font-bold text-gray-900 dark:text-slate-100">{c.nombre}</div>
                                 {c.negocio && (
-                                  <div className="text-sm text-gray-600 flex items-center gap-1 mt-0.5">
+                                  <div className="text-sm text-gray-600 dark:text-slate-400 flex items-center gap-1 mt-0.5">
                                     <Building2 size={12} />
                                     {c.negocio}
                                   </div>

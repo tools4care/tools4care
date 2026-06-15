@@ -3,6 +3,7 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { usePermisos } from "./hooks/usePermisos";
 import { useStoreMode } from "./hooks/useStoreMode";
+import { useTheme } from "./hooks/useTheme.jsx";
 // ICONS Lucide
 import {
   LayoutDashboard,
@@ -71,6 +72,7 @@ export default function Sidebar() {
   const location = useLocation();
   const { isAdmin, isSupervisor, puedeVerModulo, puedeCambiarVan } = usePermisos();
   const { storeMode, toggle: toggleStoreMode } = useStoreMode();
+  const { theme, toggleTheme } = useTheme();
 
   // ── Main menu filtered by per-user module permissions ──
   const allMenuItems = [
@@ -202,6 +204,24 @@ export default function Sidebar() {
           </span>
           <span className={`w-9 h-5 rounded-full flex items-center transition-all px-0.5 ${storeMode ? "bg-blue-500" : "bg-gray-600"}`}>
             <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${storeMode ? "translate-x-4" : "translate-x-0"}`} />
+          </span>
+        </button>
+
+        {/* Dark mode toggle */}
+        <button
+          onClick={toggleTheme}
+          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-colors text-xs font-semibold border ${
+            theme === "dark"
+              ? "bg-indigo-900/60 border-indigo-600 text-indigo-200"
+              : "bg-gray-800/60 border-gray-600 text-gray-400"
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <span>{theme === "dark" ? "🌙" : "☀️"}</span>
+            <span>{theme === "dark" ? "Dark mode" : "Light mode"}</span>
+          </span>
+          <span className={`w-9 h-5 rounded-full flex items-center transition-all px-0.5 ${theme === "dark" ? "bg-indigo-500" : "bg-gray-600"}`}>
+            <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${theme === "dark" ? "translate-x-4" : "translate-x-0"}`} />
           </span>
         </button>
 

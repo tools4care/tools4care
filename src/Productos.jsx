@@ -7,6 +7,10 @@ import { useVan } from "./hooks/VanContext";
 import { logAudit } from "./lib/auditLog";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useToast } from "./hooks/useToast";
+import { Package, Check, X } from "lucide-react";
+import PageHeader from "./components/ui/PageHeader";
+import Avatar from "./components/ui/Avatar";
+import { SkeletonCard } from "./components/ui/Skeleton";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
 // Generate a unique in-store product code (12-digit, starts with 2 = internal UPC-A range)
@@ -1103,7 +1107,7 @@ export default function Productos() {
 
   return (
     <div className="px-2 sm:px-4 pb-20 sm:pb-0">
-      <h2 className="text-xl sm:text-2xl font-bold mb-4 text-center">Product Inventory</h2>
+      <PageHeader icon={Package} title="Product Inventory" color="pink" />
 
       {/* BARRA DE BÚSQUEDA Y ACCIONES */}
       <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
@@ -1160,13 +1164,15 @@ export default function Productos() {
       {/* LISTA DE PRODUCTOS */}
       <div className="max-w-6xl mx-auto">
         {loading ? (
-          <div className="text-center py-6 text-blue-700 font-bold">Loading...</div>
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
         ) : (
           <>
             {/* VISTA MÓVIL - TARJETAS */}
             <div className="lg:hidden space-y-3">
               {productos.length === 0 ? (
-                <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400">
+                <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-8 text-center text-gray-400 dark:text-slate-500">
                   {busqueda ? "No results found for your search." : "No products."}
                 </div>
               ) : (
@@ -1174,17 +1180,20 @@ export default function Productos() {
                   <div
                     key={p.id}
                     id={`prod-row-${idx}`}
-                    className={`bg-white rounded-xl shadow-sm border border-gray-100 p-3.5 cursor-pointer transition-all active:scale-[0.99] ${
-                      idx === hl ? "ring-2 ring-blue-500 bg-blue-50 border-blue-200" : "active:bg-gray-50"
+                    className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700 p-3.5 cursor-pointer transition-all active:scale-[0.99] ${
+                      idx === hl ? "ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800" : "active:bg-gray-50 dark:active:bg-slate-700"
                     }`}
                     onMouseEnter={() => setHl(idx)}
                     onClick={() => abrirModal(p)}
                   >
-                    {/* Row 1: Name + Price */}
+                    {/* Row 1: Avatar + Name + Price */}
                     <div className="flex justify-between items-start gap-2">
-                      <h3 className="font-bold text-gray-900 text-sm leading-tight flex-1 min-w-0 pr-1 line-clamp-2">
-                        {p.nombre}
-                      </h3>
+                      <div className="flex items-start gap-2 flex-1 min-w-0">
+                        <Avatar name={p.nombre || "?"} size="sm" />
+                        <h3 className="font-bold text-gray-900 dark:text-slate-100 text-sm leading-tight flex-1 min-w-0 pr-1 line-clamp-2">
+                          {p.nombre}
+                        </h3>
+                      </div>
                       <div className="flex-shrink-0 text-right">
                         <div className="text-base font-bold text-emerald-600 leading-tight">
                           ${Number(p.precio || 0).toFixed(2)}
@@ -1200,8 +1209,8 @@ export default function Productos() {
                     </div>
 
                     {/* Row 2: Brand · Code */}
-                    <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-400">
-                      {p.marca && <span className="font-medium text-gray-500">{p.marca}</span>}
+                    <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-400 dark:text-slate-500">
+                      {p.marca && <span className="font-medium text-gray-500 dark:text-slate-400">{p.marca}</span>}
                       {p.marca && p.codigo && <span>·</span>}
                       {p.codigo && <span className="font-mono">{p.codigo}</span>}
                     </div>
@@ -1232,10 +1241,10 @@ export default function Productos() {
             </div>
 
             {/* VISTA DESKTOP - TABLA */}
-            <div className="hidden lg:block overflow-x-auto rounded shadow bg-white">
+            <div className="hidden lg:block overflow-x-auto rounded shadow bg-white dark:bg-slate-800">
               <table className="min-w-[780px] w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-50">
+                  <tr className="bg-gray-50 dark:bg-slate-900 dark:text-slate-300">
                     <th className="p-2 text-left">Code/UPC</th>
                     <th className="p-2 text-left">Name</th>
                     <th className="p-2 text-left">Brand</th>
@@ -1249,7 +1258,7 @@ export default function Productos() {
                 <tbody>
                   {productos.length === 0 ? (
                     <tr>
-                      <td colSpan="8" className="text-center text-gray-400 py-5">
+                      <td colSpan="8" className="text-center text-gray-400 dark:text-slate-500 py-5">
                         {busqueda ? "No results found for your search." : "No products."}
                       </td>
                     </tr>
@@ -1258,14 +1267,19 @@ export default function Productos() {
                       <tr
                         id={`prod-row-${idx}`}
                         key={p.id}
-                        className={`cursor-pointer border-t ${
-                          idx === hl ? "bg-blue-50 ring-2 ring-blue-200" : "hover:bg-blue-50"
+                        className={`cursor-pointer border-t dark:border-slate-700 dark:text-slate-200 ${
+                          idx === hl ? "bg-blue-50 dark:bg-blue-950/40 ring-2 ring-blue-200 dark:ring-blue-800" : "hover:bg-blue-50 dark:hover:bg-slate-700"
                         }`}
                         onMouseEnter={() => setHl(idx)}
                         onClick={() => abrirModal(p)}
                       >
                         <td className="p-2 font-mono truncate max-w-[140px]">{p.codigo}</td>
-                        <td className="p-2 truncate">{p.nombre}</td>
+                        <td className="p-2 truncate">
+                          <div className="flex items-center gap-2">
+                            <Avatar name={p.nombre || "?"} size="sm" />
+                            <span className="truncate">{p.nombre}</span>
+                          </div>
+                        </td>
                         <td className="p-2 truncate">{p.marca}</td>
                         <td className="p-2 truncate">{p.categoria}</td>
                         <td className="p-2">{p.size}</td>
@@ -1551,12 +1565,23 @@ export default function Productos() {
                         <div className="relative">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">$</span>
                           <input
-                            className="border border-gray-200 rounded-lg pl-6 pr-3 py-2.5 w-full text-sm font-semibold focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                            className={`border-2 rounded-lg pl-6 pr-8 py-2.5 w-full text-sm font-semibold focus:ring-2 focus:border-transparent outline-none ${
+                              productoActual.precio === "" || productoActual.precio == null
+                                ? "border-gray-200 focus:ring-blue-500"
+                                : Number(productoActual.precio) > 0
+                                ? "border-emerald-300 focus:ring-emerald-400"
+                                : "border-red-300 focus:ring-red-400"
+                            }`}
                             value={productoActual.precio ?? ""}
                             type="number" step="0.01" min="0"
                             onChange={(e) => setProductoActual({ ...productoActual, precio: e.target.value })}
                             required disabled={disabled}
                           />
+                          {productoActual.precio !== "" && productoActual.precio != null && (
+                            Number(productoActual.precio) > 0
+                              ? <Check size={16} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-emerald-500" />
+                              : <X size={16} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500" />
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1615,16 +1640,39 @@ export default function Productos() {
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="relative w-24">
-                          <input
-                            className="border border-gray-200 rounded-lg py-2 pl-3 pr-7 w-full text-sm font-semibold text-center focus:ring-2 focus:ring-orange-400 focus:border-transparent outline-none"
-                            type="number" step="0.01" min="0" max="100"
-                            value={productoActual.descuento_pct ?? ""}
-                            onChange={(e) => setProductoActual({ ...productoActual, descuento_pct: e.target.value })}
-                            placeholder="0"
-                            disabled={disabled}
-                          />
+                          {(() => {
+                            const raw = productoActual.descuento_pct;
+                            const empty = raw === "" || raw == null;
+                            const val = Number(raw);
+                            const valid = empty || (val >= 0 && val <= 100);
+                            return (
+                              <input
+                                className={`border-2 rounded-lg py-2 pl-3 pr-7 w-full text-sm font-semibold text-center focus:ring-2 focus:border-transparent outline-none ${
+                                  empty
+                                    ? "border-gray-200 focus:ring-orange-400"
+                                    : valid
+                                    ? "border-emerald-300 focus:ring-emerald-400"
+                                    : "border-red-300 focus:ring-red-400"
+                                }`}
+                                type="number" step="0.01" min="0" max="100"
+                                value={raw ?? ""}
+                                onChange={(e) => setProductoActual({ ...productoActual, descuento_pct: e.target.value })}
+                                placeholder="0"
+                                disabled={disabled}
+                              />
+                            );
+                          })()}
                           <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-bold select-none">%</span>
                         </div>
+                        {(() => {
+                          const raw = productoActual.descuento_pct;
+                          if (raw === "" || raw == null) return null;
+                          const val = Number(raw);
+                          const valid = val >= 0 && val <= 100;
+                          return valid
+                            ? <Check size={16} className="text-emerald-500 flex-shrink-0" />
+                            : <X size={16} className="text-red-500 flex-shrink-0" />;
+                        })()}
                         {Number(productoActual.descuento_pct) > 0 && Number(productoActual.precio) > 0 && (
                           <p className="text-xs text-gray-400">
                             off ${Number(productoActual.precio).toFixed(2)} = saves ${(Number(productoActual.precio) * Number(productoActual.descuento_pct) / 100).toFixed(2)}

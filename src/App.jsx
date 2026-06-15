@@ -113,7 +113,7 @@ function PrivilegedRoute({ children }) {
 function LayoutInterior() {
   const { syncing, ventasPendientes, syncError, lastSync, sincronizarAhora } = useSyncGlobal();
   return (
-    <div className="min-h-screen bg-gray-50 flex lg:flex-row flex-col">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex lg:flex-row flex-col">
       <NetworkIndicator
         syncing={syncing}
         ventasPendientes={ventasPendientes}
