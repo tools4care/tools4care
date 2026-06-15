@@ -27,6 +27,7 @@ import {
   CaretRight,
   MapPin,
   Scroll,
+  Wrench,
 } from "@phosphor-icons/react";
 
 const ICON_SIZE = 22;
@@ -87,6 +88,7 @@ export default function Sidebar() {
     { key: "cxc",        to: "/cxc",       icon: <CreditCard     {...iconProps} />, gradient: "from-orange-400 to-amber-600",  text: "Accounts Receivable" },
     { key: "reportes",       to: "/reportes",      icon: <ChartBar      {...iconProps} />, gradient: "from-rose-400 to-pink-600",     text: "Reports" },
     { key: "suscripciones", to: "/suscripciones", icon: <CalendarCheck {...iconProps} />, gradient: "from-violet-500 to-purple-600", text: "Subscriptions" },
+    { key: "alquileres",    to: "/alquileres",    icon: <Wrench        {...iconProps} />, gradient: "from-emerald-500 to-teal-600",  text: "Equipment Rentals" },
     { key: "suplidores",    to: "/suplidores",    icon: <UserCircle    {...iconProps} />, gradient: "from-indigo-400 to-blue-600",   text: "Suppliers" },
     { key: "comisiones",    to: "/comisiones",    icon: <CurrencyDollar {...iconProps} />, gradient: "from-emerald-400 to-teal-600", text: "Commissions" },
   ];
