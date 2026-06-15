@@ -341,6 +341,8 @@ function EliminarModal({ usuario: u, onClose, onEliminado, onCascadeError }) {
       supabaseAdmin.from("cierres_dia").update({ usuario_id: null }).eq("usuario_id", u.id),
       supabaseAdmin.from("acuerdos_pago").update({ usuario_id: null }).eq("usuario_id", u.id),
       supabaseAdmin.from("cxc_movimientos").update({ usuario_id: null }).eq("usuario_id", u.id),
+      supabaseAdmin.from("cliente_credito_movimientos").update({ usuario_id: null }).eq("usuario_id", u.id),
+      supabaseAdmin.from("audit_log").update({ usuario_id: null }).eq("usuario_id", u.id),
     ]);
 
     // 3. Delete from usuarios table (use admin client to bypass RLS)
