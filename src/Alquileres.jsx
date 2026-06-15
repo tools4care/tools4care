@@ -177,16 +177,16 @@ function ContractSignModal({ contractText, onConfirm, onClose }) {
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Customer Signature</p>
             <SignaturePad onSignature={setFirma} />
           </div>
-        </div>
-        <div className="border-t border-gray-200 p-4 flex gap-3 flex-shrink-0">
-          <button type="button" onClick={onClose}
-            className="flex-1 border-2 border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-semibold hover:bg-gray-50">
-            Cancel
-          </button>
-          <button type="button" onClick={() => onConfirm(firma)} disabled={!firma}
-            className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-3 rounded-xl text-sm font-bold disabled:opacity-40">
-            Save Signature
-          </button>
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 border-2 border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-semibold hover:bg-gray-50">
+              Cancel
+            </button>
+            <button type="button" onClick={() => onConfirm(firma)} disabled={!firma}
+              className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-3 rounded-xl text-sm font-bold disabled:opacity-40">
+              Accept & Continue
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -466,6 +466,7 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
               value={clientSearch}
               onChange={e => { setClientSearch(e.target.value); setPickedClient(null); }}
               onFocus={() => { if (clientResults.length > 0) setShowClientDropdown(true); }}
+              onBlur={() => setTimeout(() => setShowClientDropdown(false), 150)}
               placeholder="Type name or phone to search…"
               className="w-full border-2 border-gray-200 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm outline-none transition-all"
             />
@@ -505,6 +506,7 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
               value={productSearch}
               onChange={e => { setProductSearch(e.target.value); setPickedProduct(null); }}
               onFocus={() => { if (productResults.length > 0) setShowProductDropdown(true); }}
+              onBlur={() => setTimeout(() => setShowProductDropdown(false), 150)}
               placeholder="Search product…"
               className="w-full border-2 border-gray-200 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm outline-none transition-all"
             />
