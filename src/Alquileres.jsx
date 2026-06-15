@@ -129,6 +129,20 @@ function SignaturePad({ onSignature }) {
     onSignature(null);
   }
 
+  // Attach touch listeners as non-passive so preventDefault() can block page scroll while signing
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.addEventListener("touchstart", startDraw, { passive: false });
+    canvas.addEventListener("touchmove", drawMove, { passive: false });
+    canvas.addEventListener("touchend", endDraw, { passive: false });
+    return () => {
+      canvas.removeEventListener("touchstart", startDraw);
+      canvas.removeEventListener("touchmove", drawMove);
+      canvas.removeEventListener("touchend", endDraw);
+    };
+  }, []);
+
   return (
     <div>
       <div className="relative border-2 border-dashed border-gray-300 rounded-xl overflow-hidden bg-white">
@@ -136,7 +150,6 @@ function SignaturePad({ onSignature }) {
           ref={canvasRef} width={500} height={150} className="w-full touch-none"
           style={{ cursor: "crosshair", display: "block" }}
           onMouseDown={startDraw} onMouseMove={drawMove} onMouseUp={endDraw} onMouseLeave={endDraw}
-          onTouchStart={startDraw} onTouchMove={drawMove} onTouchEnd={endDraw}
         />
         {!hasContent && (
           <p className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm pointer-events-none select-none">
@@ -516,7 +529,7 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
                   <button key={p.id} type="button" onMouseDown={() => pickProduct(p)}
                     className="w-full text-left px-4 py-2.5 hover:bg-emerald-50 text-sm flex justify-between items-center border-b border-gray-50 last:border-0">
                     <span className="font-medium text-gray-900">{p.nombre}</span>
-                    <span className="text-xs text-gray-400">{fmt(p.precio)} · cost {fmt(p.costo)}</span>
+                    <span className="text-xs text-gray-400">{fmt(p.precio)}</span>
                   </button>
                 ))}
               </div>
@@ -526,7 +539,7 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
             <div className="mt-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex items-center justify-between">
               <div>
                 <p className="font-bold text-indigo-900">{pickedProduct.nombre}</p>
-                <p className="text-xs text-indigo-500">Sale price {fmt(pickedProduct.precio)} · cost {fmt(pickedProduct.costo)}</p>
+                <p className="text-xs text-indigo-500">Sale price {fmt(pickedProduct.precio)}</p>
               </div>
               <button type="button" onClick={() => { setPickedProduct(null); setProductSearch(""); }} className="text-indigo-400 hover:text-red-500">
                 <X size={14}/>
