@@ -8,7 +8,7 @@ import { Elements, CardElement, useStripe, useElements } from "@stripe/react-str
 import {
   Package, Plus, X, ChevronDown, ChevronUp, CheckCircle,
   AlertCircle, RefreshCw, CreditCard, DollarSign, Trash2, RotateCcw,
-  PenTool, ShoppingBag, ArrowLeftRight,
+  PenTool, ShoppingBag,
 } from "lucide-react";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
@@ -47,7 +47,7 @@ function StatusBadge({ status }) {
     atrasado: { color: "bg-red-100 text-red-800",       icon: AlertCircle,  label: "Payment Overdue" },
     retirado: { color: "bg-gray-200 text-gray-700",     icon: RotateCcw,    label: "Repossessed" },
     comprado: { color: "bg-blue-100 text-blue-800",     icon: ShoppingBag,  label: "Purchased" },
-    cancelado:{ color: "bg-amber-100 text-amber-800",   icon: X,            label: "Cancelled" },
+    cancelado:{ color: "bg-amber-100 text-amber-800",   icon: RotateCcw,    label: "Returned" },
   };
   const s = map[status] || map.en_renta;
   const Icon = s.icon;
@@ -707,15 +707,65 @@ function ChargeButton({ rental, onDone }) {
   );
 }
 
+/* ─── Equipment returned modal ─── */
+function ReturnEquipmentModal({ rental, onConfirm, onClose }) {
+  const [condition, setCondition] = useState(null); // "good" | "damaged"
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function confirm() {
+    setSaving(true);
+    await onConfirm(condition, note.trim());
+    setSaving(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-4 flex items-center justify-between">
+          <p className="text-white font-bold">Equipment Returned</p>
+          <button type="button" onClick={onClose} className="text-white/70 hover:text-white"><X size={20}/></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-sm text-gray-600">In what condition is {rental.productos?.nombre || "the equipment"} being returned?</p>
+          <button type="button" onClick={() => setCondition("good")}
+            className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all ${condition === "good" ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:border-emerald-300"}`}>
+            <p className="font-bold text-sm text-emerald-700">Good condition</p>
+            <p className="text-xs text-gray-500">Refund the {fmt(rental.deposito)} deposit to the customer</p>
+          </button>
+          <button type="button" onClick={() => setCondition("damaged")}
+            className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all ${condition === "damaged" ? "border-red-500 bg-red-50" : "border-gray-200 hover:border-red-300"}`}>
+            <p className="font-bold text-sm text-red-700">Damaged / not in good condition</p>
+            <p className="text-xs text-gray-500">Keep the {fmt(rental.deposito)} deposit</p>
+          </button>
+          <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Notes (optional)"
+            className="w-full border-2 border-gray-200 focus:border-emerald-400 rounded-xl px-3 py-2 text-sm outline-none transition-all" rows={2} />
+        </div>
+        <div className="border-t border-gray-200 p-4 flex gap-3">
+          <button type="button" onClick={onClose}
+            className="flex-1 border-2 border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">
+            Cancel
+          </button>
+          <button type="button" onClick={confirm} disabled={!condition || saving}
+            className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-2.5 rounded-xl text-sm font-bold disabled:opacity-40">
+            {saving ? "Saving…" : "Confirm"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════
    Rental Card
 ═══════════════════════════════════════════════ */
-function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete }) {
+function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete, onReturn }) {
   const [expanded, setExpanded] = useState(false);
   const [pagos, setPagos] = useState([]);
   const [loadingPagos, setLoadingPagos] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCardModal, setShowCardModal] = useState(false);
+  const [showReturnModal, setShowReturnModal] = useState(false);
   const hasCard = r.stripe_customer_id && r.stripe_payment_method_id;
   const isOverdue = r.estado === "atrasado" || (r.proxima_renta && r.proxima_renta < new Date().toISOString().slice(0,10) && r.estado === "en_renta");
 
@@ -825,7 +875,7 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete }) {
         )}
       </div>
 
-      <div className="px-5 pb-4 flex flex-wrap gap-2">
+      <div className="px-5 pb-4 flex flex-wrap items-center gap-2">
         {(r.estado === "en_renta" || r.estado === "atrasado") && (
           <>
             <button onClick={() => onMarkPaid(r)}
@@ -833,35 +883,40 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete }) {
               <DollarSign size={13}/> Mark Payment Received
             </button>
             {hasCard && <ChargeButton rental={r} onDone={onChargeDone}/>}
-            {r.estado === "en_renta" && (
-              <button onClick={() => onChangeStatus(r.id, "atrasado")}
-                className="border-2 border-red-200 text-red-600 hover:bg-red-50 px-3 py-2 rounded-xl text-xs font-bold">
-                Mark Overdue
-              </button>
-            )}
-            {r.estado === "atrasado" && (
-              <button onClick={() => { if (confirm("Repossess this equipment (or an equivalent-value item from the customer's station)?")) onChangeStatus(r.id, "retirado"); }}
-                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5">
-                <ArrowLeftRight size={13}/> Repossess Equipment
-              </button>
-            )}
-            <button onClick={() => { if (confirm(`Mark this rental as PURCHASED by ${r.clientes?.nombre}? This ends the rental.`)) onChangeStatus(r.id, "comprado"); }}
-              className="border-2 border-blue-200 text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5">
-              <ShoppingBag size={13}/> Customer Bought It
-            </button>
           </>
         )}
-        {r.estado === "retirado" && (
-          <button onClick={() => onChangeStatus(r.id, "en_renta")}
-            className="border-2 border-green-300 text-green-700 hover:bg-green-50 px-4 py-2 rounded-xl text-xs font-bold">
-            Re-activate Rental
-          </button>
-        )}
 
-        <button onClick={() => setShowDeleteConfirm(true)}
-          className="border-2 border-red-100 text-red-400 hover:bg-red-50 hover:border-red-300 hover:text-red-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors">
-          <Trash2 size={12}/> Delete
-        </button>
+        <select
+          value=""
+          onChange={e => {
+            const action = e.target.value;
+            if (action === "overdue") onChangeStatus(r.id, "atrasado");
+            else if (action === "repossess") {
+              if (confirm("Repossess this equipment (or an equivalent-value item from the customer's station)?")) onChangeStatus(r.id, "retirado");
+            } else if (action === "purchased") {
+              if (confirm(`Mark this rental as PURCHASED by ${r.clientes?.nombre}? This ends the rental.`)) onChangeStatus(r.id, "comprado");
+            } else if (action === "returned") setShowReturnModal(true);
+            else if (action === "reactivate") onChangeStatus(r.id, "en_renta");
+            else if (action === "delete") setShowDeleteConfirm(true);
+          }}
+          className="border-2 border-gray-200 hover:border-gray-300 text-gray-600 px-3 py-2 rounded-xl text-xs font-bold bg-white outline-none cursor-pointer"
+        >
+          <option value="">Actions…</option>
+          {r.estado === "en_renta" && <option value="overdue">Mark Overdue</option>}
+          {r.estado === "atrasado" && <option value="repossess">Repossess Equipment</option>}
+          {(r.estado === "en_renta" || r.estado === "atrasado") && <option value="purchased">Customer Bought It</option>}
+          {(r.estado === "en_renta" || r.estado === "atrasado") && <option value="returned">Equipment Returned</option>}
+          {r.estado === "retirado" && <option value="reactivate">Re-activate Rental</option>}
+          <option value="delete">Delete</option>
+        </select>
+
+        {showReturnModal && (
+          <ReturnEquipmentModal
+            rental={r}
+            onClose={() => setShowReturnModal(false)}
+            onConfirm={async (condition, note) => { await onReturn(r, condition, note); setShowReturnModal(false); }}
+          />
+        )}
 
         <button onClick={toggleExpand} className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-emerald-600 font-semibold">
           {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
@@ -1042,6 +1097,26 @@ export default function Alquileres() {
     load();
   }
 
+  async function returnEquipment(r, condition, note) {
+    await supabase.from("alquileres").update({ estado: "cancelado" }).eq("id", r.id);
+
+    if (condition === "good") {
+      await supabase.from("alquiler_pagos").insert({
+        alquiler_id: r.id, monto: -(Number(r.deposito) || 0),
+        tipo: "reembolso", metodo: "efectivo", estado: "pagado",
+        notas: note || "Equipment returned in good condition — deposit refunded",
+      });
+    } else {
+      await supabase.from("alquiler_pagos").insert({
+        alquiler_id: r.id, monto: 0,
+        tipo: "nota", metodo: "efectivo", estado: "pagado",
+        notas: note || "Equipment returned damaged — deposit retained",
+      });
+    }
+
+    load();
+  }
+
   const filtered = rentals.filter(r => filterStatus === "all" || r.estado === filterStatus);
   const today = new Date().toISOString().slice(0, 10);
   const summary = {
@@ -1087,7 +1162,7 @@ export default function Alquileres() {
 
               <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div className="flex gap-2 flex-wrap">
-                  {[["en_renta","Active"],["atrasado","Overdue"],["retirado","Repossessed"],["comprado","Purchased"],["all","All"]].map(([v,l])=>(
+                  {[["en_renta","Active"],["atrasado","Overdue"],["retirado","Repossessed"],["comprado","Purchased"],["cancelado","Returned"],["all","All"]].map(([v,l])=>(
                     <button key={v} onClick={()=>setFilterStatus(v)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${filterStatus===v?"bg-emerald-600 text-white":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                       {l}
@@ -1109,7 +1184,7 @@ export default function Alquileres() {
               <div className="space-y-4">
                 {filtered.length===0 && <p className="text-center py-12 text-gray-400">No rentals with status "{filterStatus}"</p>}
                 {filtered.map(r => (
-                  <RentalCard key={r.id} r={r} onChangeStatus={changeStatus} onMarkPaid={markPaid} onChargeDone={load} onDelete={deleteRental} />
+                  <RentalCard key={r.id} r={r} onChangeStatus={changeStatus} onMarkPaid={markPaid} onChargeDone={load} onDelete={deleteRental} onReturn={returnEquipment} />
                 ))}
               </div>
             </>
