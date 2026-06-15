@@ -160,7 +160,7 @@ function ContractSignModal({ contractText, onConfirm, onClose }) {
   const [firma, setFirma] = useState(null);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 md:flex md:items-center md:justify-center md:p-4">
+    <div className="fixed inset-0 z-[70] bg-black/60 md:flex md:items-center md:justify-center md:p-4">
       <div className="bg-white h-full md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl w-full flex flex-col overflow-hidden">
         <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-4 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2">
@@ -251,7 +251,7 @@ function CardManageForm({ rental, onSaved, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4 flex items-center justify-between">
           <p className="text-white font-bold">{rental.card_last4 ? "Update Card" : "Add Card"}</p>
@@ -465,7 +465,7 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
             <input
               value={clientSearch}
               onChange={e => { setClientSearch(e.target.value); setPickedClient(null); }}
-              onFocus={() => { if (clientResults.length > 0) setShowClientDropdown(true); }}
+              onFocus={() => { setShowProductDropdown(false); if (clientResults.length > 0) setShowClientDropdown(true); }}
               onBlur={() => setTimeout(() => setShowClientDropdown(false), 150)}
               placeholder="Type name or phone to search…"
               className="w-full border-2 border-gray-200 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm outline-none transition-all"
@@ -505,7 +505,7 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
             <input
               value={productSearch}
               onChange={e => { setProductSearch(e.target.value); setPickedProduct(null); }}
-              onFocus={() => { if (productResults.length > 0) setShowProductDropdown(true); }}
+              onFocus={() => { setShowClientDropdown(false); if (productResults.length > 0) setShowProductDropdown(true); }}
               onBlur={() => setTimeout(() => setShowProductDropdown(false), 150)}
               placeholder="Search product…"
               className="w-full border-2 border-gray-200 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm outline-none transition-all"
