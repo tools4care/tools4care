@@ -256,13 +256,17 @@ export default function SyncStatusWidget({
       // Subir a Storage
       const jsonStr = JSON.stringify(result, null, 2);
       const storageName = `backup-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.json`;
-      await supabase.storage.from(STORAGE_BUCKET).upload(
+      const { error: uploadErr } = await supabase.storage.from(STORAGE_BUCKET).upload(
         storageName,
         new Blob([jsonStr], { type: "application/json" }),
         { upsert: true }
       );
 
-      toast.success(`✅ Backup creado — ${total.toLocaleString()} filas descargadas`);
+      if (uploadErr) {
+        toast.error(`Backup local OK, pero falló la subida a la nube: ${uploadErr.message}`);
+      } else {
+        toast.success(`✅ Backup creado — ${total.toLocaleString()} filas descargadas`);
+      }
       await cargarCloudBackups();
     } catch (err) {
       toast.error("Error al crear backup: " + err.message);
