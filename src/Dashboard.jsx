@@ -24,7 +24,7 @@ import {
 import {
   DollarSign, TrendingUp, TrendingDown, ShoppingCart, Users,
   AlertTriangle, Package, Clock, Map as MapIcon, Check, Plus, Pencil,
-  Trash2, Phone, MapPin, Search, ChevronRight, X, SendHorizonal,
+  Trash2, Phone, MapPin, Search, ChevronRight, X, SendHorizonal, Wrench,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -2069,6 +2069,8 @@ export default function Dashboard() {
     debtClients: 0,
     debtTotal: 0,
     dueSubscriptions: 0,
+    rentalsDue: 0,
+    nextRental: null,
   });
 
   const [metricas, setMetricas] = useState({
@@ -2136,7 +2138,7 @@ export default function Dashboard() {
     const from = dayjs().subtract(20, "day").format("YYYY-MM-DD");
 
     try {
-      const [salesResult, closeoutsResult, debtResult, subscriptionsResult] = await Promise.all([
+      const [salesResult, closeoutsResult, debtResult, subscriptionsResult, rentalsResult] = await Promise.all([
         supabase.from("ventas").select("fecha").eq("van_id", vanId).gte("fecha", from),
         supabase.from("cierres_dia").select("fecha").eq("van_id", vanId).gte("fecha", from),
         supabase.from("v_cxc_cliente_detalle_ext").select("saldo").gt("saldo", 0.01),
@@ -2145,12 +2147,20 @@ export default function Dashboard() {
           .select("id, proxima_entrega")
           .eq("estado", "activa")
           .lte("proxima_entrega", today),
+        supabase
+          .from("alquileres")
+          .select("id, proxima_renta, renta_semanal, clientes(nombre)")
+          .eq("van_id", vanId)
+          .in("estado", ["en_renta", "atrasado"])
+          .lte("proxima_renta", today)
+          .order("proxima_renta", { ascending: true }),
       ]);
 
       const closedDates = new Set((closeoutsResult.data || []).map((row) => String(row.fecha).slice(0, 10)));
       const saleDates = new Set((salesResult.data || []).map((row) => String(row.fecha).slice(0, 10)));
       const pendingCloseouts = [...saleDates].filter((date) => !closedDates.has(date)).length;
       const debtRows = debtResult.data || [];
+      const rentalRows = rentalsResult.data || [];
 
       setDailyActions({
         loading: false,
@@ -2158,6 +2168,8 @@ export default function Dashboard() {
         debtClients: debtRows.length,
         debtTotal: debtRows.reduce((sum, row) => sum + Number(row.saldo || 0), 0),
         dueSubscriptions: (subscriptionsResult.data || []).length,
+        rentalsDue: rentalRows.length,
+        nextRental: rentalRows[0] || null,
       });
     } catch (error) {
       console.error("Error loading daily priorities:", error);
@@ -2647,6 +2659,20 @@ export default function Dashboard() {
       border: "border-red-200",
       iconBg: "bg-red-600 text-white",
       valueColor: "text-red-700",
+    },
+    {
+      key: "rentals",
+      label: "Rentals to collect",
+      detail: dailyActions.nextRental
+        ? `Next: ${dailyActions.nextRental.clientes?.nombre || "—"} · due ${dayjs(dailyActions.nextRental.proxima_renta).format("MM/DD")}`
+        : "No rental payments due",
+      count: dailyActions.rentalsDue,
+      path: "/alquileres",
+      icon: Wrench,
+      bg: "bg-emerald-50",
+      border: "border-emerald-200",
+      iconBg: "bg-emerald-600 text-white",
+      valueColor: "text-emerald-700",
     },
   ];
 
