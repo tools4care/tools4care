@@ -584,6 +584,109 @@ function PermisosModal({ usuario: u, onClose, onGuardado, onTriggerError }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   MODAL — Reset password
+══════════════════════════════════════════════════════════════════ */
+function ResetPasswordModal({ usuario: u, onClose, onDone }) {
+  const [password, setPassword] = useState("");
+  const [showPw,   setShowPw]   = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    if (!isAdminConfigured)   { setError("Service key not configured."); return; }
+
+    setSaving(true);
+    setError("");
+
+    const { error: err } = await supabaseAdmin.auth.admin.updateUserById(u.id, { password });
+    if (err) {
+      setError("Error: " + err.message);
+      setSaving(false);
+      return;
+    }
+    onDone();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+
+        {/* Header */}
+        <div className="bg-gradient-to-br from-slate-800 to-blue-900 text-white rounded-t-2xl px-6 py-5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center">
+              <Key size={20} />
+            </div>
+            <div>
+              <h2 className="font-bold text-lg">Reset Password</h2>
+              <p className="text-blue-200 text-xs truncate max-w-[180px]">{u.nombre || u.email}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg flex items-center justify-center transition-all">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4" autoComplete="off">
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">New password *</label>
+            <div className="relative">
+              <input
+                type={showPw ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Min. 6 characters"
+                required
+                autoComplete="new-password"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm pr-10 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw(!showPw)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+              <Key size={10} /> Share the new password securely with the user.
+            </p>
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2.5 text-xs flex items-start gap-2">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" /> {error}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 border border-slate-200 text-slate-600 rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-50 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+            >
+              {saving ? <RefreshCw size={14} className="animate-spin" /> : <Key size={14} />}
+              {saving ? "Saving…" : "Set Password"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════════════════════════════════ */
 export default function UsuariosAdmin() {
@@ -602,6 +705,7 @@ export default function UsuariosAdmin() {
   const [showNuevo,        setShowNuevo]        = useState(false);
   const [eliminarUser,     setEliminarUser]     = useState(null);
   const [permisosUser,     setPermisosUser]     = useState(null);
+  const [resetPwUser,      setResetPwUser]      = useState(null);
 
   /* ── Load ── */
   const cargar = useCallback(async () => {
@@ -989,6 +1093,16 @@ export default function UsuariosAdmin() {
                   <Settings size={14} />
                 </button>
 
+                {/* Reset password button */}
+                <button
+                  onClick={() => setResetPwUser(u)}
+                  disabled={isSaving}
+                  title="Reset password"
+                  className="w-9 h-9 rounded-xl border border-slate-200 bg-slate-50 text-slate-400 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 flex items-center justify-center transition-all shrink-0"
+                >
+                  <Key size={14} />
+                </button>
+
                 {/* Delete button */}
                 {!isMe && (
                   <button
@@ -1049,6 +1163,16 @@ export default function UsuariosAdmin() {
           onClose={() => setPermisosUser(null)}
           onGuardado={handlePermisosGuardados}
           onTriggerError={() => setTriggerErr(true)}
+        />
+      )}
+      {resetPwUser && (
+        <ResetPasswordModal
+          usuario={resetPwUser}
+          onClose={() => setResetPwUser(null)}
+          onDone={() => {
+            setResetPwUser(null);
+            showToast(`Password updated for ${resetPwUser.email}.`);
+          }}
         />
       )}
     </div>
