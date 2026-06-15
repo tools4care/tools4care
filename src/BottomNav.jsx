@@ -2,26 +2,26 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
-  Home,
+  House,
   ShoppingCart,
   Users,
-  Box,
-  MoreHorizontal,
-  ClipboardList,
-  LogOut,
+  Package,
+  DotsThreeCircle,
+  ClipboardText,
+  SignOut,
   Truck,
-  UserCircle2,
+  UserCircle,
   FileText,
   CreditCard,
   CalendarCheck,
-  Navigation,
-  BarChart2,
-  ChevronDown,
+  Compass,
+  ChartBar,
+  CaretDown,
   PlusCircle,
   ArrowRight,
   X,
-  AlertTriangle,
-} from "lucide-react";
+  Warning,
+} from "@phosphor-icons/react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { supabase } from "./supabaseClient";
@@ -29,24 +29,24 @@ import { useStoreMode } from "./hooks/useStoreMode";
 
 /* ── Tab definitions ───────────────────────────────── */
 const items = [
-  { to: "/",         label: "Home",      icon: Home,          color: "#2563eb", activeColor: "#2563eb", activeBg: "bg-blue-50"    },
-  { to: "/ventas",   label: "Sales",     icon: ShoppingCart,  color: "#059669", activeColor: "#059669", activeBg: "bg-emerald-50" },
-  { to: "/productos",label: "Products",  icon: Box,           color: "#a21caf", activeColor: "#a21caf", activeBg: "bg-purple-50"  },
-  { to: "/clientes", label: "Customers", icon: Users,         color: "#d97706", activeColor: "#d97706", activeBg: "bg-amber-50"   },
-  { action: "more",  label: "More",      icon: MoreHorizontal,color: "#64748b", activeColor: "#64748b", activeBg: "bg-slate-50"   },
+  { to: "/",         label: "Home",      icon: House,          activeColor: "#2563eb", gradient: "from-blue-500 to-indigo-600"    },
+  { to: "/ventas",   label: "Sales",     icon: ShoppingCart,   activeColor: "#059669", gradient: "from-emerald-400 to-green-600"  },
+  { to: "/productos",label: "Products",  icon: Package,        activeColor: "#a21caf", gradient: "from-pink-500 to-purple-600"    },
+  { to: "/clientes", label: "Customers", icon: Users,          activeColor: "#d97706", gradient: "from-amber-400 to-orange-500"   },
+  { action: "more",  label: "More",      icon: DotsThreeCircle,activeColor: "#64748b", gradient: "from-slate-400 to-slate-600"    },
 ];
 
 /* ── More menu grid ────────────────────────────────── */
 const MORE_ITEMS = [
-  { path: "/cxc",        label: "Accounts",     icon: CreditCard,    iconColor: "#0284c7", bg: "bg-sky-50",     ring: "ring-sky-200"    },
-  { path: "/inventario", label: "Inventory",    icon: ClipboardList, iconColor: "#6366f1", bg: "bg-indigo-50",  ring: "ring-indigo-200" },
-  { path: "/facturas",   label: "Invoicing",    icon: FileText,      iconColor: "#9333ea", bg: "bg-purple-50",  ring: "ring-purple-200" },
-  { path: "/cierres",    label: "Van Closeout", icon: Truck,         iconColor: "#059669", bg: "bg-emerald-50", ring: "ring-emerald-200" },
-  { path: "/suplidores", label: "Suppliers",    icon: UserCircle2,   iconColor: "#4f46e5", bg: "bg-blue-50",    ring: "ring-blue-200"   },
-  { path: "/reportes",       label: "Reports",       icon: BarChart2,     iconColor: "#e11d48", bg: "bg-rose-50",    ring: "ring-rose-200"   },
-  { path: "/suscripciones", label: "Subscriptions", icon: CalendarCheck, iconColor: "#7c3aed", bg: "bg-violet-50",  ring: "ring-violet-200" },
-  { path: "/van",            label: "Change VAN",    icon: Navigation,    iconColor: "#b45309", bg: "bg-amber-50",   ring: "ring-amber-200"  },
-  { path: "/emergencia",    label: "Essentials",    icon: AlertTriangle, iconColor: "#2563eb", bg: "bg-blue-50",    ring: "ring-blue-200"   },
+  { path: "/cxc",        label: "Accounts",     icon: CreditCard,    gradient: "from-sky-400 to-blue-600"    },
+  { path: "/inventario", label: "Inventory",    icon: ClipboardText, gradient: "from-indigo-400 to-blue-600" },
+  { path: "/facturas",   label: "Invoicing",    icon: FileText,      gradient: "from-purple-500 to-violet-600" },
+  { path: "/cierres",    label: "Van Closeout", icon: Truck,         gradient: "from-emerald-400 to-green-600" },
+  { path: "/suplidores", label: "Suppliers",    icon: UserCircle,    gradient: "from-blue-400 to-indigo-600" },
+  { path: "/reportes",       label: "Reports",       icon: ChartBar,      gradient: "from-rose-400 to-pink-600" },
+  { path: "/suscripciones", label: "Subscriptions", icon: CalendarCheck, gradient: "from-violet-500 to-purple-600" },
+  { path: "/van",            label: "Change VAN",    icon: Compass,       gradient: "from-amber-400 to-orange-600" },
+  { path: "/emergencia",    label: "Essentials",    icon: Warning,       gradient: "from-cyan-400 to-blue-600" },
 ];
 
 let salesPreload;
@@ -114,7 +114,7 @@ export default function BottomNav() {
         className="fixed bottom-2 left-2 right-2 bg-white/95 dark:bg-slate-800/95 border border-slate-200/80 dark:border-slate-700/80 shadow-[0_12px_35px_rgba(15,23,42,0.18)] z-50 flex justify-around items-center h-[66px] rounded-2xl lg:hidden backdrop-blur-md overflow-hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        {items.map(({ to, label, icon: Icon, action, color, activeColor, activeBg }) => {
+        {items.map(({ to, label, icon: Icon, action, activeColor, gradient }) => {
           /* "More" button */
           if (action === "more") {
             return (
@@ -122,16 +122,16 @@ export default function BottomNav() {
                 key="more"
                 onClick={() => setShowMore(true)}
                 className={`flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors relative ${
-                  showMore ? "text-slate-700" : "text-gray-400 hover:text-slate-600"
+                  showMore ? "text-slate-700 dark:text-slate-200" : "text-gray-400 hover:text-slate-600"
                 }`}
               >
                 {showMore && (
                   <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] rounded-b-full bg-slate-500" />
                 )}
-                <div className={`p-1.5 rounded-xl transition-colors ${showMore ? activeBg : ""}`}>
-                  <Icon size={21} color={showMore ? color : "#9ca3af"} />
+                <div className={`p-1.5 rounded-xl transition-all bg-gradient-to-br ${gradient} ${showMore ? "shadow-md scale-105" : "opacity-75"}`}>
+                  <Icon size={21} weight="duotone" className="text-white" />
                 </div>
-                <span className={`text-[10px] font-medium ${showMore ? "text-slate-700" : "text-gray-400"}`}>
+                <span className={`text-[10px] font-medium ${showMore ? "text-slate-700 dark:text-slate-200" : "text-gray-400"}`}>
                   {label}
                 </span>
               </button>
@@ -151,10 +151,10 @@ export default function BottomNav() {
                 {isActive && (
                   <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] rounded-b-full bg-emerald-500" />
                 )}
-                <div className={`p-1.5 rounded-xl transition-colors ${isActive ? activeBg : ""}`}>
-                  <Icon size={21} color={isActive ? activeColor : "#9ca3af"} />
+                <div className={`p-1.5 rounded-xl transition-all bg-gradient-to-br ${gradient} ${isActive ? "shadow-md scale-105" : "opacity-75"}`}>
+                  <Icon size={21} weight="duotone" className="text-white" />
                 </div>
-                <span className={`text-[10px] font-medium ${isActive ? "text-emerald-700" : "text-gray-400"}`}>
+                <span className={`text-[10px] font-medium ${isActive ? "text-emerald-700 dark:text-emerald-400" : "text-gray-400"}`}>
                   {label}
                 </span>
               </button>
@@ -177,8 +177,8 @@ export default function BottomNav() {
                       style={{ backgroundColor: activeColor }}
                     />
                   )}
-                  <div className={`p-1.5 rounded-xl transition-colors ${isActive ? activeBg : ""}`}>
-                    <Icon size={21} color={isActive ? activeColor : "#9ca3af"} />
+                  <div className={`p-1.5 rounded-xl transition-all bg-gradient-to-br ${gradient} ${isActive ? "shadow-md scale-105" : "opacity-75"}`}>
+                    <Icon size={21} weight="duotone" className="text-white" />
                   </div>
                   <span
                     className="text-[10px] font-medium"
@@ -210,8 +210,8 @@ export default function BottomNav() {
 
             {/* Header */}
             <div className="px-5 pt-2 pb-4 text-center">
-              <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
-                <ShoppingCart size={26} color="#059669" />
+              <div className="w-14 h-14 bg-gradient-to-br from-emerald-400 to-green-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-md">
+                <ShoppingCart size={26} weight="duotone" className="text-white" />
               </div>
               <h2 className="font-bold text-gray-900 text-lg">Sales</h2>
               <p className="text-gray-500 text-sm mt-1">What would you like to do?</p>
@@ -228,13 +228,13 @@ export default function BottomNav() {
                 className="w-full flex items-center gap-4 bg-emerald-600 text-white px-5 py-4 rounded-2xl shadow-lg active:scale-[0.98] transition-all"
               >
                 <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
-                  <PlusCircle size={20} color="white" />
+                  <PlusCircle size={20} weight="duotone" className="text-white" />
                 </div>
                 <div className="text-left flex-1">
                   <div className="font-bold text-sm">New Sale</div>
                   <div className="text-emerald-100 text-xs">Start a fresh transaction</div>
                 </div>
-                <ArrowRight size={18} color="white" className="opacity-70" />
+                <ArrowRight size={18} weight="bold" color="white" className="opacity-70" />
               </button>
 
               {/* Continue */}
@@ -243,7 +243,7 @@ export default function BottomNav() {
                 className="w-full flex items-center gap-4 bg-gray-100 text-gray-800 px-5 py-4 rounded-2xl active:scale-[0.98] transition-all"
               >
                 <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center flex-shrink-0">
-                  <ArrowRight size={20} color="#059669" />
+                  <ArrowRight size={20} weight="bold" color="#059669" />
                 </div>
                 <div className="text-left flex-1">
                   <div className="font-bold text-sm">Continue Current Sale</div>
@@ -257,7 +257,7 @@ export default function BottomNav() {
               onClick={() => setShowSaleSheet(false)}
               className="flex items-center justify-center gap-1.5 w-full py-4 border-t border-gray-100 text-gray-400 text-sm font-medium hover:bg-gray-50 transition-colors"
             >
-              <X size={15} />
+              <X size={15} weight="bold" />
               Cancel
             </button>
           </div>
@@ -292,14 +292,14 @@ export default function BottomNav() {
             <div className="overflow-y-auto flex-1 px-4 pb-2">
               {/* 3-col icon grid */}
               <div className="grid grid-cols-3 gap-2.5 mb-3">
-                {MORE_ITEMS.map(({ path, label, icon: Icon, iconColor, bg, ring }) => (
+                {MORE_ITEMS.map(({ path, label, icon: Icon, gradient }) => (
                   <button
                     key={path}
                     onClick={() => handleNav(path)}
-                    className={`flex flex-col items-center justify-center gap-2 min-h-[104px] p-3 rounded-2xl ${bg} ring-1 ${ring} active:scale-[0.97] transition-transform`}
+                    className="flex flex-col items-center justify-center gap-2 min-h-[104px] p-3 rounded-2xl bg-white ring-1 ring-gray-100 shadow-sm active:scale-[0.97] transition-transform"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center">
-                      <Icon size={22} color={iconColor} />
+                    <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${gradient} shadow-sm flex items-center justify-center`}>
+                      <Icon size={22} weight="duotone" className="text-white" />
                     </div>
                     <span className="text-[11px] font-semibold text-gray-700 text-center leading-tight">{label}</span>
                   </button>
@@ -348,7 +348,7 @@ export default function BottomNav() {
                   <div className="text-[10px] text-gray-500 truncate">{usuario?.email}</div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 bg-white rounded-xl px-2.5 py-1.5 shadow-sm ring-1 ring-gray-200">
-                  <Truck size={13} color="#059669" />
+                  <Truck size={13} weight="duotone" color="#059669" />
                   <span className="text-[10px] font-semibold text-gray-700 max-w-[72px] truncate">
                     {van?.nombre_van || van?.nombre || "No VAN"}
                   </span>
@@ -361,7 +361,7 @@ export default function BottomNav() {
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-red-50 ring-1 ring-red-200 active:scale-[0.98] transition-all mb-2"
               >
                 <div className="w-10 h-10 rounded-2xl bg-white shadow-sm flex items-center justify-center flex-shrink-0">
-                  <LogOut size={18} color="#dc2626" />
+                  <SignOut size={18} weight="duotone" color="#dc2626" />
                 </div>
                 <span className="font-semibold text-red-600 text-sm">Log Out</span>
               </button>
@@ -372,7 +372,7 @@ export default function BottomNav() {
               onClick={() => setShowMore(false)}
               className="flex-shrink-0 flex items-center justify-center gap-1.5 w-full py-4 border-t border-gray-100 text-gray-400 text-sm font-medium hover:bg-gray-50 transition-colors"
             >
-              <ChevronDown size={16} />
+              <CaretDown size={16} weight="bold" />
               Close
             </button>
           </div>

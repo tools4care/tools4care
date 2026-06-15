@@ -4,30 +4,30 @@ import { useVan } from "./hooks/VanContext";
 import { usePermisos } from "./hooks/usePermisos";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useTheme } from "./hooks/useTheme.jsx";
-// ICONS Lucide
+// ICONS Phosphor (duotone)
 import {
-  LayoutDashboard,
+  Gauge,
   ShoppingCart,
   FileText,
   Users,
-  Users2,
+  UsersThree,
   Package,
-  Boxes,
-  Repeat,
-  LogOut,
+  Stack,
+  ArrowsClockwise,
+  SignOut,
   CreditCard,
-  UserCircle2,
-  DollarSign,
-  BarChart2,
+  UserCircle,
+  CurrencyDollar,
+  ChartBar,
   Shield,
   Globe,
   Star,
   Receipt,
   CalendarCheck,
-  ChevronRight,
+  CaretRight,
   MapPin,
-  ScrollText,
-} from "lucide-react";
+  Scroll,
+} from "@phosphor-icons/react";
 
 const ICON_SIZE = 22;
 
@@ -41,7 +41,7 @@ function preloadSales() {
   return salesPreload;
 }
 
-function NavLink({ to, icon, text, location }) {
+function NavLink({ to, icon, text, gradient, location }) {
   const isActive = location.pathname === to || location.pathname.startsWith(to + "/");
   return (
     <Link
@@ -55,13 +55,13 @@ function NavLink({ to, icon, text, location }) {
       }`}
     >
       {isActive && <span className="absolute -left-3.5 top-2 bottom-2 w-1 rounded-r-full bg-cyan-400" />}
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
-        isActive ? "bg-white/10" : "bg-white/[0.04] group-hover:bg-white/[0.08]"
+      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all bg-gradient-to-br ${gradient} ${
+        isActive ? "shadow-md shadow-black/20 ring-2 ring-white/25" : "opacity-80 group-hover:opacity-100"
       }`}>
         {icon}
       </div>
       <span className="text-sm font-semibold truncate">{text}</span>
-      <ChevronRight size={14} className={`ml-auto transition-all ${isActive ? "opacity-80" : "opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0"}`} />
+      <CaretRight size={14} weight="bold" className={`ml-auto transition-all ${isActive ? "opacity-80" : "opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0"}`} />
     </Link>
   );
 }
@@ -75,29 +75,30 @@ export default function Sidebar() {
   const { theme, toggleTheme } = useTheme();
 
   // ── Main menu filtered by per-user module permissions ──
+  const iconProps = { size: ICON_SIZE, weight: "duotone", className: "text-white" };
   const allMenuItems = [
-    { key: "dashboard",  to: "/",          icon: <LayoutDashboard size={ICON_SIZE} className="text-blue-400" />,   text: "Dashboard" },
-    { key: "ventas",     to: "/ventas",    icon: <ShoppingCart    size={ICON_SIZE} className="text-green-500" />,   text: "Sales" },
-    { key: "facturas",   to: "/facturas",  icon: <FileText        size={ICON_SIZE} className="text-purple-500" />,  text: "Invoices" },
-    { key: "clientes",   to: "/clientes",  icon: <Users           size={ICON_SIZE} className="text-yellow-500" />,  text: "Customers" },
-    { key: "productos",  to: "/productos", icon: <Package         size={ICON_SIZE} className="text-pink-500" />,    text: "Products" },
-    { key: "inventario", to: "/inventario",icon: <Boxes           size={ICON_SIZE} className="text-teal-500" />,    text: "Inventory" },
-    { key: "cierres",    to: "/cierres",   icon: <Repeat          size={ICON_SIZE} className="text-cyan-600" />,    text: "Van Closeout" },
-    { key: "cxc",        to: "/cxc",       icon: <CreditCard      size={ICON_SIZE} className="text-orange-400" />,  text: "Accounts Receivable" },
-    { key: "reportes",       to: "/reportes",      icon: <BarChart2      size={ICON_SIZE} className="text-rose-400" />,    text: "Reports" },
-    { key: "suscripciones", to: "/suscripciones", icon: <CalendarCheck  size={ICON_SIZE} className="text-violet-400" />, text: "Subscriptions" },
-    { key: "suplidores",    to: "/suplidores",    icon: <UserCircle2    size={ICON_SIZE} className="text-indigo-400" />,  text: "Suppliers" },
-    { key: "comisiones",    to: "/comisiones",    icon: <DollarSign     size={ICON_SIZE} className="text-emerald-400" />, text: "Commissions" },
+    { key: "dashboard",  to: "/",          icon: <Gauge          {...iconProps} />, gradient: "from-blue-500 to-indigo-600",   text: "Dashboard" },
+    { key: "ventas",     to: "/ventas",    icon: <ShoppingCart   {...iconProps} />, gradient: "from-emerald-400 to-green-600", text: "Sales" },
+    { key: "facturas",   to: "/facturas",  icon: <FileText       {...iconProps} />, gradient: "from-purple-500 to-violet-600", text: "Invoices" },
+    { key: "clientes",   to: "/clientes",  icon: <Users          {...iconProps} />, gradient: "from-amber-400 to-orange-500",  text: "Customers" },
+    { key: "productos",  to: "/productos", icon: <Package        {...iconProps} />, gradient: "from-pink-500 to-rose-600",     text: "Products" },
+    { key: "inventario", to: "/inventario",icon: <Stack          {...iconProps} />, gradient: "from-teal-400 to-cyan-600",     text: "Inventory" },
+    { key: "cierres",    to: "/cierres",   icon: <ArrowsClockwise {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: "Van Closeout" },
+    { key: "cxc",        to: "/cxc",       icon: <CreditCard     {...iconProps} />, gradient: "from-orange-400 to-amber-600",  text: "Accounts Receivable" },
+    { key: "reportes",       to: "/reportes",      icon: <ChartBar      {...iconProps} />, gradient: "from-rose-400 to-pink-600",     text: "Reports" },
+    { key: "suscripciones", to: "/suscripciones", icon: <CalendarCheck {...iconProps} />, gradient: "from-violet-500 to-purple-600", text: "Subscriptions" },
+    { key: "suplidores",    to: "/suplidores",    icon: <UserCircle    {...iconProps} />, gradient: "from-indigo-400 to-blue-600",   text: "Suppliers" },
+    { key: "comisiones",    to: "/comisiones",    icon: <CurrencyDollar {...iconProps} />, gradient: "from-emerald-400 to-teal-600", text: "Commissions" },
   ];
 
   const menuBase = allMenuItems.filter(item => puedeVerModulo(item.key));
 
   // ── Admin-only section (never per-user configurable) ──
   const adminMenu = [
-    { to: "/online",   icon: <Globe   size={ICON_SIZE} className="text-sky-400"    />, text: "Online Store" },
-    { to: "/tax",      icon: <Receipt size={ICON_SIZE} className="text-amber-400"  />, text: "Tax / Impuestos" },
-    { to: "/usuarios", icon: <Shield  size={ICON_SIZE} className="text-purple-400" />, text: "Users" },
-    { to: "/auditoria", icon: <ScrollText size={ICON_SIZE} className="text-rose-400" />, text: "Audit Log" },
+    { to: "/online",   icon: <Globe      {...iconProps} />, gradient: "from-sky-400 to-blue-600",      text: "Online Store" },
+    { to: "/tax",      icon: <Receipt    {...iconProps} />, gradient: "from-amber-400 to-orange-600",  text: "Tax / Impuestos" },
+    { to: "/usuarios", icon: <Shield     {...iconProps} />, gradient: "from-purple-500 to-fuchsia-600", text: "Users" },
+    { to: "/auditoria", icon: <Scroll {...iconProps} />, gradient: "from-rose-400 to-red-600",      text: "Audit Log" },
   ];
 
   function handleLogout() {
@@ -130,7 +131,7 @@ export default function Sidebar() {
                 : "bg-blue-900/60 text-blue-300 border border-blue-700"
             }`}
           >
-            {isAdmin ? <Shield size={10} /> : isSupervisor ? <Star size={10} /> : <Users2 size={10} />}
+            {isAdmin ? <Shield weight="duotone" size={10} /> : isSupervisor ? <Star weight="duotone" size={10} /> : <UsersThree weight="duotone" size={10} />}
             {isAdmin ? "Admin" : isSupervisor ? "Supervisor" : "Vendedor"}
           </span>
         </div>
@@ -138,8 +139,8 @@ export default function Sidebar() {
         {/* ── Main nav ── */}
         <div className="px-2 mb-1.5 text-[10px] text-slate-500 font-bold uppercase tracking-[0.18em]">Workspace</div>
         <nav className="flex flex-col gap-0.5 overflow-y-auto pr-1 pb-3 sidebar-scroll">
-          {menuBase.map(({ to, icon, text }) => (
-            <NavLink key={to} to={to} icon={icon} text={text} location={location} />
+          {menuBase.map(({ to, icon, text, gradient }) => (
+            <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
           ))}
 
           {/* ── Admin-only section ── */}
@@ -147,10 +148,10 @@ export default function Sidebar() {
             <>
               <div className="h-px bg-white/10 my-2" />
               <div className="text-[10px] text-slate-500 px-2 py-1 font-bold uppercase tracking-[0.18em] flex items-center gap-1.5">
-                <Shield size={10} /> Admin
+                <Shield weight="duotone" size={10} /> Admin
               </div>
-              {adminMenu.map(({ to, icon, text }) => (
-                <NavLink key={to} to={to} icon={icon} text={text} location={location} />
+              {adminMenu.map(({ to, icon, text, gradient }) => (
+                <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
               ))}
             </>
           )}
@@ -186,7 +187,7 @@ export default function Sidebar() {
           onClick={handleLogout}
           className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-400/15 py-2 px-3 rounded-xl font-semibold text-xs flex items-center gap-2 justify-center transition-colors"
         >
-          <LogOut size={15} /> Log out
+          <SignOut weight="duotone" size={15} /> Log out
         </button>
 
         {/* Store Mode toggle */}
