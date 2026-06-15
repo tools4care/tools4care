@@ -154,6 +154,158 @@ function SignaturePad({ onSignature }) {
 }
 
 /* ═══════════════════════════════════════════════
+   Contract & Signature — fullscreen on mobile, modal on desktop
+═══════════════════════════════════════════════ */
+function ContractSignModal({ contractText, onConfirm, onClose }) {
+  const [firma, setFirma] = useState(null);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 md:flex md:items-center md:justify-center md:p-4">
+      <div className="bg-white h-full md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl w-full flex flex-col overflow-hidden">
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-4 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <PenTool size={18} className="text-white"/>
+            <p className="text-white font-bold">Contract & Signature</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-white/70 hover:text-white">
+            <X size={22}/>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <pre className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm text-gray-600 whitespace-pre-wrap">{contractText}</pre>
+          <div>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Customer Signature</p>
+            <SignaturePad onSignature={setFirma} />
+          </div>
+        </div>
+        <div className="border-t border-gray-200 p-4 flex gap-3 flex-shrink-0">
+          <button type="button" onClick={onClose}
+            className="flex-1 border-2 border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-semibold hover:bg-gray-50">
+            Cancel
+          </button>
+          <button type="button" onClick={() => onConfirm(firma)} disabled={!firma}
+            className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-3 rounded-xl text-sm font-bold disabled:opacity-40">
+            Save Signature
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
+   Add / Update Card (for an existing rental)
+═══════════════════════════════════════════════ */
+function CardManageForm({ rental, onSaved, onClose }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [cardReady, setCardReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSave() {
+    if (!stripe || !elements || !cardReady) return;
+    setSaving(true);
+    setError("");
+    try {
+      let customerId = rental.stripe_customer_id;
+      if (!customerId) {
+        const { data: custData } = await supabase.functions.invoke("stripe-subscriptions", {
+          body: { action: "create_customer", name: rental.clientes?.nombre, email: rental.clientes?.email, phone: rental.clientes?.telefono,
+            metadata: { supabase_cliente_id: rental.cliente_id } },
+        });
+        if (!custData?.ok) throw new Error(custData?.error || "Could not create customer");
+        customerId = custData.customer_id;
+      }
+
+      const { data: siData } = await supabase.functions.invoke("stripe-subscriptions", {
+        body: { action: "create_setup_intent", customer_id: customerId },
+      });
+      if (!siData?.ok) throw new Error(siData?.error || "Could not create setup intent");
+
+      const cardElement = elements.getElement(CardElement);
+      const { setupIntent, error: stripeErr } = await stripe.confirmCardSetup(siData.client_secret, {
+        payment_method: { card: cardElement, billing_details: { name: rental.clientes?.nombre || "" } },
+      });
+      if (stripeErr) throw new Error(stripeErr.message);
+      const pm = setupIntent.payment_method;
+
+      const { data: pmList } = await supabase.functions.invoke("stripe-subscriptions", {
+        body: { action: "list_payment_methods", customer_id: customerId },
+      });
+      const card = pmList?.payment_methods?.find(p => p.id === pm) || pmList?.payment_methods?.[0];
+
+      await supabase.from("alquileres").update({
+        stripe_customer_id: customerId,
+        stripe_payment_method_id: pm,
+        card_last4: card?.last4 || null,
+        card_brand: card?.brand || null,
+      }).eq("id", rental.id);
+
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4 flex items-center justify-between">
+          <p className="text-white font-bold">{rental.card_last4 ? "Update Card" : "Add Card"}</p>
+          <button type="button" onClick={onClose} className="text-white/70 hover:text-white">
+            <X size={20}/>
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-gray-500">{rental.clientes?.nombre}</p>
+          {rental.card_last4 && (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Current card on file: <span className="font-semibold capitalize">{rental.card_brand} ···· {rental.card_last4}</span>. Saving a new card will replace it for future auto-charges.
+            </p>
+          )}
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-5 shadow-lg">
+            <div className="bg-white/10 rounded-xl px-4 py-3">
+              <CardElement
+                onChange={e => setCardReady(e.complete)}
+                options={{ style: { base: { fontSize: "15px", color: "#ffffff", fontFamily: "monospace", letterSpacing: "0.05em", "::placeholder": { color: "#94a3b8" } }, invalid: { color: "#f87171" } }, hidePostalCode: false }}
+              />
+            </div>
+            {error && (
+              <div className="mt-3 bg-red-500/20 border border-red-500/30 rounded-lg px-3 py-2">
+                <p className="text-red-300 text-xs">{error}</p>
+              </div>
+            )}
+            <p className="text-slate-400 text-xs mt-3">🔒 Secured by Stripe. Card data never touches our servers.</p>
+          </div>
+          <div className="flex gap-3">
+            <button type="button" onClick={onClose}
+              className="flex-1 border-2 border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">
+              Cancel
+            </button>
+            <button type="button" onClick={handleSave} disabled={!cardReady || saving}
+              className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-2.5 rounded-xl text-sm font-bold disabled:opacity-40 flex items-center justify-center gap-2">
+              {saving && <RefreshCw size={14} className="animate-spin"/>}
+              {saving ? "Saving…" : "Save Card"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CardManageModal({ rental, onSaved, onClose }) {
+  return (
+    <Elements stripe={stripePromise}>
+      <CardManageForm rental={rental} onSaved={onSaved} onClose={onClose} />
+    </Elements>
+  );
+}
+
+/* ═══════════════════════════════════════════════
    New Rental Form (client + product + contract + card)
 ═══════════════════════════════════════════════ */
 function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
@@ -182,6 +334,7 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
     nota: "",
   });
   const [firma, setFirma] = useState(null);
+  const [showContractModal, setShowContractModal] = useState(false);
 
   // Client search
   useEffect(() => {
@@ -410,8 +563,29 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
         {/* STEP 4: Contract + signature */}
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2 block">4. Contract & Signature</label>
-          <pre className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-xs text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto mb-3">{contractText}</pre>
-          <SignaturePad onSignature={setFirma} />
+          {firma ? (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-emerald-700 text-sm font-semibold">
+                <CheckCircle size={16}/> Contract signed
+              </div>
+              <button type="button" onClick={() => setShowContractModal(true)}
+                className="text-xs font-bold text-emerald-700 underline">
+                View / Re-sign
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setShowContractModal(true)}
+              className="w-full border-2 border-dashed border-gray-300 rounded-xl p-4 flex items-center justify-center gap-2 text-sm font-semibold text-gray-600 hover:border-emerald-400 hover:text-emerald-600 transition-all">
+              <PenTool size={16}/> Open Contract & Sign
+            </button>
+          )}
+          {showContractModal && (
+            <ContractSignModal
+              contractText={contractText}
+              onConfirm={(sig) => { setFirma(sig); setShowContractModal(false); }}
+              onClose={() => setShowContractModal(false)}
+            />
+          )}
         </div>
 
         {/* STEP 5: Card (optional) */}
@@ -526,6 +700,7 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete }) {
   const [pagos, setPagos] = useState([]);
   const [loadingPagos, setLoadingPagos] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCardModal, setShowCardModal] = useState(false);
   const hasCard = r.stripe_customer_id && r.stripe_payment_method_id;
   const isOverdue = r.estado === "atrasado" || (r.proxima_renta && r.proxima_renta < new Date().toISOString().slice(0,10) && r.estado === "en_renta");
 
@@ -592,7 +767,7 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete }) {
           </div>
         </div>
 
-        <div className={`mt-2 rounded-xl px-4 py-2.5 flex items-center justify-between ${hasCard ? "bg-slate-800" : "bg-gray-100"}`}>
+        <div className={`mt-2 rounded-xl px-4 py-2.5 flex items-center justify-between gap-2 ${hasCard ? "bg-slate-800" : "bg-gray-100"}`}>
           {hasCard ? (
             <>
               <div className="flex items-center gap-2">
@@ -602,7 +777,13 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete }) {
                   <p className="text-white font-bold text-sm capitalize">{r.card_brand || "Card"} ···· {r.card_last4}</p>
                 </div>
               </div>
-              <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-semibold">Auto-charge</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-semibold">Auto-charge</span>
+                <button type="button" onClick={() => setShowCardModal(true)}
+                  className="text-xs font-semibold text-slate-300 underline hover:text-white">
+                  Update
+                </button>
+              </div>
             </>
           ) : (
             <>
@@ -610,10 +791,17 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete }) {
                 <AlertCircle size={15} className="text-amber-500"/>
                 <p className="text-xs text-gray-600 font-medium">No card on file — cash payment</p>
               </div>
-              <span className="text-xs bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-semibold">Manual</span>
+              <button type="button" onClick={() => setShowCardModal(true)}
+                className="text-xs font-bold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full hover:bg-amber-200 transition-colors">
+                Add Card
+              </button>
             </>
           )}
         </div>
+        {showCardModal && (
+          <CardManageModal rental={r} onClose={() => setShowCardModal(false)}
+            onSaved={() => { setShowCardModal(false); onChargeDone?.(); }} />
+        )}
 
         {r.contrato_firma && (
           <p className="mt-2 text-xs text-violet-500 font-semibold flex items-center gap-1">
