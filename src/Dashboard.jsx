@@ -2136,6 +2136,7 @@ export default function Dashboard() {
     setDailyActions((prev) => ({ ...prev, loading: true }));
     const today = dayjs().format("YYYY-MM-DD");
     const from = dayjs().subtract(20, "day").format("YYYY-MM-DD");
+    const weekAhead = dayjs().add(7, "day").format("YYYY-MM-DD");
 
     try {
       const [salesResult, closeoutsResult, debtResult, subscriptionsResult, rentalsResult] = await Promise.all([
@@ -2152,7 +2153,7 @@ export default function Dashboard() {
           .select("id, proxima_renta, renta_semanal, clientes(nombre)")
           .eq("van_id", vanId)
           .in("estado", ["en_renta", "atrasado"])
-          .lte("proxima_renta", today)
+          .lte("proxima_renta", weekAhead)
           .order("proxima_renta", { ascending: true }),
       ]);
 
@@ -2662,10 +2663,10 @@ export default function Dashboard() {
     },
     {
       key: "rentals",
-      label: "Rentals to collect",
+      label: "Rentals due this week",
       detail: dailyActions.nextRental
         ? `Next: ${dailyActions.nextRental.clientes?.nombre || "—"} · due ${dayjs(dailyActions.nextRental.proxima_renta).format("MM/DD")}`
-        : "No rental payments due",
+        : "No rental payments due this week",
       count: dailyActions.rentalsDue,
       path: "/alquileres",
       icon: Wrench,
