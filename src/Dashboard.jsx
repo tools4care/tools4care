@@ -2137,6 +2137,15 @@ export default function Dashboard() {
     const today = dayjs().format("YYYY-MM-DD");
     const from = dayjs().subtract(20, "day").format("YYYY-MM-DD");
     const weekAhead = dayjs().add(7, "day").format("YYYY-MM-DD");
+    const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
+
+    let rentalsQuery = supabase
+      .from("alquileres")
+      .select("id, proxima_renta, renta_semanal, clientes(nombre)")
+      .in("estado", ["en_renta", "atrasado"])
+      .lte("proxima_renta", weekAhead)
+      .order("proxima_renta", { ascending: true });
+    if (!isAdmin) rentalsQuery = rentalsQuery.eq("van_id", vanId);
 
     try {
       const [salesResult, closeoutsResult, debtResult, subscriptionsResult, rentalsResult] = await Promise.all([
@@ -2148,13 +2157,7 @@ export default function Dashboard() {
           .select("id, proxima_entrega")
           .eq("estado", "activa")
           .lte("proxima_entrega", today),
-        supabase
-          .from("alquileres")
-          .select("id, proxima_renta, renta_semanal, clientes(nombre)")
-          .eq("van_id", vanId)
-          .in("estado", ["en_renta", "atrasado"])
-          .lte("proxima_renta", weekAhead)
-          .order("proxima_renta", { ascending: true }),
+        rentalsQuery,
       ]);
 
       const closedDates = new Set((closeoutsResult.data || []).map((row) => String(row.fecha).slice(0, 10)));
