@@ -332,13 +332,15 @@ function EliminarModal({ usuario: u, onClose, onEliminado, onCascadeError }) {
       // Config / session tables — delete entirely
       supabaseAdmin.from("usuarios_vans").delete().eq("usuario_id", u.id),
       supabaseAdmin.from("usuario_sesion").delete().eq("usuario_id", u.id),
-      supabaseAdmin.from("cierres_van").delete().eq("usuario_id", u.id),
       supabaseAdmin.from("ventas_pendientes").delete().eq("usuario_id", u.id),
       supabaseAdmin.from("configuraciones_comisiones").delete().eq("vendedor_id", u.id),
       supabaseAdmin.from("comisiones_calculadas").delete().eq("vendedor_id", u.id),
       // Business data — preserve records but nullify the user reference
       supabaseAdmin.from("ventas").update({ usuario_id: null }).eq("usuario_id", u.id),
       supabaseAdmin.from("cierres_dia").update({ usuario_id: null }).eq("usuario_id", u.id),
+      // cierres_van rows are referenced by ventas/pagos.cierre_id, so they can't
+      // be hard-deleted — nullify the user reference instead, like cierres_dia
+      supabaseAdmin.from("cierres_van").update({ usuario_id: null }).eq("usuario_id", u.id),
       supabaseAdmin.from("acuerdos_pago").update({ usuario_id: null }).eq("usuario_id", u.id),
       supabaseAdmin.from("cxc_movimientos").update({ usuario_id: null }).eq("usuario_id", u.id),
       supabaseAdmin.from("cliente_credito_movimientos").update({ usuario_id: null }).eq("usuario_id", u.id),
