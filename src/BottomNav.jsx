@@ -21,6 +21,7 @@ import {
   ArrowRight,
   X,
   Warning,
+  Wrench,
 } from "@phosphor-icons/react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -45,6 +46,7 @@ const MORE_ITEMS = [
   { path: "/suplidores", label: "Suppliers",    icon: UserCircle,    gradient: "from-blue-400 to-indigo-600" },
   { path: "/reportes",       label: "Reports",       icon: ChartBar,      gradient: "from-rose-400 to-pink-600" },
   { path: "/suscripciones", label: "Subscriptions", icon: CalendarCheck, gradient: "from-violet-500 to-purple-600" },
+  { path: "/alquileres",    label: "Rentals",       icon: Wrench,        gradient: "from-emerald-500 to-teal-600" },
   { path: "/van",            label: "Change VAN",    icon: Compass,       gradient: "from-amber-400 to-orange-600" },
   { path: "/emergencia",    label: "Essentials",    icon: Warning,       gradient: "from-cyan-400 to-blue-600" },
 ];

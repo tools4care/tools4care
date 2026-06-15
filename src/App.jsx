@@ -43,6 +43,9 @@ const Reportes = lazy(() => import('./Reportes'));
 
 // 📦 Suscripciones
 const Suscripciones = lazy(() => import('./Suscripciones'));
+
+// 🛠 Alquileres (equipment rentals)
+const Alquileres = lazy(() => import('./Alquileres'));
 const GlobalSearch = lazy(() => import('./components/GlobalSearch'));
 
 // 🧾 Tax / Impuestos
@@ -234,6 +237,9 @@ export default function App() {
 
             {/* 📦 SUSCRIPCIONES */}
             <Route path="suscripciones" element={<Suscripciones />} />
+
+            {/* 🛠 ALQUILERES (equipment rentals) */}
+            <Route path="alquileres" element={<Alquileres />} />
 
             {/* 🧾 TAX / IMPUESTOS */}
             <Route path="tax" element={<AdminRoute><TaxConfig /></AdminRoute>} />
