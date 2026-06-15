@@ -602,9 +602,25 @@ function ResetPasswordModal({ usuario: u, onClose, onDone }) {
 
     const { error: err } = await supabaseAdmin.auth.admin.updateUserById(u.id, { password });
     if (err) {
-      setError("Error: " + err.message);
-      setSaving(false);
-      return;
+      // No auth.users record for this id (e.g. a row created directly in `usuarios`) —
+      // create one with the same id so it links to the existing usuarios row.
+      if (err.status === 404 || err.message.toLowerCase().includes("not found")) {
+        const { error: createErr } = await supabaseAdmin.auth.admin.createUser({
+          id: u.id,
+          email: u.email,
+          password,
+          email_confirm: true,
+        });
+        if (createErr) {
+          setError("Error: " + createErr.message);
+          setSaving(false);
+          return;
+        }
+      } else {
+        setError("Error: " + err.message);
+        setSaving(false);
+        return;
+      }
     }
     onDone();
   }
