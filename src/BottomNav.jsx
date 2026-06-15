@@ -111,7 +111,7 @@ export default function BottomNav() {
     <>
       {/* ── Bottom tab bar ──────────────────────────────── */}
       <nav
-        className="fixed bottom-2 left-2 right-2 bg-white/95 border border-slate-200/80 shadow-[0_12px_35px_rgba(15,23,42,0.18)] z-50 flex justify-around items-center h-[66px] rounded-2xl lg:hidden backdrop-blur-md overflow-hidden"
+        className="fixed bottom-2 left-2 right-2 bg-white/95 dark:bg-slate-800/95 border border-slate-200/80 dark:border-slate-700/80 shadow-[0_12px_35px_rgba(15,23,42,0.18)] z-50 flex justify-around items-center h-[66px] rounded-2xl lg:hidden backdrop-blur-md overflow-hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {items.map(({ to, label, icon: Icon, action, color, activeColor, activeBg }) => {

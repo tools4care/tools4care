@@ -4,6 +4,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../supabaseClient";
 import { ScrollText, RefreshCw } from "lucide-react";
+import PageHeader from "../components/ui/PageHeader";
+import { SkeletonRow } from "../components/ui/Skeleton";
 
 const PAGE_SIZE = 20;
 
@@ -115,66 +117,63 @@ export default function AuditoriaLog() {
   return (
     <div className="max-w-5xl mx-auto">
       {/* Header */}
-      <div className="bg-gradient-to-br from-slate-800 to-purple-900 text-white rounded-2xl px-6 py-5 mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 bg-white/15 rounded-xl flex items-center justify-center">
-            <ScrollText size={22} />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold">Audit Log</h1>
-            <p className="text-purple-200 text-xs mt-0.5">Credit limit changes, price edits, discounts and returns</p>
-          </div>
-        </div>
-        <button
-          onClick={cargar}
-          disabled={loading}
-          className="w-9 h-9 bg-white/10 hover:bg-white/20 rounded-xl flex items-center justify-center transition-all"
-          title="Reload"
-        >
-          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-        </button>
-      </div>
+      <PageHeader
+        icon={ScrollText}
+        title="Audit Log"
+        subtitle="Credit limit changes, price edits, discounts and returns"
+        color="purple"
+        actions={
+          <button
+            onClick={cargar}
+            disabled={loading}
+            className="w-9 h-9 bg-white/10 hover:bg-white/20 rounded-xl flex items-center justify-center transition-all"
+            title="Reload"
+          >
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+          </button>
+        }
+      />
 
       {/* Filters */}
-      <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 mb-4 flex flex-wrap gap-3 items-end">
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 mb-4 flex flex-wrap gap-3 items-end">
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">Action</label>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Action</label>
           <select
             value={accion}
             onChange={(e) => setAccion(e.target.value)}
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+            className="border border-slate-300 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-lg px-2 py-1.5 text-sm"
           >
             {ACCIONES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">User</label>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">User</label>
           <input
             type="text"
             value={usuarioQ}
             onChange={(e) => setUsuarioQ(e.target.value)}
             placeholder="Search by name…"
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+            className="border border-slate-300 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-lg px-2 py-1.5 text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">From</label>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm" />
+          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">From</label>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border border-slate-300 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-lg px-2 py-1.5 text-sm" />
         </div>
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">To</label>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm" />
+          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">To</label>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border border-slate-300 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-lg px-2 py-1.5 text-sm" />
         </div>
       </div>
 
       {error && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 mb-4 text-sm">{error}</div>
+        <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-xl px-4 py-3 mb-4 text-sm">{error}</div>
       )}
 
       {/* Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+          <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 text-xs uppercase">
             <tr>
               <th className="text-left px-4 py-2">Date</th>
               <th className="text-left px-4 py-2">User</th>
@@ -183,19 +182,22 @@ export default function AuditoriaLog() {
             </tr>
           </thead>
           <tbody>
+            {loading && rows.length === 0 && (
+              Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} columns={4} />)
+            )}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={4} className="text-center text-slate-400 py-8">No audit entries found.</td></tr>
+              <tr><td colSpan={4} className="text-center text-slate-400 dark:text-slate-500 py-8">No audit entries found.</td></tr>
             )}
             {rows.map((row) => (
-              <tr key={row.id} className="border-t border-slate-100">
-                <td className="px-4 py-2 whitespace-nowrap text-slate-600">{fmtDate(row.created_at)}</td>
-                <td className="px-4 py-2 whitespace-nowrap">{row.usuario_nombre || "—"}</td>
+              <tr key={row.id} className="border-t border-slate-100 dark:border-slate-700">
+                <td className="px-4 py-2 whitespace-nowrap text-slate-600 dark:text-slate-300">{fmtDate(row.created_at)}</td>
+                <td className="px-4 py-2 whitespace-nowrap dark:text-slate-200">{row.usuario_nombre || "—"}</td>
                 <td className="px-4 py-2 whitespace-nowrap">
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${ACCION_BADGE[row.accion] || "bg-slate-100 text-slate-600 border-slate-200"}`}>
                     {ACCIONES.find((a) => a.value === row.accion)?.label || row.accion}
                   </span>
                 </td>
-                <td className="px-4 py-2 text-slate-700">
+                <td className="px-4 py-2 text-slate-700 dark:text-slate-300">
                   {describeChange(row)}
                   {row.nota ? <span className="text-slate-400"> — {row.nota}</span> : null}
                 </td>
@@ -206,13 +208,13 @@ export default function AuditoriaLog() {
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between mt-4 text-sm text-slate-500">
+      <div className="flex items-center justify-between mt-4 text-sm text-slate-500 dark:text-slate-400">
         <span>{total} entries</span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page <= 1 || loading}
-            className="px-3 py-1.5 rounded-lg border border-slate-300 disabled:opacity-40"
+            className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 disabled:opacity-40"
           >
             Prev
           </button>
@@ -220,7 +222,7 @@ export default function AuditoriaLog() {
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page >= totalPages || loading}
-            className="px-3 py-1.5 rounded-lg border border-slate-300 disabled:opacity-40"
+            className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 disabled:opacity-40"
           >
             Next
           </button>

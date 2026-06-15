@@ -23,6 +23,7 @@ import {
   ComposedChart,
   Cell,
 } from "recharts";
+import { SkeletonCard } from "./components/ui/Skeleton";
 
 const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = import.meta.env.VITE_CXC_SECRET || "#cxcadmin2025";
@@ -1933,10 +1934,10 @@ export default function CuentasPorCobrar() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-slate-900 dark:to-slate-900 pb-20">
       <div className="w-full max-w-7xl mx-auto p-3 sm:p-6">
         {/* Header */}
-        <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-4 sm:p-6 mb-4">
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
@@ -2073,10 +2074,7 @@ export default function CuentasPorCobrar() {
         {/* List */}
         <div className="space-y-3">
           {loading && (
-            <div className="bg-white rounded-xl p-8 text-center border-2 border-gray-200 shadow-lg">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-blue-600 mx-auto mb-4"></div>
-              <div className="text-gray-500 font-semibold">Loading customers...</div>
-            </div>
+            Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)
           )}
 
           {!loading && rows.length === 0 && (
@@ -2097,7 +2095,7 @@ export default function CuentasPorCobrar() {
               const addrStr = parseAddr(r.direccion);
               const stale = scoreEstaDesactualizado(r.score_base, usePct);
               return (
-                <div key={r.cliente_id} className="bg-white border border-gray-200 rounded-2xl shadow-md overflow-hidden">
+                <div key={r.cliente_id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-md overflow-hidden">
                   {/* Header */}
                   <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 pt-4 pb-3">
                     <div className="flex items-start justify-between gap-2">

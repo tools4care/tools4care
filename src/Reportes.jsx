@@ -8,6 +8,7 @@ import {
   CartesianGrid, PieChart, Pie, Cell, Legend,
 } from "recharts";
 import { loadPdfLibs } from "./utils/lazyPdf";
+import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
@@ -546,8 +547,8 @@ function CierreDiarioReport({ van }) {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="day" tick={{ fontSize: 11 }} />
                 <YAxis tickFormatter={v => `$${v}`} tick={{ fontSize: 11 }} />
-                <Tooltip formatter={v => fmtCurrency(v)} />
-                <Legend />
+                <Tooltip formatter={v => fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
+                <Legend {...CHART_LEGEND_STYLE} />
                 <Bar dataKey="Vendido"    fill="#6366f1" radius={[3,3,0,0]} />
                 <Bar dataKey="Cobrado"    fill="#22c55e" radius={[3,3,0,0]} />
                 <Bar dataKey="Pend. CxC" fill="#f59e0b" radius={[3,3,0,0]} />
