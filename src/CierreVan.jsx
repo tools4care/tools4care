@@ -138,7 +138,7 @@ function easternDayBounds(isoDay) {
 /* ========================= Main Component ========================= */
 export default function CierreVan() {
   const { van } = useVan();
-  const { usuario } = useUsuario();
+  const { usuario, setUsuario } = useUsuario();
   const navigate = useNavigate();
   const { toast } = useToast();
   // ============================
@@ -358,11 +358,72 @@ export default function CierreVan() {
 
         console.log('📊 Cargando totales desde RPC para:', { p_from, p_to });
 
-        const { data: cierresPrevios, error: cierresPreviosError } = await supabase
-          .from("cierres_dia")
-          .select("fecha, created_at, periodo_hasta, numero_cierre, total_efectivo, total_tarjeta, total_transferencia, total_otros")
-          .eq("van_id", van.id)
-          .in("fecha", fechasSeleccionadas);
+        // Estas lecturas son independientes entre sí — antes se esperaban una
+        // por una (varios round trips en serie), lo que hacía que los números
+        // aparecieran de a poco después de que el spinner ya había terminado.
+        // Cada una se aísla con su propio catch para que, si una falla, las
+        // demás sigan completándose (igual que los try/catch individuales de antes).
+        const safe = (p, fallback) => p.then((r) => r ?? fallback).catch(() => fallback);
+
+        const [
+          { data: cierresPrevios, error: cierresPreviosError },
+          rpcResult,
+          { data: otherSales },
+          { data: pagosData },
+          { data: devData },
+          arSummary,
+        ] = await Promise.all([
+          supabase
+            .from("cierres_dia")
+            .select("fecha, created_at, periodo_hasta, numero_cierre, total_efectivo, total_tarjeta, total_transferencia, total_otros")
+            .eq("van_id", van.id)
+            .in("fecha", fechasSeleccionadas),
+          // 🎯 CLAVE: Este RPC calcula correctamente sin duplicar
+          supabase.rpc("closeout_pre_resumen_filtrado", { p_van_id: van.id, p_from, p_to }),
+          // The legacy RPC does not expose pago_otro. Add it explicitly so
+          // checks/other payment methods are not silently omitted.
+          safe(supabase
+            .from("ventas")
+            .select("fecha, created_at, pago_otro")
+            .eq("van_id", van.id)
+            .neq("tipo", "devolucion")
+            .gte("fecha", p_from + "T00:00:00")
+            .lte("fecha", p_to + "T23:59:59"), { data: [] }),
+          // Pagos CxC standalone desde pantalla Clientes. `idem` identifica
+          // pagos directos de CxC; pagos aplicados dentro de una venta usan
+          // `idem_key` y ya están incluidos en los totales de la venta.
+          safe(supabase
+            .from("pagos")
+            .select("id, monto, metodo_pago, fecha_pago, cliente_id, clientes:cliente_id(nombre)")
+            .eq("van_id", van.id)
+            .not("idem", "is", null)
+            .gte("fecha_pago", p_from + "T00:00:00")
+            .lte("fecha_pago", p_to + "T23:59:59"), { data: [] }),
+          // Descontar únicamente devoluciones donde realmente salió dinero.
+          // Las reducciones de CxC usan credito_tienda y no afectan el cierre.
+          safe(supabase
+            .from("ventas")
+            .select("created_at, total_venta, metodo_pago")
+            .eq("van_id", van.id)
+            .eq("tipo", "devolucion")
+            .eq("estado_pago", "reembolsado")
+            .gte("created_at", p_from + "T00:00:00")
+            .lte("created_at", p_to + "T23:59:59"), { data: [] }),
+          // CxC movement summary: informational only; never added to cash twice.
+          safe(Promise.all([
+            supabase.from("ventas")
+              .select("total_venta,total_pagado")
+              .eq("van_id", van.id).neq("tipo", "devolucion")
+              .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
+            supabase.from("pagos")
+              .select("monto").eq("van_id", van.id)
+              .gte("fecha_pago", p_from + "T00:00:00").lte("fecha_pago", p_to + "T23:59:59"),
+            supabase.from("cxc_movimientos")
+              .select("monto,tipo").eq("van_id", van.id)
+              .in("tipo", ["devolucion", "credito_tienda"])
+              .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
+          ]), [{ data: [] }, { data: [] }, { data: [] }]),
+        ]);
         if (cierresPreviosError) throw cierresPreviosError;
 
         const previousMap = {};
@@ -383,16 +444,7 @@ export default function CierreVan() {
         });
         setCierresPreviosPorFecha(previousMap);
 
-        // 🎯 CLAVE: Este RPC calcula correctamente sin duplicar
-        const { data, error } = await supabase.rpc(
-          "closeout_pre_resumen_filtrado",
-          {
-            p_van_id: van.id,
-            p_from,
-            p_to,
-          }
-        );
-
+        const { data, error } = rpcResult;
         if (error) {
           console.error("❌ RPC error:", error);
           throw error;
@@ -416,100 +468,46 @@ export default function CierreVan() {
           console.log(`💰 Totales para ${iso}:`, map[iso]);
         });
 
-        // The legacy RPC does not expose pago_otro. Add it explicitly so
-        // checks/other payment methods are not silently omitted.
-        try {
-          const { data: otherSales } = await supabase
-            .from("ventas")
-            .select("fecha, created_at, pago_otro")
-            .eq("van_id", van.id)
-            .neq("tipo", "devolucion")
-            .gte("fecha", p_from + "T00:00:00")
-            .lte("fecha", p_to + "T23:59:59");
+        (otherSales || []).forEach((sale) => {
+          const iso = String(sale.fecha || sale.created_at || "").slice(0, 10);
+          if (!iso || !fechasSeleccionadas.includes(iso)) return;
+          if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
+          map[iso].other = Number(map[iso].other || 0) + Number(sale.pago_otro || 0);
+        });
 
-          (otherSales || []).forEach((sale) => {
-            const iso = String(sale.fecha || sale.created_at || "").slice(0, 10);
-            if (!iso || !fechasSeleccionadas.includes(iso)) return;
-            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
-            map[iso].other = Number(map[iso].other || 0) + Number(sale.pago_otro || 0);
-          });
-        } catch (_) { /* pago_otro unavailable */ }
+        (pagosData || []).forEach((p) => {
+          const iso = String(p.fecha_pago || "").slice(0, 10);
+          if (!iso) return;
+          if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
+          const amount = Number(p.monto || 0);
+          const method = normalizeCloseoutMethod(p.metodo_pago);
+          // The closeout RPC already includes standalone CxC cash, card and
+          // transfer payments. It has no "other" bucket, so only supplement
+          // checks/other here to avoid counting standard methods twice.
+          if (method === "other") {
+            map[iso].other = Number(map[iso].other || 0) + amount;
+          }
+        });
+        setAbonosCxC(pagosData || []);
 
-        // Pagos CxC standalone desde pantalla Clientes.
-        // `idem` identifica pagos directos de CxC; pagos aplicados dentro de una
-        // venta usan `idem_key` y ya están incluidos en los totales de la venta.
-        try {
-          const { data: pagosData } = await supabase
-            .from("pagos")
-            .select("id, monto, metodo_pago, fecha_pago, cliente_id, clientes:cliente_id(nombre)")
-            .eq("van_id", van.id)
-            .not("idem", "is", null)
-            .gte("fecha_pago", p_from + "T00:00:00")
-            .lte("fecha_pago", p_to + "T23:59:59");
+        (devData || []).forEach((r) => {
+          const iso = String(r.created_at || "").slice(0, 10);
+          if (!iso || !fechasSeleccionadas.includes(iso)) return;
+          if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
+          const monto = Number(r.total_venta || 0);
+          const method = normalizeCloseoutMethod(r.metodo_pago);
+          map[iso][method] = Number(map[iso][method] || 0) - monto;
+          map[iso].refunds = Number(map[iso].refunds || 0) + monto;
+          map[iso][`${method}Refunds`] = Number(map[iso][`${method}Refunds`] || 0) + monto;
+        });
 
-          (pagosData || []).forEach((p) => {
-            const iso = String(p.fecha_pago || "").slice(0, 10);
-            if (!iso) return;
-            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
-            const amount = Number(p.monto || 0);
-            const method = normalizeCloseoutMethod(p.metodo_pago);
-            // The closeout RPC already includes standalone CxC cash, card and
-            // transfer payments. It has no "other" bucket, so only supplement
-            // checks/other here to avoid counting standard methods twice.
-            if (method === "other") {
-              map[iso].other = Number(map[iso].other || 0) + amount;
-            }
-          });
-
-          setAbonosCxC(pagosData || []);
-        } catch (_) { /* pagos table unavailable */ }
-
-        // Descontar únicamente devoluciones donde realmente salió dinero.
-        // Las reducciones de CxC usan credito_tienda y no afectan el cierre.
-        try {
-          const { data: devData } = await supabase
-            .from("ventas")
-            .select("created_at, total_venta, metodo_pago")
-            .eq("van_id", van.id)
-            .eq("tipo", "devolucion")
-            .eq("estado_pago", "reembolsado")
-            .gte("created_at", p_from + "T00:00:00")
-            .lte("created_at", p_to + "T23:59:59");
-
-          (devData || []).forEach((r) => {
-            const iso = String(r.created_at || "").slice(0, 10);
-            if (!iso || !fechasSeleccionadas.includes(iso)) return;
-            if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
-            const monto = Number(r.total_venta || 0);
-            const method = normalizeCloseoutMethod(r.metodo_pago);
-            map[iso][method] = Number(map[iso][method] || 0) - monto;
-            map[iso].refunds = Number(map[iso].refunds || 0) + monto;
-            map[iso][`${method}Refunds`] = Number(map[iso][`${method}Refunds`] || 0) + monto;
-          });
-        } catch (_) { /* ignorar si falla */ }
-
-        // CxC movement summary: informational only; never added to cash twice.
-        try {
-          const [{ data: salesForAr }, { data: debtPayments }, { data: arMoves }] = await Promise.all([
-            supabase.from("ventas")
-              .select("total_venta,total_pagado")
-              .eq("van_id", van.id).neq("tipo", "devolucion")
-              .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
-            supabase.from("pagos")
-              .select("monto").eq("van_id", van.id)
-              .gte("fecha_pago", p_from + "T00:00:00").lte("fecha_pago", p_to + "T23:59:59"),
-            supabase.from("cxc_movimientos")
-              .select("monto,tipo").eq("van_id", van.id)
-              .in("tipo", ["devolucion", "credito_tienda"])
-              .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
-          ]);
-          const deudaNueva = (salesForAr || []).reduce(
-            (s, v) => s + Math.max(0, Number(v.total_venta || 0) - Number(v.total_pagado || 0)), 0
-          );
-          const pagosDeuda = (debtPayments || []).reduce((s, p) => s + Number(p.monto || 0), 0);
-          const reducciones = (arMoves || []).reduce((s, m) => s + Number(m.monto || 0), 0);
-          setCxcResumen({ deudaNueva, reducciones, pagosDeuda, cambioNeto: deudaNueva - reducciones - pagosDeuda });
-        } catch (_) { /* summary is optional */ }
+        const [{ data: salesForAr }, { data: debtPayments }, { data: arMoves }] = arSummary;
+        const deudaNueva = (salesForAr || []).reduce(
+          (s, v) => s + Math.max(0, Number(v.total_venta || 0) - Number(v.total_pagado || 0)), 0
+        );
+        const pagosDeuda = (debtPayments || []).reduce((s, p) => s + Number(p.monto || 0), 0);
+        const reducciones = (arMoves || []).reduce((s, m) => s + Number(m.monto || 0), 0);
+        setCxcResumen({ deudaNueva, reducciones, pagosDeuda, cambioNeto: deudaNueva - reducciones - pagosDeuda });
 
         // El RPC devuelve el acumulado del día. Restar todos los cierres
         // anteriores deja únicamente los movimientos del próximo corte.
@@ -559,11 +557,10 @@ useEffect(() => {
   if (!fechasSeleccionadas.length || !van?.id) return;
 
   const cargarTodas = async () => {
-    let temp = [];
-    for (const fecha of fechasSeleccionadas) {
-      const t = await loadTransaccionesDelDia(fecha);
-      temp = [...temp, ...t];
-    }
+    const porFecha = await Promise.all(
+      fechasSeleccionadas.map((fecha) => loadTransaccionesDelDia(fecha))
+    );
+    const temp = porFecha.flat();
     setTransacciones(
       temp.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     );
@@ -581,37 +578,36 @@ useEffect(() => {
     setTipoMensaje("info");
 
     try {
-      const ventasTemp = {};
+      // Cargar datos para cada fecha en paralelo (antes era secuencial: una
+      // consulta por fecha esperando a la anterior, lo que hacía que los
+      // números aparecieran de a poco después del spinner).
+      const resultados = await Promise.all(
+        fechasSeleccionadas.map(async (fecha) => {
+          const { start, end } = easternDayBounds(fecha);
 
-      // Cargar datos para cada fecha
-      for (const fecha of fechasSeleccionadas) {
-        console.log(`📅 Cargando datos para ${fecha}`);
+          let ventasQuery = supabase
+            .from("ventas")
+            .select(`
+              id, created_at, total_venta, total_pagado, estado_pago,
+              cliente_id, clientes:cliente_id (id, nombre),
+              pago, metodo_pago
+            `)
+            .eq("van_id", van.id)
+            .neq("tipo", "devolucion")
+            .gte("created_at", start)
+            .lte("created_at", end)
+            .order("created_at", { ascending: false });
+          const priorCutoff = cierresPreviosPorFecha[fecha]?.lastClosedAt;
+          if (priorCutoff) ventasQuery = ventasQuery.gt("created_at", priorCutoff);
+          const { data: ventas, error: ventasError } = await ventasQuery;
 
-        // Usar Eastern Time para los rangos
-        const { start, end } = easternDayBounds(fecha);
+          if (ventasError) throw ventasError;
+          console.log(`✅ ${ventas?.length || 0} ventas cargadas para ${fecha}`);
+          return [fecha, ventas || []];
+        })
+      );
 
-        // Cargar ventas del día (solo para mostrar — excluir devoluciones)
-        let ventasQuery = supabase
-          .from("ventas")
-          .select(`
-            id, created_at, total_venta, total_pagado, estado_pago,
-            cliente_id, clientes:cliente_id (id, nombre),
-            pago, metodo_pago
-          `)
-          .eq("van_id", van.id)
-          .neq("tipo", "devolucion")
-          .gte("created_at", start)
-          .lte("created_at", end)
-          .order("created_at", { ascending: false });
-        const priorCutoff = cierresPreviosPorFecha[fecha]?.lastClosedAt;
-        if (priorCutoff) ventasQuery = ventasQuery.gt("created_at", priorCutoff);
-        const { data: ventas, error: ventasError } = await ventasQuery;
-
-        if (ventasError) throw ventasError;
-        ventasTemp[fecha] = ventas || [];
-        console.log(`✅ ${ventas?.length || 0} ventas cargadas para ${fecha}`);
-      }
-
+      const ventasTemp = Object.fromEntries(resultados);
       setVentasPorFecha(ventasTemp);
 
       const totalVentas = Object.values(ventasTemp).reduce(
@@ -789,6 +785,16 @@ useEffect(() => {
     }
   };
 
+  /* ========================= Close system after report ========================= */
+  const closeSystemAfterReport = () => {
+    toast.success("Report sent. Closing session…");
+    setTimeout(async () => {
+      await supabase.auth.signOut();
+      setUsuario(null);
+      navigate("/login");
+    }, 1500);
+  };
+
   /* ========================= Email Report ========================= */
   const handleSendEmailReport = async () => {
     if (!reportEmail.trim()) return;
@@ -900,6 +906,7 @@ useEffect(() => {
       if (error) throw new Error(error.message || "Failed to send email");
       if (!data?.ok) throw new Error(data?.error || "Failed to send email");
       setEmailSent(true);
+      closeSystemAfterReport();
     } catch (e) {
       console.error("Email error:", e);
       toast.error("Error sending email: " + e.message);
@@ -1196,6 +1203,7 @@ useEffect(() => {
       );
       setMensaje("PDF report generated successfully");
       setTipoMensaje("success");
+      closeSystemAfterReport();
     } catch (error) {
       setMensaje("Error generating PDF: " + error.message);
       setTipoMensaje("error");
