@@ -14,6 +14,20 @@ import { computeSaleFinancials, calcularPagoMinimo, policyLimit, getClientBalanc
 import { logAudit } from "./lib/auditLog";
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
+import { useSyncGlobal } from "./hooks/SyncContext";
+import {
+  barcodeVariants,
+  compactSearchTerm,
+  filterProductRowsLocal,
+  hasExactCodeMatch,
+  isCodeLikeSearch,
+} from "./utils/productSearch";
+import {
+  clientDigits,
+  filterClientsLocal,
+  isPhoneLikeSearch,
+  phoneSearchVariants,
+} from "./utils/clientSearch";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 const AgreementModal = lazy(() => import("./components/AgreementModal"));
 const CreditRiskPanel = lazy(() => import("./components/CreditRiskPanel"));
@@ -24,11 +38,16 @@ const ClientPaymentView = lazy(() => import("./components/ClientPaymentView"));
 import { useOffline } from "./hooks/useOffline";
 import {
   guardarVentaOffline,
+  guardarClientesCache,
+  ajustarClienteBalanceLocal,
   guardarInventarioVan,
   obtenerInventarioVan,
+  descontarInventarioVanLocal,
   guardarTopProductos,
   obtenerTopProductos,
   obtenerClientesCache,
+  obtenerMetaClientesCache,
+  obtenerMetaInventarioVan,
 } from "./utils/offlineDB";
 
 /* ========================= Config & Constantes ========================= */
@@ -957,6 +976,12 @@ export default function Sales() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast, confirm: confirmDialog } = useToast();
+  const {
+    syncing: globalSyncing,
+    ventasPendientes: offlinePendingCount,
+    syncError: globalSyncError,
+    sincronizarAhora,
+  } = useSyncGlobal();
 
   // ====================== AGENTE DE CRÉDITO ======================
   const [clientRisk, setClientRisk] = useState(null);
@@ -971,7 +996,7 @@ export default function Sales() {
 // ===========================================================
 async function runCreditAgent(clienteId, montoVenta = 0) {
   try {
-    if (!clienteId) return;
+    if (!clienteId || isOffline) return;
     setAgentLoading(true);
 
     // 1) Historial
@@ -1058,6 +1083,13 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
 
   // HOOKS MODO OFFLINE
   const { isOffline } = useOffline();
+  const [offlineReady, setOfflineReady] = useState({
+    clients: 0,
+    products: 0,
+    lastPrepared: null,
+    loading: false,
+    error: "",
+  });
 
   // Usar el sync global (ya activo en LayoutPrivado — no crear instancia duplicada)
 // 🆕 PENDING SALES EN LA NUBE (reemplaza localStorage)  // <--- AGREGA //
@@ -1085,6 +1117,7 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [selectedClient, setSelectedClient] = useState(null);
   const [focusedClientIdx, setFocusedClientIdx] = useState(-1);  // keyboard nav – client list
   const clientListRef = useRef(null);                            // scroll target – client list
+  const clientSearchSeqRef = useRef(0);
   const [focusedProductIdx, setFocusedProductIdx] = useState(-1); // keyboard nav – product list
   const productListRef = useRef(null);                             // scroll target – product list
 
@@ -1115,6 +1148,11 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   // pendingSales ahora viene del hook cloudPendingSales
   const pendingSales = cloudPendingSales;
   const [modalPendingSales, setModalPendingSales] = useState(false);
+
+  useEffect(() => {
+    if (!modalPendingSales) return;
+    refreshPendingSales({ silent: true });
+  }, [modalPendingSales, refreshPendingSales]);
   
   // ID de la venta pendiente actual en la nube
   const [currentCloudPendingId, setCurrentCloudPendingId] = useState(null);
@@ -1139,7 +1177,6 @@ useEffect(() => {
   const hasOutstandingBalance = invoiceTotal - invoicePaid > 0.005;
   setReturnType(hasOutstandingBalance && selectedClient?.id ? "credit" : "cash");
 }, [selectedInvoice?.id, selectedClient?.id]);
-
 
   const [step, setStep] = useState(1);
 
@@ -1172,6 +1209,108 @@ useEffect(() => {
 
   const [searchingInDB, setSearchingInDB] = useState(false);
 
+  const refreshOfflineReady = useCallback(async () => {
+    const [clientsMeta, inventoryMeta] = await Promise.all([
+      obtenerMetaClientesCache(),
+      obtenerMetaInventarioVan(van?.id),
+    ]);
+    const timestamps = [clientsMeta.timestamp, inventoryMeta.timestamp].filter(Boolean);
+    setOfflineReady((prev) => ({
+      ...prev,
+      clients: clientsMeta.count,
+      products: inventoryMeta.count,
+      lastPrepared: timestamps.length ? timestamps.sort().at(-1) : null,
+      error: "",
+    }));
+  }, [van?.id]);
+
+  const prepareOfflineData = useCallback(async ({ silent = false } = {}) => {
+    if (!van?.id) return;
+
+    if (!navigator.onLine) {
+      await refreshOfflineReady();
+      if (!silent) {
+        toast.warning("Sin internet. Estoy usando los datos offline que ya estén guardados.");
+      }
+      return;
+    }
+
+    setOfflineReady((prev) => ({ ...prev, loading: true, error: "" }));
+    try {
+      const [{ data: clientes, error: clientsError }, { data: inventario, error: inventoryError }] = await Promise.all([
+        supabase
+          .from("clientes_balance")
+          .select("id,nombre,negocio,telefono,email,direccion,balance")
+          .order("nombre", { ascending: true })
+          .limit(3000),
+        supabase
+          .from("stock_van")
+          .select("producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)")
+          .eq("van_id", van.id)
+          .gt("cantidad", 0)
+          .order("nombre", { ascending: true, foreignTable: "productos" })
+          .limit(1200),
+      ]);
+
+      if (clientsError) throw new Error(`Clientes: ${clientsError.message}`);
+      if (inventoryError) throw new Error(`Inventario: ${inventoryError.message}`);
+
+      const cachedClients = (clientes || []).map((c) => ({
+        ...c,
+        _saldo_real: Number(c.balance || 0),
+      }));
+
+      const cachedInventory = (inventario || []).map((row) => ({
+        producto_id: row.producto_id,
+        cantidad: Number(row.cantidad) || 0,
+        productos: {
+          id: row.productos?.id,
+          nombre: row.productos?.nombre || "",
+          precio: Number(row.productos?.precio) || 0,
+          codigo: row.productos?.codigo || "",
+          marca: row.productos?.marca || "",
+          descuento_pct: row.productos?.descuento_pct ?? null,
+          bulk_min_qty: row.productos?.bulk_min_qty ?? null,
+          bulk_unit_price: row.productos?.bulk_unit_price ?? null,
+        },
+      }));
+
+      await Promise.all([
+        guardarClientesCache(cachedClients),
+        guardarInventarioVan(van.id, cachedInventory),
+        guardarTopProductos(van.id, cachedInventory.slice(0, 50)),
+      ]);
+
+      setAllProducts(cachedInventory);
+      setTopProducts(cachedInventory.slice(0, 50));
+      setProductsLoaded(cachedInventory.length > 0);
+      await refreshOfflineReady();
+
+      if (!silent) {
+        toast.success(`Offline listo: ${cachedClients.length} clientes y ${cachedInventory.length} productos guardados.`);
+      }
+    } catch (err) {
+      const message = err?.message || "No se pudo preparar el modo offline.";
+      setOfflineReady((prev) => ({ ...prev, error: message }));
+      if (!silent) toast.error(message);
+    } finally {
+      setOfflineReady((prev) => ({ ...prev, loading: false }));
+    }
+  }, [van?.id, refreshOfflineReady, toast]);
+
+  useEffect(() => {
+    refreshOfflineReady();
+  }, [refreshOfflineReady]);
+
+  useEffect(() => {
+    if (!van?.id || isOffline) return;
+    if (offlineReady.loading) return;
+    if (offlineReady.error) return;
+    if (offlineReady.clients > 0 && offlineReady.products > 0) return;
+    const timer = setTimeout(() => prepareOfflineData({ silent: true }), 1200);
+    return () => clearTimeout(timer);
+  }, [van?.id, isOffline, offlineReady.clients, offlineReady.products, offlineReady.loading, offlineReady.error, prepareOfflineData]);
+
 
   // ---- STRIPE QR Estados
   const [showQRModal, setShowQRModal] = useState(false);
@@ -1185,6 +1324,8 @@ useEffect(() => {
   const autoSaveTimerRef = useRef(null);
   // Ref para el input de búsqueda de productos (focus management)
   const productSearchRef = useRef(null);
+  const productSearchSeqRef = useRef(0);
+  const productStepRefreshRef = useRef(null);
   // Ref para nota de excepción (override de bloqueo de venta)
   const saleOverrideRef = useRef(null);
   // 🆕 ESTADOS PARA FEE DE TARJETA
@@ -1253,7 +1394,10 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 150);
+    const t = setTimeout(
+      () => setDebouncedClientSearch(clientSearch.trim()),
+      isPhoneLikeSearch(clientSearch) ? 35 : 120
+    );
     return () => clearTimeout(t);
   }, [clientSearch]);
 
@@ -1280,11 +1424,31 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
     }
   }, [focusedProductIdx]);
 
+  const searchClientsInOfflineCache = useCallback(async (term) => {
+    const safeTerm = String(term || "").trim().toLowerCase();
+    if (safeTerm.length < 2) return [];
+
+    const cachedClientes = await obtenerClientesCache();
+    if (!cachedClientes.length) return [];
+
+    return filterClientsLocal(cachedClientes, safeTerm, 30)
+      .map((c) => ({
+        ...c,
+        _saldo_real: Number(c._saldo_real ?? c.balance ?? 0),
+      }));
+  }, []);
+
 
   /* ---------- CARGAR CLIENTES RECIENTES ---------- */
   useEffect(() => {
     async function loadRecentClients() {
       if (!van?.id) return;
+
+      if (isOffline) {
+        const cached = await obtenerClientesCache();
+        setRecentClients(cached.slice(0, 5));
+        return;
+      }
       
       const { data } = await supabase
         .from('ventas')
@@ -1292,7 +1456,7 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
           cliente_id,
           created_at,
           clientes:cliente_id (
-            id, nombre, apellido, telefono, negocio, email, direccion
+            id, nombre, telefono, negocio, email, direccion
           )
         `)
         .eq('van_id', van.id)
@@ -1317,12 +1481,13 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
     }
     
     loadRecentClients();
-  }, [van?.id]);
+  }, [van?.id, isOffline]);
 
   /* ---------- CARGAR ESTADÍSTICAS DEL DÍA ---------- */
   useEffect(() => {
     async function loadTodayStats() {
       if (!van?.id) return;
+      if (isOffline) return;
       
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -1344,10 +1509,11 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
     }
     
     loadTodayStats();
-  }, [van?.id]);
+  }, [van?.id, isOffline]);
 
   useEffect(() => {
     async function probeAddressShape() {
+      if (isOffline) return;
       try {
         const { data } = await supabase
           .from("clientes_balance")
@@ -1404,42 +1570,48 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
     }
 
     probeAddressShape();
-  }, []);
-// Verificar si el sistema de acuerdos está disponible
-useEffect(() => {
-  isAgreementSystemAvailable().then(setAgreementSystemReady);
-}, []);
-
+  }, [isOffline]);
 // Verificar si el sistema de acuerdos está disponible
   useEffect(() => {
+    if (isOffline) {
+      setAgreementSystemReady(false);
+      return;
+    }
     isAgreementSystemAvailable().then(setAgreementSystemReady);
-  }, []);
+  }, [isOffline]);
   /* ---------- CLIENTES (búsqueda OPTIMIZADA con CACHE) ---------- */
   useEffect(() => {
     async function loadClients() {
+      const searchId = ++clientSearchSeqRef.current;
       const term = String(debouncedClientSearch || "").trim();
 
       if (term.length < 2) {
         setClients([]);
+        setClientLoading(false);
         return;
+      }
+
+      const cachedLocalResults = filterClientsLocal(
+        [...clientCache.values()].flat(),
+        term,
+        20
+      );
+      if (cachedLocalResults.length > 0) {
+        setClients(cachedLocalResults);
       }
 
       if (clientCache.has(term)) {
         setClients(clientCache.get(term));
+        setClientLoading(false);
         return;
       }
 
       // ✅ OFFLINE: buscar en cache local si no hay conexión
       if (isOffline) {
         try {
-          const cachedClientes = await obtenerClientesCache();
-          if (cachedClientes.length > 0) {
-            const termLower = term.toLowerCase();
-            const resultados = cachedClientes.filter(c =>
-              (c.nombre || '').toLowerCase().includes(termLower) ||
-              (c.negocio || '').toLowerCase().includes(termLower) ||
-              (c.telefono || '').toLowerCase().includes(termLower)
-            ).slice(0, 20);
+          const resultados = await searchClientsInOfflineCache(term);
+          if (searchId !== clientSearchSeqRef.current) return;
+          if (resultados.length > 0) {
             setClients(resultados);
             console.log(`📵 Búsqueda offline: ${resultados.length} clientes encontrados`);
           } else {
@@ -1447,6 +1619,7 @@ useEffect(() => {
             console.warn('📵 No hay cache de clientes disponible');
           }
         } catch (e) {
+          if (searchId !== clientSearchSeqRef.current) return;
           console.error('Error buscando en cache offline:', e);
           setClients([]);
         }
@@ -1456,24 +1629,64 @@ useEffect(() => {
       setClientLoading(true);
       try {
         const safe = term.replace(/[(),%]/g, "").slice(0, 80);
+        const phoneLike = isPhoneLikeSearch(safe);
+        const phoneVariants = phoneSearchVariants(safe);
+        const phoneDigits = clientDigits(safe);
 
-        let primaryFields = ["nombre", "apellido", "negocio", "telefono", "email"];
-        let primaryCols = "id,nombre,apellido,negocio,telefono,email,direccion,balance";
+        let primaryFields = ["nombre", "negocio", "telefono", "email"];
+        let primaryCols = "id,nombre,negocio,telefono,email,direccion,balance";
         
         if (addrSpec.type === "text") {
           primaryFields.push("direccion");
         }
         
-        const primaryOr = primaryFields.map(f => `${f}.ilike.%${safe}%`).join(",");
+        const phoneFilters = phoneVariants.map((v) => `telefono.ilike.%${v}%`);
+        const primaryOr = phoneLike
+          ? [
+              ...phoneFilters,
+              `telefono.ilike.${phoneDigits}%`,
+              `nombre.ilike.%${safe}%`,
+              `negocio.ilike.%${safe}%`,
+              `email.ilike.%${safe}%`,
+            ].filter(Boolean).join(",")
+          : primaryFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
         let baseData = [];
         let needFallbackNoApellido = false;
 
-        let { data: d1, error: e1 } = await supabase
+        const tokens = safe.split(/\s+/).filter(Boolean);
+
+        // Run the independent reads in parallel instead of one-at-a-time —
+        // each round trip was adding 100-300ms of pure network latency to every search.
+        const primaryQueryPromise = supabase
           .from("clientes_balance")
           .select(primaryCols)
           .or(primaryOr)
           .limit(20);
+
+        const jsonAddressQueryPromise = (addrSpec.type === "json" && addrSpec.fields.length > 0)
+          ? supabase
+              .from("clientes_balance")
+              .select("id,nombre,negocio,telefono,email,direccion,balance")
+              .not("direccion", "is", null)
+              .limit(100)
+          : Promise.resolve({ data: [], error: null });
+
+        const andQueryPromise = tokens.length >= 2
+          ? supabase
+              .from("clientes_balance")
+              .select("id,nombre,negocio,telefono,email,direccion,balance")
+              .ilike("nombre", `%${tokens[0]}%`)
+              .or(`negocio.ilike.%${tokens.slice(1).join(" ")}%,telefono.ilike.%${tokens.slice(1).join(" ")}%,email.ilike.%${tokens.slice(1).join(" ")}%`)
+              .limit(10)
+          : Promise.resolve({ data: [], error: null });
+
+        const [
+          { data: d1, error: e1 },
+          { data: allData, error: eAll },
+          { data: dAnd, error: eAnd },
+        ] = await Promise.all([primaryQueryPromise, jsonAddressQueryPromise, andQueryPromise]);
+        if (searchId !== clientSearchSeqRef.current) return;
 
         if (e1) {
           if (e1.code === "42703") {
@@ -1492,87 +1705,69 @@ useEffect(() => {
           }
           
           const fbCols = "id,nombre,negocio,telefono,email,direccion,balance";
-          const fbOr = fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
+          const fbOr = phoneLike
+            ? [
+                ...phoneFilters,
+                `telefono.ilike.${phoneDigits}%`,
+                `nombre.ilike.%${safe}%`,
+                `negocio.ilike.%${safe}%`,
+                `email.ilike.%${safe}%`,
+              ].filter(Boolean).join(",")
+            : fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
           const { data: d2, error: e2 } = await supabase
             .from("clientes_balance")
             .select(fbCols)
             .or(fbOr)
             .limit(20);
+          if (searchId !== clientSearchSeqRef.current) return;
 
           if (e2) {
-            console.warn("Fallback OR sin apellido también falló:", e2);
+            console.warn("Fallback OR de clientes también falló:", e2);
           } else {
             baseData = d2 || baseData;
           }
         }
 
         let jsonAddressData = [];
-        if (addrSpec.type === "json" && addrSpec.fields.length > 0) {
-          try {
-            const { data: allData, error: eAll } = await supabase
-              .from("clientes_balance")
-              .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
-              .not("direccion", "is", null)
-              .limit(100);
+        if (eAll) {
+          console.warn("Búsqueda en dirección JSON falló:", eAll);
+        } else if (allData && addrSpec.type === "json") {
+          const searchLower = safe.toLowerCase();
+          jsonAddressData = allData.filter(client => {
+            if (!client.direccion) return false;
 
-            if (!eAll && allData) {
-              jsonAddressData = allData.filter(client => {
-                if (!client.direccion) return false;
-                
-                let addr = client.direccion;
-                
-                if (typeof addr === "string") {
-                  try {
-                    addr = JSON.parse(addr);
-                  } catch {
-                    return false;
-                  }
-                }
-                
-                if (typeof addr !== "object") return false;
-                
-                const searchLower = safe.toLowerCase();
-                return addrSpec.fields.some(field => {
-                  const value = String(addr[field] || "").toLowerCase();
-                  return value.includes(searchLower);
-                });
-              });
+            let addr = client.direccion;
+
+            if (typeof addr === "string") {
+              try {
+                addr = JSON.parse(addr);
+              } catch {
+                return false;
+              }
             }
-          } catch (e) {
-            console.warn("Búsqueda en dirección JSON falló:", e);
-          }
+
+            if (typeof addr !== "object") return false;
+
+            return addrSpec.fields.some(field => {
+              const value = String(addr[field] || "").toLowerCase();
+              return value.includes(searchLower);
+            });
+          });
         }
 
         let andData = [];
-        const tokens = safe.split(/\s+/).filter(Boolean);
-        if (tokens.length >= 2) {
-          const first = tokens[0];
-          const rest = tokens.slice(1).join(" ");
-
-          try {
-            const { data: dAnd, error: eAnd } = await supabase
-              .from("clientes_balance")
-              .select("id,nombre,apellido,negocio,telefono,email,direccion,balance")
-              .ilike("nombre", `%${first}%`)
-              .ilike("apellido", `%${rest}%`)
-              .limit(10);
-
-            if (eAnd) {
-              if (eAnd.code !== "42703") console.warn("AND nombre+apellido falló:", eAnd);
-            } else {
-              andData = dAnd || [];
-            }
-          } catch (e) {
-            // ignora
-          }
+        if (eAnd) {
+          if (eAnd.code !== "42703") console.warn("AND nombre + negocio/contacto falló:", eAnd);
+        } else {
+          andData = dAnd || [];
         }
 
         const byId = new Map();
         for (const row of [...(baseData || []), ...andData, ...jsonAddressData]) {
           if (row && row.id != null) byId.set(row.id, row);
         }
-        const merged = Array.from(byId.values());
+        const merged = filterClientsLocal(Array.from(byId.values()), safe, 30);
 
         const ids = merged.map((c) => c.id).filter(Boolean);
         let enriched = merged;
@@ -1582,6 +1777,7 @@ useEffect(() => {
             .from("v_cxc_cliente_detalle")
             .select("cliente_id,saldo")
             .in("cliente_id", ids);
+          if (searchId !== clientSearchSeqRef.current) return;
 
           if (eCx) console.warn("Enriquecimiento saldo falló:", eCx);
 
@@ -1612,15 +1808,21 @@ useEffect(() => {
         setClients(Array.isArray(enriched) ? enriched : []);
 
       } catch (err) {
+        if (searchId !== clientSearchSeqRef.current) return;
         console.error("Error searching clients:", err);
-        setClients([]);
+        const cachedResults = await searchClientsInOfflineCache(term);
+        if (searchId !== clientSearchSeqRef.current) return;
+        setClients(cachedResults);
+        if (cachedResults.length > 0) {
+          toast.info("Sin conexión estable. Mostrando clientes guardados offline.", 4000);
+        }
       } finally {
-        setClientLoading(false);
+        if (searchId === clientSearchSeqRef.current) setClientLoading(false);
       }
     }
 
     loadClients();
-  }, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length]);
+  }, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length, isOffline, searchClientsInOfflineCache, clientCache, toast]);
 
 /* ---------- Historial al seleccionar cliente ---------- */
 useEffect(() => {
@@ -1628,6 +1830,24 @@ useEffect(() => {
     const id = selectedClient?.id;
     if (!id) {
       setClientHistory({ has: false, ventas: 0, pagos: 0, loading: false, lastSaleDate: null });
+      return;
+    }
+
+    if (isOffline) {
+      const cachedBalance = getClientBalance(selectedClient);
+      setClientHistory({
+        has: cachedBalance > 0,
+        ventas: 0,
+        pagos: 0,
+        loading: false,
+        lastSaleDate: null,
+      });
+      setCxcLimit(selectedClient?.limite_manual ?? selectedClient?.limite_politica ?? null);
+      setCxcAvailable(null);
+      setCxcBalance(cachedBalance);
+      setClientStoreCredit(0);
+      setAcuerdosResumen(null);
+      setReglasCredito(null);
       return;
     }
     
@@ -1761,7 +1981,7 @@ if (appMode === 'devolucion') {
     setClientHistory({ has, ventas: vCount || 0, pagos: pCount || 0, loading: false, lastSaleDate });
   }
   fetchHistory();
-}, [selectedClient?.id, appMode, van?.id]); // 🆕 AGREGAR 'appMode' Y 'van?.id' a las dependencias
+}, [selectedClient?.id, appMode, van?.id, isOffline]); // 🆕 AGREGAR 'appMode' Y 'van?.id' a las dependencias
 
   /* ---------- Traer límite/disponible/saldo ---------- */
   useEffect(() => {
@@ -1775,6 +1995,14 @@ if (appMode === 'devolucion') {
         setCxcLimit(null);
         setCxcAvailable(null);
         setCxcBalance(null);
+        setClientStoreCredit(0);
+        return;
+      }
+      if (isOffline) {
+        const cachedBalance = getClientBalance(selectedClient);
+        setCxcLimit(selectedClient?.limite_manual ?? selectedClient?.limite_politica ?? null);
+        setCxcAvailable(null);
+        setCxcBalance(cachedBalance);
         setClientStoreCredit(0);
         return;
       }
@@ -1805,7 +2033,7 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [selectedClient?.id]);
+  }, [selectedClient?.id, isOffline]);
 
   /* ========== TOP productos ========== */
   function normalizeFromRpc(arr = []) {
@@ -2039,43 +2267,50 @@ useEffect(() => {
       await guardarTopProductos(van.id, rows);
     } catch (err) {
       console.error("Todos los fallbacks de TOP fallaron:", err?.message || err);
+      const cachedInventory = await obtenerInventarioVan(van.id);
+      if (cachedInventory.length > 0) {
+        setAllProducts(cachedInventory);
+        setProductsLoaded(true);
+        setTopProducts(cachedInventory.slice(0, 50));
+        setProductError("");
+        return;
+      }
+      const cachedProducts = await obtenerTopProductos(van.id);
+      if (cachedProducts.length > 0) {
+        setTopProducts(cachedProducts);
+        setAllProducts(cachedProducts);
+        setProductsLoaded(true);
+        setProductError("");
+        return;
+      }
       setTopProducts([]);
-      setProductError("No se pudieron cargar los productos (TOP).");
+      setProductError("No se pudieron cargar los productos. No hay caché offline para esta van.");
     }
   }
 
   loadTopProducts();
 }, [van?.id, invTick, isOffline]);
 
-/* ---------- INVENTARIO COMPLETO - LAZY LOADING ---------- */
+/* ---------- INVENTARIO COMPLETO - PRELOAD PARA BÚSQUEDA RÁPIDA ---------- */
 useEffect(() => {
-  if (productSearch.trim().length === 0) {
+  if (step !== 2 || !van?.id) {
     setAllProductsLoading(false);
-    setProductsLoaded(false);
     return;
   }
 
-  if (productsLoaded && allProducts.length > 0) {
-    return;
-  }
+  if (productsLoaded && allProducts.length > 0) return;
 
   async function loadAllProducts() {
-    setAllProducts([]);
     setAllProductsLoading(true);
-    if (!van?.id) return setAllProductsLoading(false);
 
-    // 🆕 Si está offline, cargar desde caché
     if (isOffline) {
-      console.log('📵 Offline: Cargando inventario completo desde caché...');
       const cachedInventory = await obtenerInventarioVan(van.id);
       if (cachedInventory.length > 0) {
         setAllProducts(cachedInventory);
         setProductsLoaded(true);
         setAllProductsLoading(false);
-        console.log(`✅ ${cachedInventory.length} productos cargados desde caché (inventario completo)`);
         return;
       } else {
-        console.warn('⚠️ No hay inventario completo en caché');
         setAllProducts([]);
         setProductsLoaded(false);
         setAllProductsLoading(false);
@@ -2110,34 +2345,45 @@ useEffect(() => {
       }));
       
       setAllProducts(Array.isArray(rows) ? rows : []);
-
       setProductsLoaded(true);
       setAllProductsLoading(false);
       
-      // 🆕 Guardar inventario completo en caché
       await guardarInventarioVan(van.id, rows);
-      console.log(`✅ ${rows.length} productos guardados en caché (inventario completo)`);
       
       return;
     } catch (err) {
       console.warn("Inventario completo falló:", err?.message || err);
-      setAllProducts([]);
-      setProductsLoaded(false);
+      const cachedInventory = await obtenerInventarioVan(van.id);
+      if (cachedInventory.length > 0) {
+        setAllProducts(cachedInventory);
+        setProductsLoaded(true);
+      } else {
+        setAllProducts([]);
+        setProductsLoaded(false);
+      }
     } finally {
       setAllProductsLoading(false);
     }
   }
 
-  const timer = setTimeout(() => {
-    loadAllProducts();
-  }, 300);
+  const timer = setTimeout(loadAllProducts, 80);
 
   return () => clearTimeout(timer);
-}, [van?.id, productSearch, invTick, productsLoaded, allProducts.length, isOffline]);
+}, [step, van?.id, invTick, productsLoaded, allProducts.length, isOffline]);
 
   useEffect(() => {
-    if (step === 2) reloadInventory();
-  }, [step]);
+    if (step !== 2 || !van?.id) return;
+
+    const refreshKey = `${van.id}:${topProducts.length}:${allProducts.length}:${productsLoaded ? "loaded" : "empty"}`;
+    if (productStepRefreshRef.current === refreshKey) return;
+
+    const needsVisibleInventory = topProducts.length === 0 && allProducts.length === 0;
+    const needsSearchInventory = productSearch.trim().length > 0 && !productsLoaded && !allProductsLoading;
+    if (needsVisibleInventory || needsSearchInventory) {
+      productStepRefreshRef.current = refreshKey;
+      reloadInventory();
+    }
+  }, [step, van?.id, topProducts.length, allProducts.length, productsLoaded, productSearch, allProductsLoading]);
 
   /* ---------- Walk-in return: load recent sales without a client ---------- */
   async function loadWalkinSales(searchTerm = "") {
@@ -2263,115 +2509,142 @@ useEffect(() => {
     }
   }
 
-  /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
-  useEffect(() => {
-    const handler = (e) => {
-      const tag  = document.activeElement?.tagName?.toLowerCase();
-      const inInput = tag === "input" || tag === "select" || tag === "textarea";
-      const isCtrl  = e.ctrlKey || e.metaKey; // Ctrl on Win, Cmd on Mac
-
-      // Ctrl/Cmd + Shift + C = jump to Customer search
-      if (isCtrl && e.shiftKey && e.key.toLowerCase() === "c" && !inInput) {
-        e.preventDefault();
-        const el = document.getElementById("client-search-input");
-        if (el) { setStep(1); setTimeout(() => { el.focus(); el.select(); }, 50); }
-        return;
-      }
-
-      // Ctrl/Cmd + Shift + B = jump to product search (B = Browse products)
-      if (isCtrl && e.shiftKey && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        const el = document.getElementById("product-search-input");
-        if (el) { setStep(2); setTimeout(() => { el.focus(); el.select(); }, 50); }
-        return;
-      }
-
-      // Ctrl/Cmd + Enter = Save sale (step 3) — works even from inside inputs
-      if (isCtrl && e.key === "Enter" && step === 3 && !saving) {
-        e.preventDefault();
-        saveSale();
-        return;
-      }
-
-      // Enter (outside inputs, step 3) = Save sale
-      if (e.key === "Enter" && step === 3 && !saving && !inInput) {
-        e.preventDefault();
-        saveSale();
-        return;
-      }
-
-      // Escape = close POS actions or go back one step
-      if (e.key === "Escape") {
-        if (showPOSActions) { setShowPOSActions(false); return; }
-        if (step === 3) { setStep(2); return; }
-        if (step === 2) { setStep(1); return; }
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [step, saving, showPOSActions]); // eslint-disable-line
-
-  /* ---------- Filtro del buscador ---------- */
+ /* ---------- Filtro del buscador ---------- */
  useEffect(() => {
-  const filter = productSearch.trim().toLowerCase();
+  const rawFilter = productSearch.trim();
+  const filter = rawFilter.toLowerCase();
   const searchActive = filter.length > 0;
+  const codeLike = isCodeLikeSearch(rawFilter);
+  const searchId = ++productSearchSeqRef.current;
 
   if (!searchActive) {
     setProducts(topProducts.filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0));
     setNoProductFound("");
     setProductExistsNotInVan("");
+    setSearchingInDB(false);
     return;
   }
+
+  const source = allProducts.length > 0 ? allProducts : topProducts;
+  const hasFullInventory = productsLoaded && allProducts.length > 0;
+  const localResults = filterProductRowsLocal(source, rawFilter, { inStockOnly: true, limit: 50 });
 
   // ── MODO OFFLINE: buscar solo en caché (allProducts ya cargado) ──
   if (isOffline) {
-    const source = allProducts.length > 0 ? allProducts : topProducts;
-    const filterVariants = [filter];
-    const withoutZeros = filter.replace(/^0+/, '');
-    if (withoutZeros && withoutZeros !== filter) filterVariants.push(withoutZeros);
-    if (!filter.startsWith('0')) filterVariants.push('0' + filter);
-
-    const results = source.filter(r => {
-      const p = r.productos || r;
-      const nombre = (p.nombre || r.nombre || "").toLowerCase();
-      const codigo = (p.codigo || r.codigo || "").toLowerCase();
-      const marca  = (p.marca  || r.marca  || "").toLowerCase();
-      return filterVariants.some(v =>
-        nombre.includes(v) || codigo.includes(v) || marca.includes(v)
-      );
-    }).filter(r => Number(r.cantidad ?? r.stock ?? 0) > 0);
-
-    setProducts(results);
-    setNoProductFound(results.length === 0 ? filter : "");
+    setProducts(localResults);
+    setNoProductFound(localResults.length === 0 ? filter : "");
     setProductExistsNotInVan("");
+    setSearchingInDB(false);
     return;
   }
+
+  if (localResults.length > 0) {
+    setProducts(localResults);
+    setNoProductFound("");
+    setProductExistsNotInVan("");
+    setSearchingInDB(false);
+
+    // If the full van inventory is already in memory, local search is the
+    // authoritative fast path. Avoid a second remote query on every keystroke.
+    if (hasFullInventory && (!codeLike || hasExactCodeMatch(localResults, rawFilter))) {
+      return;
+    }
+
+    if (codeLike && hasExactCodeMatch(localResults, rawFilter)) {
+      setSearchingInDB(false);
+      return;
+    }
+  }
+
+  const mapVanStockRows = (rows) => (rows || []).map(row => ({
+    producto_id: row.producto_id,
+    cantidad: Number(row.cantidad || 0),
+    productos: row.productos,
+    nombre: row.productos?.nombre || "",
+    precio: Number(row.productos?.precio || 0),
+    codigo: row.productos?.codigo || "",
+    marca: row.productos?.marca || ""
+  }));
+
+  const findStockForProducts = async (productsData) => {
+    if (!productsData?.length) return [];
+    const productIds = productsData.map(p => p.id);
+    const { data: stockData, error: stockErr } = await supabase
+      .from("stock_van")
+      .select("producto_id, cantidad")
+      .eq("van_id", van.id)
+      .in("producto_id", productIds)
+      .gt("cantidad", 0);
+    if (stockErr) throw stockErr;
+
+    const stockMap = new Map((stockData || []).map(s => [s.producto_id, Number(s.cantidad || 0)]));
+    return productsData
+      .filter(p => stockMap.has(p.id))
+      .map(p => ({
+        producto_id: p.id,
+        cantidad: stockMap.get(p.id) || 0,
+        productos: p,
+        nombre: p.nombre,
+        precio: Number(p.precio || 0),
+        codigo: p.codigo,
+        marca: p.marca
+      }));
+  };
 
   async function searchInDatabase() {
     if (!van?.id) return;
 
-    setSearchingInDB(true);
+    if (productSearchSeqRef.current !== searchId) return;
+    setSearchingInDB(localResults.length === 0 || !codeLike);
     try {
-      // Generar variantes del código para búsqueda flexible
-      const filterVariants = [];
-      filterVariants.push(filter);
-      
-      const withoutZeros = filter.replace(/^0+/, '');
-      if (withoutZeros && withoutZeros !== filter) {
-        filterVariants.push(withoutZeros);
-      }
-      
-      if (!filter.startsWith('0')) {
-        filterVariants.push('0' + filter);
-      }
-      
-      if (!filter.startsWith('00')) {
-        filterVariants.push('00' + filter);
+      const filterVariants = barcodeVariants(rawFilter);
+      const codePrefix = filterVariants.map(v => `codigo.ilike.${v}%`).join(',');
+      const compactFilter = compactSearchTerm(rawFilter).toLowerCase();
+
+      if (codeLike && filterVariants.length > 0) {
+        const { data: exactProducts, error: exactErr } = await supabase
+          .from("productos")
+          .select("id, nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price")
+          .in("codigo", filterVariants)
+          .limit(20);
+
+        if (exactErr) throw exactErr;
+        if (productSearchSeqRef.current !== searchId) return;
+
+        if (exactProducts?.length) {
+          const results = await findStockForProducts(exactProducts);
+          if (productSearchSeqRef.current !== searchId) return;
+          setProducts(results);
+          setNoProductFound(results.length === 0 ? "" : "");
+          setProductExistsNotInVan(results.length === 0 ? filter : "");
+          return;
+        }
+
+        if (codePrefix) {
+          const { data: prefixedProducts, error: prefixErr } = await supabase
+            .from("productos")
+            .select("id, nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price")
+            .or(codePrefix)
+            .limit(50);
+
+          if (prefixErr) throw prefixErr;
+          if (productSearchSeqRef.current !== searchId) return;
+
+          if (prefixedProducts?.length) {
+            const results = await findStockForProducts(prefixedProducts);
+            if (productSearchSeqRef.current !== searchId) return;
+            setProducts(results);
+            setNoProductFound(results.length === 0 ? "" : "");
+            setProductExistsNotInVan(results.length === 0 ? filter : "");
+            return;
+          }
+        }
       }
 
-      const codigoConditions = filterVariants
-        .map(v => `codigo.ilike.%${v}%`)
-        .join(',');
+      const codigoConditions = codeLike
+        ? codePrefix
+        : filterVariants.map(v => `codigo.ilike.%${v}%`).join(',');
+      const textFilter = codeLike ? (compactFilter || filter) : filter;
 
       const { data, error } = await supabase
         .from("stock_van")
@@ -2392,10 +2665,12 @@ useEffect(() => {
         .eq("van_id", van.id)
         .gt("cantidad", 0)
         .or(
-          `nombre.ilike.%${filter}%,${codigoConditions},marca.ilike.%${filter}%`,
+          `nombre.ilike.%${textFilter}%,${codigoConditions},marca.ilike.%${textFilter}%`,
           { foreignTable: 'productos' }
         )
         .limit(50);
+
+      if (productSearchSeqRef.current !== searchId) return;
 
       if (error) {
         console.error("Error buscando productos:", error);
@@ -2413,7 +2688,7 @@ useEffect(() => {
             .from("productos")
             .select("id, nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price")
             .in("id", productIds)
-            .or(`nombre.ilike.%${filter}%,${codigoConditions},marca.ilike.%${filter}%`);
+            .or(`nombre.ilike.%${textFilter}%,${codigoConditions},marca.ilike.%${textFilter}%`);
 
           if (productsData) {
             const stockMap = new Map(stockData.map(s => [s.producto_id, s.cantidad]));
@@ -2442,15 +2717,7 @@ useEffect(() => {
       }
 
       if (data && data.length > 0) {
-        const results = data.map(row => ({
-          producto_id: row.producto_id,
-          cantidad: Number(row.cantidad || 0),
-          productos: row.productos,
-          nombre: row.productos?.nombre || "",
-          precio: Number(row.productos?.precio || 0),
-          codigo: row.productos?.codigo || "",
-          marca: row.productos?.marca || ""
-        }));
+        const results = mapVanStockRows(data);
 
         setProducts(results);
         setNoProductFound("");
@@ -2462,7 +2729,7 @@ useEffect(() => {
         const { data: prodCheck } = await supabase
           .from("productos")
           .select("id")
-          .or(`nombre.ilike.%${filter}%,${codigoConditionsCheck},marca.ilike.%${filter}%`)
+          .or(`nombre.ilike.%${textFilter}%,${codigoConditionsCheck},marca.ilike.%${textFilter}%`)
           .limit(1);
 
         if (prodCheck && prodCheck.length > 0) {
@@ -2477,17 +2744,21 @@ useEffect(() => {
       }
     } catch (err) {
       console.error("Error en búsqueda:", err);
-      setProducts([]);
-      setNoProductFound(filter);
+      const cachedInventory = allProducts.length > 0 ? allProducts : await obtenerInventarioVan(van.id);
+      const cachedResults = filterProductRowsLocal(cachedInventory, rawFilter, { inStockOnly: true, limit: 50 });
+
+      if (productSearchSeqRef.current !== searchId) return;
+      setProducts(cachedResults);
+      setNoProductFound(cachedResults.length === 0 ? filter : "");
       setProductExistsNotInVan("");
     } finally {
-      setSearchingInDB(false);
+      if (productSearchSeqRef.current === searchId) setSearchingInDB(false);
     }
   }
 
  const timer = setTimeout(() => {
   searchInDatabase();
-}, 200);
+}, codeLike ? (localResults.length > 0 ? 0 : 40) : 180);
 
   return () => clearTimeout(timer);
 }, [productSearch, van?.id, topProducts, isOffline, allProducts]);
@@ -2594,6 +2865,68 @@ useEffect(() => {
     isOffline,
   }), [saleTotalWithTax, paid, cxcBalance, selectedClient, cxcLimit, cxcAvailable, clientHistory.has, clientStoreCredit, isOffline]);
 
+  const hasClientAccount = !!selectedClient?.id;
+  const remainingToCollect = Math.max(0, Number((totalAPagar - paid).toFixed(2)));
+  const quickSaleNeedsFullPayment = !hasClientAccount && remainingToCollect > 0.005;
+  const creditLimitBlocksSave = hasClientAccount && showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable;
+  const saleSaveBlocked = quickSaleNeedsFullPayment || creditLimitBlocksSave;
+  const saleSaveDisabled = saving || saleSaveBlocked;
+  const saleSaveLabel = saving
+    ? "Saving..."
+    : quickSaleNeedsFullPayment
+      ? `Collect ${fmt(remainingToCollect)}`
+      : "Save Sale";
+  const canSendToAR = hasClientAccount;
+
+  /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
+  useEffect(() => {
+    const handler = (e) => {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const inInput = tag === "input" || tag === "select" || tag === "textarea";
+      const isCtrl = e.ctrlKey || e.metaKey; // Ctrl on Win, Cmd on Mac
+
+      if (isCtrl && e.shiftKey && e.key.toLowerCase() === "c" && !inInput) {
+        e.preventDefault();
+        const el = document.getElementById("client-search-input");
+        if (el) {
+          setStep(1);
+          setTimeout(() => { el.focus(); el.select(); }, 50);
+        }
+        return;
+      }
+
+      if (isCtrl && e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        const el = document.getElementById("product-search-input");
+        if (el) {
+          setStep(2);
+          setTimeout(() => { el.focus(); el.select(); }, 50);
+        }
+        return;
+      }
+
+      if (isCtrl && e.key === "Enter" && step === 3 && !saleSaveDisabled) {
+        e.preventDefault();
+        saveSale();
+        return;
+      }
+
+      if (e.key === "Enter" && step === 3 && !saleSaveDisabled && !inInput) {
+        e.preventDefault();
+        saveSale();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (showPOSActions) { setShowPOSActions(false); return; }
+        if (step === 3) { setStep(2); return; }
+        if (step === 2) { setStep(1); return; }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [step, saleSaveDisabled, showPOSActions]); // eslint-disable-line
+
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
 useEffect(() => {
@@ -2602,7 +2935,7 @@ useEffect(() => {
     const currentPayment = Number(payments[0].monto);
     
     // Si el pago actual es diferente al total a pagar, resetear auto-fill
-    if (paymentAutoFilled && Math.abs(currentPayment - saleTotal) > 0.01) {
+    if (paymentAutoFilled && Math.abs(currentPayment - totalAPagar) > 0.01) {
       setPaymentAutoFilled(false);
     }
   }
@@ -2811,6 +3144,7 @@ useEffect(() => {
 
 function clearSale() {
   // Limpiar búsquedas y listas
+  productStepRefreshRef.current = null;
   setClientSearch("");
   setClients([]);
   setSelectedClient(null);
@@ -2923,7 +3257,7 @@ function clearSale() {
   const handleAddProduct = useCallback((p) => {
     const stockNow = Number(p.cantidad ?? p.stock ?? 0);
     if (!Number.isFinite(stockNow) || stockNow <= 0) {
-      setProductError("Sin stock disponible para este producto.");
+      setProductError("No stock available for this product.");
       return;
     }
     const meta = extractPricingFromRow(p);
@@ -3225,8 +3559,8 @@ async function handleProcessReturn() {
       const maxAvailable = item.cantidad_disponible ?? item.cantidad;
       if (qty > maxAvailable) {
         throw new Error(
-          `No puedes devolver ${qty} de "${item.productos.nombre}". ` +
-          `Disponible para devolver: ${maxAvailable}`
+          `You cannot return ${qty} of "${item.productos.nombre}". ` +
+          `Available to return: ${maxAvailable}`
         );
       }
 
@@ -3400,11 +3734,12 @@ async function handleDeletePendingSale(id) {
   }
 
   /* ===================== Guardar venta ===================== */
-  async function saveSale() {
+  async function saveSale(agreementDataOverride = null) {
+    const resolvedAgreementData = agreementDataOverride || pendingAgreementData;
     setSaving(true);
     setPaymentError("");
      // Si hay crédito y el modal de acuerdo no se ha confirmado aún, mostrarlo
-    const amountToCreditCheck = saleTotal - payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+    const amountToCreditCheck = saleTotalWithTax - payments.reduce((s, p) => s + Number(p.monto || 0), 0);
     
    // Solo mostrar modal de acuerdo si:
 // 1. Hay crédito significativo (> $20)
@@ -3412,7 +3747,7 @@ async function handleDeletePendingSale(id) {
 // 3. No se ha respondido ya
 const esCreditoSignificativo = amountToCreditCheck > 20;
 
-if (esCreditoSignificativo && agreementSystemReady && !pendingAgreementData) {
+	if (selectedClient?.id && esCreditoSignificativo && agreementSystemReady && !resolvedAgreementData) {
   setPendingAgreementData({
     montoCredito: Number(amountToCreditCheck.toFixed(2)),
     saldoActual: creditProfile?.saldo || 0,
@@ -3466,10 +3801,18 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
     try {
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!van?.id) throw new Error("Select a VAN first.");
-      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
-      if (cartSafe.length === 0) throw new Error("Add at least one product.");
+	      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
+	      if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
-      if (amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
+	      if (!selectedClient?.id && amountToCredit > 0.005) {
+	        setPaymentError(
+	          `Quick Sale has no customer account. Collect the remaining ${fmt(amountToCredit)} before saving.`
+	        );
+	        setSaving(false);
+	        return;
+	      }
+
+	      if (selectedClient?.id && amountToCredit > 0 && amountToCredit > creditAvailable + 0.0001) {
         setSaving(false);
         const note = await openSaleBlockModal(
           "credit_limit",
@@ -3487,8 +3830,8 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
           const paid_offline = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
           const oldDebt_offline = Math.max(0, balanceBefore);
           const payOldDebt_offline = Math.min(paid_offline, oldDebt_offline);
-          const paidForSale_offline = Math.min(saleTotal, Math.max(0, paid_offline - payOldDebt_offline));
-          const pendingFromSale_offline = Math.max(0, saleTotal - paidForSale_offline);
+          const paidForSale_offline = Math.min(saleTotalWithTax, Math.max(0, paid_offline - payOldDebt_offline));
+          const pendingFromSale_offline = Math.max(0, saleTotalWithTax - paidForSale_offline);
           const estadoPago_offline = pendingFromSale_offline === 0 ? "pagado" : paidForSale_offline > 0 ? "parcial" : "pendiente";
 
           const nonZeroPays_offline = payments.filter((p) => Number(p.monto) > 0);
@@ -3524,6 +3867,9 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
               total_ingresado: Number(paid_offline.toFixed(2)),
               aplicado_venta: Number(paidForSale_offline.toFixed(2)),
               aplicado_deuda: Number(payOldDebt_offline.toFixed(2)),
+              tax_rate: taxEnabled ? taxRate : 0,
+              tax_amount: taxEnabled ? taxAmount : 0,
+              subtotal: Number(saleTotal.toFixed(2)),
             },
             notas: [notes, saleOverrideRef.current, "[OFFLINE]"].filter(Boolean).join(" ").trim(),
             // Items con campos de descuento compatibles con detalle_ventas
@@ -3551,12 +3897,34 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
           };
 
           await guardarVentaOffline(ventaOffline);
+          const updatedInventory = await descontarInventarioVanLocal(van.id, cartSafe);
+          if (updatedInventory.length > 0) {
+            setAllProducts(updatedInventory);
+            setTopProducts(updatedInventory.slice(0, 50));
+            setProducts((prev) => prev
+              .map((row) => {
+                const sold = cartSafe.find((item) => item.producto_id === row.producto_id);
+                if (!sold) return row;
+                return { ...row, cantidad: Math.max(0, Number(row.cantidad || 0) - Number(sold.cantidad || 0)) };
+              })
+              .filter((row) => Number(row.cantidad || 0) > 0)
+            );
+            await refreshOfflineReady();
+          }
+          if (selectedClient?.id) {
+            const balanceDelta = Number((pendingFromSale_offline - payOldDebt_offline).toFixed(2));
+            const updatedClient = await ajustarClienteBalanceLocal(selectedClient.id, balanceDelta);
+            if (updatedClient) {
+              setSelectedClient((prev) => prev?.id === updatedClient.id ? { ...prev, ...updatedClient } : prev);
+              setCxcBalance(Number(updatedClient._saldo_real ?? updatedClient.balance ?? 0));
+            }
+          }
 
           for (const item of cartSafe) {
             console.log(`📦 Producto ${item.nombre} descontado localmente`);
           }
 
-          toast.info(`Sale saved offline — ${fmt(saleTotal)} for ${selectedClient?.nombre || 'Quick Sale'}. Will sync automatically when connection is restored.`, 6000);
+          toast.info(`Sale saved offline — ${fmt(saleTotalWithTax)} for ${selectedClient?.nombre || 'Quick Sale'}. Will sync automatically when connection is restored.`, 6000);
 
           if (currentPendingId) {
   const updated = removePendingFromLSById(currentPendingId);
@@ -3848,10 +4216,11 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
         pagoTransferencia,
       };
 // 🆕 CREAR ACUERDO DE PAGO si hay crédito
-     if (pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady && !pendingAgreementData?.skipped) {
+      let createdAgreementPlan = null;
+     if (pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady && !resolvedAgreementData?.skipped) {
         try {
           // Usar el plan que el vendedor seleccionó en el modal
-          const cuotasSeleccionadas = pendingAgreementData?.plan?.num_cuotas || null;
+          const cuotasSeleccionadas = resolvedAgreementData?.plan?.num_cuotas || null;
           
           const resultAcuerdo = await crearAcuerdo({
             clienteId: selectedClient.id,
@@ -3860,12 +4229,13 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
             usuarioId: usuario.id,
             montoCredito: Number(pendingFromThisSale.toFixed(2)),
             numCuotas: cuotasSeleccionadas,
-            excepcionVendedor: pendingAgreementData?.isException || false,
-            excepcionNota: pendingAgreementData?.exceptionNote || null,
+            excepcionVendedor: resolvedAgreementData?.isException || false,
+            excepcionNota: resolvedAgreementData?.exceptionNote || null,
           });
 
           if (resultAcuerdo.ok) {
             console.log('✅ Acuerdo de pago creado:', resultAcuerdo.acuerdo.id);
+            createdAgreementPlan = resultAcuerdo.acuerdo.plan;
             setAgreementPlan(resultAcuerdo.acuerdo.plan);
           }
         } catch (e) {
@@ -3874,9 +4244,9 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       }
 
 // ========== 🆕 PEGAR AQUÍ — SMS CON CALENDARIO ==========
-      const agreementPlanForSMS = agreementPlan || (
+      const agreementPlanForSMS = createdAgreementPlan || agreementPlan || (
         pendingFromThisSale > 0
-          ? generarPlanPago(pendingFromThisSale, { numCuotas: pendingAgreementData?.numCuotas })
+          ? generarPlanPago(pendingFromThisSale, { numCuotas: resolvedAgreementData?.numCuotas })
           : null
       );
 
@@ -3978,7 +4348,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
               </div>
             ) : (
               <div className="text-2xl font-bold text-gray-900">
-                Monto a Pagar: {fmt(qrAmount)}
+                Amount to pay: {fmt(qrAmount)}
               </div>
             )}
 
@@ -3986,7 +4356,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
               <div className="bg-white p-4 rounded-xl border-4 border-purple-200 inline-block">
                 <img 
                   src={qrCodeData} 
-                  alt="QR Code de pago" 
+                  alt="Payment QR code" 
                   className="w-64 h-64"
                 />
               </div>
@@ -3994,14 +4364,14 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
 
             <div className="space-y-2">
               <p className="text-gray-700 font-semibold">
-                📱 Escanea el código QR con tu teléfono
+                📱 Scan the QR code with your phone
               </p>
               <p className="text-sm text-gray-600">
-                El cliente puede pagar de forma segura con su tarjeta
+                The customer can pay securely with their card
               </p>
               {hasFee && (
                 <p className="text-xs text-purple-600 font-semibold">
-                  ⚠️ El monto incluye el {cardFeePercentage}% de cargo por procesamiento
+                  ⚠️ Amount includes the {cardFeePercentage}% processing fee
                 </p>
               )}
             </div>
@@ -4010,7 +4380,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                 <div className="flex items-center justify-center gap-2 text-blue-700">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700"></div>
-                  <span className="font-semibold">Esperando confirmación del pago...</span>
+                  <span className="font-semibold">Waiting for payment confirmation...</span>
                 </div>
               </div>
             )}
@@ -4194,14 +4564,14 @@ function renderReturnDetails() {
               <div className="flex-1">
                 <span className="font-semibold text-sm">{item.productos.nombre}</span>
                 <div className="text-xs text-gray-500">
-                  {fmt(item.precio_unitario)} c/u · 
-                  Comprado: {item.cantidad}
+                  {fmt(item.precio_unitario)} ea. · 
+                  Bought: {item.cantidad}
                   {alreadyReturned > 0 && (
                     <span className="text-orange-600 ml-1">
-                      · Ya devuelto: {alreadyReturned}
+                      · Already returned: {alreadyReturned}
                     </span>
                   )}
-                  · <span className="font-semibold text-green-700">Disponible: {maxQty}</span>
+                  · <span className="font-semibold text-green-700">Available: {maxQty}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -4527,6 +4897,74 @@ function renderPendingSalesModal() {
 function renderStepClient() {
   const clientsSafe = Array.isArray(clients) ? clients : [];
   const creditNum = getCreditNumber(selectedClient);
+  const offlineCacheReady = offlineReady.clients > 0 && offlineReady.products > 0;
+  const offlineLastPrepared = offlineReady.lastPrepared
+    ? new Date(offlineReady.lastPrepared).toLocaleString()
+    : "Not prepared";
+  const renderOfflinePrepCard = () => (
+    <details className={`group rounded-xl border px-3 py-2 ${
+      isOffline
+        ? offlineCacheReady ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200"
+        : offlineCacheReady ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"
+    }`}>
+      <summary className="list-none cursor-pointer flex items-center justify-between gap-3">
+        <div className="min-w-0 flex items-center gap-2">
+          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+            isOffline ? offlineCacheReady ? "bg-amber-500" : "bg-red-500" : offlineCacheReady ? "bg-emerald-500" : "bg-slate-400"
+          }`} />
+          <div className="min-w-0">
+            <div className={`text-xs sm:text-sm font-bold truncate ${
+              isOffline ? offlineCacheReady ? "text-amber-800" : "text-red-800" : offlineCacheReady ? "text-emerald-800" : "text-slate-700"
+            }`}>
+              {isOffline ? "Offline" : "Ready offline"} · {offlineReady.clients} clients · {offlineReady.products} products
+              {offlinePendingCount > 0 && ` · ${offlinePendingCount} pending`}
+            </div>
+            {(globalSyncError || offlineReady.error) && (
+              <div className="text-[11px] text-red-700 truncate">
+                {globalSyncError || offlineReady.error}
+              </div>
+            )}
+          </div>
+        </div>
+        <span className="text-[11px] font-bold text-slate-500 group-open:hidden">Manage</span>
+        <span className="hidden text-[11px] font-bold text-slate-500 group-open:inline">Close</span>
+      </summary>
+      <div className="mt-3 pt-3 border-t border-black/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="text-xs text-gray-600">
+          Last prepared: {offlineLastPrepared}
+          {globalSyncing && " · syncing now"}
+        </div>
+        <div className="grid grid-cols-2 sm:flex gap-2">
+          <button
+            type="button"
+            onClick={() => prepareOfflineData({ silent: false })}
+            disabled={offlineReady.loading || globalSyncing}
+            className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold disabled:opacity-50"
+          >
+            {offlineReady.loading ? "Preparing..." : "Prepare Offline"}
+          </button>
+          <button
+            type="button"
+            onClick={sincronizarAhora}
+            disabled={globalSyncing || isOffline}
+            className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold disabled:opacity-50"
+          >
+            {globalSyncing ? "Syncing..." : "Sync Now"}
+          </button>
+        </div>
+      </div>
+    </details>
+  );
+  const startQuickSale = () => {
+    window.pendingSaleId = null;
+    setCart([]);
+    setPayments([{ forma: "efectivo", monto: 0 }]);
+    setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 });
+    setClientRisk(null);
+    setClientBehavior(null);
+    setCreditProfile(null);
+    setStep(2);
+  };
 
   if (selectedClient) {
     return (
@@ -4542,7 +4980,7 @@ function renderStepClient() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2">
             <button
               className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
               onClick={() => setModalPendingSales(true)}
@@ -4551,13 +4989,16 @@ function renderStepClient() {
               📂 Pending ({pendingStats.total})
             </button>
             <button
-              onClick={() => navigate("/clientes/nuevo", { replace: false })}
-              className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+              onClick={startQuickSale}
+              type="button"
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200"
             >
-              ✨ Quick Create
+              ⚡ No Client
             </button>
           </div>
         </div>
+
+        {renderOfflinePrepCard()}
 
         {/* ── Client card ── */}
         <div className="bg-white rounded-2xl border-2 border-blue-200 shadow-md overflow-hidden">
@@ -4808,90 +5249,112 @@ function renderStepClient() {
       {/* ── Walk-in return details: show product selector after invoice is picked ── */}
       {walkinDevolucion && renderReturnDetails()}
 
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-gray-800 flex items-center">
-            {appMode === 'devolucion' ? '🔍 Search Customer for Return' : '👤 Select Client'}
-          </h2>
-          {migrationMode && (
-            <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
-              🔒 Migration mode
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => { setMigrationMode(v => !v); toast.info(`Migration mode ${!migrationMode ? "ON" : "OFF"}`); }}
-              className={`text-xs px-3 py-1.5 rounded-lg font-semibold border transition-all ${migrationMode ? "bg-purple-600 text-white border-purple-600" : "bg-white text-purple-700 border-purple-300 hover:bg-purple-50"}`}
-            >🔒 Migration</button>
-          )}
-          <button
-            className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-            onClick={() => setModalPendingSales(true)}
-            type="button"
-          >
-            📂 Pending ({pendingStats.total})
-          </button>
-          <button
-            onClick={() => navigate("/clientes/nuevo", { replace: false })}
-            className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg px-4 py-2 font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-          >
-            ✨ Quick Create
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-3 border-2 border-blue-200">
-          <div className="text-[10px] sm:text-xs text-blue-600 font-semibold uppercase">Today</div>
-          <div className="text-lg sm:text-2xl font-bold text-blue-800">{todayStats.sales}</div>
-          <div className="text-[10px] text-blue-600">Sales</div>
-        </div>
-        <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-lg p-3 border-2 border-emerald-200">
-          <div className="text-[10px] sm:text-xs text-emerald-600 font-semibold uppercase">Clients</div>
-          <div className="text-lg sm:text-2xl font-bold text-emerald-800">{todayStats.clients}</div>
-          <div className="text-[10px] text-emerald-600">Served</div>
-        </div>
-        <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-lg p-3 border-2 border-amber-200">
-          <div className="text-[10px] sm:text-xs text-amber-600 font-semibold uppercase">Total</div>
-          <div className="text-base sm:text-xl font-bold text-amber-800">{fmt(todayStats.total)}</div>
-          <div className="text-[10px] text-amber-600">Revenue</div>
-        </div>
-      </div>
-
-      {recentClients.length > 0 && (
-        <div className="bg-white rounded-lg border-2 border-gray-200 p-3">
-          <div className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-2">
-            <span>⚡ Recent Clients</span>
-            <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded">Quick access</span>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-gray-800 leading-tight">
+                {appMode === 'devolucion' ? 'Search Customer for Return' : 'Sales'}
+              </h2>
+              <p className="text-xs text-gray-500">
+                {appMode === 'devolucion' ? 'Find the customer or process a walk-in return.' : 'Start fast, or find a saved customer.'}
+              </p>
+            </div>
+            {migrationMode && (
+              <span className="shrink-0 inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded">
+                Migration
+              </span>
+            )}
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
+
+          <div className="grid grid-cols-2 sm:grid-cols-[1.2fr_auto_auto_auto] gap-2">
+            <button
+              onClick={startQuickSale}
+              type="button"
+              className="col-span-2 sm:col-span-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl px-4 py-3 font-bold shadow-md hover:shadow-lg active:scale-[0.99] transition-all duration-200"
+            >
+              ⚡ No Client Sale
+            </button>
+            <button
+              onClick={() => navigate("/clientes/nuevo", { replace: false })}
+              type="button"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-4 py-3 font-bold shadow-md active:scale-[0.99] transition-all duration-200"
+            >
+              + Client
+            </button>
+            <button
+              className="bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 px-4 py-3 rounded-xl font-bold shadow-sm transition-all duration-200"
+              onClick={() => {
+                refreshPendingSales({ silent: true });
+                setModalPendingSales(true);
+              }}
+              type="button"
+            >
+              Pending ({pendingStats.total})
+            </button>
+            <details className="relative">
+              <summary className="list-none cursor-pointer bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-3 rounded-xl font-bold shadow-sm text-center">
+                More
+              </summary>
+              <div className="absolute right-0 z-20 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => { setMigrationMode(v => !v); toast.info(`Migration mode ${!migrationMode ? "ON" : "OFF"}`); }}
+                    className={`w-full text-left text-xs px-3 py-2 rounded-lg font-semibold transition-all ${migrationMode ? "bg-purple-600 text-white" : "text-purple-700 hover:bg-purple-50"}`}
+                  >
+                    Migration mode
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => prepareOfflineData({ silent: false })}
+                  disabled={offlineReady.loading || globalSyncing}
+                  className="w-full text-left text-xs px-3 py-2 rounded-lg font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {offlineReady.loading ? "Preparing offline..." : "Prepare offline"}
+                </button>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        {renderOfflinePrepCard()}
+
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm shadow-sm">
+          <span className="font-bold text-slate-900">{todayStats.sales} sales</span>
+          <span className="h-1 w-1 rounded-full bg-slate-300" />
+          <span className="font-bold text-slate-900">{todayStats.clients} clients</span>
+          <span className="h-1 w-1 rounded-full bg-slate-300" />
+          <span className="font-black text-amber-700">{fmt(todayStats.total)}</span>
+          <span className="text-xs text-slate-400">today</span>
+        </div>
+
+        {recentClients.length > 0 && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <span className="shrink-0 text-xs font-bold text-gray-500">Recent</span>
             {recentClients.map((c) => (
               <button
                 key={c.id}
                 onClick={() => handleClientSelect(c)}
-                className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-blue-200 rounded-lg px-3 py-2 transition-all duration-200 min-w-[140px]"
+                className="shrink-0 bg-white hover:bg-blue-50 border border-blue-100 rounded-full px-3 py-2 transition-all duration-200 shadow-sm max-w-[190px]"
               >
-                <div className="text-left">
-                  <div className="font-semibold text-sm text-gray-900 truncate">
-                    {c.nombre} {c.apellido || ""}
-                  </div>
-                  <div className="text-xs text-gray-600 font-mono truncate">
-                    {c.telefono}
-                  </div>
-                  {c.negocio && (
-                    <div className="text-[10px] text-blue-600 truncate mt-0.5">
-                      🏢 {c.negocio}
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
+                  <div className="text-left min-w-0">
+                    <div className="font-bold text-xs text-gray-900 truncate">
+                      {c.nombre} {c.apellido || ""}
                     </div>
-                  )}
+                    <div className="text-[10px] text-gray-500 truncate">
+                      {c.negocio || c.telefono || "Recent customer"}
+                    </div>
+                  </div>
                 </div>
               </button>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="relative">
 <input
@@ -4962,14 +5425,9 @@ function renderStepClient() {
       </div>
 
       {debouncedClientSearch.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-          <div className="flex flex-wrap items-center gap-1.5 text-blue-700">
-            <span className="font-semibold">🔍</span>
-            {['Name','Phone','Email','Address','Business'].map(f => (
-              <span key={f} className="bg-white px-2 py-0.5 rounded border border-blue-200 text-blue-700">{f}</span>
-            ))}
-          </div>
-          <div className="hidden sm:flex items-center gap-2 text-blue-600 shrink-0">
+        <div className="hidden sm:flex items-center justify-between gap-2 text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+          <span className="font-semibold text-blue-700">Searching name, phone, email, address and business</span>
+          <div className="flex items-center gap-2 text-blue-600 shrink-0">
             <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↑↓</kbd>
             <span>Navigate</span>
             <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↵</kbd>
@@ -4986,49 +5444,10 @@ function renderStepClient() {
       >
         {/* ── EMPTY STATE: no search typed yet ── */}
         {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
-          <div className="py-2 space-y-3">
-            {/* Keyboard shortcuts card */}
-            <div className="bg-white rounded-xl border border-blue-100 p-3 shadow-sm">
-              <p className="text-[11px] font-bold text-blue-700 mb-2 flex items-center gap-1.5">
-                ⌨️ Keyboard shortcuts
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                {[
-                  { keys: "↑  ↓", desc: "Navigate list" },
-                  { keys: "↵ Enter", desc: "Select client" },
-                  { keys: "Esc", desc: "Clear search" },
-                  { keys: "2+ chars", desc: "Auto-search" },
-                ].map(({ keys, desc }) => (
-                  <div key={desc} className="flex items-center gap-1.5 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5">
-                    <kbd className="bg-white border border-blue-300 text-blue-700 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap">{keys}</kbd>
-                    <span className="text-[11px] text-gray-600 leading-tight">{desc}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Search fields card */}
-            <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm">
-              <p className="text-[11px] font-bold text-gray-600 mb-2">🔍 Search by any field</p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { label: "👤 Name", hint: "e.g. Maria" },
-                  { label: "📞 Phone", hint: "e.g. 555-1234" },
-                  { label: "🏢 Business", hint: "e.g. Panaderia" },
-                  { label: "📧 Email", hint: "e.g. @gmail" },
-                  { label: "📍 Address", hint: "e.g. Main St" },
-                ].map(({ label, hint }) => (
-                  <div key={label} className="bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-left min-w-[100px]">
-                    <div className="text-[11px] font-semibold text-gray-700">{label}</div>
-                    <div className="text-[10px] text-gray-400 font-mono mt-0.5">{hint}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Prompt */}
-            <p className="text-center text-xs text-gray-400 py-1 flex items-center justify-center gap-1.5">
-              ✍️ <span>Start typing to search your clients</span>
+          <div className="py-8 px-4 text-center">
+            <p className="text-sm font-semibold text-gray-500">Type a phone number, name or business to search.</p>
+            <p className="hidden sm:block text-xs text-gray-400 mt-2">
+              Keyboard: arrows to move, Enter to select, Esc to clear.
             </p>
           </div>
         )}
@@ -5039,6 +5458,12 @@ function renderStepClient() {
             <p className="text-3xl mb-2">🔍</p>
             <p className="text-gray-500 font-medium text-sm">No clients found</p>
             <p className="text-gray-400 text-xs mt-1">Try a different name, phone or business</p>
+            <button
+              onClick={() => navigate("/clientes/nuevo", { replace: false })}
+              className="mt-4 inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"
+            >
+              + Create client
+            </button>
           </div>
         )}
 
@@ -5117,33 +5542,50 @@ function renderStepClient() {
         })}
       </div>
 
-      <div className="space-y-3">
-        <button
-          onClick={() => {
-            window.pendingSaleId = null;
-            setCart([]);
-            setPayments([{ forma: "efectivo", monto: 0 }]);
-            setSelectedClient({ id: null, nombre: "Quick sale", balance: 0 });
-            setClientRisk(null);
-            setClientBehavior(null);
-            setCreditProfile(null);
-            setStep(2); // go straight to products
-          }}
-          className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-4 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200"
-        >
-          ⚡ Quick Sale (No Client)
-        </button>
-      </div>
+      {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          <button
+            type="button"
+            onClick={startQuickSale}
+            className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-left shadow-sm hover:bg-blue-100 active:scale-[0.99] transition-all"
+          >
+            <div className="text-xs font-bold text-blue-600 uppercase">Fast sale</div>
+            <div className="text-sm font-black text-blue-900 mt-0.5">No client</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              refreshPendingSales({ silent: true });
+              setModalPendingSales(true);
+            }}
+            className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-left shadow-sm hover:bg-amber-100 active:scale-[0.99] transition-all"
+          >
+            <div className="text-xs font-bold text-amber-600 uppercase">Pending</div>
+            <div className="text-sm font-black text-amber-900 mt-0.5">{pendingStats.total} sales</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/clientes/nuevo", { replace: false })}
+            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-left shadow-sm hover:bg-emerald-100 active:scale-[0.99] transition-all"
+          >
+            <div className="text-xs font-bold text-emerald-600 uppercase">New</div>
+            <div className="text-sm font-black text-emerald-900 mt-0.5">Client</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => prepareOfflineData({ silent: false })}
+            disabled={offlineReady.loading || globalSyncing}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-left shadow-sm hover:bg-slate-50 active:scale-[0.99] transition-all disabled:opacity-60"
+          >
+            <div className="text-xs font-bold text-slate-500 uppercase">Offline</div>
+            <div className="text-sm font-black text-slate-900 mt-0.5">
+              {offlineReady.loading ? "Preparing" : offlineCacheReady ? "Ready" : "Prepare"}
+            </div>
+          </button>
+        </div>
+      )}
 
-      <div className="flex justify-end pt-4">
-        <button
-          className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200"
-          disabled={!selectedClient}
-          onClick={() => setStep(2)}
-        >
-          Next Step →
-        </button>
-      </div>
+      <div className="h-2" />
     </div>
   );
 }
@@ -5151,11 +5593,23 @@ function renderStepClient() {
 /* ======================== Paso 2: Productos ======================== */
 function renderStepProducts() {
   const searchActive = productSearch.trim().length > 0;
+  const cartUnits = cartSafe.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">🛒 Add Products</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {selectedClient?.id ? `Selling to ${selectedClient.nombre}` : "Quick sale without customer account"}
+            </p>
+          </div>
+          <div className="shrink-0 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-right">
+            <div className="text-[10px] uppercase font-bold text-blue-600">Cart</div>
+            <div className="text-sm font-black text-blue-900">{cartUnits} units · {fmt(saleTotal)}</div>
+          </div>
+        </div>
         {/* Keyboard hints — desktop only */}
         <div className="hidden lg:flex items-center gap-3 text-xs text-gray-400">
           <span className="flex items-center gap-1"><kbd className="bg-gray-100 border border-gray-300 rounded px-1.5 py-0.5 font-mono text-gray-600 text-[10px]">Ctrl+Shift+B</kbd> Search product</span>
@@ -5283,7 +5737,7 @@ function renderStepProducts() {
           <div className="flex items-center gap-2">
             <span className="text-orange-600 text-lg">⚠️</span>
             <span className="font-bold text-orange-800 text-sm">
-              Stock insuficiente para {pendingStockIssues.length} producto{pendingStockIssues.length > 1 ? "s" : ""} de este pendiente
+              Not enough stock for {pendingStockIssues.length} product{pendingStockIssues.length > 1 ? "s" : ""} in this pending sale
             </span>
           </div>
           <ul className="space-y-1">
@@ -5296,8 +5750,8 @@ function renderStepProducts() {
                     : "bg-orange-100 text-orange-700"
                 }`}>
                   {issue.available === 0
-                    ? "Sin stock"
-                    : `Pedido ${issue.requested} · Disponible ${issue.available}`}
+                    ? "Out of stock"
+                    : `Requested ${issue.requested} · Available ${issue.available}`}
                 </span>
               </li>
             ))}
@@ -5307,13 +5761,13 @@ function renderStepProducts() {
               className="flex-1 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold py-2 rounded-xl active:scale-95 transition-all"
               onClick={autoAdjustCart}
             >
-              Ajustar cantidades automáticamente
+              Auto-adjust quantities
             </button>
             <button
               className="px-4 py-2 text-sm text-orange-700 hover:text-orange-900 font-medium transition-colors"
               onClick={() => setPendingStockIssues([])}
             >
-              Ignorar
+              Ignore
             </button>
           </div>
         </div>
@@ -5355,12 +5809,12 @@ function renderStepProducts() {
       {noProductFound && (
         <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-l-4 border-yellow-500 p-4 rounded-lg flex items-start justify-between gap-3">
           <span className="text-yellow-800 text-sm">
-            ❌ "<b>{noProductFound}</b>" no existe en el sistema
+            ❌ "<b>{noProductFound}</b>" does not exist in the system
           </span>
           <button
             className="bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg px-3 py-1.5 text-sm font-semibold shadow-md hover:shadow-lg transition-all whitespace-nowrap"
             onClick={() => navigate(`/productos/nuevo?codigo=${encodeURIComponent(noProductFound)}`)}
-          >✨ Crear</button>
+          >✨ Create</button>
         </div>
       )}
 
@@ -5368,7 +5822,7 @@ function renderStepProducts() {
       {productExistsNotInVan && (
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-400 p-4 rounded-lg flex items-start justify-between gap-3">
           <span className="text-blue-800 text-sm">
-            📦 "<b>{productExistsNotInVan}</b>" existe en el sistema pero no tiene stock en esta van
+            📦 "<b>{productExistsNotInVan}</b>" exists in the system but has no stock in this van
           </span>
         </div>
       )}
@@ -5656,10 +6110,12 @@ function renderStepPayment() {
 
         {/* Metrics grid */}
         {(() => {
-          const showAR = !!selectedClient?.id;
-          const cols = balanceBefore > 0 ? (showAR ? 4 : 3) : (showAR ? 3 : 2);
+          const showAR = hasClientAccount;
+          const colsClass = balanceBefore > 0
+            ? (showAR ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")
+            : (showAR ? "grid-cols-3" : "grid-cols-2");
           return (
-            <div className={`grid gap-0 divide-x divide-gray-100 grid-cols-${cols}`}>
+            <div className={`grid gap-0 divide-x divide-gray-100 ${colsClass}`}>
               {balanceBefore > 0 && (
                 <div className="p-3 text-center bg-red-50">
                   <div className="text-[10px] uppercase text-red-600 font-semibold tracking-wide">Prior Balance</div>
@@ -5792,11 +6248,32 @@ function renderStepPayment() {
       )}
 
       {/* ── CREDIT LIMIT WARNING ──────────────────────── */}
-      {excesoCredito > 0 && (
+      {hasClientAccount && excesoCredito > 0 && (
         <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3 text-center">
           <div className="text-rose-700 font-semibold">❌ Credit Limit Exceeded</div>
           <div className="text-rose-600 text-sm mt-1">
             Needed: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
+          </div>
+        </div>
+      )}
+
+      {!hasClientAccount && (
+        <div className={`rounded-xl border-2 px-4 py-3 flex items-center justify-between gap-3 ${
+          quickSaleNeedsFullPayment ? "bg-blue-50 border-blue-200" : "bg-emerald-50 border-emerald-200"
+        }`}>
+          <div>
+            <div className={`font-bold text-sm ${quickSaleNeedsFullPayment ? "text-blue-800" : "text-emerald-800"}`}>
+              ⚡ Quick Sale is cash-and-carry
+            </div>
+            <div className="text-xs text-gray-600 mt-0.5">
+              No customer account is attached, so this sale must be paid in full before saving.
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[10px] uppercase font-bold text-gray-500">Remaining</div>
+            <div className={`text-xl font-black ${quickSaleNeedsFullPayment ? "text-blue-700" : "text-emerald-700"}`}>
+              {fmt(remainingToCollect)}
+            </div>
           </div>
         </div>
       )}
@@ -5925,24 +6402,24 @@ function renderStepPayment() {
                   </div>
                 )}
 
-                {/* Row 2: action buttons */}
-                <div className="flex items-center gap-2">
-                  {!p?.toAR ? (
-                    <button
-                      onClick={() => {
-                        handleChangePayment(i, "monto", 0);
-                        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: true } : x));
-                      }}
-                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
-                    >📋 Send to A/R</button>
-                  ) : (
-                    <button
-                      onClick={() => setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x))}
-                      className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
-                    >↩️ Undo A/R</button>
-                  )}
-                  {!p?.toAR && p.forma === "tarjeta" && (
-                    <button
+	                {/* Row 2: action buttons */}
+	                <div className="flex items-center gap-2">
+	                  {p?.toAR ? (
+	                    <button
+	                      onClick={() => setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x))}
+	                      className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
+	                    >↩️ Undo A/R</button>
+	                  ) : canSendToAR ? (
+	                    <button
+	                      onClick={() => {
+	                        handleChangePayment(i, "monto", 0);
+	                        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: true } : x));
+	                      }}
+	                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
+	                    >📋 Send to A/R</button>
+	                  ) : null}
+	                  {!p?.toAR && p.forma === "tarjeta" && (
+	                    <button
                       onClick={() => handleGenerateQR(i)}
                       className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-md transition-colors flex items-center justify-center gap-1"
                     >📱 QR Pay</button>
@@ -6026,13 +6503,13 @@ function renderStepPayment() {
           onClick={() => setStep(2)}
           disabled={saving}
         >← Back</button>
-        <button
-          className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-8 py-4 lg:py-5 rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg lg:text-2xl"
-          disabled={saving || (showCreditPanel && amountToCredit > 0 && amountToCredit > creditAvailable)}
-          onClick={saveSale}
-        >
-          {saving ? "💾 Saving…" : "💾 Save Sale"}
-        </button>
+	        <button
+	          className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-8 py-4 lg:py-5 rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 text-lg lg:text-2xl"
+	          disabled={saleSaveDisabled}
+	          onClick={saveSale}
+	        >
+	          {saleSaveLabel}
+	        </button>
       </div>
 
       {paymentError && (
@@ -6159,18 +6636,19 @@ function renderStepPayment() {
               setPendingAgreementData(null);
               setSaving(false);
             }}
-         onConfirm={(result) => {
-  setPendingAgreementData({
-    ...pendingAgreementData,
-    waiting: false,
-    plan: result.plan,
-    numCuotas: result.numCuotas,
-    isException: result.isException,
-    exceptionNote: result.exceptionNote,
-    skipped: result.skipped || false, // 🆕
-  });
-  setTimeout(() => saveSale(), 100);
-}}
+            onConfirm={(result) => {
+              const confirmedAgreementData = {
+                ...pendingAgreementData,
+                waiting: false,
+                plan: result.plan,
+                numCuotas: result.numCuotas,
+                isException: result.isException,
+                exceptionNote: result.exceptionNote,
+                skipped: result.skipped || false,
+              };
+              setPendingAgreementData(confirmedAgreementData);
+              saveSale(confirmedAgreementData);
+            }}
             montoCredito={pendingAgreementData?.montoCredito || 0}
             clientName={pendingAgreementData?.clientName || ''}
             saldoActual={pendingAgreementData?.saldoActual || 0}
@@ -6278,11 +6756,11 @@ function renderStepPayment() {
           {step === 3 && (
             <button
               onClick={saveSale}
-              disabled={saving}
+              disabled={saleSaveDisabled}
               className="flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold bg-green-600 hover:bg-green-500 text-white transition-all disabled:opacity-50 shadow-lg shadow-green-700/40"
             >
               <span>{saving ? "⏳" : "💾"}</span>
-              <span>{saving ? "Saving…" : "Save Sale"}</span>
+              <span>{saleSaveLabel}</span>
               <kbd className="bg-black/30 text-green-200 rounded px-1 text-[9px] font-mono">Ctrl+Enter</kbd>
             </button>
           )}
