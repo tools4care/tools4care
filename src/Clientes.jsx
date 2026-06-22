@@ -2291,6 +2291,7 @@ function ClienteStatsModal({
 /* -------------------- MODAL: ABONO CON QR STRIPE -------------------- */
 function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { van } = useVan();
+  const { toast } = useToast();
 
   // Snapshot de saldo al abrir (evita saltos)
   const [saldoBase, setSaldoBase] = useState(Number(resumen?.balance ?? cliente?.balance ?? 0));
