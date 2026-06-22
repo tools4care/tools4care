@@ -1637,6 +1637,16 @@ export default function CuentasPorCobrar() {
     "750+": [750, 1000],
   };
 
+  const [agingFilter, setAgingFilter] = useState("ALL");
+  const agingOptions = [
+    { key: "ALL", label: "🕐 All" },
+    { key: "CURRENT", label: "≤30d" },
+    { key: "D30", label: "31-60d" },
+    { key: "D60", label: "61-90d" },
+    { key: "D90", label: "90d+" },
+    { key: "NEVER", label: "Never paid" },
+  ];
+
   useEffect(() => {
     const timer = setTimeout(
       () => setDebouncedQ(q.trim()),
@@ -1874,10 +1884,10 @@ export default function CuentasPorCobrar() {
   }
 
   // ── Días sin pago por cliente (aging) ──
-  // Una sola query agregada por página en vez de N queries por cliente.
-  async function loadLastPayInfo(clienteIds) {
+  // Una sola query agregada por lote de ids en vez de N queries por cliente.
+  async function fetchLastPayInfo(clienteIds) {
     const ids = (clienteIds || []).filter(Boolean);
-    if (ids.length === 0) { setLastPayInfo({}); return; }
+    if (ids.length === 0) return {};
 
     const [ventasRes, pagosRes] = await Promise.all([
       supabase
@@ -1913,7 +1923,15 @@ export default function CuentasPorCobrar() {
       const days = Math.max(0, Math.floor((Date.now() - last.getTime()) / 86400000));
       info[id] = { days, lastDate: last };
     });
-    setLastPayInfo(info);
+    return info;
+  }
+
+  function agingBucketOf(days) {
+    if (days == null) return "NEVER";
+    if (days <= 30) return "CURRENT";
+    if (days <= 60) return "D30";
+    if (days <= 90) return "D60";
+    return "D90";
   }
 
   function payAgingBadge(info) {
@@ -1963,33 +1981,62 @@ export default function CuentasPorCobrar() {
 
         query = query.order("saldo", { ascending: false });
 
-        const from = (page - 1) * pageSize;
-        const to = from + pageSize - 1;
-        const result = await query.range(from, to);
+        // El filtro de antigüedad no es una columna de la vista, así que se
+        // resuelve en dos pasos: 1) traer todos los ids que cumplen
+        // búsqueda/score, 2) calcular su antigüedad y filtrar/paginar aquí.
+        if (agingFilter !== "ALL") {
+          const { data: allMatches, error: matchErr } = await query.select(
+            "cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual, telefono, direccion, nombre_negocio"
+          );
+          if (matchErr) throw matchErr;
 
-        if (!ignore) {
-          if (result.error) {
-            console.error("Error loading A/R:", result.error);
-            toast.error("Error loading data: " + result.error.message);
-            setRows([]);
-            setTotal(0);
-          } else {
-            setRows(result.data || []);
-            setTotal(result.count || 0);
+          const allIds = (allMatches || []).map((r) => r.cliente_id);
+          const info = await fetchLastPayInfo(allIds);
+          if (ignore) return;
 
-            // ✅ FIX: Calcular total global (todos los clientes, no solo la página)
-            const { data: allSaldos } = await supabase
-              .from("v_cxc_cliente_detalle_ext")
-              .select("saldo")
-              .gt("saldo", 0);
-            if (!ignore) {
-              const total = (allSaldos || []).reduce(
-                (s, r) => s + Number(r.saldo || 0), 0
-              );
-              setGlobalSaldo(total);
+          const filtered = (allMatches || []).filter(
+            (r) => agingBucketOf(info[r.cliente_id]?.days ?? null) === agingFilter
+          );
+
+          const from = (page - 1) * pageSize;
+          const pageRows = filtered.slice(from, from + pageSize);
+
+          setRows(pageRows);
+          setTotal(filtered.length);
+          setLastPayInfo(info);
+
+          const totalSaldo = filtered.reduce((s, r) => s + Number(r.saldo || 0), 0);
+          setGlobalSaldo(totalSaldo);
+        } else {
+          const from = (page - 1) * pageSize;
+          const to = from + pageSize - 1;
+          const result = await query.range(from, to);
+
+          if (!ignore) {
+            if (result.error) {
+              console.error("Error loading A/R:", result.error);
+              toast.error("Error loading data: " + result.error.message);
+              setRows([]);
+              setTotal(0);
+            } else {
+              setRows(result.data || []);
+              setTotal(result.count || 0);
+
+              // ✅ FIX: Calcular total global (todos los clientes, no solo la página)
+              const { data: allSaldos } = await supabase
+                .from("v_cxc_cliente_detalle_ext")
+                .select("saldo")
+                .gt("saldo", 0);
+              if (!ignore) {
+                const total = (allSaldos || []).reduce(
+                  (s, r) => s + Number(r.saldo || 0), 0
+                );
+                setGlobalSaldo(total);
+              }
+
+              const info = await fetchLastPayInfo((result.data || []).map((r) => r.cliente_id));
+              if (!ignore) setLastPayInfo(info);
             }
-
-            loadLastPayInfo((result.data || []).map((r) => r.cliente_id));
           }
         }
       } catch (e) {
@@ -2005,7 +2052,7 @@ export default function CuentasPorCobrar() {
     }
     load();
     return () => { ignore = true; };
-  }, [debouncedQ, page, pageSize, scoreFilter, reloadTick]);
+  }, [debouncedQ, page, pageSize, scoreFilter, agingFilter, reloadTick]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const metrics = useMemo(() => {
@@ -2185,6 +2232,28 @@ export default function CuentasPorCobrar() {
                       }}
                     >
                       {k === "ALL" ? "📊 All" : `${k}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Aging Filters (days since last payment) */}
+              <div className="overflow-x-auto pb-2 -mx-3 px-3">
+                <div className="flex gap-2 min-w-max">
+                  {agingOptions.map(({ key, label }) => (
+                    <button
+                      key={key}
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all ${
+                        agingFilter === key
+                          ? "bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-lg scale-105"
+                          : "bg-white text-gray-700 border-2 border-gray-300 hover:border-orange-400"
+                      }`}
+                      onClick={() => {
+                        setAgingFilter(key);
+                        setPage(1);
+                      }}
+                    >
+                      {label}
                     </button>
                   ))}
                 </div>
