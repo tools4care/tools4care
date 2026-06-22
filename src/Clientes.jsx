@@ -662,6 +662,11 @@ export default function Clientes() {
 
   // Ref para buscar con atajo
   const searchRef = useRef(null);
+  const [hl, setHl] = useState(-1);
+  useEffect(() => setHl(-1), [clientes]);
+  useEffect(() => {
+    if (hl >= 0) document.getElementById(`cliente-row-${hl}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [hl]);
 
   /* -------------------- Debounce búsqueda -------------------- */
   useEffect(() => {
@@ -1397,13 +1402,23 @@ const fetchPage = async (opts = {}) => {
           {/* Search */}
           <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50 dark:from-slate-900 dark:to-slate-900 border-b-2 border-gray-200 dark:border-slate-700">
             <div className="relative">
-              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-blue-500" size={22} />
               <input
                 ref={searchRef}
-                className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-300 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white dark:bg-slate-900 dark:text-slate-100 shadow-sm text-base font-medium"
+                autoFocus
+                className="w-full pl-12 pr-4 py-4 border-2 border-blue-300 dark:border-slate-600 rounded-2xl focus:ring-4 focus:ring-blue-200 focus:border-blue-500 transition-all duration-200 bg-white dark:bg-slate-900 dark:text-slate-100 shadow-md hover:shadow-lg text-base sm:text-lg font-semibold placeholder:font-normal placeholder:text-gray-400"
                 placeholder="Search clients by name, phone, email, business or address..."
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value ?? "")}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, clientes.length - 1)); }
+                  else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
+                  else if (e.key === "Enter") {
+                    e.preventDefault();
+                    const target = hl >= 0 ? clientes[hl] : clientes[0];
+                    if (target) abrirDetalleCliente(target, target.direccion);
+                  } else if (e.key === "Escape") { setHl(-1); }
+                }}
                 title="Focus Search (⌘/Ctrl+K)"
               />
             </div>
@@ -1504,7 +1519,7 @@ const fetchPage = async (opts = {}) => {
             <>
               {/* Mobile View - Cards */}
               <div className="md:hidden space-y-4 p-4">
-                {clientes.map((c) => {
+                {clientes.map((c, idx) => {
                   // Dirección: aceptar string u objeto
                   const dRaw = c.direccion;
                   let dObj = null;
@@ -1519,8 +1534,11 @@ const fetchPage = async (opts = {}) => {
 
                   return (
                     <div
+                      id={`cliente-row-${idx}`}
                       key={c.id}
-                      className="bg-gradient-to-br from-white to-blue-50 border-2 border-blue-100 rounded-2xl p-5 shadow-lg hover:shadow-xl transition-all cursor-pointer"
+                      className={`bg-gradient-to-br from-white to-blue-50 border-2 rounded-2xl p-5 shadow-lg hover:shadow-xl transition-all cursor-pointer ${
+                        idx === hl ? "border-blue-500 ring-2 ring-blue-300" : "border-blue-100"
+                      }`}
                       onClick={() => abrirDetalleCliente(c, dObj ? d : dRaw)}
                     >
                       <div className="flex justify-between items-start mb-4">
@@ -1611,7 +1629,7 @@ const fetchPage = async (opts = {}) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
-                    {clientes.map((c) => {
+                    {clientes.map((c, idx) => {
                       // Dirección: aceptar string u objeto
                       const dRaw = c.direccion;
                       let dObj = null;
@@ -1626,8 +1644,11 @@ const fetchPage = async (opts = {}) => {
 
                       return (
                         <tr
+                          id={`cliente-row-${idx}`}
                           key={c.id}
-                          className="hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 dark:hover:from-slate-700 dark:hover:to-slate-700 cursor-pointer transition-all duration-200"
+                          className={`hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 dark:hover:from-slate-700 dark:hover:to-slate-700 cursor-pointer transition-all duration-200 ${
+                            idx === hl ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : ""
+                          }`}
                           onClick={() => abrirDetalleCliente(c, dObj ? d : dRaw)}
                         >
                           <td className="px-6 py-4">
