@@ -22,24 +22,6 @@ const IconAlert = () => (
   </svg>
 );
 
-const IconCheck = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
-
-const IconLogout = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-  </svg>
-);
-
-const IconDashboard = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-  </svg>
-);
-
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -62,65 +44,6 @@ export default function Login() {
       setErrorMsg("Incorrect email or password. Please try again.");
     }
   };
-
-  // Modal: Already logged in
-  const AlreadyLoggedModal = () => (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
-        {/* Header del modal */}
-        <div className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-6 py-5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <IconAlert />
-            <h3 className="font-bold text-xl">Active Session</h3>
-          </div>
-          <button
-            className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors text-xl"
-            onClick={() => setShowAlreadyLoggedModal(false)}
-          >
-            ✖
-          </button>
-        </div>
-
-        {/* Contenido del modal */}
-        <div className="p-6 space-y-4">
-          <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-6 border-2 border-amber-200 text-center">
-            <div className="w-16 h-16 bg-gradient-to-r from-amber-500 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4">
-              <IconCheck />
-            </div>
-            <h4 className="text-lg font-bold text-gray-900 mb-2">You're already logged in!</h4>
-            <p className="text-sm text-gray-600">
-              You have an active session. Choose an option below.
-            </p>
-          </div>
-
-          {/* Botones */}
-          <div className="space-y-3">
-            <button
-              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-3.5 px-4 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 group"
-              onClick={() => navigate("/")}
-            >
-              <IconDashboard />
-              <span>Go to Dashboard</span>
-              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            
-            <button
-              className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white py-3.5 px-4 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
-              onClick={async () => {
-                await supabase.auth.signOut();
-                window.location.reload();
-              }}
-            >
-              <IconLogout />
-              <span>Log Out</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 
   // Loading state
   if (cargando) {
@@ -150,11 +73,8 @@ export default function Login() {
       <div className="w-full max-w-md relative z-10">
         {/* Logo/Brand Card */}
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-6 text-center">
-          <div className="w-20 h-20 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg">
-            <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05A2.5 2.5 0 0115.95 16H17a1 1 0 001-1v-5a1 1 0 00-.293-.707l-2-2A1 1 0 0015 7h-1z" />
-            </svg>
+          <div className="w-20 h-20 bg-white rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg ring-1 ring-blue-100">
+            <img src="/icons/icon-192.png" alt="Tools4Care" className="h-16 w-16 rounded-xl object-contain" />
           </div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
             TOOLS4CARE

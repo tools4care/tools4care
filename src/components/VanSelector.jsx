@@ -6,6 +6,7 @@ import { supabase } from "../supabaseClient";
 import { AlertCircle, ArrowRight, CheckCircle2, Monitor, RefreshCw, Search, Truck, Wifi } from "lucide-react";
 
 const VANS_CACHE_KEY = "tools4care_vans_cache_v1";
+const TOOLS4CARE_LOGO = "/icons/icon-192.png";
 
 function getVanName(van) {
   return van?.nombre || van?.nombre_van || van?.name || "VAN";
@@ -108,8 +109,8 @@ export default function VanSelector({ onSelect }) {
             <div className="flex h-full min-h-[360px] flex-col justify-between gap-8">
               <div>
                 <div className="mb-8 flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-500 shadow-lg shadow-blue-950/30">
-                    <Truck size={24} />
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white shadow-lg shadow-blue-950/30">
+                    <img src={TOOLS4CARE_LOGO} alt="Tools4Care" className="h-10 w-10 rounded-lg object-contain" />
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-200">Tools4Care</p>
