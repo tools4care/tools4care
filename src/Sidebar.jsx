@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { usePermisos } from "./hooks/usePermisos";
@@ -71,6 +71,7 @@ export default function Sidebar() {
   const { usuario } = useUsuario();
   const { van, setVan } = useVan();
   const location = useLocation();
+  const navigate = useNavigate();
   const { isAdmin, isSupervisor, puedeVerModulo, puedeCambiarVan } = usePermisos();
   const { storeMode, toggle: toggleStoreMode } = useStoreMode();
   const { theme, toggleTheme } = useTheme();
@@ -178,7 +179,8 @@ export default function Sidebar() {
             onClick={() => {
               setVan(null);
               localStorage.removeItem("van");
-              window.location.href = "/van";
+              localStorage.removeItem("tools4care_selected_van");
+              navigate("/van", { replace: true });
             }}
             className="w-full bg-amber-400/10 hover:bg-amber-400/20 text-amber-200 border border-amber-300/20 py-2 px-3 rounded-xl font-semibold text-xs transition-colors"
           >
