@@ -31,6 +31,7 @@ import {
 } from "@phosphor-icons/react";
 
 const ICON_SIZE = 22;
+const TOOLS4CARE_LOGO = "/icons/icon-192.png";
 
 let salesPreload;
 function preloadSales() {
@@ -114,8 +115,8 @@ export default function Sidebar() {
       <div className="min-h-0 flex-1 flex flex-col">
         {/* ── Brand ── */}
         <div className="flex items-center gap-3 px-1.5 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-600 shadow-lg shadow-blue-950/40 flex items-center justify-center text-lg">
-            🛠
+          <div className="w-10 h-10 rounded-xl bg-white shadow-lg shadow-blue-950/40 flex items-center justify-center overflow-hidden">
+            <img src={TOOLS4CARE_LOGO} alt="Tools4Care" className="h-9 w-9 object-contain" />
           </div>
           <div>
             <div className="font-black text-[17px] tracking-wide leading-tight">TOOLS4CARE</div>
