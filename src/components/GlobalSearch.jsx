@@ -17,6 +17,7 @@ export default function GlobalSearch() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [groups, setGroups] = useState([]);
+  const [hl, setHl] = useState(-1);
 
   useEffect(() => {
     const onKey = (event) => {
@@ -134,6 +135,11 @@ export default function GlobalSearch() {
   }, [query, van?.id]);
 
   const count = useMemo(() => groups.reduce((sum, group) => sum + group.rows.length, 0), [groups]);
+  const flatRows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
+  useEffect(() => setHl(-1), [groups]);
+  useEffect(() => {
+    if (hl >= 0) document.getElementById(`gsearch-row-${hl}`)?.scrollIntoView({ block: "nearest" });
+  }, [hl]);
   const go = (path) => {
     setOpen(false);
     navigate(path);
@@ -161,6 +167,15 @@ export default function GlobalSearch() {
                 ref={inputRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") { event.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, flatRows.length - 1)); }
+                  else if (event.key === "ArrowUp") { event.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
+                  else if (event.key === "Enter") {
+                    event.preventDefault();
+                    const target = hl >= 0 ? flatRows[hl] : flatRows[0];
+                    if (target) go(target.path);
+                  }
+                }}
                 placeholder="Search customers, invoices, products, payments or online orders…"
                 className="flex-1 min-w-0 text-base outline-none bg-transparent"
               />
@@ -181,12 +196,22 @@ export default function GlobalSearch() {
                       <section key={group.key}>
                         <div className="flex items-center gap-2 px-2 mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500"><Icon size={14} /> {group.label}</div>
                         <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100">
-                          {group.rows.map((row) => (
-                            <button key={`${group.key}-${row.id}`} onClick={() => go(row.path)} className="w-full text-left px-3.5 py-3 hover:bg-blue-50 flex items-center gap-3 transition-colors">
-                              <div className="min-w-0 flex-1"><div className="font-semibold text-slate-900 truncate">{row.title}</div><div className="text-xs text-slate-500 truncate mt-0.5">{row.detail}</div></div>
-                              <ArrowRight size={16} className="text-slate-400 shrink-0" />
-                            </button>
-                          ))}
+                          {group.rows.map((row) => {
+                            const flatIndex = flatRows.indexOf(row);
+                            return (
+                              <button
+                                key={`${group.key}-${row.id}`}
+                                id={`gsearch-row-${flatIndex}`}
+                                onClick={() => go(row.path)}
+                                className={`w-full text-left px-3.5 py-3 flex items-center gap-3 transition-colors ${
+                                  flatIndex === hl ? "bg-blue-50" : "hover:bg-blue-50"
+                                }`}
+                              >
+                                <div className="min-w-0 flex-1"><div className="font-semibold text-slate-900 truncate">{row.title}</div><div className="text-xs text-slate-500 truncate mt-0.5">{row.detail}</div></div>
+                                <ArrowRight size={16} className="text-slate-400 shrink-0" />
+                              </button>
+                            );
+                          })}
                         </div>
                       </section>
                     );

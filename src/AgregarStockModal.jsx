@@ -29,6 +29,7 @@ export default function AgregarStockModal({
   const [saving, setSaving] = useState(false);
   const [modo, setModo] = useState("auto");
   const [showScanner, setShowScanner] = useState(false);
+  const [hl, setHl] = useState(-1);
 
   const timerRef = useRef();
   const busquedaInputRef = useRef(null);
@@ -60,6 +61,23 @@ export default function AgregarStockModal({
       }, 100);
     }
   }, [seleccion]);
+
+  useEffect(() => setHl(-1), [opciones]);
+  useEffect(() => {
+    if (hl >= 0) document.getElementById(`stock-opt-${hl}`)?.scrollIntoView({ block: "nearest" });
+  }, [hl]);
+
+  function elegirOpcion(opt) {
+    const term = norm(busqueda).toLowerCase();
+    const isExact = term && (
+      opt.codigo?.toLowerCase() === term ||
+      opt.nombre?.toLowerCase() === term ||
+      opt.marca?.toLowerCase() === term
+    );
+    setSeleccion(opt);
+    setBusqueda(opt.codigo || opt.nombre || "");
+    setMensaje(isExact ? "exact" : "selected");
+  }
 
   /* ── Debounce / fast-path ── */
   useEffect(() => {
@@ -375,14 +393,21 @@ export default function AgregarStockModal({
                   setMensaje("");
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "ArrowDown") {
                     e.preventDefault();
+                    setHl((i) => Math.min(i < 0 ? 0 : i + 1, opciones.length - 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setHl((i) => Math.max(i - 1, 0));
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (hl >= 0 && opciones[hl]) { elegirOpcion(opciones[hl]); return; }
                     const term = norm(busqueda);
                     if (!term) return;
                     if ((modo === "auto" || modo === "codigo") && isCodeLikeSearch(term))
                       buscarExactoPorCodigo(term);
                     else buscarOpciones(term, modo);
-                  }
+                  } else if (e.key === "Escape") { setHl(-1); }
                 }}
               />
               {busqueda && (
@@ -420,7 +445,7 @@ export default function AgregarStockModal({
           {/* ── Results list ── */}
           {!loading && opciones.length > 0 && (
             <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
-              {opciones.map((opt) => {
+              {opciones.map((opt, idx) => {
                 const term = norm(busqueda).toLowerCase();
                 const isExact =
                   term && (
@@ -431,15 +456,12 @@ export default function AgregarStockModal({
                 const isSelected = seleccion?.producto_id === opt.producto_id;
                 return (
                   <div
+                    id={`stock-opt-${idx}`}
                     key={opt.producto_id}
                     className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                      isSelected ? "bg-blue-50" : isExact ? "bg-green-50" : "hover:bg-slate-50"
+                      idx === hl ? "bg-blue-100" : isSelected ? "bg-blue-50" : isExact ? "bg-green-50" : "hover:bg-slate-50"
                     }`}
-                    onClick={() => {
-                      setSeleccion(opt);
-                      setBusqueda(opt.codigo || opt.nombre || "");
-                      setMensaje(isExact ? "exact" : "selected");
-                    }}
+                    onClick={() => elegirOpcion(opt)}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-sm text-slate-800 truncate">{opt.nombre}</div>

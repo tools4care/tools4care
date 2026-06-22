@@ -26,6 +26,7 @@ export default function ModalTraspasoStock({
   const [mensaje, setMensaje] = useState(""); // "exact" | "none" | "empty" | "many" | "success" | "err:..."
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hl, setHl] = useState(-1);
 
   const timerRef = useRef();
   const busquedaRef = useRef(null);
@@ -47,6 +48,17 @@ export default function ModalTraspasoStock({
       setTimeout(() => busquedaRef.current?.focus(), 150);
     }
   }, [abierto, ubicacionActual, ubicaciones]);
+
+  useEffect(() => setHl(-1), [opciones]);
+  useEffect(() => {
+    if (hl >= 0) document.getElementById(`traspaso-opt-${hl}`)?.scrollIntoView({ block: "nearest" });
+  }, [hl]);
+
+  function elegirOpcion(opt) {
+    setSeleccion(opt);
+    setCantidad(1);
+    setMensaje("");
+  }
 
   /* ── Debounce búsqueda ── */
   useEffect(() => {
@@ -382,6 +394,12 @@ export default function ModalTraspasoStock({
                   setSeleccion(null);
                   setMensaje("");
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, opciones.length - 1)); }
+                  else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
+                  else if (e.key === "Enter") { e.preventDefault(); if (hl >= 0 && opciones[hl]) elegirOpcion(opciones[hl]); }
+                  else if (e.key === "Escape") { setHl(-1); }
+                }}
                 disabled={!origen}
               />
               {busqueda && (
@@ -410,19 +428,16 @@ export default function ModalTraspasoStock({
           {/* ── Results list ── */}
           {!loading && opciones.length > 0 && (
             <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
-              {opciones.map((opt) => {
+              {opciones.map((opt, idx) => {
                 const isSelected = seleccion?.producto_id === opt.producto_id;
                 return (
                   <div
-                    key={`${opt.producto_id}_${opt.id || Math.random()}`}
+                    id={`traspaso-opt-${idx}`}
+                    key={`${opt.producto_id}_${opt.id || idx}`}
                     className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                      isSelected ? "bg-emerald-50" : "hover:bg-slate-50"
+                      idx === hl ? "bg-emerald-100" : isSelected ? "bg-emerald-50" : "hover:bg-slate-50"
                     }`}
-                    onClick={() => {
-                      setSeleccion(opt);
-                      setCantidad(1);
-                      setMensaje("");
-                    }}
+                    onClick={() => elegirOpcion(opt)}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-sm text-slate-800 truncate">
