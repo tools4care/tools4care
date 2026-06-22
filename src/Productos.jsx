@@ -597,6 +597,8 @@ export default function Productos() {
   const [suplidorNombre, setSuplidorNombre] = useState("");
 
   const [ubicaciones, setUbicaciones] = useState([{ key: "almacen", nombre: "Central warehouse" }]);
+  const ubicacionInicialDefault = () => (van?.id ? `van_${van.id}` : "almacen");
+  const vanIdInicialDefault = () => van?.id ?? null;
 
   // 🆕 ESCÁNER MEJORADO
   const [showScanner, setShowScanner] = useState(false);
@@ -769,8 +771,8 @@ export default function Productos() {
     setProductoActual({
       ...prod,
       cantidad_inicial: "",
-      ubicacion_inicial: "almacen",
-      van_id_inicial: null,
+      ubicacion_inicial: ubicacionInicialDefault(),
+      van_id_inicial: vanIdInicialDefault(),
       descuento_pct: prod.descuento_pct ?? "",
       bulk_min_qty: prod.bulk_min_qty ?? "",
       bulk_unit_price: prod.bulk_unit_price ?? "",
@@ -832,8 +834,8 @@ export default function Productos() {
       bulk_min_qty: "",
       bulk_unit_price: "",
       cantidad_inicial: "",
-      ubicacion_inicial: "almacen",
-      van_id_inicial: null,
+      ubicacion_inicial: ubicacionInicialDefault(),
+      van_id_inicial: vanIdInicialDefault(),
     });
     setIsCustomSize(false);
     setSizeCustom("");
@@ -967,7 +969,7 @@ export default function Productos() {
 
     setProductoActual((prev) =>
       prev
-        ? { ...prev, id: productoId, cantidad_inicial: "", ubicacion_inicial: "almacen", van_id_inicial: null }
+        ? { ...prev, id: productoId, cantidad_inicial: "", ubicacion_inicial: ubicacionInicialDefault(), van_id_inicial: vanIdInicialDefault() }
         : prev
     );
 
@@ -1442,9 +1444,9 @@ export default function Productos() {
                       </label>
                       <div className="flex gap-2">
                         <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base select-none">▌▌▌</span>
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base select-none pointer-events-none">▌▌▌</span>
                           <input
-                            className={`border-2 rounded-lg pl-9 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 outline-none bg-gray-50 uppercase ${codigoExisteInfo ? "border-amber-400 focus:ring-amber-400 focus:border-amber-400" : "border-gray-200 focus:ring-blue-500 focus:border-blue-400"}`}
+                            className={`border-2 rounded-lg pl-12 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 outline-none bg-gray-50 uppercase ${codigoExisteInfo ? "border-amber-400 focus:ring-amber-400 focus:border-amber-400" : "border-gray-200 focus:ring-blue-500 focus:border-blue-400"}`}
                             value={productoActual.codigo ?? ""}
                             onChange={(e) => {
                               const nextCode = e.target.value.toUpperCase();
@@ -1635,6 +1637,44 @@ export default function Productos() {
                     })()}
                   </div>
 
+                  {/* SECTION: Add Stock */}
+                  <div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Add Stock</p>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Quantity</label>
+                        <input
+                          className="border border-gray-200 rounded-lg p-2.5 w-full text-sm text-center focus:ring-2 focus:ring-blue-500 outline-none"
+                          type="number" min="0"
+                          value={productoActual.cantidad_inicial || ""}
+                          onChange={(e) => setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })}
+                          placeholder="0"
+                          disabled={disabled}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Location</label>
+                        <select
+                          className="border border-gray-200 rounded-lg p-2.5 w-full text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={productoActual.ubicacion_inicial}
+                          onChange={(e) => {
+                            if (disabled) return;
+                            const value = e.target.value;
+                            setProductoActual((prev) => ({
+                              ...prev,
+                              ubicacion_inicial: value,
+                              van_id_inicial: value.startsWith("van_") ? ubicaciones.find((u) => u.key === value)?.van_id : null,
+                            }));
+                          }}
+                          disabled={disabled}
+                        >
+                          {ubicaciones.map((u) => <option key={u.key} value={u.key}>{u.nombre}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1.5">Leave at 0 to save without adding stock.</p>
+                  </div>
+
                   {/* SECTION: Special Pricing */}
                   <div>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Special Pricing</p>
@@ -1742,44 +1782,6 @@ export default function Productos() {
                     </div>
                   </div>
 
-                  {/* SECTION: Add Stock */}
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Add Stock</p>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Quantity</label>
-                        <input
-                          className="border border-gray-200 rounded-lg p-2.5 w-full text-sm text-center focus:ring-2 focus:ring-blue-500 outline-none"
-                          type="number" min="0"
-                          value={productoActual.cantidad_inicial || ""}
-                          onChange={(e) => setProductoActual({ ...productoActual, cantidad_inicial: e.target.value })}
-                          placeholder="0"
-                          disabled={disabled}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-semibold text-gray-500 mb-1 block">Location</label>
-                        <select
-                          className="border border-gray-200 rounded-lg p-2.5 w-full text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                          value={productoActual.ubicacion_inicial}
-                          onChange={(e) => {
-                            if (disabled) return;
-                            const value = e.target.value;
-                            setProductoActual((prev) => ({
-                              ...prev,
-                              ubicacion_inicial: value,
-                              van_id_inicial: value.startsWith("van_") ? ubicaciones.find((u) => u.key === value)?.van_id : null,
-                            }));
-                          }}
-                          disabled={disabled}
-                        >
-                          {ubicaciones.map((u) => <option key={u.key} value={u.key}>{u.nombre}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1.5">Leave at 0 to save without adding stock.</p>
-                  </div>
-
                   {/* SECTION: Notes */}
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 block">Notes</label>
@@ -1813,7 +1815,7 @@ export default function Productos() {
                   <button
                     type="submit"
                     form="producto-form"
-                    className="flex-1 bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-bold rounded-xl py-3 text-sm transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 active:from-blue-800 active:to-blue-900 text-white font-bold rounded-xl py-3 text-sm shadow-md shadow-blue-200 transition-all disabled:opacity-70 disabled:shadow-none disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     disabled={disabled || guardandoProducto}
                   >
                     {guardandoProducto ? (
