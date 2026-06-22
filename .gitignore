@@ -25,3 +25,6 @@ dist-ssr
 .vercel
 .env
 .env*.local
+
+# Local DB backups (contain customer/financial data)
+.backups/
