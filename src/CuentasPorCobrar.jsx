@@ -1562,6 +1562,134 @@ function DetalleClienteModal({ cliente, onClose }) {
   );
 }
 
+/* ====================== Bulk Reminder Modal ====================== */
+// Walks through the selected customers one at a time. Each step still
+// requires a manual click to open WhatsApp (with the message pre-filled)
+// and a manual "Send" inside WhatsApp itself — this never sends anything
+// on its own, it just removes the busywork of finding each customer again.
+function BulkReminderModal({ clientes, onClose, onSent }) {
+  const [templates] = useState([...DEFAULT_TEMPLATES, ...loadUserTemplates()]);
+  const [tplKey, setTplKey] = useState("en_pro");
+  const [index, setIndex] = useState(0);
+  const [results, setResults] = useState({}); // cliente_id -> "sent" | "skipped"
+
+  const current = clientes[index];
+  const done = index >= clientes.length;
+
+  const messageFor = (cliente) => {
+    const tpl = templates.find((t) => t.key === tplKey) || templates[0];
+    const nombre = cliente?.cliente_nombre || "Customer";
+    const saldoRow = Number(cliente?.saldo || 0);
+    return renderTemplate(tpl.body, {
+      cliente: nombre,
+      saldo: saldoRow,
+      total_cxc: saldoRow,
+      company: COMPANY_NAME,
+      pay_url: PAY_URL,
+      email: CONTACT_EMAIL,
+      phone: CONTACT_PHONE,
+    });
+  };
+
+  const advance = (status) => {
+    setResults((prev) => ({ ...prev, [current.cliente_id]: status }));
+    setIndex((i) => i + 1);
+  };
+
+  const sentCount = Object.values(results).filter((v) => v === "sent").length;
+  const skippedCount = Object.values(results).filter((v) => v === "skipped").length;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center overflow-hidden">
+      <div className="bg-white w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl shadow-2xl flex flex-col sm:m-4">
+        <div className="flex-shrink-0 bg-gradient-to-r from-green-600 to-emerald-600 text-white pt-safe pb-4 px-4 sm:px-6 sm:py-6 shadow-lg">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-bold text-xl sm:text-2xl mb-1">💬 Bulk Reminders</div>
+              <div className="text-sm text-green-100">
+                {done ? "Done" : `Customer ${index + 1} of ${clientes.length}`}
+              </div>
+            </div>
+            <button onClick={onClose} className="w-10 h-10 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white text-2xl font-bold">✕</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+          {!done && (
+            <>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Template (applies to all):</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {templates.map((t) => (
+                    <button
+                      key={t.key}
+                      onClick={() => setTplKey(t.key)}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium border-2 transition-all ${
+                        tplKey === t.key ? "bg-green-600 text-white border-green-600" : "bg-white text-gray-700 border-gray-300 hover:border-green-400"
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-gray-50 border-2 border-gray-200 rounded-xl p-4">
+                <div className="font-bold text-gray-900">{current.cliente_nombre}</div>
+                <div className="text-sm text-gray-500 mb-2">
+                  {current.telefono ? `📞 ${current.telefono}` : "⚠️ No phone number on file"}
+                  {" · "}Balance {fmt(current.saldo)}
+                </div>
+                <div className="text-sm text-gray-700 whitespace-pre-line border-t border-gray-200 pt-2 mt-2">
+                  {messageFor(current)}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => advance("skipped")}
+                  className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-3 rounded-xl font-semibold"
+                >
+                  Skip
+                </button>
+                <button
+                  disabled={!current.telefono}
+                  onClick={() => {
+                    openWhatsAppWith(current.telefono, messageFor(current));
+                    onSent?.(current);
+                    advance("sent");
+                  }}
+                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-3 rounded-xl font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  💬 Open WhatsApp &amp; Next
+                </button>
+              </div>
+            </>
+          )}
+
+          {done && (
+            <div className="text-center py-6">
+              <div className="text-5xl mb-3">✅</div>
+              <div className="font-bold text-lg text-gray-900">
+                {sentCount} sent{skippedCount > 0 ? `, ${skippedCount} skipped` : ""}
+              </div>
+              <div className="text-sm text-gray-500 mt-1">
+                Each WhatsApp message still needs your tap on "Send" in the opened chat.
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex-shrink-0 bg-white border-t-2 border-gray-200 p-4 pb-safe">
+          <button onClick={onClose} className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 px-6 py-3 rounded-xl font-semibold">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ====================== Credit Simulator Modal ====================== */
 function SimuladorCreditoModal({ onClose, initialAmount, initialMonths, customerName, customerId }) {
   return (
@@ -1622,6 +1750,28 @@ export default function CuentasPorCobrar() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [lastPayInfo, setLastPayInfo] = useState({}); // cliente_id -> { days, label }
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [openBulkReminder, setOpenBulkReminder] = useState(false);
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleSelectAllVisible() {
+    setSelectedIds((prev) => {
+      const visibleIds = rows.map((r) => r.cliente_id);
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+      if (allSelected) {
+        const next = new Set(prev);
+        visibleIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...visibleIds]);
+    });
+  }
 
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
   const [page, setPage] = useState(1);
@@ -1933,6 +2083,11 @@ export default function CuentasPorCobrar() {
     if (days <= 90) return "D60";
     return "D90";
   }
+
+  // Clear selection when the page/filter/search context changes — selection
+  // is scoped to what's currently visible in `rows`, so a stale id from a
+  // previous page or filter would otherwise silently drop out of the bulk send.
+  useEffect(() => { setSelectedIds(new Set()); }, [debouncedQ, scoreFilter, agingFilter, page]);
 
   function payAgingBadge(info) {
     if (!info || info.days == null) {
@@ -2332,6 +2487,38 @@ export default function CuentasPorCobrar() {
           </div>
         </div>
 
+        {/* Bulk selection bar */}
+        {!loading && rows.length > 0 && (
+          <div className="flex items-center justify-between gap-3 bg-white border-2 border-gray-200 rounded-xl px-4 py-2.5 mb-3 shadow-sm">
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rows.length > 0 && rows.every((r) => selectedIds.has(r.cliente_id))}
+                onChange={toggleSelectAllVisible}
+                className="w-4 h-4 accent-indigo-600"
+              />
+              Select all on this page
+            </label>
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">{selectedIds.size} selected</span>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-sm text-gray-500 hover:text-gray-700 underline"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() => setOpenBulkReminder(true)}
+                  className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm"
+                >
+                  💬 Send reminders ({selectedIds.size})
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* List */}
         <div className="space-y-3">
           {loading && (
@@ -2361,9 +2548,17 @@ export default function CuentasPorCobrar() {
                   {/* Header */}
                   <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 pt-4 pb-3">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-bold text-base leading-tight truncate">{r.cliente_nombre}</div>
-                        {r.nombre_negocio && <div className="text-xs text-blue-100 mt-0.5 truncate">🏪 {r.nombre_negocio}</div>}
+                      <div className="flex items-start gap-2 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(r.cliente_id)}
+                          onChange={() => toggleSelect(r.cliente_id)}
+                          className="w-4 h-4 mt-1 accent-white flex-shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-base leading-tight truncate">{r.cliente_nombre}</div>
+                          {r.nombre_negocio && <div className="text-xs text-blue-100 mt-0.5 truncate">🏪 {r.nombre_negocio}</div>}
+                        </div>
                       </div>
                       <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
                         <span className={`text-xs font-bold px-2 py-1 rounded-full border ${sc.bg} ${sc.text} ${sc.border}`}>
@@ -2457,6 +2652,14 @@ export default function CuentasPorCobrar() {
               <table className="min-w-full">
                 <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
                   <tr>
+                    <th className="px-3 py-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={rows.length > 0 && rows.every((r) => selectedIds.has(r.cliente_id))}
+                        onChange={toggleSelectAllVisible}
+                        className="w-4 h-4 accent-indigo-600"
+                      />
+                    </th>
                     <th className="text-left px-5 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Customer</th>
                     <th className="text-right px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Balance</th>
                     <th className="text-center px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider">Score</th>
@@ -2474,6 +2677,14 @@ export default function CuentasPorCobrar() {
                     const aging = payAgingBadge(lastPayInfo[r.cliente_id]);
                     return (
                       <tr key={r.cliente_id} className="hover:bg-blue-50/50 transition-colors">
+                        <td className="px-3 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(r.cliente_id)}
+                            onChange={() => toggleSelect(r.cliente_id)}
+                            className="w-4 h-4 accent-indigo-600"
+                          />
+                        </td>
                         <td className="px-5 py-3">
                           <div className="font-semibold text-gray-900 leading-tight">{r.cliente_nombre}</div>
                           {r.nombre_negocio && <div className="text-xs text-gray-500 mt-0.5">🏪 {r.nombre_negocio}</div>}
@@ -2668,6 +2879,22 @@ export default function CuentasPorCobrar() {
         <CustomerHistoryModal
           cliente={selected}
           onClose={() => { setOpenHistory(false); setSelected(null); }}
+        />
+      )}
+
+      {openBulkReminder && (
+        <BulkReminderModal
+          clientes={rows.filter((r) => selectedIds.has(r.cliente_id))}
+          onClose={() => setOpenBulkReminder(false)}
+          onSent={(cliente) => {
+            logAudit({
+              usuario, van,
+              accion: "ar_bulk_reminder_sent",
+              entidadTipo: "cliente",
+              entidadId: cliente.cliente_id,
+              nota: cliente.cliente_nombre || null,
+            });
+          }}
         />
       )}
 
