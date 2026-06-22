@@ -1,9 +1,12 @@
 // src/ModalTraspasoStock.jsx
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
+import { barcodeVariants, isCodeLikeSearch, normalizeSearchTerm } from "./utils/productSearch";
+import { useUsuario } from "./UsuarioContext";
+import { useVan } from "./hooks/VanContext";
+import { logAudit } from "./lib/auditLog";
 
-const norm = (s) => String(s || "").trim();
-const isLikelyScan = (s) => !!s && s.length >= 6 && !/\s/.test(s);
+const norm = normalizeSearchTerm;
 
 export default function ModalTraspasoStock({
   abierto,
@@ -12,6 +15,8 @@ export default function ModalTraspasoStock({
   ubicacionActual = null,
   onSuccess,
 }) {
+  const { usuario } = useUsuario();
+  const { van } = useVan();
   const [origen, setOrigen] = useState(null);
   const [destino, setDestino] = useState(null);
   const [busqueda, setBusqueda] = useState("");
@@ -24,12 +29,14 @@ export default function ModalTraspasoStock({
 
   const timerRef = useRef();
   const busquedaRef = useRef(null);
+  const querySeq = useRef(0);
 
   /* ── Reset al abrir / cerrar ── */
   useEffect(() => {
     if (!abierto) {
       setBusqueda(""); setOpciones([]); setSeleccion(null); setCantidad(1); setMensaje("");
       setSaving(false);
+      querySeq.current = 0;
       if (timerRef.current) clearTimeout(timerRef.current);
     } else {
       if (ubicacionActual) {
@@ -49,8 +56,8 @@ export default function ModalTraspasoStock({
     const term = norm(busqueda);
     if (!term) { setOpciones([]); setSeleccion(null); setMensaje(""); return; }
 
-    if (isLikelyScan(term)) timerRef.current = setTimeout(() => buscarProducto(term, true), 150);
-    else timerRef.current = setTimeout(() => buscarProducto(term, false), 300);
+    const codeLike = isCodeLikeSearch(term);
+    timerRef.current = setTimeout(() => buscarProducto(term, codeLike), codeLike ? 45 : 180);
 
     return () => clearTimeout(timerRef.current);
   }, [busqueda, abierto, origen]);
@@ -58,45 +65,76 @@ export default function ModalTraspasoStock({
   /* ── Búsqueda de productos (dos-query para eficiencia) ── */
   async function buscarProducto(filtro, exacto = false) {
     if (!origen) return;
+    const qid = ++querySeq.current;
     setLoading(true); setOpciones([]); setSeleccion(null); setMensaje("");
 
     try {
       const tabla = origen.tipo === "warehouse" ? "stock_almacen" : "stock_van";
+      const variants = barcodeVariants(filtro);
+      const codeLike = exacto || isCodeLikeSearch(filtro);
+      let productosData = [];
+      let prodError = null;
 
-      let stockQuery = supabase.from(tabla).select("id, producto_id, cantidad").gt("cantidad", 0);
+      if (codeLike && variants.length > 0) {
+        const exactProducts = await supabase
+          .from("productos")
+          .select("id, codigo, nombre, marca")
+          .in("codigo", variants)
+          .limit(50);
+        prodError = exactProducts.error;
+        productosData = exactProducts.data || [];
+      }
+
+      if (!prodError && codeLike && productosData.length === 0) {
+        const codeFilters = variants.map((code) => `codigo.ilike.${code}%`).join(",");
+        const prefixedProducts = await supabase
+          .from("productos")
+          .select("id, codigo, nombre, marca")
+          .or(codeFilters)
+          .limit(100);
+        prodError = prefixedProducts.error;
+        productosData = prefixedProducts.data || [];
+      }
+
+      if (!prodError && !codeLike) {
+        const textProducts = await supabase
+          .from("productos")
+          .select("id, codigo, nombre, marca")
+          .or(`codigo.ilike.%${filtro}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`)
+          .limit(100);
+        prodError = textProducts.error;
+        productosData = textProducts.data || [];
+      }
+
+      if (qid !== querySeq.current) return;
+      if (prodError) throw prodError;
+
+      if (!productosData || productosData.length === 0) {
+        setMensaje("none"); setLoading(false); return;
+      }
+
+      const productoIds = productosData.map((p) => p.id);
+      let stockQuery = supabase.from(tabla).select("id, producto_id, cantidad").in("producto_id", productoIds).gt("cantidad", 0);
       if (origen.tipo === "van" && origen.id) stockQuery = stockQuery.eq("van_id", origen.id);
 
       const { data: stockData, error: stockError } = await stockQuery;
+      if (qid !== querySeq.current) return;
       if (stockError) throw stockError;
 
-      if (!stockData || stockData.length === 0) {
-        setMensaje("empty"); setLoading(false); return;
-      }
-
-      const productoIds = stockData.map((s) => s.producto_id);
-      let prodQuery = supabase.from("productos").select("id, codigo, nombre, marca").in("id", productoIds);
-
-      if (exacto) prodQuery = prodQuery.eq("codigo", filtro);
-      else prodQuery = prodQuery.or(
-        `codigo.ilike.%${filtro}%,nombre.ilike.%${filtro}%,marca.ilike.%${filtro}%`
-      );
-
-      const { data: productosData, error: prodError } = await prodQuery;
-      if (prodError) throw prodError;
-
-      const results = (productosData || []).map((prod) => {
-        const stock = stockData.find((s) => s.producto_id === prod.id);
+      const prodMap = new Map((productosData || []).map((prod) => [prod.id, prod]));
+      const results = (stockData || []).map((stock) => {
+        const prod = prodMap.get(stock.producto_id);
         return {
-          id: stock?.id,
-          producto_id: prod.id,
-          cantidad: Number(stock?.cantidad || 0),
+          id: stock.id,
+          producto_id: stock.producto_id,
+          cantidad: Number(stock.cantidad || 0),
           productos: prod,
         };
-      }).filter((r) => r.cantidad > 0);
+      }).filter((r) => r.cantidad > 0 && r.productos);
 
       setOpciones(results);
 
-      if (results.length === 1 && exacto) {
+      if (results.length === 1 && codeLike) {
         setSeleccion(results[0]);
         setCantidad(1); // ✅ fixed: was Math.min(1, opt.cantidad)
         setMensaje("exact");
@@ -114,6 +152,10 @@ export default function ModalTraspasoStock({
   }
 
   /* ── Transferir stock ── */
+  function isMissingRpc(error) {
+    return error?.code === "42883" || error?.code === "PGRST202" || /function .* does not exist/i.test(error?.message || "");
+  }
+
   async function transferirStock(e) {
     e.preventDefault(); setMensaje("");
 
@@ -129,7 +171,40 @@ export default function ModalTraspasoStock({
 
     try {
       setSaving(true);
-      await transferirStockManual(qty);
+      const { error: rpcError } = await supabase.rpc("transferir_stock", {
+        p_producto_id: seleccion.producto_id,
+        p_cantidad: qty,
+        p_origen_tipo: origen.tipo === "warehouse" ? "almacen" : origen.tipo,
+        p_origen_van_id: origen.tipo === "van" ? origen.id : null,
+        p_destino_tipo: destino.tipo === "warehouse" ? "almacen" : destino.tipo,
+        p_destino_van_id: destino.tipo === "van" ? destino.id : null,
+        p_motivo: `Transfer ${origen.nombre || origen.tipo} -> ${destino.nombre || destino.tipo}`,
+        p_usuario_id: usuario?.id || null,
+      });
+
+      if (rpcError) {
+        if (!isMissingRpc(rpcError)) throw rpcError;
+        await transferirStockManual(qty);
+      }
+      logAudit({
+        usuario,
+        van,
+        accion: "stock_transfer",
+        entidadTipo: "producto",
+        entidadId: seleccion.producto_id,
+        before: {
+          origen: origen?.nombre || origen?.tipo,
+          origen_tipo: origen?.tipo,
+          origen_van_id: origen?.tipo === "van" ? origen.id : null,
+        },
+        after: {
+          destino: destino?.nombre || destino?.tipo,
+          destino_tipo: destino?.tipo,
+          destino_van_id: destino?.tipo === "van" ? destino.id : null,
+          cantidad: qty,
+        },
+        nota: seleccion.productos?.nombre || "Stock transfer",
+      });
       if (onSuccess) await onSuccess();
       setMensaje("success");
       setTimeout(() => cerrar(), 1200);

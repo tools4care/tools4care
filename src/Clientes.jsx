@@ -8,6 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import QRCode from "qrcode";
 import { loadPdfLibs } from "./utils/lazyPdf";
 import { useLocation, useNavigate } from "react-router-dom";
+import { clientDigits, filterClientsLocal, isPhoneLikeSearch, phoneSearchVariants } from "./utils/clientSearch";
 import Avatar from "./components/ui/Avatar";
 import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
@@ -664,7 +665,10 @@ export default function Clientes() {
 
   /* -------------------- Debounce búsqueda -------------------- */
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(busqueda.trim()), 350);
+    const t = setTimeout(
+      () => setDebounced(busqueda.trim()),
+      isPhoneLikeSearch(busqueda) ? 45 : 220
+    );
     return () => clearTimeout(t);
   }, [busqueda]);
 
@@ -708,14 +712,7 @@ const fetchPage = async (opts = {}) => {
     if (cached.length > 0) {
       let resultados = cached;
       if (q) {
-        const term = q.toLowerCase();
-        resultados = cached.filter(c =>
-          (c.nombre || "").toLowerCase().includes(term) ||
-          (c.negocio || "").toLowerCase().includes(term) ||
-          (c.telefono || "").toLowerCase().includes(term) ||
-          (c.email || "").toLowerCase().includes(term) ||
-          (c.direccion || "").toLowerCase().includes(term)
-        );
+        resultados = filterClientsLocal(cached, q, cached.length);
       }
       const from = (p - 1) * ps;
       setClientes(resultados.slice(from, from + ps));
@@ -738,7 +735,9 @@ const fetchPage = async (opts = {}) => {
 
   if (q) {
     const like = `%${q}%`;
-    const qDigits = (q || "").replace(/\D/g, "");
+    const qDigits = clientDigits(q);
+    const phoneLike = isPhoneLikeSearch(q);
+    const phoneVariants = phoneSearchVariants(q);
 
     // 🔍 BÚSQUEDA COMPLETA: Nombre, Email, Negocio, Teléfono, Dirección
     const filtros = [
@@ -757,6 +756,10 @@ const fetchPage = async (opts = {}) => {
     if (qDigits.length >= 3) {
       const likeDigits = `%${qDigits}%`;
       filtros.push(
+        ...(phoneLike ? phoneVariants.flatMap((v) => [
+          `tel_norm.ilike.${clientDigits(v)}%`,
+          `telefono.ilike.%${v}%`,
+        ]) : []),
         `tel_norm.ilike.${likeDigits}`,
         `tel_norm.ilike.%1${qDigits}%`
       );

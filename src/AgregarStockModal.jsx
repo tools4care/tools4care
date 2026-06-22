@@ -2,19 +2,14 @@
 import { lazy, Suspense, useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useNavigate } from "react-router-dom";
+import { barcodeVariants, isCodeLikeSearch, normalizeSearchTerm } from "./utils/productSearch";
+import { useUsuario } from "./UsuarioContext";
+import { useVan } from "./hooks/VanContext";
+import { logAudit } from "./lib/auditLog";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
 /* ===================== Helpers de búsqueda (fast-path escáner) ===================== */
-const isLikelyScan = (s) => !!s && s.length >= 6 && !/\s/.test(s);
-const norm = (s) => String(s || "").trim();
-
-// Genera variantes del código para manejar ceros al inicio (UPC-A vs EAN-13).
-// Ej: "0010181055935" → ["0010181055935", "010181055935", "10181055935"]
-function barcodeVariants(code) {
-  const s = norm(code);
-  const stripped = s.replace(/^0+/, "") || "0";
-  return [...new Set([s, stripped])].filter(Boolean);
-}
+const norm = normalizeSearchTerm;
 
 export default function AgregarStockModal({
   abierto,
@@ -23,6 +18,8 @@ export default function AgregarStockModal({
   ubicacionId = null, // uuid de van cuando tipo="van"
   onSuccess,
 }) {
+  const { usuario } = useUsuario();
+  const { van } = useVan();
   const [busqueda, setBusqueda] = useState("");
   const [opciones, setOpciones] = useState([]);
   const [seleccion, setSeleccion] = useState(null);
@@ -72,15 +69,15 @@ export default function AgregarStockModal({
     const term = norm(busqueda);
     if (!term) { setOpciones([]); setSeleccion(null); setMensaje(""); return; }
 
-    if ((modo === "auto" || modo === "codigo") && isLikelyScan(term)) {
+    if ((modo === "auto" || modo === "codigo") && isCodeLikeSearch(term)) {
       (async () => {
         const hit = await buscarExactoPorCodigo(term);
-        if (!hit) timerRef.current = setTimeout(() => buscarOpciones(term, modo), 180);
+        if (!hit) timerRef.current = setTimeout(() => buscarOpciones(term, modo), 60);
       })();
       return;
     }
 
-    timerRef.current = setTimeout(() => buscarOpciones(term, modo), 300);
+    timerRef.current = setTimeout(() => buscarOpciones(term, modo), 160);
     return () => clearTimeout(timerRef.current);
   }, [busqueda, abierto, modo]);
 
@@ -91,7 +88,10 @@ export default function AgregarStockModal({
 
     let prodQuery = supabase.from("productos").select("id, nombre, marca, codigo").limit(50);
 
-    const codeFilters = barcodeVariants(filtro).map((code) => `codigo.ilike.%${code}%`).join(",");
+    const codeLike = isCodeLikeSearch(filtro);
+    const codeFilters = barcodeVariants(filtro)
+      .map((code) => `codigo.ilike.${codeLike ? `${code}%` : `%${code}%`}`)
+      .join(",");
 
     if (modoBusqueda === "codigo")      prodQuery = prodQuery.or(codeFilters);
     else if (modoBusqueda === "nombre") prodQuery = prodQuery.ilike("nombre", `%${filtro}%`);
@@ -189,6 +189,39 @@ export default function AgregarStockModal({
   }
 
   /* ====================== AGREGAR STOCK ====================== */
+  function isMissingRpc(error) {
+    return error?.code === "42883" || error?.code === "PGRST202" || /function .* does not exist/i.test(error?.message || "");
+  }
+
+  async function agregarStockLegacy(qty) {
+    if (tipo === "van") {
+      if (!ubicacionId) { setMensaje("err:No van selected."); return false; }
+      const { error } = await supabase.rpc("increment_stock_van", {
+        p_van_id: ubicacionId,
+        p_producto_id: seleccion.producto_id,
+        p_delta: qty,
+      });
+      if (error) { setMensaje("err:" + error.message); return false; }
+      return true;
+    }
+
+    const { data: existente, error: readErr } = await supabase
+      .from("stock_almacen").select("id, cantidad")
+      .eq("producto_id", seleccion.producto_id).maybeSingle();
+    if (readErr) { setMensaje("err:" + readErr.message); return false; }
+
+    if (existente) {
+      const { error: updErr } = await supabase.from("stock_almacen")
+        .update({ cantidad: Number(existente.cantidad || 0) + qty }).eq("id", existente.id);
+      if (updErr) { setMensaje("err:" + updErr.message); return false; }
+    } else {
+      const { error: insErr } = await supabase.from("stock_almacen")
+        .insert({ producto_id: seleccion.producto_id, cantidad: qty });
+      if (insErr) { setMensaje("err:" + insErr.message); return false; }
+    }
+    return true;
+  }
+
   async function agregarStock(e) {
     e.preventDefault(); setMensaje("");
     if (!seleccion?.producto_id) { setMensaje("err:Select a product first."); return; }
@@ -198,30 +231,40 @@ export default function AgregarStockModal({
     try {
       setSaving(true);
 
-      if (tipo === "van") {
-        if (!ubicacionId) { setMensaje("err:No van selected."); return; }
-        const { error } = await supabase.rpc("increment_stock_van", {
-          p_van_id: ubicacionId,
-          p_producto_id: seleccion.producto_id,
-          p_delta: qty,
-        });
-        if (error) { setMensaje("err:" + error.message); return; }
-      } else {
-        const { data: existente, error: readErr } = await supabase
-          .from("stock_almacen").select("id, cantidad")
-          .eq("producto_id", seleccion.producto_id).maybeSingle();
-        if (readErr) { setMensaje("err:" + readErr.message); return; }
+      const ubicacion = tipo === "van" ? "van" : "almacen";
+      const { error: rpcError } = await supabase.rpc("ajustar_stock", {
+        p_producto_id: seleccion.producto_id,
+        p_delta: qty,
+        p_ubicacion: ubicacion,
+        p_van_id: tipo === "van" ? ubicacionId : null,
+        p_motivo: `Add stock from ${labelTipo}`,
+        p_usuario_id: usuario?.id || null,
+        p_referencia_tipo: "stock_modal",
+        p_referencia_id: null,
+      });
 
-        if (existente) {
-          const { error: updErr } = await supabase.from("stock_almacen")
-            .update({ cantidad: Number(existente.cantidad || 0) + qty }).eq("id", existente.id);
-          if (updErr) { setMensaje("err:" + updErr.message); return; }
-        } else {
-          const { error: insErr } = await supabase.from("stock_almacen")
-            .insert({ producto_id: seleccion.producto_id, cantidad: qty });
-          if (insErr) { setMensaje("err:" + insErr.message); return; }
+      if (rpcError) {
+        if (!isMissingRpc(rpcError)) {
+          setMensaje("err:" + rpcError.message);
+          return;
         }
+        const ok = await agregarStockLegacy(qty);
+        if (!ok) return;
       }
+
+      logAudit({
+        usuario,
+        van,
+        accion: "stock_adjustment",
+        entidadTipo: "producto",
+        entidadId: seleccion.producto_id,
+        after: {
+          delta: qty,
+          ubicacion,
+          van_id: tipo === "van" ? ubicacionId : null,
+        },
+        nota: seleccion.nombre || seleccion.codigo || "Stock adjustment",
+      });
 
       if (onSuccess) await onSuccess();
       cerrar();
@@ -336,7 +379,7 @@ export default function AgregarStockModal({
                     e.preventDefault();
                     const term = norm(busqueda);
                     if (!term) return;
-                    if ((modo === "auto" || modo === "codigo") && isLikelyScan(term))
+                    if ((modo === "auto" || modo === "codigo") && isCodeLikeSearch(term))
                       buscarExactoPorCodigo(term);
                     else buscarOpciones(term, modo);
                   }
@@ -549,7 +592,7 @@ export default function AgregarStockModal({
             setSeleccion(null);
             setMensaje("");
             setShowScanner(false);
-            setTimeout(() => busquedaInputRef.current?.focus(), 150);
+            setTimeout(() => busquedaInputRef.current?.focus(), 60);
           }}
           onClose={() => setShowScanner(false)}
         /></Suspense>

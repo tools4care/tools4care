@@ -594,33 +594,6 @@
       // Detectar si estamos en el storefront (rutas del cliente)
       const _isStorefront = /^\/(storefront|checkout|auth\/callback|payment-success|payment-cancelled)/.test(window.location.pathname);
 
-      // Service Worker Registration
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(registration => {
-              console.log('✅ Service Worker registrado:', registration);
-              
-              // Check for updates
-              registration.addEventListener('updatefound', () => {
-                const newWorker = registration.installing;
-                newWorker.addEventListener('statechange', () => {
-                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    console.log('🔄 Nueva versión disponible');
-                    // Opcional: Mostrar notificación al usuario
-                    if (confirm('Hay una nueva versión disponible. ¿Deseas actualizar?')) {
-                      window.location.reload();
-                    }
-                  }
-                });
-              });
-            })
-            .catch(error => {
-              console.error('❌ Error registrando Service Worker:', error);
-            });
-        });
-      }
-
       // Online/Offline Status — solo para el POS, nunca en storefront
       function updateOnlineStatus() {
         if (_isStorefront) return; // clientes no ven el banner offline

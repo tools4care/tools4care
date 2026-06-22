@@ -87,7 +87,6 @@ export async function guardarClientesCache(clientes) {
       data: clientes,
       timestamp: new Date().toISOString()
     });
-    console.log(`✅ ${clientes.length} clientes guardados en cache`);
   } catch (error) {
     console.error('Error guardando clientes en cache:', error);
   }
@@ -101,6 +100,48 @@ export async function obtenerClientesCache() {
     console.error('Error obteniendo clientes de cache:', error);
     return [];
   }
+}
+
+export async function obtenerMetaClientesCache() {
+  try {
+    const cache = await localforage.getItem('cache_clientes');
+    return {
+      count: Array.isArray(cache?.data) ? cache.data.length : 0,
+      timestamp: cache?.timestamp || null,
+    };
+  } catch {
+    return { count: 0, timestamp: null };
+  }
+}
+
+export async function ajustarClienteBalanceLocal(clienteId, deltaBalance = 0) {
+  if (!clienteId || !Number.isFinite(Number(deltaBalance))) return null;
+
+  const cache = await localforage.getItem('cache_clientes');
+  const data = Array.isArray(cache?.data) ? cache.data : [];
+  if (data.length === 0) return null;
+
+  let updatedClient = null;
+  const next = data.map((cliente) => {
+    if (cliente.id !== clienteId) return cliente;
+    const current = Number(cliente._saldo_real ?? cliente.balance ?? cliente.saldo ?? 0);
+    const nextBalance = Math.max(0, Number((current + Number(deltaBalance)).toFixed(2)));
+    updatedClient = {
+      ...cliente,
+      balance: nextBalance,
+      _saldo_real: nextBalance,
+      _offline_balance_adjusted_at: new Date().toISOString(),
+    };
+    return updatedClient;
+  });
+
+  if (!updatedClient) return null;
+  await localforage.setItem('cache_clientes', {
+    ...cache,
+    data: next,
+    timestamp: new Date().toISOString(),
+  });
+  return updatedClient;
 }
 
 export async function clientesCacheEsValido() {
@@ -130,7 +171,6 @@ export async function guardarDeudaCache(ventasConDeuda) {
       timestamp: new Date().toISOString(),
       total: ventasConDeuda.length,
     });
-    console.log(`✅ ${ventasConDeuda.length} ventas con deuda guardadas en caché`);
   } catch (error) {
     console.error('Error guardando deudas en cache:', error);
   }
@@ -155,7 +195,6 @@ export async function guardarInventarioVan(vanId, productos) {
       timestamp: new Date().toISOString(),
       vanId
     });
-    console.log(`✅ Inventario de van ${vanId} guardado en caché (${productos.length} productos)`);
   } catch (error) {
     console.error('Error guardando inventario de van:', error);
   }
@@ -165,7 +204,6 @@ export async function obtenerInventarioVan(vanId) {
   try {
     const cache = await localforage.getItem(`inventario_van_${vanId}`);
     if (cache?.data) {
-      console.log(`📦 Inventario de van ${vanId} cargado desde caché`);
       return cache.data;
     }
     return [];
@@ -175,13 +213,63 @@ export async function obtenerInventarioVan(vanId) {
   }
 }
 
+export async function obtenerMetaInventarioVan(vanId) {
+  try {
+    if (!vanId) return { count: 0, timestamp: null };
+    const cache = await localforage.getItem(`inventario_van_${vanId}`);
+    return {
+      count: Array.isArray(cache?.data) ? cache.data.length : 0,
+      timestamp: cache?.timestamp || null,
+      vanId: cache?.vanId || vanId,
+    };
+  } catch {
+    return { count: 0, timestamp: null };
+  }
+}
+
+export async function descontarInventarioVanLocal(vanId, items = []) {
+  if (!vanId || !Array.isArray(items) || items.length === 0) return [];
+
+  const cacheKey = `inventario_van_${vanId}`;
+  const cache = await localforage.getItem(cacheKey);
+  const data = Array.isArray(cache?.data) ? cache.data : [];
+  if (data.length === 0) return [];
+
+  const qtyByProduct = new Map();
+  for (const item of items) {
+    const id = item.producto_id ?? item.productos?.id;
+    if (!id) continue;
+    qtyByProduct.set(id, (qtyByProduct.get(id) || 0) + Number(item.cantidad || 0));
+  }
+
+  const next = data
+    .map((row) => {
+      const id = row.producto_id ?? row.productos?.id;
+      const sold = qtyByProduct.get(id) || 0;
+      if (!sold) return row;
+      return {
+        ...row,
+        cantidad: Math.max(0, Number(row.cantidad || 0) - sold),
+      };
+    })
+    .filter((row) => Number(row.cantidad || 0) > 0);
+
+  await localforage.setItem(cacheKey, {
+    ...cache,
+    data: next,
+    timestamp: new Date().toISOString(),
+    vanId,
+  });
+  await guardarTopProductos(vanId, next.slice(0, 50));
+  return next;
+}
+
 export async function guardarTopProductos(vanId, productos) {
   try {
     await localforage.setItem(`top_productos_${vanId}`, {
       data: productos,
       timestamp: new Date().toISOString()
     });
-    console.log(`✅ Top productos guardados en caché`);
   } catch (error) {
     console.error('Error guardando top productos:', error);
   }
@@ -223,8 +311,6 @@ export async function guardarBackupLocal(datos) {
     }});
     // Solo guardar los últimos 3
     await localforage.setItem('backup_historial', historial.slice(0, 3));
-
-    console.log(`✅ Backup local guardado: ${backup.clientes.length} clientes, ${backup.inventario.length} productos`);
     return true;
   } catch (error) {
     console.error('Error guardando backup local:', error);
@@ -274,7 +360,6 @@ export async function guardarPagoOffline(pago) {
     };
     pagosPendientes.push(nuevoPago);
     await localforage.setItem('pagos_pendientes', pagosPendientes);
-    console.log(`💾 Pago offline guardado: $${pago.monto} para cliente ${pago.cliente_id}`);
     return nuevoPago;
   } catch (error) {
     console.error('Error guardando pago offline:', error);

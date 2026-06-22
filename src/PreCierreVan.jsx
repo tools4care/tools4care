@@ -134,8 +134,6 @@ function usePrecloseRows(vanId, diasAtras = 21) {
         const p_from = desde.toISOString().slice(0, 10);
         const p_to = hoy.toISOString().slice(0, 10);
 
-        console.log("📅 Fetching pre-close rows for van:", vanId, "from:", p_from, "to:", p_to);
-
         // Obtener cierres previos. Un mismo día puede tener varios cortes; los
         // importes ya cerrados se restan del total acumulado del día.
         const { data: cierres, error: cierresError } = await supabase
@@ -181,8 +179,6 @@ function usePrecloseRows(vanId, diasAtras = 21) {
           console.error("❌ RPC error:", rpcError);
           throw new Error(rpcError.message);
         }
-
-        console.log("✅ RPC data received:", data);
 
         // Procesar y normalizar los datos del RPC
         const normalized = (data ?? [])
@@ -257,9 +253,6 @@ function usePrecloseRows(vanId, diasAtras = 21) {
           });
 
           const totalRefunds = (devData || []).reduce((s, r) => s + Number(r.total_venta || 0), 0);
-          if (totalRefunds > 0) {
-            console.log(`💸 Cash refunds deducted: -$${totalRefunds.toFixed(2)}`);
-          }
         } catch (_) { /* ventas table unavailable */ }
 
         // Restar lo ya incluido en cierres anteriores del mismo día.
@@ -280,10 +273,7 @@ function usePrecloseRows(vanId, diasAtras = 21) {
             const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
             const hasTransactions = total > 0;
 
-            if (isValid && hasTransactions) {
-              console.log(`✅ Día válido: ${r.dia} - Total: $${total.toFixed(2)}`);
-              return true;
-            }
+            if (isValid && hasTransactions) return true;
 
             return false;
           });
@@ -291,7 +281,6 @@ function usePrecloseRows(vanId, diasAtras = 21) {
         // Ordenar por fecha descendente (más reciente primero)
         filtered.sort((a, b) => (a.dia < b.dia ? 1 : -1));
 
-        console.log(`📊 Total de días pendientes: ${filtered.length}`);
         setRows(filtered);
       } catch (err) {
         console.error("❌ Error in fetchData:", err);
@@ -1445,7 +1434,6 @@ export default function PreCierreVan() {
       const saved = JSON.parse(localStorage.getItem("pre_cierre_fechas") || "[]");
       if (Array.isArray(saved)) {
         setSelected(saved);
-        console.log("📅 Fechas cargadas del localStorage:", saved);
       }
     } catch (e) {
       console.error("❌ Error loading selected dates", e);
@@ -1471,7 +1459,6 @@ export default function PreCierreVan() {
 
       if (alive) {
         setInvoices((prev) => ({ ...prev, ...out }));
-        console.log("📋 Conteo de facturas actualizado:", out);
       }
     };
 
@@ -1489,7 +1476,6 @@ export default function PreCierreVan() {
     const cleaned = selected.filter((d) => visible.has(d));
     if (cleaned.length !== selected.length) {
       setSelected(cleaned);
-      console.log("🧹 Fechas seleccionadas limpiadas:", cleaned);
     }
   }, [rows, selected]);
 
@@ -1500,7 +1486,6 @@ export default function PreCierreVan() {
       if (selected.length > 0) {
         localStorage.setItem("pre_cierre_fecha", selected[0]);
       }
-      console.log("💾 Fechas guardadas en localStorage:", selected);
     } catch (e) {
       console.error("❌ Error saving selected dates", e);
     }
@@ -1512,8 +1497,6 @@ export default function PreCierreVan() {
 
     // Usar Eastern Time para el rango del día
     const { start, end } = easternDayBounds(diaISO);
-
-    console.log(`📊 Contando ventas para ${diaISO} (${start} - ${end})`);
 
     // Probamos varias columnas de fecha, según tu esquema real
     const dateCols = ["created_at", "fecha", "fecha_venta"];
@@ -1532,7 +1515,6 @@ export default function PreCierreVan() {
 
       // status 200 y count numérico ⇒ lo tomamos como bueno
       if (!error && typeof count === "number") {
-        console.log(`✅ ${count} ventas encontradas usando columna '${col}'`);
         return count;
       }
 
@@ -1543,7 +1525,6 @@ export default function PreCierreVan() {
     }
 
     // Si todas fallan, devolvemos 0
-    console.log(`⚠️ No se pudieron contar ventas para ${diaISO}`);
     return 0;
   }, []);
 
@@ -1552,7 +1533,6 @@ export default function PreCierreVan() {
     setSelected((prev) => {
       const has = prev.includes(day);
       const next = has ? prev.filter((d) => d !== day) : [day, ...prev];
-      console.log(`${has ? '❌ Deseleccionado' : '✅ Seleccionado'}: ${day}`);
       return next;
     });
   }, []);
@@ -1562,7 +1542,6 @@ export default function PreCierreVan() {
   const onToggleAll = useCallback(() => {
     const next = allSelected ? [] : [...rows.map(r => r.dia)];
     setSelected(next);
-    console.log(allSelected ? '❌ Todas deseleccionadas' : '✅ Todas seleccionadas');
   }, [rows, allSelected]);
 
   // Sumas del panel (sobre fechas seleccionadas)
@@ -1585,7 +1564,6 @@ export default function PreCierreVan() {
       { cash: 0, card: 0, transfer: 0, mix: 0, other: 0, invoices: 0 }
     );
 
-    console.log('💰 Totales calculados para fechas seleccionadas:', result);
     return result;
   }, [selected, rows, invoices]);
 
@@ -1605,7 +1583,6 @@ export default function PreCierreVan() {
       localStorage.setItem("pre_cierre_fecha", selected[0] || "");
       localStorage.setItem("pre_cierre_refresh", String(Date.now()));
       
-      console.log("✅ Navegando a cierre con fechas:", selected);
       navigate("/cierres/van");
     } catch (e) {
       console.error("❌ Error saving selected dates", e);
@@ -1703,8 +1680,6 @@ export default function PreCierreVan() {
       doc.save(`PreClosure_${van?.nombre || 'VAN'}_${new Date().toISOString().slice(0, 10)}.pdf`);
       setMensaje("PDF report generated successfully");
       setTipoMensaje("success");
-      
-      console.log("✅ PDF generado exitosamente");
     } catch (error) {
       console.error("❌ Error generating PDF:", error);
       setMensaje("Error generating PDF: " + error.message);

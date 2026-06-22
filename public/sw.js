@@ -1,12 +1,12 @@
 // public/sw.js — cache ligero tipo "app shell"
 // No cachea llamadas a Supabase para que los datos siempre estén frescos.
 
-const VERSION = "t4c-sw-v3";
+const VERSION = "t4c-sw-v5";
 const APP_SHELL = [
   "/",
   "/storefront",
   "/index.html",
-  "/manifest.webmanifest"
+  "/manifest-ventas.json"
 ];
 
 // Instalar: precache básico
@@ -35,18 +35,24 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  if (request.method !== "GET") return;
+  if (!["http:", "https:"].includes(url.protocol)) return;
+
   // Nunca cachear supabase ni RPC
   if (url.hostname.endsWith("supabase.co")) return;
 
   const acceptsHTML = request.headers.get("accept")?.includes("text/html");
   const isStatic = /\.(css|js|png|jpg|jpeg|gif|svg|webp|ico|ttf|woff2?)$/i.test(url.pathname)
+                || url.pathname === "/manifest-ventas.json"
                 || url.pathname === "/manifest.webmanifest";
 
   if (acceptsHTML) {
     event.respondWith(
       fetch(request).then((res) => {
-        const copy = res.clone();
-        caches.open(VERSION).then((c) => c.put(request, copy));
+        if (res.ok && url.origin === self.location.origin) {
+          const copy = res.clone();
+          caches.open(VERSION).then((c) => c.put(request, copy)).catch(() => {});
+        }
         return res;
       }).catch(() =>
         caches.match(request).then((res) => res || caches.match("/index.html"))
@@ -60,8 +66,10 @@ self.addEventListener("fetch", (event) => {
       caches.match(request).then((cached) =>
         cached ||
         fetch(request).then((res) => {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put(request, copy));
+          if (res.ok && url.origin === self.location.origin) {
+            const copy = res.clone();
+            caches.open(VERSION).then((c) => c.put(request, copy)).catch(() => {});
+          }
           return res;
         })
       )

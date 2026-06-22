@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { Search, X, Users, Package, FileText, CreditCard, ShoppingBag, ArrowRight } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { useVan } from "../hooks/VanContext";
+import { barcodeVariants, isCodeLikeSearch } from "../utils/productSearch";
+import { clientDigits, isPhoneLikeSearch, phoneSearchVariants } from "../utils/clientSearch";
 
 const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const money = (value) => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -47,16 +49,28 @@ export default function GlobalSearch() {
     const timer = setTimeout(async () => {
       setLoading(true);
       const like = `%${term}%`;
+      const codeLike = isCodeLikeSearch(term);
+      const phoneLike = isPhoneLikeSearch(term);
+      const productCodeFilters = barcodeVariants(term)
+        .map((code) => `codigo.ilike.${codeLike ? `${code}%` : `%${code}%`}`)
+        .join(",");
+      const phoneFilters = phoneSearchVariants(term).map((v) => `telefono.ilike.%${v}%`);
       try {
         const clientQuery = supabase
           .from("clientes")
           .select("id,nombre,negocio,telefono,email")
-          .or(`nombre.ilike.${like},negocio.ilike.${like},telefono.ilike.${like},email.ilike.${like}`)
+          .or([
+            `nombre.ilike.${like}`,
+            `negocio.ilike.${like}`,
+            `telefono.ilike.${like}`,
+            `email.ilike.${like}`,
+            ...(phoneLike ? [`telefono.ilike.%${clientDigits(term)}%`, ...phoneFilters] : []),
+          ].join(","))
           .limit(6);
         const productQuery = supabase
           .from("productos")
           .select("id,nombre,codigo,marca,precio")
-          .or(`nombre.ilike.${like},codigo.ilike.${like},marca.ilike.${like}`)
+          .or(`nombre.ilike.${like},${productCodeFilters || `codigo.ilike.${like}`},marca.ilike.${like}`)
           .limit(6);
         let saleQuery = supabase
           .from("ventas")
@@ -111,7 +125,7 @@ export default function GlobalSearch() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }, 280);
+    }, isPhoneLikeSearch(term) || isCodeLikeSearch(term) ? 60 : 220);
 
     return () => {
       cancelled = true;

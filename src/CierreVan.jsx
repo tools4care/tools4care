@@ -319,8 +319,6 @@ export default function CierreVan() {
       const savedFechas = JSON.parse(
         localStorage.getItem("pre_cierre_fechas") || "[]"
       );
-      console.log("📅 Fechas cargadas del localStorage:", savedFechas);
-
       if (Array.isArray(savedFechas) && savedFechas.length > 0) {
         setFechasSeleccionadas(savedFechas);
       } else {
@@ -339,7 +337,7 @@ export default function CierreVan() {
     if (fechasSeleccionadas.length > 0 && van?.id) {
       cargarDatosMultiplesFechas();
     }
-  }, [fechasSeleccionadas, van?.id, cierresPreviosPorFecha]);
+  }, [fechasSeleccionadas, van?.id]);
 
   // ✅ SOLUCIÓN: Usar SOLO el RPC para los totales esperados
   useEffect(() => {
@@ -356,7 +354,13 @@ export default function CierreVan() {
           fechasSeleccionadas[0]
         );
 
-        console.log('📊 Cargando totales desde RPC para:', { p_from, p_to });
+        setResumenPorFecha((prev) => {
+          const next = { ...prev };
+          fechasSeleccionadas.forEach((iso) => {
+            if (!next[iso]) next[iso] = { cash: 0, card: 0, transfer: 0, other: 0, loading: true };
+          });
+          return next;
+        });
 
         // Estas lecturas son independientes entre sí — antes se esperaban una
         // por una (varios round trips en serie), lo que hacía que los números
@@ -450,8 +454,6 @@ export default function CierreVan() {
           throw error;
         }
 
-        console.log('✅ Datos del RPC recibidos:', data);
-
         const map = {};
         (data || []).forEach((r) => {
           const iso = (r.dia ?? r.fecha ?? r.day ?? r.f ?? "").slice(0, 10);
@@ -465,7 +467,6 @@ export default function CierreVan() {
             other: Number(r.other_expected ?? 0),
           };
 
-          console.log(`💰 Totales para ${iso}:`, map[iso]);
         });
 
         (otherSales || []).forEach((sale) => {
@@ -567,7 +568,7 @@ useEffect(() => {
   };
 
   cargarTodas();
-}, [fechasSeleccionadas, van?.id, cierresPreviosPorFecha]);
+}, [fechasSeleccionadas, van?.id]);
 
   // ✅ Cargar ventas SOLO para mostrar la lista (NO para calcular totales)
   const cargarDatosMultiplesFechas = async () => {
@@ -602,7 +603,6 @@ useEffect(() => {
           const { data: ventas, error: ventasError } = await ventasQuery;
 
           if (ventasError) throw ventasError;
-          console.log(`✅ ${ventas?.length || 0} ventas cargadas para ${fecha}`);
           return [fecha, ventas || []];
         })
       );
@@ -786,8 +786,8 @@ useEffect(() => {
   };
 
   /* ========================= Close system after report ========================= */
-  const closeSystemAfterReport = () => {
-    toast.success("Report sent. Closing session…");
+  const closeSystemAfterReport = (message = "Report completed. Closing session...") => {
+    toast.success(message);
     setTimeout(async () => {
       await supabase.auth.signOut();
       setUsuario(null);
@@ -906,7 +906,7 @@ useEffect(() => {
       if (error) throw new Error(error.message || "Failed to send email");
       if (!data?.ok) throw new Error(data?.error || "Failed to send email");
       setEmailSent(true);
-      closeSystemAfterReport();
+      closeSystemAfterReport("Report sent. Closing session...");
     } catch (e) {
       console.error("Email error:", e);
       toast.error("Error sending email: " + e.message);
@@ -1203,7 +1203,7 @@ useEffect(() => {
       );
       setMensaje("PDF report generated successfully");
       setTipoMensaje("success");
-      closeSystemAfterReport();
+      closeSystemAfterReport("PDF downloaded. Closing session...");
     } catch (error) {
       setMensaje("Error generating PDF: " + error.message);
       setTipoMensaje("error");
@@ -1462,10 +1462,6 @@ useEffect(() => {
       totalOtros       += Number(r.other        || 0);
       totalRefunds     += Number(r.refunds      || 0);
 
-      console.log(`📊 Sumando ${fecha}:`, {
-        cash: r.cash, card: r.card, transfer: r.transfer, other: r.other,
-        refunds: r.refunds,
-      });
     });
 
     const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
@@ -1475,15 +1471,6 @@ useEffect(() => {
     const totalCajaNeto = efectivoNeto + totalTarjeta + totalTransferencia + totalOtros;
     const totalReal = cashReal + cardReal + transferReal + otherReal;
     const diferencia = Math.abs(totalCajaNeto - totalReal);
-
-    console.log('💰 TOTALES FINALES:', {
-      totalEfectivo,
-      totalTarjeta,
-      totalTransferencia,
-      totalCaja,
-      totalReal,
-      diferencia
-    });
 
     return {
       totalVentas,          // Solo para display (sin devoluciones)

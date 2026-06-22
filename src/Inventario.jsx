@@ -3,19 +3,20 @@ import { lazy, Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useOffline } from "./hooks/useOffline";
+import { useUsuario } from "./UsuarioContext";
 import { guardarInventarioVan, obtenerInventarioVan } from "./utils/offlineDB";
 import { usePermisos } from "./hooks/usePermisos";
+import { logAudit } from "./lib/auditLog";
+import {
+  barcodeVariants,
+  filterProductRowsLocal,
+  hasExactCodeMatch,
+  isCodeLikeSearch,
+} from "./utils/productSearch";
 const AgregarStockModal = lazy(() => import("./AgregarStockModal"));
 const ModalTraspasoStock = lazy(() => import("./ModalTraspasoStock"));
 const InvoiceImporter = lazy(() => import("./InvoiceImporter"));
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
-
-function barcodeVariants(value) {
-  const code = String(value || "").trim().replace(/\s+/g, "").toLowerCase();
-  if (!code) return [];
-  const withoutLeadingZeros = code.replace(/^0+/, "") || "0";
-  return [...new Set([code, withoutLeadingZeros, `0${code}`])];
-}
 
 const PAGE_SIZE = 100;
 
@@ -28,6 +29,7 @@ function stockBadge(qty) {
 
 export default function Inventory() {
   const { van } = useVan();
+  const { usuario } = useUsuario();
   const { isOnline } = useOffline();
   const { puedeAgregarAlmacen } = usePermisos();
 
@@ -56,7 +58,12 @@ export default function Inventory() {
   const [savingQtyIds, setSavingQtyIds]     = useState(new Set());
   const editQtyInputRef                     = useRef(null);
   const searchTimerRef = useRef(null);
+  const searchSeqRef = useRef(0);
   const offset = page * PAGE_SIZE;
+
+  function isMissingRpc(error) {
+    return error?.code === "42883" || error?.code === "PGRST202" || /function .* does not exist/i.test(error?.message || "");
+  }
 
   // ── Guardar conteo físico (SET, no incremento) ───────────
   async function handleSetQty(producto_id, rawValue) {
@@ -67,24 +74,51 @@ export default function Inventory() {
     setEditingQty(null);
 
     try {
-      if (selected.tipo === "van" && selected.id) {
-        const { data: existing } = await supabase
-          .from("stock_van").select("id").eq("van_id", selected.id).eq("producto_id", producto_id).maybeSingle();
-        if (existing) {
-          await supabase.from("stock_van").update({ cantidad: newQty }).eq("id", existing.id);
+      const { error: rpcError } = await supabase.rpc("establecer_stock", {
+        p_producto_id: producto_id,
+        p_cantidad: newQty,
+        p_ubicacion: selected.tipo === "van" ? "van" : "almacen",
+        p_van_id: selected.tipo === "van" ? selected.id : null,
+        p_motivo: "Physical count from inventory screen",
+        p_usuario_id: usuario?.id || null,
+      });
+
+      if (rpcError) {
+        if (!isMissingRpc(rpcError)) throw rpcError;
+
+        if (selected.tipo === "van" && selected.id) {
+          const { data: existing } = await supabase
+            .from("stock_van").select("id").eq("van_id", selected.id).eq("producto_id", producto_id).maybeSingle();
+          if (existing) {
+            await supabase.from("stock_van").update({ cantidad: newQty }).eq("id", existing.id);
+          } else {
+            await supabase.from("stock_van").insert({ van_id: selected.id, producto_id, cantidad: newQty });
+          }
         } else {
-          await supabase.from("stock_van").insert({ van_id: selected.id, producto_id, cantidad: newQty });
-        }
-      } else {
-        // warehouse
-        const { data: existing } = await supabase
-          .from("stock_almacen").select("id").eq("producto_id", producto_id).maybeSingle();
-        if (existing) {
-          await supabase.from("stock_almacen").update({ cantidad: newQty }).eq("id", existing.id);
-        } else {
-          await supabase.from("stock_almacen").insert({ producto_id, cantidad: newQty });
+          const { data: existing } = await supabase
+            .from("stock_almacen").select("id").eq("producto_id", producto_id).maybeSingle();
+          if (existing) {
+            await supabase.from("stock_almacen").update({ cantidad: newQty }).eq("id", existing.id);
+          } else {
+            await supabase.from("stock_almacen").insert({ producto_id, cantidad: newQty });
+          }
         }
       }
+
+      logAudit({
+        usuario, van,
+        accion: "stock_adjustment",
+        entidadTipo: "producto",
+        entidadId: producto_id,
+        after: {
+          cantidad: newQty,
+          ubicacion: selected.tipo === "van" ? "van" : "almacen",
+          van_id: selected.tipo === "van" ? selected.id : null,
+          modo: "conteo_fisico",
+        },
+        nota: selected.nombre || "Physical inventory count",
+      });
+
       // Actualizar local sin recargar toda la lista
       setInventory((prev) => prev.map((item) =>
         item.producto_id === producto_id ? { ...item, cantidad: newQty } : item
@@ -214,16 +248,45 @@ export default function Inventory() {
   }, [selected.tipo, selected.key, selected.id]);
 
   // ── DB search ─────────────────────────────────────────────
-  const searchInDatabase = async (term) => {
+  const searchInDatabase = async (term, searchId) => {
     if (!term.trim()) { setDbSearchResults(null); return; }
     setIsSearchingDB(true); setError("");
     try {
       const variants = barcodeVariants(term);
-      const codeFilters = variants.map((code) => `codigo.ilike.%${code}%`).join(",");
-      const { data: productos, error: pErr } = await supabase.from("productos")
-        .select("id,codigo,nombre,marca,size")
-        .or(`${codeFilters},nombre.ilike.%${term}%,marca.ilike.%${term}%`)
-        .limit(100);
+      const codeLike = isCodeLikeSearch(term);
+      const codeFilters = variants.map((code) => `codigo.ilike.${code}%`).join(",");
+      let productos = [];
+      let pErr = null;
+
+      if (codeLike && variants.length > 0) {
+        const exact = await supabase.from("productos")
+          .select("id,codigo,nombre,marca,size")
+          .in("codigo", variants)
+          .limit(100);
+        pErr = exact.error;
+        productos = exact.data || [];
+      }
+
+      if (!pErr && codeLike && productos.length === 0 && codeFilters) {
+        const prefixed = await supabase.from("productos")
+          .select("id,codigo,nombre,marca,size")
+          .or(codeFilters)
+          .limit(100);
+        pErr = prefixed.error;
+        productos = prefixed.data || [];
+      }
+
+      if (!pErr && !codeLike) {
+        const textFilters = variants.map((code) => `codigo.ilike.%${code}%`).join(",");
+        const broad = await supabase.from("productos")
+          .select("id,codigo,nombre,marca,size")
+          .or(`${textFilters},nombre.ilike.%${term}%,marca.ilike.%${term}%`)
+          .limit(100);
+        pErr = broad.error;
+        productos = broad.data || [];
+      }
+
+      if (searchId !== searchSeqRef.current) return;
       if (pErr) throw pErr;
       if (!productos?.length) { setDbSearchResults([]); return; }
 
@@ -232,6 +295,7 @@ export default function Inventory() {
       let q = supabase.from(tabla).select("id,producto_id,cantidad").in("producto_id", ids);
       if (selected.tipo === "van") q = q.eq("van_id", selected.id);
       const { data: inv, error: iErr } = await q.order("cantidad", { ascending: false });
+      if (searchId !== searchSeqRef.current) return;
       if (iErr) throw iErr;
 
       const pMap = new Map(productos.map(p => [p.id, p]));
@@ -239,39 +303,38 @@ export default function Inventory() {
         id: r.id, producto_id: r.producto_id,
         cantidad: Number(r.cantidad || 0), productos: pMap.get(r.producto_id) || null,
       })));
-    } catch (e) { setError(e?.message || String(e)); setDbSearchResults([]); }
-    finally { setIsSearchingDB(false); }
+    } catch (e) {
+      if (searchId !== searchSeqRef.current) return;
+      setError(e?.message || String(e)); setDbSearchResults([]);
+    }
+    finally {
+      if (searchId === searchSeqRef.current) setIsSearchingDB(false);
+    }
   };
 
   // ── Hybrid search effect ──────────────────────────────────
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     const term = search.trim();
+    const searchId = ++searchSeqRef.current;
     if (!term) { setDbSearchResults(null); setIsSearchingDB(false); return; }
-    const variants = barcodeVariants(term);
-    const mem = inventory.filter(it => {
-      const p = it.productos || {};
-      return variants.some((code) => (p.codigo || "").toLowerCase().includes(code))
-          || (p.nombre || "").toLowerCase().includes(term.toLowerCase())
-          || (p.marca  || "").toLowerCase().includes(term.toLowerCase());
-    });
-    if (mem.length > 0) { setDbSearchResults(null); return; }
+    const codeLike = isCodeLikeSearch(term);
+    const mem = filterProductRowsLocal(inventory, term, { limit: 100 });
+    if (mem.length > 0 && (!codeLike || hasExactCodeMatch(mem, term))) {
+      setDbSearchResults(null);
+      setIsSearchingDB(false);
+      return;
+    }
     if (!isOnline) return;
-    searchTimerRef.current = setTimeout(() => searchInDatabase(term), 400);
+    searchTimerRef.current = setTimeout(() => searchInDatabase(term, searchId), codeLike ? 45 : 220);
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [search, inventory, selected.tipo, selected.id]);
+  }, [search, inventory, selected.tipo, selected.id, isOnline]);
 
   // ── Final filtered list ───────────────────────────────────
   const filteredInventory = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return inventory;
-    const variants = barcodeVariants(term);
-    const mem = inventory.filter(it => {
-      const p = it.productos || {};
-      return variants.some((code) => (p.codigo || "").toLowerCase().includes(code))
-          || (p.nombre || "").toLowerCase().includes(term)
-          || (p.marca  || "").toLowerCase().includes(term);
-    });
+    const mem = filterProductRowsLocal(inventory, term, { limit: 1000 });
     return mem.length > 0 ? mem : (dbSearchResults || []);
   }, [inventory, search, dbSearchResults]);
 
