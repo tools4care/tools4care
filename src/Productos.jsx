@@ -415,74 +415,76 @@ function PestañaVentas({ productoId }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[1fr_1.15fr] lg:gap-6">
 
-      {/* All-time stats */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="bg-blue-50 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-blue-500 font-bold uppercase tracking-wide">Total Units Sold</p>
-          <p className="text-2xl font-bold text-blue-800">{totalUnits}</p>
+      <div className="space-y-4">
+        {/* All-time stats */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-blue-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-blue-500 font-bold uppercase tracking-wide">Total Units Sold</p>
+            <p className="text-2xl font-bold text-blue-800">{totalUnits}</p>
+          </div>
+          <div className="bg-emerald-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wide">Total Revenue</p>
+            <p className="text-xl font-bold text-emerald-800">{fmtCur(totalRevenue)}</p>
+          </div>
         </div>
-        <div className="bg-emerald-50 rounded-xl p-3 text-center">
-          <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wide">Total Revenue</p>
-          <p className="text-xl font-bold text-emerald-800">{fmtCur(totalRevenue)}</p>
+
+        {/* Chart */}
+        <div className="h-[160px] lg:h-[260px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={[...porMes].reverse()} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis
+                dataKey="mes"
+                fontSize={10}
+                tickFormatter={(v) => {
+                  const [, m] = v.split("-");
+                  return new Date(2000, Number(m) - 1).toLocaleString("en-US", { month: "short" });
+                }}
+              />
+              <YAxis fontSize={10} />
+              <Tooltip
+                formatter={(v, name) => [name === "qty" ? `${v} units` : fmtCur(v), name === "qty" ? "Units" : "Revenue"]}
+                labelFormatter={fmtMes}
+              />
+              <Bar dataKey="qty" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-      </div>
 
-      {/* Chart */}
-      <div className="h-[160px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={[...porMes].reverse()} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis
-              dataKey="mes"
-              fontSize={10}
-              tickFormatter={(v) => {
-                const [, m] = v.split("-");
-                return new Date(2000, Number(m) - 1).toLocaleString("en-US", { month: "short" });
-              }}
-            />
-            <YAxis fontSize={10} />
-            <Tooltip
-              formatter={(v, name) => [name === "qty" ? `${v} units` : fmtCur(v), name === "qty" ? "Units" : "Revenue"]}
-              labelFormatter={fmtMes}
-            />
-            <Bar dataKey="qty" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Month selector */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-500 font-semibold whitespace-nowrap">Month:</span>
-        <select
-          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-          value={mesSeleccionado}
-          onChange={(e) => setMesSeleccionado(e.target.value)}
-        >
-          {porMes.map((m) => (
-            <option key={m.mes} value={m.mes}>
-              {fmtMes(m.mes)} — {m.qty} units · {fmtCur(m.revenue)}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Month summary bar */}
-      <div className="flex gap-2">
-        <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
-          <span className="text-xs text-gray-500">Units</span>
-          <span className="text-sm font-bold text-gray-800">{mesQty}</span>
+        {/* Month selector */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 font-semibold whitespace-nowrap">Month:</span>
+          <select
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            value={mesSeleccionado}
+            onChange={(e) => setMesSeleccionado(e.target.value)}
+          >
+            {porMes.map((m) => (
+              <option key={m.mes} value={m.mes}>
+                {fmtMes(m.mes)} — {m.qty} units · {fmtCur(m.revenue)}
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
-          <span className="text-xs text-gray-500">Revenue</span>
-          <span className="text-sm font-bold text-emerald-700">{fmtCur(mesRevenue)}</span>
+
+        {/* Month summary bar */}
+        <div className="flex gap-2">
+          <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+            <span className="text-xs text-gray-500">Units</span>
+            <span className="text-sm font-bold text-gray-800">{mesQty}</span>
+          </div>
+          <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+            <span className="text-xs text-gray-500">Revenue</span>
+            <span className="text-sm font-bold text-emerald-700">{fmtCur(mesRevenue)}</span>
+          </div>
         </div>
       </div>
 
       {/* Sales rows for selected month */}
-      <div className="space-y-1.5">
-        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+      <div className="space-y-1.5 lg:max-h-[420px] lg:overflow-y-auto lg:pr-1">
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest sticky top-0 bg-white py-0.5">
           {fmtMes(mesSeleccionado)} · {filasMes.length} sale{filasMes.length !== 1 ? "s" : ""}
         </p>
         {filasMes.map((f, i) => (
@@ -1334,7 +1336,7 @@ export default function Productos() {
       {/* MODAL */}
       {modalAbierto && productoActual && (
         <div className="fixed inset-x-0 top-0 bg-black/50 flex justify-center items-end sm:items-center z-50 p-0 sm:p-4" style={{bottom:'64px'}}>
-          <div className="bg-white w-full h-full sm:h-auto sm:max-h-[92vh] sm:rounded-2xl shadow-2xl max-w-lg flex flex-col" style={{overflow:'hidden'}}>
+          <div className={`bg-white w-full h-full sm:h-auto sm:max-h-[92vh] sm:rounded-2xl shadow-2xl flex flex-col ${tabActivo === "ventas" ? "max-w-lg sm:max-w-3xl lg:max-w-5xl" : "max-w-lg sm:max-w-xl lg:max-w-2xl"}`} style={{overflow:'hidden'}}>
 
             {/* ── Sticky Header ── */}
             <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 sm:px-5 pt-4 pb-0 z-20">
