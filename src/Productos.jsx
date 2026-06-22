@@ -590,6 +590,7 @@ export default function Productos() {
   const [editMode, setEditMode] = useState(true);
 
   const [stockResumen, setStockResumen] = useState({ unidades: 0, valor: 0 });
+  const [stockPorUbicacion, setStockPorUbicacion] = useState([]);
   const [ultimaVenta, setUltimaVenta] = useState(null);
 
   const [sizeCustom, setSizeCustom] = useState("");
@@ -747,10 +748,22 @@ export default function Productos() {
     try {
       const { data: sa } = await supabase.from("stock_almacen").select("cantidad").eq("producto_id", prodId);
       const sumAlmacen = (sa || []).reduce((t, r) => t + Number(r.cantidad || 0), 0);
-      const { data: sv } = await supabase.from("stock_van").select("cantidad").eq("producto_id", prodId);
+      const { data: sv } = await supabase.from("stock_van").select("van_id, cantidad").eq("producto_id", prodId);
       const sumVans = (sv || []).reduce((t, r) => t + Number(r.cantidad || 0), 0);
       const total = sumAlmacen + sumVans;
       setStockResumen({ unidades: total, valor: total * Number(costoUnit || 0) });
+
+      const desglose = [];
+      if (sumAlmacen > 0) desglose.push({ nombre: "Central warehouse", cantidad: sumAlmacen });
+      (sv || []).forEach((r) => {
+        const cantidad = Number(r.cantidad || 0);
+        if (cantidad <= 0) return;
+        const nombreVan = ubicaciones.find((u) => u.van_id === r.van_id)?.nombre || "Unassigned van";
+        const existente = desglose.find((d) => d.nombre === nombreVan);
+        if (existente) existente.cantidad += cantidad;
+        else desglose.push({ nombre: nombreVan, cantidad });
+      });
+      setStockPorUbicacion(desglose.sort((a, b) => b.cantidad - a.cantidad));
 
       const { data: dv } = await supabase.from("detalle_ventas").select("venta_id").eq("producto_id", prodId);
       const ventaIds = Array.from(new Set((dv || []).map((d) => d.venta_id).filter(Boolean)));
@@ -762,6 +775,7 @@ export default function Productos() {
       }
     } catch {
       setStockResumen({ unidades: 0, valor: 0 });
+      setStockPorUbicacion([]);
       setUltimaVenta(null);
     }
   }
@@ -794,6 +808,7 @@ export default function Productos() {
       setTimeout(() => cargarKpisProducto(prod.id, Number(prod.costo || 0)), 0);
     } else {
       setStockResumen({ unidades: 0, valor: 0 });
+      setStockPorUbicacion([]);
       setUltimaVenta(null);
     }
   }
@@ -808,6 +823,7 @@ export default function Productos() {
     setSuplidorId(null);
     setSuplidorNombre("");
     setStockResumen({ unidades: 0, valor: 0 });
+    setStockPorUbicacion([]);
     setUltimaVenta(null);
     setEditMode(true);
     setCodigoExisteInfo(null);
@@ -847,6 +863,7 @@ export default function Productos() {
     setTabActivo("editar");
     setModalAbierto(true);
     setStockResumen({ unidades: 0, valor: 0 });
+    setStockPorUbicacion([]);
     setUltimaVenta(null);
     setEditMode(true);
   }
@@ -1399,6 +1416,25 @@ export default function Productos() {
                       <div className="text-[10px] text-gray-400">{new Date(ultimaVenta).getFullYear()}</div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Stock breakdown by location — where is it physically located */}
+              {productoActual.id && stockPorUbicacion.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {stockPorUbicacion.map((d) => (
+                    <span
+                      key={d.nombre}
+                      className="inline-flex items-center gap-1 text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-1"
+                    >
+                      📍 {d.nombre}: {d.cantidad}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {productoActual.id && stockResumen.unidades > 0 && stockPorUbicacion.length === 0 && (
+                <div className="mb-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                  ⚠️ Stock location unknown — units aren't assigned to the warehouse or a specific van.
                 </div>
               )}
 
