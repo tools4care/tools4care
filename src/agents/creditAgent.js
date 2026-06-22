@@ -372,19 +372,19 @@ export function evaluateCredit({
   const hs = reglasCredito?.healthScore;
   if (hs !== undefined) {
     if (hs >= 90) {
-      recomendaciones.push(`⭐ Health ${hs}/100 — Cliente ejemplar. Considera AUMENTAR el límite de crédito.`);
+      recomendaciones.push(`⭐ Health ${hs}/100 — Excellent customer. Consider increasing the credit limit.`);
     } else if (hs >= 75) {
-      recomendaciones.push(`🟢 Health ${hs}/100 — Buen pagador. Mantener o aumentar límite.`);
+      recomendaciones.push(`🟢 Health ${hs}/100 — Good payer. Keep or increase the limit.`);
     } else if (hs >= 60) {
-      recomendaciones.push(`🟡 Health ${hs}/100 — Estable. Monitorear tendencia.`);
+      recomendaciones.push(`🟡 Health ${hs}/100 — Stable. Monitor the trend.`);
     } else if (hs >= 45) {
-      recomendaciones.push(`🟠 Health ${hs}/100 — Atrasado. Límite reducido 20%. Exigir pago mínimo.`);
+      recomendaciones.push(`🟠 Health ${hs}/100 — Behind on payments. Limit reduced 20%. Require minimum payment.`);
     } else if (hs >= 30) {
-      recomendaciones.push(`🔴 Health ${hs}/100 — Riesgo. Límite reducido 40%. Solo ventas pequeñas.`);
+      recomendaciones.push(`🔴 Health ${hs}/100 — Risky account. Limit reduced 40%. Keep sales small.`);
     } else if (hs >= 15) {
-      recomendaciones.push(`🚨 Health ${hs}/100 — Crítico. Límite reducido 65%. Requiere pago antes de vender.`);
+      recomendaciones.push(`🚨 Health ${hs}/100 — Critical account. Limit reduced 65%. Collect payment before selling.`);
     } else {
-      recomendaciones.push(`⛔ Health ${hs}/100 — Near-freeze. Solo deuda vieja. No extender crédito.`);
+      recomendaciones.push(`⛔ Health ${hs}/100 — Near-freeze. Old debt only. Do not extend more credit.`);
     }
   }
 
@@ -392,28 +392,28 @@ export function evaluateCredit({
   if (pprData) {
     const pprEfectivo = ppr30Data?.ppr30 ?? pprData.ppr;
     if (pprEfectivo < 0.5) {
-      recomendaciones.push(`🔴 PPR ${pprEfectivo.toFixed(2)} — Paga solo ${Math.round(pprEfectivo * 100)}% de lo que compra. Deuda creciendo.`);
+      recomendaciones.push(`🔴 PPR ${pprEfectivo.toFixed(2)} — Pays only ${Math.round(pprEfectivo * 100)}% of purchases. Debt is growing.`);
     } else if (pprEfectivo < 0.8) {
-      recomendaciones.push(`🟠 PPR ${pprEfectivo.toFixed(2)} — Paga menos de lo que compra. Exigir más en cada visita.`);
+      recomendaciones.push(`🟠 PPR ${pprEfectivo.toFixed(2)} — Pays less than they buy. Collect more on each visit.`);
     } else if (pprEfectivo >= 1.2) {
-      recomendaciones.push(`⭐ PPR ${pprEfectivo.toFixed(2)} — Paga MÁS de lo que compra. Excelente comportamiento.`);
+      recomendaciones.push(`⭐ PPR ${pprEfectivo.toFixed(2)} — Pays more than they buy. Excellent behavior.`);
     } else if (pprEfectivo >= 1.0) {
-      recomendaciones.push(`✅ PPR ${pprEfectivo.toFixed(2)} — Paga todo lo que compra. Buen cliente.`);
+      recomendaciones.push(`✅ PPR ${pprEfectivo.toFixed(2)} — Pays for purchases reliably. Good customer.`);
     }
 
     if (pprData.tendencia === "empeorando") {
-      recomendaciones.push("📉 Tendencia empeorando — monitorear en próximas visitas");
+      recomendaciones.push("📉 Trend worsening — monitor on upcoming visits");
     } else if (pprData.tendencia === "mejorando") {
-      recomendaciones.push("📈 Tendencia mejorando — señal de recuperación");
+      recomendaciones.push("📈 Trend improving — recovery signal");
     }
   }
 
   // Streak recommendations
   if (streakData) {
     if (streakData.pagoUltimos3) {
-      recomendaciones.push(`🔥 Pagó en últimos 3 días ($${streakData.totalPagadoUltimos7.toFixed(2)} esta semana) — constancia premiada`);
+      recomendaciones.push(`🔥 Paid within the last 3 days ($${streakData.totalPagadoUltimos7.toFixed(2)} this week) — reward consistency`);
     } else if (streakData.pagoUltimos7) {
-      recomendaciones.push(`✅ Pagó en últimos 7 días ($${streakData.totalPagadoUltimos7.toFixed(2)} esta semana)`);
+      recomendaciones.push(`✅ Paid within the last 7 days ($${streakData.totalPagadoUltimos7.toFixed(2)} this week)`);
     }
   }
 
@@ -478,7 +478,7 @@ export function evaluateCredit({
 // ========================= RUN CREDIT AGENT =========================
 
 export async function runCreditAgent(clienteId, montoVenta = 0, montoPagadoAhora = 0) {
-  if (!clienteId) return { error: "Cliente requerido" };
+  if (!clienteId) return { error: "Customer required" };
 
   try {
     const historial = await getClientHistory(clienteId);
@@ -539,9 +539,9 @@ export async function runCreditAgent(clienteId, montoVenta = 0, montoPagadoAhora
           permitido: true,
           requiereExcepcion: true, // sigue requiriendo excepción pero no bloquea
           advertencias: [
-            "🟡 MODO PROBATORIO — Crédito congelado pero cliente está pagando activamente.",
-            `Límite reducido al 50%: $${limiteProba.toFixed(2)}. Regla 50% compra nueva se mantiene.`,
-            "Para rehabilitación completa: liquidar deuda total.",
+            "🟡 PROBATION MODE — Credit was frozen, but the customer is actively paying.",
+            `Limit reduced to 50%: $${limiteProba.toFixed(2)}. The 50% new-purchase rule still applies.`,
+            "For full rehabilitation: pay off the total debt.",
           ],
         };
       }

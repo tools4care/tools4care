@@ -75,6 +75,7 @@ const COMPANY_EMAIL   = import.meta?.env?.VITE_COMPANY_EMAIL   || "Tools4care@gm
 const COMPANY_PHONE   = import.meta?.env?.VITE_COMPANY_PHONE   || "";
 const COMPANY_ADDRESS = import.meta?.env?.VITE_COMPANY_ADDRESS || "";
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
+const OFFLINE_REFRESH_MS = 6 * 60 * 60 * 1000;
 
 /* ========================= Stripe QR Payment Helpers ========================= */
 const CHECKOUT_FN_URL =
@@ -1035,7 +1036,6 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
       const deudaAcuerdos = acuerdos ? Math.round(Number(acuerdos.deuda_en_acuerdos || 0) * 100) / 100 : 0;
       if (deudaAcuerdos > saldo + 0.01 && saldo >= 0) {
         const discrepancia = Math.round((deudaAcuerdos - saldo) * 100) / 100;
-        console.log(`🔄 Reconciliando cuotas en venta: deuda=${deudaAcuerdos} cxc=${saldo} diff=${discrepancia}`);
         try {
           await aplicarPagoAAcuerdos(clienteId, discrepancia);
           acuerdos = await getAcuerdosResumen(clienteId); // recargar tras reconciliar
@@ -1259,6 +1259,8 @@ useEffect(() => {
         ...c,
         _saldo_real: Number(c.balance || 0),
       }));
+      cachedClientsRef.current = cachedClients;
+      clientCacheRef.current = new Map();
 
       const cachedInventory = (inventario || []).map((row) => ({
         producto_id: row.producto_id,
@@ -1306,10 +1308,12 @@ useEffect(() => {
     if (!van?.id || isOffline) return;
     if (offlineReady.loading) return;
     if (offlineReady.error) return;
-    if (offlineReady.clients > 0 && offlineReady.products > 0) return;
+    const lastPreparedMs = offlineReady.lastPrepared ? new Date(offlineReady.lastPrepared).getTime() : 0;
+    const cacheFresh = lastPreparedMs && Date.now() - lastPreparedMs < OFFLINE_REFRESH_MS;
+    if (offlineReady.clients > 0 && offlineReady.products > 0 && cacheFresh) return;
     const timer = setTimeout(() => prepareOfflineData({ silent: true }), 1200);
     return () => clearTimeout(timer);
-  }, [van?.id, isOffline, offlineReady.clients, offlineReady.products, offlineReady.loading, offlineReady.error, prepareOfflineData]);
+  }, [van?.id, isOffline, offlineReady.clients, offlineReady.products, offlineReady.lastPrepared, offlineReady.loading, offlineReady.error, prepareOfflineData]);
 
 
   // ---- STRIPE QR Estados
@@ -1378,7 +1382,8 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
   });
 
   // ---- CACHE DE BÚSQUEDA DE CLIENTES
-  const [clientCache, setClientCache] = useState(new Map());
+  const clientCacheRef = useRef(new Map());
+  const cachedClientsRef = useRef([]);
 
   // ---- AUTO-FILL PAYMENT
   const [paymentAutoFilled, setPaymentAutoFilled] = useState(false);
@@ -1428,7 +1433,11 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
     const safeTerm = String(term || "").trim().toLowerCase();
     if (safeTerm.length < 2) return [];
 
-    const cachedClientes = await obtenerClientesCache();
+    let cachedClientes = cachedClientsRef.current;
+    if (!cachedClientes.length) {
+      cachedClientes = await obtenerClientesCache();
+      cachedClientsRef.current = cachedClientes;
+    }
     if (!cachedClientes.length) return [];
 
     return filterClientsLocal(cachedClientes, safeTerm, 30)
@@ -1437,6 +1446,17 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
         _saldo_real: Number(c._saldo_real ?? c.balance ?? 0),
       }));
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    obtenerClientesCache().then((cached) => {
+      if (!alive || !Array.isArray(cached)) return;
+      cachedClientsRef.current = cached;
+    });
+    return () => {
+      alive = false;
+    };
+  }, [offlineReady.clients]);
 
 
   /* ---------- CARGAR CLIENTES RECIENTES ---------- */
@@ -1591,18 +1611,25 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
         return;
       }
 
-      const cachedLocalResults = filterClientsLocal(
-        [...clientCache.values()].flat(),
-        term,
-        20
-      );
-      if (cachedLocalResults.length > 0) {
-        setClients(cachedLocalResults);
+      if (clientCacheRef.current.has(term)) {
+        setClients(clientCacheRef.current.get(term));
+        setClientLoading(false);
+        return;
       }
 
-      if (clientCache.has(term)) {
-        setClients(clientCache.get(term));
+      const memoryResults = filterClientsLocal(cachedClientsRef.current, term, 30)
+        .map((c) => ({
+          ...c,
+          _saldo_real: Number(c._saldo_real ?? c.balance ?? 0),
+        }));
+
+      if (memoryResults.length > 0) {
+        setClients(memoryResults);
         setClientLoading(false);
+        clientCacheRef.current.set(term, memoryResults);
+        if (clientCacheRef.current.size > 18) {
+          clientCacheRef.current.delete(clientCacheRef.current.keys().next().value);
+        }
         return;
       }
 
@@ -1613,10 +1640,9 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
           if (searchId !== clientSearchSeqRef.current) return;
           if (resultados.length > 0) {
             setClients(resultados);
-            console.log(`📵 Búsqueda offline: ${resultados.length} clientes encontrados`);
+            clientCacheRef.current.set(term, resultados);
           } else {
             setClients([]);
-            console.warn('📵 No hay cache de clientes disponible');
           }
         } catch (e) {
           if (searchId !== clientSearchSeqRef.current) return;
@@ -1656,36 +1682,11 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
         const tokens = safe.split(/\s+/).filter(Boolean);
 
-        // Run the independent reads in parallel instead of one-at-a-time —
-        // each round trip was adding 100-300ms of pure network latency to every search.
-        const primaryQueryPromise = supabase
+        const { data: d1, error: e1 } = await supabase
           .from("clientes_balance")
           .select(primaryCols)
           .or(primaryOr)
           .limit(20);
-
-        const jsonAddressQueryPromise = (addrSpec.type === "json" && addrSpec.fields.length > 0)
-          ? supabase
-              .from("clientes_balance")
-              .select("id,nombre,negocio,telefono,email,direccion,balance")
-              .not("direccion", "is", null)
-              .limit(100)
-          : Promise.resolve({ data: [], error: null });
-
-        const andQueryPromise = tokens.length >= 2
-          ? supabase
-              .from("clientes_balance")
-              .select("id,nombre,negocio,telefono,email,direccion,balance")
-              .ilike("nombre", `%${tokens[0]}%`)
-              .or(`negocio.ilike.%${tokens.slice(1).join(" ")}%,telefono.ilike.%${tokens.slice(1).join(" ")}%,email.ilike.%${tokens.slice(1).join(" ")}%`)
-              .limit(10)
-          : Promise.resolve({ data: [], error: null });
-
-        const [
-          { data: d1, error: e1 },
-          { data: allData, error: eAll },
-          { data: dAnd, error: eAnd },
-        ] = await Promise.all([primaryQueryPromise, jsonAddressQueryPromise, andQueryPromise]);
         if (searchId !== clientSearchSeqRef.current) return;
 
         if (e1) {
@@ -1729,81 +1730,36 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
           }
         }
 
-        let jsonAddressData = [];
-        if (eAll) {
-          console.warn("Búsqueda en dirección JSON falló:", eAll);
-        } else if (allData && addrSpec.type === "json") {
-          const searchLower = safe.toLowerCase();
-          jsonAddressData = allData.filter(client => {
-            if (!client.direccion) return false;
-
-            let addr = client.direccion;
-
-            if (typeof addr === "string") {
-              try {
-                addr = JSON.parse(addr);
-              } catch {
-                return false;
-              }
-            }
-
-            if (typeof addr !== "object") return false;
-
-            return addrSpec.fields.some(field => {
-              const value = String(addr[field] || "").toLowerCase();
-              return value.includes(searchLower);
-            });
-          });
-        }
-
         let andData = [];
-        if (eAnd) {
-          if (eAnd.code !== "42703") console.warn("AND nombre + negocio/contacto falló:", eAnd);
-        } else {
-          andData = dAnd || [];
+        if (baseData.length === 0 && tokens.length >= 2) {
+          const { data: dAnd, error: eAnd } = await supabase
+            .from("clientes_balance")
+            .select("id,nombre,negocio,telefono,email,direccion,balance")
+            .ilike("nombre", `%${tokens[0]}%`)
+            .or(`negocio.ilike.%${tokens.slice(1).join(" ")}%,telefono.ilike.%${tokens.slice(1).join(" ")}%,email.ilike.%${tokens.slice(1).join(" ")}%`)
+            .limit(10);
+          if (searchId !== clientSearchSeqRef.current) return;
+          if (eAnd) {
+            if (eAnd.code !== "42703") console.warn("AND nombre + negocio/contacto falló:", eAnd);
+          } else {
+            andData = dAnd || [];
+          }
         }
 
         const byId = new Map();
-        for (const row of [...(baseData || []), ...andData, ...jsonAddressData]) {
+        for (const row of [...(baseData || []), ...andData]) {
           if (row && row.id != null) byId.set(row.id, row);
         }
-        const merged = filterClientsLocal(Array.from(byId.values()), safe, 30);
-
-        const ids = merged.map((c) => c.id).filter(Boolean);
-        let enriched = merged;
-
-        if (ids.length > 0 && ids.length <= 10) {
-          const { data: cxcRows, error: eCx } = await supabase
-            .from("v_cxc_cliente_detalle")
-            .select("cliente_id,saldo")
-            .in("cliente_id", ids);
-          if (searchId !== clientSearchSeqRef.current) return;
-
-          if (eCx) console.warn("Enriquecimiento saldo falló:", eCx);
-
-          const saldoMap = new Map(
-            (cxcRows || []).map((r) => [r.cliente_id, Number(r.saldo || 0)])
-          );
-
-          enriched = merged.map((c) => ({
+        const enriched = filterClientsLocal(Array.from(byId.values()), safe, 30)
+          .map((c) => ({
             ...c,
-            _saldo_real: saldoMap.has(c.id)
-              ? saldoMap.get(c.id)
-              : Number(c.balance || 0),
+            _saldo_real: Number(c._saldo_real ?? c.balance ?? 0),
           }));
-        } else {
-          enriched = merged.map((c) => ({
-            ...c,
-            _saldo_real: Number(c.balance || 0),
-          }));
+
+        clientCacheRef.current.set(term, enriched);
+        if (clientCacheRef.current.size > 18) {
+          clientCacheRef.current.delete(clientCacheRef.current.keys().next().value);
         }
-
-        setClientCache((prev) => {
-          const next = new Map(prev);
-          next.set(term, enriched);
-          if (next.size > 12) next.delete(next.keys().next().value);
-          return next;
-        });
 
         setClients(Array.isArray(enriched) ? enriched : []);
 
@@ -1822,7 +1778,7 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
     }
 
     loadClients();
-  }, [debouncedClientSearch, addrSpec.type, addrSpec.fields?.length, isOffline, searchClientsInOfflineCache, clientCache, toast]);
+  }, [debouncedClientSearch, addrSpec.type, isOffline, searchClientsInOfflineCache, toast]);
 
 /* ---------- Historial al seleccionar cliente ---------- */
 useEffect(() => {
@@ -2110,34 +2066,38 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
   }
 
  
-useEffect(() => {
-  async function loadTopProducts() {
-    setProductError("");
-    setTopProducts([]);
-    if (!van?.id) return;
+	useEffect(() => {
+	  async function loadTopProducts() {
+	    setProductError("");
+	    if (!van?.id) return;
 
-    // 🆕 Si está offline, intentar cargar desde caché
-    if (isOffline) {
-      console.log('📵 Offline: Cargando productos desde caché...');
-      // Cargar inventario completo de la van (para búsquedas offline)
-      const cachedInventory = await obtenerInventarioVan(van.id);
-      if (cachedInventory.length > 0) {
-        setAllProducts(cachedInventory);
-        setProductsLoaded(true);
-        setTopProducts(cachedInventory.slice(0, 50)); // mostrar primeros 50 como "top"
-        console.log(`✅ ${cachedInventory.length} productos cargados desde caché (inventario completo)`);
-        return;
-      }
-      // Fallback a top productos si no hay inventario completo
-      const cachedProducts = await obtenerTopProductos(van.id);
-      if (cachedProducts.length > 0) {
-        setTopProducts(cachedProducts);
-        setAllProducts(cachedProducts);
-        setProductsLoaded(true);
-        console.log(`✅ ${cachedProducts.length} top productos cargados desde caché`);
-        return;
-      }
-      setProductError("📵 Sin conexión y no hay productos en caché. Conecta internet para cargar productos.");
+	    const cachedInventory = await obtenerInventarioVan(van.id);
+	    if (cachedInventory.length > 0) {
+	      setAllProducts(cachedInventory);
+	      setProductsLoaded(isOffline);
+	      setTopProducts(cachedInventory.slice(0, 50));
+	    } else {
+	      const cachedProducts = await obtenerTopProductos(van.id);
+	      if (cachedProducts.length > 0) {
+	        setTopProducts(cachedProducts);
+	        setAllProducts(cachedProducts);
+	        setProductsLoaded(isOffline);
+	      } else {
+	        setTopProducts([]);
+	      }
+	    }
+
+	    // 🆕 Si está offline, intentar cargar desde caché
+	    if (isOffline) {
+	      if (cachedInventory.length > 0) {
+	        return;
+	      }
+	      // Fallback a top productos si no hay inventario completo
+	      const cachedProducts = await obtenerTopProductos(van.id);
+	      if (cachedProducts.length > 0) {
+	        return;
+	      }
+	      setProductError("📵 Sin conexión y no hay productos en caché. Conecta internet para cargar productos.");
       return;
     }
 
@@ -2322,10 +2282,10 @@ useEffect(() => {
       const { data, error } = await supabase
         .from("stock_van")
         .select("producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)")
-        .eq("van_id", van.id)
-        .gt("cantidad", 0)
-        .order("nombre", { ascending: true, foreignTable: "productos" })
-        .limit(500);
+	        .eq("van_id", van.id)
+	        .gt("cantidad", 0)
+	        .order("nombre", { ascending: true, foreignTable: "productos" })
+	        .limit(1200);
 
       if (error) throw error;
 
@@ -2877,6 +2837,7 @@ useEffect(() => {
       ? `Collect ${fmt(remainingToCollect)}`
       : "Save Sale";
   const canSendToAR = hasClientAccount;
+  const hasARPaymentRow = payments.some((p) => p?.toAR);
 
   /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
   useEffect(() => {
@@ -3033,8 +2994,6 @@ useEffect(() => {
       clearInterval(qrPollingIntervalRef.current);
     }
 
-    console.log("🌀 Iniciando polling para session:", sessionId);
-
     let errorCount = 0;
     const MAX_ERRORS = 3;
 
@@ -3067,13 +3026,6 @@ useEffect(() => {
         }
 
         errorCount = 0;
-
-        console.log("📊 Estado Stripe:", {
-          status: res.status,
-          paid: res.paid,
-          payment_status: res.payment_status,
-          session_status: res.session_status
-        });
 
         if (res.paid === true || res.status === "complete") {
           clearInterval(qrPollingIntervalRef.current);
@@ -3354,6 +3306,14 @@ function clearSale() {
   const handleRemovePayment = useCallback((index) => {
     setPayments((ps) => (ps.length === 1 ? ps : ps.filter((_, i) => i !== index)));
   }, []); // functional updater — no captura estado externo
+
+  const handleSendSaleToAR = useCallback(() => {
+    if (!selectedClient?.id) return;
+    setPayments([{ forma: "efectivo", monto: 0, toAR: true }]);
+    setPaymentAutoFilled(false);
+    setPaymentError("");
+    toast.info("This sale balance will be sent to A/R for the selected customer.");
+  }, [selectedClient?.id, toast]);
 
   const handleBarcodeScanned = useCallback((code) => {
     setProductSearch(code.trim());
@@ -3761,8 +3721,7 @@ const esCreditoSignificativo = amountToCreditCheck > 20;
 
      // 🆕 Generar transaction_id único para esta transacción física
   const transactionId = makeUUID();
-  console.log('💳 Transaction ID generado:', transactionId);
-/* ========== AGENTE DE CRÉDITO: VALIDACIÓN PREVIA A GUARDAR ========== */
+	/* ========== AGENTE DE CRÉDITO: VALIDACIÓN PREVIA A GUARDAR ========== */
 // Si la venta actual se paga completa (no se extiende crédito nuevo), omitir alertas de riesgo
 if (selectedClient?.id && amountToCreditCheck > 0.0001) {
   // Ejecutar agente contra el total actual
@@ -3918,10 +3877,6 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
               setSelectedClient((prev) => prev?.id === updatedClient.id ? { ...prev, ...updatedClient } : prev);
               setCxcBalance(Number(updatedClient._saldo_real ?? updatedClient.balance ?? 0));
             }
-          }
-
-          for (const item of cartSafe) {
-            console.log(`📦 Producto ${item.nombre} descontado localmente`);
           }
 
           toast.info(`Sale saved offline — ${fmt(saleTotalWithTax)} for ${selectedClient?.nombre || 'Quick Sale'}. Will sync automatically when connection is restored.`, 6000);
@@ -4234,7 +4189,6 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
           });
 
           if (resultAcuerdo.ok) {
-            console.log('✅ Acuerdo de pago creado:', resultAcuerdo.acuerdo.id);
             createdAgreementPlan = resultAcuerdo.acuerdo.plan;
             setAgreementPlan(resultAcuerdo.acuerdo.plan);
           }
@@ -4279,7 +4233,6 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       if (currentCloudPendingId) {
         try {
           await completePendingSale(currentCloudPendingId, ventaId);
-          console.log(`✅ Venta pendiente cloud ${currentCloudPendingId} → completada`);
         } catch (e) {
           console.warn('⚠️ Error completando pending sale en cloud:', e.message);
         }
@@ -6274,6 +6227,41 @@ function renderStepPayment() {
             <div className={`text-xl font-black ${quickSaleNeedsFullPayment ? "text-blue-700" : "text-emerald-700"}`}>
               {fmt(remainingToCollect)}
             </div>
+          </div>
+        </div>
+      )}
+
+      {hasClientAccount && (
+        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <div className="text-sm font-bold text-amber-900">A/R option available</div>
+            <div className="text-xs text-amber-700 mt-0.5">
+              {hasARPaymentRow
+                ? `Current unpaid sale amount: ${fmt(amountToCredit)}`
+                : "Use this when the customer will pay later. Not available for no-client sales."}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {hasARPaymentRow && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPayments([{ forma: "efectivo", monto: Number(totalAPagar.toFixed(2)) }]);
+                  setPaymentAutoFilled(true);
+                }}
+                className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100"
+              >
+                Undo
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSendSaleToAR}
+              disabled={saleTotalWithTax <= 0}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 disabled:opacity-50"
+            >
+              Send this sale to A/R
+            </button>
           </div>
         </div>
       )}

@@ -110,9 +110,17 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   </React.StrictMode>
 );
 
-// opcional PWA
+// PWA: single registration point. The worker uses network-first HTML and
+// skipWaiting(), so a controller change means the new app shell is ready.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
+    let refreshed = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshed) return;
+      refreshed = true;
+      window.dispatchEvent(new CustomEvent("tools4care:update-ready"));
+    });
+
     navigator.serviceWorker.register("/sw.js").catch(console.warn);
   });
 }

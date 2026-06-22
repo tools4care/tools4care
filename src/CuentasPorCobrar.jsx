@@ -5,6 +5,7 @@ import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { supabase } from "./supabaseClient";
 import { logAudit } from "./lib/auditLog";
+import { clientDigits, isPhoneLikeSearch, phoneSearchVariants } from "./utils/clientSearch";
 import dayjs from "dayjs";
 import {
   ResponsiveContainer,
@@ -373,7 +374,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
       const [ventasRes, pagosRes] = await Promise.all([
         supabase
           .from('ventas')
-          .select('id, fecha, total, estado_pago, total_pagado, metodo_pago')
+          .select('id, fecha, created_at, total, total_venta, estado_pago, total_pagado, metodo_pago')
           .eq('cliente_id', cliente.cliente_id)
           .gte('fecha', sixMonthsAgo)
           .order('fecha', { ascending: true }),
@@ -401,9 +402,9 @@ function CustomerHistoryModal({ cliente, onClose }) {
       }
 
       ventas.forEach(v => {
-        const key = dayjs(v.fecha).format('YYYY-MM');
+        const key = dayjs(v.fecha || v.created_at).format('YYYY-MM');
         if (monthlyData[key]) {
-          monthlyData[key].purchases  += Number(v.total        || 0);
+          monthlyData[key].purchases  += Number(v.total_venta ?? v.total ?? 0);
           monthlyData[key].payments   += Number(v.total_pagado || 0);
           monthlyData[key].transactions += 1;
         }
@@ -416,13 +417,24 @@ function CustomerHistoryModal({ cliente, onClose }) {
         }
       });
 
-      // ── Monthly balance trend ──────────────────────────────────────────────
-      let running = 0;
-      const monthlyBalance = last6Months.map(key => {
+      // ── Monthly balance trend from current real balance ───────────────────
+      const currentBalance = Math.max(0, Number(cliente.saldo || 0));
+      const netByMonth = Object.fromEntries(last6Months.map((key) => [
+        key,
+        monthlyData[key].purchases - monthlyData[key].payments,
+      ]));
+      let futureNet = 0;
+      const monthlyBalance = [...last6Months].reverse().map(key => {
         const d = monthlyData[key];
-        running += d.purchases - d.payments;
-        return { ...d, balance: Math.max(0, running) };
-      });
+        const closingBalance = Math.max(0, currentBalance - futureNet);
+        futureNet += netByMonth[key] || 0;
+        return {
+          ...d,
+          balance: closingBalance,
+          net: d.purchases - d.payments,
+          collectionRate: d.purchases > 0 ? Math.round((d.payments / d.purchases) * 100) : (d.payments > 0 ? 100 : 0),
+        };
+      }).reverse();
 
       // ── Real Score Factors ─────────────────────────────────────────────────
       const total   = ventas.length;
@@ -436,6 +448,12 @@ function CustomerHistoryModal({ cliente, onClose }) {
       const utilPct    = Number(cliente.limite_politica) > 0
         ? Math.min(100, Math.round((Number(cliente.saldo) / Number(cliente.limite_politica)) * 100))
         : 0;
+      const recalculatedScore = calcularNuevoScore({
+        ventas,
+        pagos,
+        saldo: Number(cliente.saldo || 0),
+        limite: Number(cliente.limite_politica || 0),
+      });
       const monthsWithAct = last6Months.filter(k => monthlyData[k].transactions > 0).length;
       const monthsWithPay = last6Months.filter(k => monthlyData[k].payments > 0).length;
       const activityPct   = Math.round((monthsWithAct / 6) * 100);
@@ -473,7 +491,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
       allPayments.sort((a, b) => new Date(b.rawDate) - new Date(a.rawDate));
 
       // ── Aggregate stats ────────────────────────────────────────────────────
-      const totalPurchases6m = ventas.reduce((s, v) => s + Number(v.total || 0), 0);
+      const totalPurchases6m = ventas.reduce((s, v) => s + Number(v.total_venta ?? v.total ?? 0), 0);
       const totalPaid6m      = ventas.reduce((s, v) => s + Number(v.total_pagado || 0), 0)
                              + pagos.reduce((s, p)  => s + Number(p.monto || 0), 0);
       const avgPurchase      = total > 0 ? totalPurchases6m / total : 0;
@@ -481,6 +499,16 @@ function CustomerHistoryModal({ cliente, onClose }) {
       const recent3  = last6Months.slice(3).reduce((s, k) => s + monthlyData[k].purchases, 0);
       const prev3    = last6Months.slice(0, 3).reduce((s, k) => s + monthlyData[k].purchases, 0);
       const seasonalTrend = prev3 > 0 ? Math.round(((recent3 - prev3) / prev3) * 100) : 0;
+      const totalNet6m = totalPurchases6m - totalPaid6m;
+      const collectionRate6m = totalPurchases6m > 0 ? Math.round((totalPaid6m / totalPurchases6m) * 100) : (totalPaid6m > 0 ? 100 : 0);
+      const avgMonthlyPurchase = totalPurchases6m / 6;
+      const avgMonthlyPayment = totalPaid6m / 6;
+      const allPayDates = [
+        ...ventas.filter(v => Number(v.total_pagado) > 0).map(v => v.fecha || v.created_at),
+        ...pagos.map(p => p.fecha_pago),
+      ].filter(Boolean).map(d => new Date(d)).filter(d => !Number.isNaN(d.getTime()));
+      const lastPaymentDate = allPayDates.length ? new Date(Math.max(...allPayDates.map(d => d.getTime()))) : null;
+      const daysSincePayment = lastPaymentDate ? Math.max(0, Math.floor((Date.now() - lastPaymentDate.getTime()) / 86400000)) : null;
 
       // ── Score History mensual (Health Score 0-100 por mes) ───────────────
       // Calcula comportamiento crediticio mes a mes con los datos disponibles
@@ -535,8 +563,15 @@ function CustomerHistoryModal({ cliente, onClose }) {
 
       if (utilPct >= 90)
         recs.push({ icon: '⚠️', text: `Credit limit almost exhausted (${utilPct}% used). Prioritize collection.` });
+      else if (utilPct >= 75)
+        recs.push({ icon: '⚠️', text: `Credit usage is high (${utilPct}%). Collect before extending more credit.` });
       else if (utilPct <= 30 && total > 0)
         recs.push({ icon: '✅', text: `Good credit headroom — only ${utilPct}% of limit used.` });
+
+      if (collectionRate6m < 80 && totalPurchases6m > 0)
+        recs.push({ icon: '💵', text: `Collected ${collectionRate6m}% of purchases in 6 months. Target payment today: ${fmt(Math.max(30, Math.min(Number(cliente.saldo || 0), Number(cliente.saldo || 0) * 0.2)))}.` });
+      if (daysSincePayment != null && daysSincePayment > 30 && Number(cliente.saldo || 0) > 0)
+        recs.push({ icon: '⏱️', text: `Last payment was ${daysSincePayment} days ago. Prioritize reminder before new credit.` });
 
       if (seasonalTrend > 10)
         recs.push({ icon: '📈', text: `Purchases up ${seasonalTrend}% vs previous 3 months.` });
@@ -558,6 +593,15 @@ function CustomerHistoryModal({ cliente, onClose }) {
           avgPurchase,
           purchaseFreq,
           seasonalTrend,
+          totalNet: totalNet6m,
+          collectionRate: collectionRate6m,
+          avgMonthlyPurchase,
+          avgMonthlyPayment,
+          lastPaymentDate,
+          daysSincePayment,
+          utilPct,
+          recalculatedScore,
+          scoreDelta: recalculatedScore - Number(cliente?.score_base || 0),
           pagadas, parciales, sinPago, total,
         },
         recs,
@@ -634,18 +678,66 @@ function CustomerHistoryModal({ cliente, onClose }) {
                 {/* Balance Tab */}
                 {activeTab === 'balance' && (
                   <div className="space-y-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <div className="bg-gradient-to-br from-red-50 to-pink-50 border-2 border-red-200 rounded-xl p-4 min-h-[100px] flex flex-col justify-center">
+                    {historyData.stats && (
+                      <div className={`rounded-2xl border-2 p-4 ${
+                        historyData.stats.utilPct >= 90 || historyData.stats.collectionRate < 60
+                          ? 'bg-red-50 border-red-200'
+                          : historyData.stats.utilPct >= 75 || historyData.stats.collectionRate < 85
+                            ? 'bg-amber-50 border-amber-200'
+                            : 'bg-emerald-50 border-emerald-200'
+                      }`}>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] uppercase font-black tracking-wide text-gray-500">Recommended action</div>
+                            <div className={`text-xl font-black mt-1 ${
+                              historyData.stats.utilPct >= 90 || historyData.stats.collectionRate < 60
+                                ? 'text-red-800'
+                                : historyData.stats.utilPct >= 75 || historyData.stats.collectionRate < 85
+                                  ? 'text-amber-900'
+                                  : 'text-emerald-800'
+                            }`}>
+                              {historyData.stats.utilPct >= 90
+                                ? 'Collect before new credit'
+                                : historyData.stats.collectionRate < 60
+                                  ? 'Tighten terms and request payment'
+                                  : historyData.stats.utilPct >= 75
+                                    ? 'Sell only with payment today'
+                                    : 'Good to sell within limit'}
+                            </div>
+                            <div className="text-sm text-gray-600 mt-1">
+                              Collection rate {historyData.stats.collectionRate}% · Usage {historyData.stats.utilPct}% · Net 6m {fmt(historyData.stats.totalNet)}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-right sm:min-w-[260px]">
+                            <div className="rounded-xl bg-white border border-white/80 px-3 py-2">
+                              <div className="text-[10px] uppercase font-bold text-gray-500">Avg buy/mo</div>
+                              <div className="font-black text-blue-700">{fmt(historyData.stats.avgMonthlyPurchase)}</div>
+                            </div>
+                            <div className="rounded-xl bg-white border border-white/80 px-3 py-2">
+                              <div className="text-[10px] uppercase font-bold text-gray-500">Avg pay/mo</div>
+                              <div className="font-black text-emerald-700">{fmt(historyData.stats.avgMonthlyPayment)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="bg-gradient-to-br from-red-50 to-pink-50 border-2 border-red-200 rounded-xl p-4 min-h-[96px] flex flex-col justify-center">
                         <div className="text-red-600 text-xs font-bold uppercase mb-2">Current Balance</div>
-                        <div className="text-3xl sm:text-4xl font-bold text-red-700">{fmt(cliente?.saldo || 0)}</div>
+                        <div className="text-2xl sm:text-3xl font-bold text-red-700">{fmt(cliente?.saldo || 0)}</div>
                       </div>
-                      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-4 min-h-[100px] flex flex-col justify-center">
+                      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-4 min-h-[96px] flex flex-col justify-center">
                         <div className="text-blue-600 text-xs font-bold uppercase mb-2">Credit Limit</div>
-                        <div className="text-3xl sm:text-4xl font-bold text-blue-700">{fmt(cliente?.limite_politica || 0)}</div>
+                        <div className="text-2xl sm:text-3xl font-bold text-blue-700">{fmt(cliente?.limite_politica || 0)}</div>
                       </div>
-                      <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-4 min-h-[100px] flex flex-col justify-center">
+                      <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-4 min-h-[96px] flex flex-col justify-center">
                         <div className="text-green-600 text-xs font-bold uppercase mb-2">Available</div>
-                        <div className="text-3xl sm:text-4xl font-bold text-green-700">{fmt(cliente?.credito_disponible || 0)}</div>
+                        <div className="text-2xl sm:text-3xl font-bold text-green-700">{fmt(cliente?.credito_disponible || 0)}</div>
+                      </div>
+                      <div className="bg-gradient-to-br from-slate-50 to-gray-100 border-2 border-gray-200 rounded-xl p-4 min-h-[96px] flex flex-col justify-center">
+                        <div className="text-gray-600 text-xs font-bold uppercase mb-2">Used</div>
+                        <div className="text-2xl sm:text-3xl font-bold text-gray-800">{historyData.stats?.utilPct ?? 0}%</div>
                       </div>
                     </div>
 
@@ -809,11 +901,19 @@ function CustomerHistoryModal({ cliente, onClose }) {
                             <Legend
                               iconType="square"
                               iconSize={10}
-                              formatter={(name) => name === 'purchases' ? 'Purchases' : name === 'payments' ? 'Payments' : name}
+                              formatter={(name) => name === 'purchases' ? 'Purchases' : name === 'payments' ? 'Payments' : name === 'net' ? 'Net Added' : name}
                               wrapperStyle={{ paddingTop: '14px', fontSize: '12px', color: '#6b7280' }}
                             />
                             <Bar dataKey="purchases" name="purchases" fill="url(#gradPurchasesBar)" radius={[6, 6, 0, 0]} maxBarSize={44} />
                             <Bar dataKey="payments" name="payments" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={44} />
+                            <Line
+                              type="monotone"
+                              dataKey="net"
+                              name="net"
+                              stroke="#f59e0b"
+                              strokeWidth={2.5}
+                              dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 2 }}
+                            />
                           </ComposedChart>
                         </ResponsiveContainer>
                       </div>
@@ -1010,14 +1110,29 @@ function CustomerHistoryModal({ cliente, onClose }) {
                     {(() => { const sc = scoreColor(cliente?.score_base); return (
                     <div className={`${sc.bg} border-2 ${sc.border} rounded-2xl p-6 text-center`}>
                       <div className={`text-xs font-bold uppercase mb-2 ${sc.text}`}>Current Credit Score</div>
-                      <div className={`text-8xl font-bold mb-3 ${sc.text}`}>{Number(cliente?.score_base || 0)}</div>
-                      <span className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border-2 ${sc.border} font-bold ${sc.text} text-base`}>
-                        <IconTrending up={Number(cliente?.score_base || 0) >= 550} />
-                        {Number(cliente?.score_base || 0) >= 750 ? 'Excellent' :
-                         Number(cliente?.score_base || 0) >= 650 ? 'Good' :
-                         Number(cliente?.score_base || 0) >= 550 ? 'Fair' :
-                         Number(cliente?.score_base || 0) >= 400 ? 'Poor' : 'Very Poor'}
-                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                        <div>
+                          <div className={`text-7xl font-bold mb-3 ${sc.text}`}>{Number(cliente?.score_base || 0)}</div>
+                          <span className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border-2 ${sc.border} font-bold ${sc.text} text-base`}>
+                            <IconTrending up={Number(cliente?.score_base || 0) >= 550} />
+                            Stored score
+                          </span>
+                        </div>
+                        {historyData.stats && (
+                          <div className="bg-white/80 rounded-2xl border border-white p-4 text-left">
+                            <div className="text-xs uppercase font-black text-gray-500 mb-1">Recalculated from real activity</div>
+                            <div className="flex items-end gap-3">
+                              <div className="text-5xl font-black text-slate-900">{historyData.stats.recalculatedScore}</div>
+                              <div className={`pb-2 text-sm font-bold ${historyData.stats.scoreDelta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                {historyData.stats.scoreDelta >= 0 ? '+' : ''}{historyData.stats.scoreDelta}
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-600 mt-2">
+                              Based on collection rate, utilization, payment recency and consistency.
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     ); })()}
 
@@ -1503,6 +1618,7 @@ export default function CuentasPorCobrar() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -1519,6 +1635,14 @@ export default function CuentasPorCobrar() {
     "650-749": [650, 749],
     "750+": [750, 1000],
   };
+
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setDebouncedQ(q.trim()),
+      isPhoneLikeSearch(q) ? 50 : 180
+    );
+    return () => clearTimeout(timer);
+  }, [q]);
 
   const [adminMode, setAdminMode] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
@@ -1753,14 +1877,25 @@ export default function CuentasPorCobrar() {
     async function load() {
       setLoading(true);
       try {
+        const term = debouncedQ.trim();
         let query = supabase
           .from("v_cxc_cliente_detalle_ext")
           .select("cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, limite_manual, telefono, direccion, nombre_negocio",
             { count: "exact" });
 
-        if (q?.trim()) {
+        if (term) {
           // Con búsqueda: mostrar cualquier cliente que coincida (incluso saldo $0)
-          query = query.ilike("cliente_nombre", `%${q.trim()}%`);
+          const phoneLike = isPhoneLikeSearch(term);
+          const digits = clientDigits(term);
+          const phoneFilters = phoneSearchVariants(term).map((v) => `telefono.ilike.%${v}%`);
+          const filters = [
+            `cliente_nombre.ilike.%${term}%`,
+            `nombre_negocio.ilike.%${term}%`,
+            `direccion.ilike.%${term}%`,
+            `telefono.ilike.%${term}%`,
+            ...(phoneLike && digits ? [`telefono.ilike.%${digits}%`, ...phoneFilters] : []),
+          ];
+          query = query.or(filters.join(","));
         } else {
           // Sin búsqueda: solo clientes con saldo pendiente (vista A/R normal)
           query = query.gt("saldo", 0);
@@ -1813,7 +1948,7 @@ export default function CuentasPorCobrar() {
     }
     load();
     return () => { ignore = true; };
-  }, [q, page, pageSize, scoreFilter, reloadTick]);
+  }, [debouncedQ, page, pageSize, scoreFilter, reloadTick]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const metrics = useMemo(() => {

@@ -15,6 +15,8 @@ const ACCIONES = [
   { value: "price_edit", label: "Price edit" },
   { value: "discount_applied", label: "Discount applied" },
   { value: "sale_return", label: "Sale return" },
+  { value: "stock_adjustment", label: "Stock adjustment" },
+  { value: "stock_transfer", label: "Stock transfer" },
 ];
 
 const ACCION_BADGE = {
@@ -22,6 +24,8 @@ const ACCION_BADGE = {
   price_edit: "bg-blue-100 text-blue-700 border-blue-200",
   discount_applied: "bg-amber-100 text-amber-700 border-amber-200",
   sale_return: "bg-rose-100 text-rose-700 border-rose-200",
+  stock_adjustment: "bg-emerald-100 text-emerald-700 border-emerald-200",
+  stock_transfer: "bg-cyan-100 text-cyan-700 border-cyan-200",
 };
 
 function fmtDate(raw) {
@@ -63,6 +67,17 @@ function describeChange(row) {
     if (detalles?.creditoFavorCreado > 0) parts.push(`Store credit created ${fmtMoney(detalles.creditoFavorCreado)}`);
     if (detalles?.motivo) parts.push(`Reason: ${detalles.motivo}`);
     return parts.join("  ·  ");
+  }
+  if (accion === "stock_adjustment") {
+    const delta = after?.delta ?? detalles?.delta;
+    const loc = after?.ubicacion || detalles?.ubicacion || "—";
+    return `Adjustment: ${delta > 0 ? "+" : ""}${delta ?? "—"} · ${loc}${after?.van_id ? ` · VAN ${String(after.van_id).slice(0, 8)}` : ""}`;
+  }
+  if (accion === "stock_transfer") {
+    const qty = after?.cantidad ?? detalles?.cantidad;
+    const from = before?.origen || before?.origen_tipo || "—";
+    const to = after?.destino || after?.destino_tipo || "—";
+    return `Transfer: ${qty ?? "—"} · ${from} → ${to}`;
   }
   return "—";
 }

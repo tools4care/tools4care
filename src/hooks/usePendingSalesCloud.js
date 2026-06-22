@@ -53,14 +53,14 @@ export function usePendingSalesCloud() {
 
   // ===================== FETCH =====================
   
-  const fetchPendingSales = useCallback(async () => {
+  const fetchPendingSales = useCallback(async ({ silent = false } = {}) => {
     if (!van?.id || !usuario?.id) {
       setPendingSales([]);
       setLoading(false);
       return;
     }
 
-    setLoading(true); // ← mostrar spinner cada vez que se refresca
+    if (!silent) setLoading(true);
     try {
       const { data, error: fetchErr } = await supabase
         .from('ventas_pendientes')
@@ -71,7 +71,7 @@ export function usePendingSalesCloud() {
         .limit(20);
 
       if (fetchErr) throw fetchErr;
-      setPendingSales(data || []);
+      setPendingSales(Array.isArray(data) ? data : []);
       setError(null);
     } catch (err) {
       console.error('❌ Error fetching pending sales:', err);
@@ -142,10 +142,20 @@ export function usePendingSalesCloud() {
     };
   }, [van?.id, usuario?.id]);
 
+  // Realtime can be interrupted on mobile sleep, poor networks, or tabs opened
+  // before the subscription is ready. A light poll keeps every device honest.
+  useEffect(() => {
+    if (!van?.id || !usuario?.id) return;
+    const timer = window.setInterval(() => {
+      fetchPendingSales({ silent: true });
+    }, 12000);
+    return () => window.clearInterval(timer);
+  }, [van?.id, usuario?.id, fetchPendingSales]);
+
   // Refrescar cuando la ventana recibe foco
   useEffect(() => {
-    const onFocus = () => fetchPendingSales();
-    const onVisible = () => { if (!document.hidden) fetchPendingSales(); };
+    const onFocus = () => fetchPendingSales({ silent: true });
+    const onVisible = () => { if (!document.hidden) fetchPendingSales({ silent: true }); };
     
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisible);
@@ -330,6 +340,8 @@ export function usePendingSalesCloud() {
   // ===================== COMPLETAR =====================
 
   const completePendingSale = useCallback(async (id, ventaId = null) => {
+    setPendingSales(prev => prev.filter(s => s.id !== id));
+
     const { error: updateErr } = await supabase
       .from('ventas_pendientes')
       .update({
@@ -342,14 +354,17 @@ export function usePendingSalesCloud() {
 
     if (updateErr) {
       console.error('Error completando venta pendiente:', updateErr);
+      fetchPendingSales({ silent: true });
     } else {
       console.log(`✅ Venta pendiente ${id} completada → venta real ${ventaId}`);
     }
-  }, []);
+  }, [fetchPendingSales]);
 
   // ===================== CANCELAR / ELIMINAR =====================
 
   const cancelPendingSale = useCallback(async (id) => {
+    setPendingSales(prev => prev.filter(s => s.id !== id));
+
     const { error: delErr } = await supabase
       .from('ventas_pendientes')
       .update({ estado: 'cancelada' })
@@ -357,20 +372,26 @@ export function usePendingSalesCloud() {
 
     if (delErr) {
       console.error('Error cancelando venta pendiente:', delErr);
+      fetchPendingSales({ silent: true });
       throw delErr;
     }
     console.log(`🗑️ Venta pendiente ${id} cancelada`);
-  }, []);
+  }, [fetchPendingSales]);
 
   const deletePendingSale = useCallback(async (id) => {
+    setPendingSales(prev => prev.filter(s => s.id !== id));
+
     const { error: delErr } = await supabase
       .from('ventas_pendientes')
       .delete()
       .eq('id', id);
 
-    if (delErr) throw delErr;
+    if (delErr) {
+      fetchPendingSales({ silent: true });
+      throw delErr;
+    }
     console.log(`🗑️ Venta pendiente ${id} eliminada`);
-  }, []);
+  }, [fetchPendingSales]);
 
   // ===================== INFO DEL DISPOSITIVO =====================
 

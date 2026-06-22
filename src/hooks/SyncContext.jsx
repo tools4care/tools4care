@@ -83,8 +83,6 @@ export function SyncProvider({ children }) {
     let pagosSubidos  = 0;
 
     try {
-      console.log('🔄 [SyncGlobal] Iniciando sync...');
-
       // 1. Subir ventas y pagos offline primero
       const [resVentas, resPagos] = await Promise.all([
         sincronizarVentasPendientes(),
@@ -93,16 +91,12 @@ export function SyncProvider({ children }) {
       ventasSubidas = resVentas.sincronizadas || 0;
       pagosSubidos  = resPagos.sincronizados  || 0;
 
-      if (ventasSubidas > 0 || pagosSubidos > 0) {
-        console.log(`✅ [SyncGlobal] Subidas: ${ventasSubidas} venta(s), ${pagosSubidos} pago(s)`);
-      }
-
       // 2. Descargar clientes con balance
       const { data: clientes, error: eClientes } = await supabase
         .from('clientes_balance')
         .select('id,nombre,negocio,telefono,email,direccion,balance')
         .order('nombre', { ascending: true })
-        .limit(2000);
+        .limit(3000);
       if (eClientes) throw new Error('Clientes: ' + eClientes.message);
       await guardarClientesCache(clientes || []);
 
@@ -111,7 +105,8 @@ export function SyncProvider({ children }) {
         .from('stock_van')
         .select('producto_id, cantidad, productos:productos!inner(id, nombre, precio, codigo, marca, descuento_pct, bulk_min_qty, bulk_unit_price)')
         .eq('van_id', vanId)
-        .gt('cantidad', 0);
+        .gt('cantidad', 0)
+        .limit(1200);
 
       if (!eInv && inventario) {
         const fmt = inventario.filter(i => i.productos).map(i => ({
@@ -183,8 +178,6 @@ export function SyncProvider({ children }) {
       localStorage.setItem('ultimo_sync_completo', ahora);
       await contarPendientes();
 
-      console.log(`✅ [SyncGlobal] Completado: ${clientes?.length || 0} clientes, ${inventario?.length || 0} productos`);
-
       // 7. Notificar a todos los listeners (vistas que necesitan refrescarse)
       const resumenSync = { ventasSubidas, pagosSubidos, clientes: clientes?.length || 0 };
       listenersRef.current.forEach(cb => {
@@ -229,7 +222,6 @@ export function SyncProvider({ children }) {
 
     // ── SYNC AUTOMÁTICO AL RECONECTAR ──────────────────────────
     const handleOnline = () => {
-      console.log('🌐 [SyncGlobal] Reconectado — sincronizando ventas offline...');
       // Pequeño delay para que la conexión esté estable
       setTimeout(() => sincronizarTodo({ silencioso: false }), 1500);
     };

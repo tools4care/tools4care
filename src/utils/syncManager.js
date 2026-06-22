@@ -67,9 +67,9 @@ export async function sincronizarVentasPendientes() {
             p_notas: venta.notas || '[OFFLINE SYNC]',
             p_items: items,
             p_deuda_nueva: venta.cliente_id ? Math.max(0, Number((total - totalPaid).toFixed(2))) : 0,
-            p_pago_deuda_anterior: 0,
-            p_credito_favor_aplicado: 0,
-            p_credito_favor_a_deuda: 0,
+            p_pago_deuda_anterior: Number(venta.pago?.aplicado_deuda || 0),
+            p_credito_favor_aplicado: Number(venta.pago?.credito_favor_aplicado || 0),
+            p_credito_favor_a_deuda: Number(venta.pago?.credito_favor_aplicado_deuda || 0),
           });
           if (txError) throw txError;
 

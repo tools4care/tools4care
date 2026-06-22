@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
 import { useUsuario } from "./UsuarioContext";
@@ -21,6 +21,103 @@ const fmtDate = (iso) => {
 };
 
 const PILOT_PRODUCT_SEARCH = "DUAL COIL";
+const RENTAL_STOCK_QTY = 1;
+const STATUS_OPTIONS = [
+  ["en_renta", "Active"],
+  ["atrasado", "Overdue"],
+  ["retirado", "Repossessed"],
+  ["comprado", "Purchased"],
+  ["cancelado", "Returned"],
+  ["all", "All"],
+];
+
+const isInventoryOutStatus = (estado) => estado === "en_renta" || estado === "atrasado" || estado === "comprado";
+
+function getBuyoutDefault(rental) {
+  const salePrice = Number(rental.productos?.precio || rental.costo_maquina || 0);
+  const alreadyPaid = Number(rental.total_pagado || 0);
+  return Math.max(0, Number((salePrice - alreadyPaid).toFixed(2)));
+}
+
+async function addStockMovement({ productoId, vanId, tipo, cantidad, motivo }) {
+  try {
+    await supabase.from("movimientos_stock").insert({
+      producto_id: productoId,
+      tipo,
+      cantidad,
+      ubicacion: "van",
+      van_id: vanId || null,
+      motivo,
+      fecha: new Date().toISOString(),
+    });
+  } catch {
+    // Stock movement audit is best-effort because older installs may not expose this table yet.
+  }
+}
+
+async function decrementRentalStock({ productoId, vanId, motivo }) {
+  if (!productoId || !vanId) throw new Error("Rental stock requires a product and VAN.");
+
+  const { data: stockRow, error: selectError } = await supabase
+    .from("stock_van")
+    .select("id, cantidad")
+    .eq("producto_id", productoId)
+    .eq("van_id", vanId)
+    .maybeSingle();
+  if (selectError) throw selectError;
+
+  const current = Number(stockRow?.cantidad || 0);
+  if (!stockRow?.id || current < RENTAL_STOCK_QTY) {
+    throw new Error(`Not enough stock in this VAN. Available: ${current}`);
+  }
+
+  const { error: updateError } = await supabase
+    .from("stock_van")
+    .update({ cantidad: current - RENTAL_STOCK_QTY })
+    .eq("id", stockRow.id);
+  if (updateError) throw updateError;
+
+  await addStockMovement({
+    productoId,
+    vanId,
+    tipo: "ALQUILER_SALIDA",
+    cantidad: RENTAL_STOCK_QTY,
+    motivo,
+  });
+}
+
+async function replenishRentalStock({ productoId, vanId, motivo }) {
+  if (!productoId || !vanId) return;
+
+  const { data: stockRow, error: selectError } = await supabase
+    .from("stock_van")
+    .select("id, cantidad")
+    .eq("producto_id", productoId)
+    .eq("van_id", vanId)
+    .maybeSingle();
+  if (selectError) throw selectError;
+
+  if (stockRow?.id) {
+    const { error: updateError } = await supabase
+      .from("stock_van")
+      .update({ cantidad: Number(stockRow.cantidad || 0) + RENTAL_STOCK_QTY })
+      .eq("id", stockRow.id);
+    if (updateError) throw updateError;
+  } else {
+    const { error: insertError } = await supabase
+      .from("stock_van")
+      .insert({ producto_id: productoId, van_id: vanId, cantidad: RENTAL_STOCK_QTY });
+    if (insertError) throw insertError;
+  }
+
+  await addStockMovement({
+    productoId,
+    vanId,
+    tipo: "ALQUILER_REINGRESO",
+    cantidad: RENTAL_STOCK_QTY,
+    motivo,
+  });
+}
 
 function buildContractText({ clienteNombre, productoNombre, deposito, rentaSemanal, fechaInicio }) {
   return `EQUIPMENT RENTAL AGREEMENT
@@ -71,6 +168,39 @@ function Card({ label, value, sub, color = "blue" }) {
       <p className="text-xs font-medium opacity-70 mb-1">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
       {sub && <p className="text-xs opacity-60 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+function RentalsSkeleton() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50 to-teal-50 pb-24">
+      <div className="max-w-4xl mx-auto px-4 pt-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 bg-emerald-100 rounded-2xl animate-pulse" />
+          <div className="space-y-2">
+            <div className="h-6 w-48 bg-slate-200 rounded-lg animate-pulse" />
+            <div className="h-4 w-64 bg-slate-100 rounded-lg animate-pulse" />
+          </div>
+        </div>
+        <div className="bg-white border border-slate-100 rounded-2xl shadow-sm p-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="h-24 bg-slate-100 rounded-xl animate-pulse" />
+            ))}
+          </div>
+          <div className="flex gap-2 mb-5 overflow-hidden">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-9 w-24 bg-slate-100 rounded-lg animate-pulse" />
+            ))}
+          </div>
+          <div className="space-y-4">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="h-44 bg-slate-100 rounded-2xl animate-pulse" />
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -890,13 +1020,13 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete, onR
           value=""
           onChange={e => {
             const action = e.target.value;
-            if (action === "overdue") onChangeStatus(r.id, "atrasado");
+            if (action === "overdue") onChangeStatus(r, "atrasado");
             else if (action === "repossess") {
-              if (confirm("Repossess this equipment (or an equivalent-value item from the customer's station)?")) onChangeStatus(r.id, "retirado");
+              if (confirm("Repossess this equipment (or an equivalent-value item from the customer's station)?")) onChangeStatus(r, "retirado");
             } else if (action === "purchased") {
-              if (confirm(`Mark this rental as PURCHASED by ${r.clientes?.nombre}? This ends the rental.`)) onChangeStatus(r.id, "comprado");
+              if (confirm(`Charge/register this equipment as PURCHASED by ${r.clientes?.nombre}? This ends the rental.`)) onChangeStatus(r, "comprado");
             } else if (action === "returned") setShowReturnModal(true);
-            else if (action === "reactivate") onChangeStatus(r.id, "en_renta");
+            else if (action === "reactivate") onChangeStatus(r, "en_renta");
             else if (action === "delete") setShowDeleteConfirm(true);
           }}
           className="border-2 border-gray-200 hover:border-gray-300 text-gray-600 px-3 py-2 rounded-xl text-xs font-bold bg-white outline-none cursor-pointer"
@@ -961,7 +1091,7 @@ function RentalCard({ r, onChangeStatus, onMarkPaid, onChargeDone, onDelete, onR
                 className="flex-1 border-2 border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">
                 Cancel
               </button>
-              <button onClick={() => { setShowDeleteConfirm(false); onDelete(r.id); }}
+              <button onClick={() => { setShowDeleteConfirm(false); onDelete(r); }}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-bold">
                 Delete
               </button>
@@ -995,7 +1125,7 @@ export default function Alquileres() {
     setLoading(true);
     setDbError(null);
     let q = supabase.from("alquileres")
-      .select("*, clientes(nombre,telefono,email), productos(nombre)")
+      .select("*, clientes(nombre,telefono,email), productos(nombre,precio,costo)")
       .order("created_at", { ascending: false });
     if (!isAdmin && van?.id) q = q.eq("van_id", van.id);
     const { data, error } = await q;
@@ -1010,58 +1140,209 @@ export default function Alquileres() {
 
   async function saveRental({ cliente, producto, form, firma, contratoTexto, stripeInfo }) {
     setSaving(true);
-    const startDate = form.fecha_inicio;
-    const next = new Date(startDate + "T00:00:00");
-    next.setDate(next.getDate() + 7);
-    const proxima = next.toISOString().slice(0, 10);
+    let stockDeducted = false;
+    try {
+      const startDate = form.fecha_inicio;
+      const next = new Date(startDate + "T00:00:00");
+      next.setDate(next.getDate() + 7);
+      const proxima = next.toISOString().slice(0, 10);
 
-    const { data: inserted, error } = await supabase.from("alquileres").insert({
-      cliente_id: cliente.id,
-      producto_id: producto.id,
-      van_id: van?.id || null,
-      serial: form.serial || null,
-      estado: "en_renta",
-      deposito: parseFloat(form.deposito) || 0,
-      renta_semanal: parseFloat(form.renta_semanal) || 0,
-      costo_maquina: producto.costo || null,
-      fecha_inicio: startDate,
-      proxima_renta: proxima,
-      nota: form.nota || null,
-      contrato_texto: contratoTexto,
-      contrato_firma: firma,
-      contrato_firmado_at: new Date().toISOString(),
-      stripe_customer_id: stripeInfo?.customerId || null,
-      stripe_payment_method_id: stripeInfo?.paymentMethodId || null,
-      card_last4: stripeInfo?.last4 || null,
-      card_brand: stripeInfo?.brand || null,
-    }).select("id").single();
+      await decrementRentalStock({
+        productoId: producto.id,
+        vanId: van?.id,
+        motivo: `Rental started for ${cliente.nombre || cliente.id}`,
+      });
+      stockDeducted = true;
 
-    if (error) {
-      toast.error("Error saving rental: " + error.message);
+      const { data: inserted, error } = await supabase.from("alquileres").insert({
+        cliente_id: cliente.id,
+        producto_id: producto.id,
+        van_id: van?.id || null,
+        serial: form.serial || null,
+        estado: "en_renta",
+        deposito: parseFloat(form.deposito) || 0,
+        renta_semanal: parseFloat(form.renta_semanal) || 0,
+        costo_maquina: producto.costo || producto.precio || null,
+        fecha_inicio: startDate,
+        proxima_renta: proxima,
+        nota: form.nota || null,
+        contrato_texto: contratoTexto,
+        contrato_firma: firma,
+        contrato_firmado_at: new Date().toISOString(),
+        stripe_customer_id: stripeInfo?.customerId || null,
+        stripe_payment_method_id: stripeInfo?.paymentMethodId || null,
+        card_last4: stripeInfo?.last4 || null,
+        card_brand: stripeInfo?.brand || null,
+      }).select("id").single();
+
+      if (error) throw error;
+
+      await supabase.from("alquiler_pagos").insert({
+        alquiler_id: inserted.id,
+        fecha: startDate,
+        monto: parseFloat(form.deposito) || 0,
+        tipo: "deposito",
+        metodo: stripeInfo ? "tarjeta" : "efectivo",
+        estado: "pagado",
+        notas: "Initial security deposit",
+      });
+
+      setShowForm(false);
+      toast.success("Rental started");
+      load();
+    } catch (error) {
+      if (stockDeducted) {
+        try {
+          await replenishRentalStock({
+            productoId: producto.id,
+            vanId: van?.id,
+            motivo: `Rollback rental start for ${cliente.nombre || cliente.id}`,
+          });
+        } catch {}
+      }
+      toast.error("Error saving rental: " + (error?.message || error));
+    } finally {
       setSaving(false);
+    }
+  }
+
+  async function chargePurchaseCard(r, amount) {
+    const { data } = await supabase.functions.invoke("stripe-subscriptions", {
+      body: {
+        action: "charge_subscription",
+        customer_id: r.stripe_customer_id,
+        payment_method_id: r.stripe_payment_method_id,
+        amount_cents: Math.round(Number(amount || 0) * 100),
+        description: `Rental buyout — ${r.clientes?.nombre || ""}`,
+      },
+    });
+    if (!data?.ok) throw new Error(data?.error || "Card charge failed");
+    return data;
+  }
+
+  async function recordRentalPurchase(r) {
+    const defaultAmount = getBuyoutDefault(r) || Number(r.productos?.precio || r.costo_maquina || 0);
+    const raw = prompt(`Final purchase amount for ${r.clientes?.nombre}?`, defaultAmount.toFixed(2));
+    if (raw === null) return;
+    const amount = Number(raw);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter a valid purchase amount.");
       return;
     }
 
-    // Record the deposit as the first payment
-    await supabase.from("alquiler_pagos").insert({
-      alquiler_id: inserted.id,
-      fecha: startDate,
-      monto: parseFloat(form.deposito) || 0,
-      tipo: "deposito",
-      metodo: stripeInfo ? "tarjeta" : "efectivo",
-      estado: "pagado",
-      notas: "Initial security deposit",
-    });
+    const hasCard = r.stripe_customer_id && r.stripe_payment_method_id;
+    const defaultMethod = hasCard ? "tarjeta" : "efectivo";
+    const methodRaw = prompt("Payment method: efectivo, tarjeta, transferencia, otro", defaultMethod);
+    if (methodRaw === null) return;
+    const metodo = ["efectivo", "tarjeta", "transferencia", "otro"].includes(methodRaw.trim().toLowerCase())
+      ? methodRaw.trim().toLowerCase()
+      : defaultMethod;
 
-    setSaving(false);
-    setShowForm(false);
-    toast.success("Rental started");
-    load();
+    try {
+      let chargeRef = null;
+      if (metodo === "tarjeta") {
+        if (!hasCard) throw new Error("This rental has no card on file.");
+        if (!confirm(`Charge ${fmt(amount)} to card ···· ${r.card_last4}?`)) return;
+        const charge = await chargePurchaseCard(r, amount);
+        chargeRef = charge.payment_intent || charge.charge_id || null;
+      }
+
+      const now = new Date().toISOString();
+      const paymentBreakdown = {
+        efectivo: metodo === "efectivo" ? amount : 0,
+        tarjeta: metodo === "tarjeta" ? amount : 0,
+        transferencia: metodo === "transferencia" ? amount : 0,
+        otro: metodo === "otro" ? amount : 0,
+      };
+
+      const { data: venta, error: ventaError } = await supabase.from("ventas").insert({
+        cliente_id: r.cliente_id,
+        van_id: r.van_id || van?.id || null,
+        usuario_id: usuario?.id || null,
+        total_venta: amount,
+        total: amount,
+        total_pagado: amount,
+        estado_pago: "pagado",
+        metodo_pago: metodo,
+        pago: paymentBreakdown,
+        pago_efectivo: paymentBreakdown.efectivo,
+        pago_tarjeta: paymentBreakdown.tarjeta,
+        pago_transferencia: paymentBreakdown.transferencia,
+        pago_otro: paymentBreakdown.otro,
+        notas: `Compra de equipo alquilado. Alquiler ${r.id}${chargeRef ? ` · Stripe ${chargeRef}` : ""}`,
+        tipo: "venta",
+        created_at: now,
+      }).select("id").single();
+      if (ventaError) throw ventaError;
+
+      const { error: detalleError } = await supabase.from("detalle_ventas").insert({
+        venta_id: venta.id,
+        producto_id: r.producto_id,
+        cantidad: 1,
+        precio_unitario: amount,
+        descuento: 0,
+        subtotal: amount,
+      });
+      if (detalleError) throw detalleError;
+
+      const today = now.slice(0, 10);
+      const { error: pagoError } = await supabase.from("alquiler_pagos").insert({
+        alquiler_id: r.id,
+        fecha: today,
+        monto: amount,
+        tipo: "compra",
+        metodo,
+        estado: "pagado",
+        notas: `Rental buyout recorded as sale ${venta.id}${chargeRef ? ` · Stripe ${chargeRef}` : ""}`,
+      });
+      if (pagoError) throw pagoError;
+
+      const { error: rentalError } = await supabase.from("alquileres").update({
+        estado: "comprado",
+        total_pagado: Number(r.total_pagado || 0) + amount,
+        ultima_renta_pagada: today,
+        proxima_renta: null,
+      }).eq("id", r.id);
+      if (rentalError) throw rentalError;
+
+      toast.success("Purchase charged and recorded");
+      load();
+    } catch (error) {
+      toast.error("Could not complete purchase: " + (error?.message || error));
+    }
   }
 
-  async function changeStatus(id, estado) {
-    await supabase.from("alquileres").update({ estado }).eq("id", id);
-    load();
+  async function changeStatus(rOrId, estado) {
+    const r = typeof rOrId === "object" ? rOrId : rentals.find((item) => item.id === rOrId);
+    if (!r) return;
+
+    if (estado === "comprado") {
+      await recordRentalPurchase(r);
+      return;
+    }
+
+    try {
+      if (estado === "retirado" && isInventoryOutStatus(r.estado)) {
+        await replenishRentalStock({
+          productoId: r.producto_id,
+          vanId: r.van_id,
+          motivo: `Rental repossessed from ${r.clientes?.nombre || r.cliente_id}`,
+        });
+      }
+
+      if (estado === "en_renta" && !isInventoryOutStatus(r.estado)) {
+        await decrementRentalStock({
+          productoId: r.producto_id,
+          vanId: r.van_id,
+          motivo: `Rental reactivated for ${r.clientes?.nombre || r.cliente_id}`,
+        });
+      }
+
+      await supabase.from("alquileres").update({ estado }).eq("id", r.id);
+      load();
+    } catch (error) {
+      toast.error("Could not update rental: " + (error?.message || error));
+    }
   }
 
   async function markPaid(r) {
@@ -1092,40 +1373,84 @@ export default function Alquileres() {
     load();
   }
 
-  async function deleteRental(id) {
-    await supabase.from("alquileres").delete().eq("id", id);
-    load();
+  async function deleteRental(rOrId) {
+    const r = typeof rOrId === "object" ? rOrId : rentals.find((item) => item.id === rOrId);
+    if (!r) return;
+    try {
+      if (isInventoryOutStatus(r.estado) && r.estado !== "comprado") {
+        await replenishRentalStock({
+          productoId: r.producto_id,
+          vanId: r.van_id,
+          motivo: `Rental deleted before closeout for ${r.clientes?.nombre || r.cliente_id}`,
+        });
+      }
+      await supabase.from("alquileres").delete().eq("id", r.id);
+      load();
+    } catch (error) {
+      toast.error("Could not delete rental: " + (error?.message || error));
+    }
   }
 
   async function returnEquipment(r, condition, note) {
-    await supabase.from("alquileres").update({ estado: "cancelado" }).eq("id", r.id);
+    try {
+      if (isInventoryOutStatus(r.estado) && r.estado !== "comprado") {
+        await replenishRentalStock({
+          productoId: r.producto_id,
+          vanId: r.van_id,
+          motivo: `Rental returned by ${r.clientes?.nombre || r.cliente_id} (${condition})`,
+        });
+      }
 
-    if (condition === "good") {
-      await supabase.from("alquiler_pagos").insert({
-        alquiler_id: r.id, monto: -(Number(r.deposito) || 0),
-        tipo: "reembolso", metodo: "efectivo", estado: "pagado",
-        notas: note || "Equipment returned in good condition — deposit refunded",
-      });
-    } else {
-      await supabase.from("alquiler_pagos").insert({
-        alquiler_id: r.id, monto: 0,
-        tipo: "nota", metodo: "efectivo", estado: "pagado",
-        notas: note || "Equipment returned damaged — deposit retained",
-      });
+      await supabase.from("alquileres").update({ estado: "cancelado" }).eq("id", r.id);
+
+      if (condition === "good") {
+        await supabase.from("alquiler_pagos").insert({
+          alquiler_id: r.id, monto: -(Number(r.deposito) || 0),
+          tipo: "reembolso", metodo: "efectivo", estado: "pagado",
+          notas: note || "Equipment returned in good condition — deposit refunded",
+        });
+      } else {
+        await supabase.from("alquiler_pagos").insert({
+          alquiler_id: r.id, monto: 0,
+          tipo: "nota", metodo: "efectivo", estado: "pagado",
+          notas: note || "Equipment returned damaged — deposit retained",
+        });
+      }
+
+      load();
+    } catch (error) {
+      toast.error("Could not return equipment: " + (error?.message || error));
     }
-
-    load();
   }
 
-  const filtered = rentals.filter(r => filterStatus === "all" || r.estado === filterStatus);
   const today = new Date().toISOString().slice(0, 10);
-  const summary = {
-    active: rentals.filter(r => r.estado === "en_renta").length,
-    weekly: rentals.filter(r => r.estado === "en_renta" || r.estado === "atrasado").reduce((t, r) => t + Number(r.renta_semanal || 0), 0),
-    overdue: rentals.filter(r => r.estado === "atrasado" || (r.estado === "en_renta" && r.proxima_renta && r.proxima_renta < today)).length,
-  };
+  const { filtered, summary, statusCounts } = useMemo(() => {
+    const counts = STATUS_OPTIONS.reduce((acc, [status]) => ({ ...acc, [status]: 0 }), {});
+    counts.all = rentals.length;
 
-  if (loading) return <div className="py-16 text-center text-gray-400">Loading rentals…</div>;
+    let active = 0;
+    let weekly = 0;
+    let overdue = 0;
+
+    for (const rental of rentals) {
+      counts[rental.estado] = (counts[rental.estado] || 0) + 1;
+      if (rental.estado === "en_renta") active += 1;
+      if (rental.estado === "en_renta" || rental.estado === "atrasado") {
+        weekly += Number(rental.renta_semanal || 0);
+      }
+      if (rental.estado === "atrasado" || (rental.estado === "en_renta" && rental.proxima_renta && rental.proxima_renta < today)) {
+        overdue += 1;
+      }
+    }
+
+    return {
+      filtered: rentals.filter((r) => filterStatus === "all" || r.estado === filterStatus),
+      summary: { active, weekly, overdue },
+      statusCounts: counts,
+    };
+  }, [rentals, filterStatus, today]);
+
+  if (loading) return <RentalsSkeleton />;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50 to-teal-50 pb-24">
@@ -1146,7 +1471,7 @@ export default function Alquileres() {
           </div>
         )}
 
-        <div className="bg-white rounded-3xl shadow-xl p-5">
+        <div className="bg-white border border-slate-100 rounded-2xl shadow-sm p-4 sm:p-5">
           {dbError ? (
             <div className="bg-red-50 border border-red-200 rounded-2xl p-5">
               <p className="font-bold text-red-700 mb-1">Database setup required</p>
@@ -1154,23 +1479,26 @@ export default function Alquileres() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
                 <Card label="Active Rentals" value={summary.active} color="green" />
                 <Card label="Weekly Revenue" value={fmt(summary.weekly)} color="blue" sub="from active + overdue rentals" />
                 <Card label="Overdue Payments" value={summary.overdue} color="red" sub="needs follow-up or repossession" />
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                <div className="flex gap-2 flex-wrap">
-                  {[["en_renta","Active"],["atrasado","Overdue"],["retirado","Repossessed"],["comprado","Purchased"],["cancelado","Returned"],["all","All"]].map(([v,l])=>(
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                  {STATUS_OPTIONS.map(([v,l])=>(
                     <button key={v} onClick={()=>setFilterStatus(v)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${filterStatus===v?"bg-emerald-600 text-white":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                      {l}
+                      className={`shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${filterStatus===v?"bg-emerald-600 text-white shadow-sm":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                      <span>{l}</span>
+                      <span className={`min-w-5 rounded-full px-1.5 py-0.5 text-[10px] leading-none ${filterStatus===v?"bg-white/20 text-white":"bg-white text-gray-500"}`}>
+                        {statusCounts[v] || 0}
+                      </span>
                     </button>
                   ))}
                 </div>
                 <button onClick={()=>setShowForm(true)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 shadow-sm">
                   <Plus size={15}/> New Rental
                 </button>
               </div>
@@ -1182,7 +1510,13 @@ export default function Alquileres() {
               )}
 
               <div className="space-y-4">
-                {filtered.length===0 && <p className="text-center py-12 text-gray-400">No rentals with status "{filterStatus}"</p>}
+                {filtered.length===0 && (
+                  <div className="text-center py-14 text-gray-400 border border-dashed border-gray-200 rounded-2xl bg-gray-50/60">
+                    <Package size={26} className="mx-auto mb-2 text-gray-300" />
+                    <p className="text-sm font-semibold">No rentals in this view</p>
+                    <p className="text-xs mt-1">Try another status or start a new rental.</p>
+                  </div>
+                )}
                 {filtered.map(r => (
                   <RentalCard key={r.id} r={r} onChangeStatus={changeStatus} onMarkPaid={markPaid} onChargeDone={load} onDelete={deleteRental} onReturn={returnEquipment} />
                 ))}
