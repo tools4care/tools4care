@@ -47,7 +47,7 @@ export default function VanSelector({ onSelect }) {
         console.warn("Could not cache vans:", storageError?.message || storageError);
       }
     } catch (e) {
-      setErr(e.message || "Error cargando vans");
+      setErr(e.message || "Error loading vans");
     } finally {
       setLoading(false);
     }
@@ -79,7 +79,7 @@ export default function VanSelector({ onSelect }) {
 
   function handleSeleccionar(v) {
     setSavingId(v.id);
-    // Mantén compat con código existente
+    // Keep compatibility with existing modules that read nombre_van.
     const compatible = { ...v, nombre_van: getVanName(v) };
     const syncResult = setVan(compatible);
     if (syncResult && typeof syncResult.catch === "function") {
@@ -93,9 +93,8 @@ export default function VanSelector({ onSelect }) {
       console.warn("Could not save selected van:", storageError?.message || storageError);
     }
 
-    // Redirección: si el nombre incluye "online", vamos al panel /online
     if (onSelect) {
-      onSelect(compatible); // si el padre maneja la navegación, respetamos eso
+      onSelect(compatible);
     } else {
       navigate(isOnlineVan(v) ? "/online" : "/");
     }
@@ -119,10 +118,10 @@ export default function VanSelector({ onSelect }) {
                 </div>
 
                 <h2 className="max-w-sm text-3xl font-black leading-tight sm:text-4xl">
-                  Elige la VAN para trabajar.
+                  Choose your workspace.
                 </h2>
                 <p className="mt-4 max-w-sm text-sm leading-6 text-slate-300">
-                  La selección se guarda para este dispositivo y se sincroniza con tu sesión cuando hay conexión.
+                  Your selection is saved on this device and synced to your session when connection is available.
                 </p>
               </div>
 
@@ -134,7 +133,7 @@ export default function VanSelector({ onSelect }) {
                 {selectedVan?.id && (
                   <div className="flex items-center gap-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3">
                     <CheckCircle2 size={18} className="text-emerald-300" />
-                    <span className="text-slate-100">Actual: {getVanName(selectedVan)}</span>
+                    <span className="text-slate-100">Current: {getVanName(selectedVan)}</span>
                   </div>
                 )}
               </div>
@@ -145,9 +144,9 @@ export default function VanSelector({ onSelect }) {
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">VAN / Route</p>
-                <h3 className="mt-1 text-2xl font-black">Selecciona una VAN</h3>
+                <h3 className="mt-1 text-2xl font-black">Select a VAN</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  {loading ? "Cargando rutas..." : `${filteredVans.length} de ${vans.length} disponibles`}
+                  {loading ? "Loading routes..." : `${filteredVans.length} of ${vans.length} available`}
                 </p>
               </div>
               <button
@@ -171,7 +170,7 @@ export default function VanSelector({ onSelect }) {
                   if (e.key === "Enter" && filteredVans.length === 1) handleSeleccionar(filteredVans[0]);
                 }}
                 className="h-12 w-full rounded-xl border-2 border-slate-200 bg-slate-50 pl-12 pr-4 text-base font-bold outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                placeholder="Buscar por nombre o placa..."
+                placeholder="Search by name or plate..."
               />
             </div>
 
@@ -179,7 +178,7 @@ export default function VanSelector({ onSelect }) {
               <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                 <AlertCircle size={18} className="mt-0.5 shrink-0" />
                 <div>
-                  <p className="font-bold">No se pudo actualizar la lista.</p>
+                  <p className="font-bold">Could not refresh the list.</p>
                   <p className="text-red-600">{err}</p>
                 </div>
               </div>
@@ -193,8 +192,8 @@ export default function VanSelector({ onSelect }) {
               </div>
             ) : filteredVans.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-                <p className="font-bold text-slate-700">No hay vans disponibles</p>
-                <p className="mt-1 text-sm text-slate-500">Prueba limpiar la búsqueda o refrescar la lista.</p>
+                <p className="font-bold text-slate-700">No vans available</p>
+                <p className="mt-1 text-sm text-slate-500">Try clearing the search or refreshing the list.</p>
               </div>
             ) : (
               <div className="grid max-h-[54vh] gap-3 overflow-y-auto pr-1">
@@ -226,7 +225,7 @@ export default function VanSelector({ onSelect }) {
                           <p className="truncate text-base font-black text-slate-950">{getVanName(v)}</p>
                           {active && (
                             <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-black uppercase text-white">
-                              Actual
+                              Current
                             </span>
                           )}
                         </div>
