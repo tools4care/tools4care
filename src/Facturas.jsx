@@ -380,15 +380,11 @@ function buildFullInvoiceHTML(factura) {
   };
 
   const fecha = factura.fecha
-    ? new Date(factura.fecha + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    ? new Date(factura.fecha.includes("T") ? factura.fecha : factura.fecha + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
     : "-";
   const invoiceNum = factura.numero_factura || factura.id?.slice(0, 8) || "-";
   const cliente = factura.cliente_nombre_c || "Quick Sale";
-  const direccion = factura.cliente_direccion
-    ? (typeof factura.cliente_direccion === "string"
-        ? factura.cliente_direccion
-        : [factura.cliente_direccion.calle, factura.cliente_direccion.ciudad, factura.cliente_direccion.estado].filter(Boolean).join(", "))
-    : "-";
+  const direccion = formatAddress(factura.cliente_direccion);
   const telefono = factura.cliente_telefono || "-";
   const emailCliente = factura.cliente_email || "-";
 

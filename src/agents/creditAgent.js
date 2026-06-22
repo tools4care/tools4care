@@ -31,15 +31,12 @@ export async function getClientHistory(clienteId) {
 
   try {
     let ventas = [];
-    for (const col of ["created_at", "fecha", "date"]) {
-      try {
-        const { data, error } = await supabase.from("ventas").select(`id, ${col}, total, total_venta, total_pagado, cliente_id`).eq("cliente_id", clienteId).order(col, { ascending: false }).limit(200);
-        if (!error && data?.length > 0) {
-          ventas = data.map((v) => ({ ...v, fecha: v[col], total: Number(v.total_venta || v.total || 0) }));
-          break;
-        }
-      } catch { /* next */ }
-    }
+    try {
+      const { data } = await supabase.from("ventas").select("id, fecha, created_at, total, total_venta, total_pagado, cliente_id").eq("cliente_id", clienteId).order("created_at", { ascending: false }).limit(200);
+      if (data?.length > 0) {
+        ventas = data.map((v) => ({ ...v, fecha: v.fecha || v.created_at, total: Number(v.total_venta || v.total || 0) }));
+      }
+    } catch { /* ignore */ }
 
     let pagos = [];
     try {
