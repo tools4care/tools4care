@@ -11,6 +11,7 @@ import { Package, Check, X } from "lucide-react";
 import PageHeader from "./components/ui/PageHeader";
 import Avatar from "./components/ui/Avatar";
 import { SkeletonCard } from "./components/ui/Skeleton";
+import { barcodeVariants, compactSearchTerm, digitsOnly, isCodeLikeSearch } from "./utils/productSearch";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
 // Generate a unique in-store product code (12-digit, starts with 2 = internal UPC-A range)
@@ -612,8 +613,10 @@ export default function Productos() {
 
   const [debounced, setDebounced] = useState("");
   const searchSeq = useRef(0);
+  const codigoCheckTimerRef = useRef(null);
+  const codigoCheckSeq = useRef(0);
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(busqueda), 120);
+    const t = setTimeout(() => setDebounced(busqueda), isCodeLikeSearch(busqueda) ? 35 : 120);
     return () => clearTimeout(t);
   }, [busqueda]);
 
@@ -650,13 +653,14 @@ export default function Productos() {
 
     const termRaw = debounced ?? "";
     const term = termRaw.trim();
-    const termNoSpaces = term.replace(/\s+/g, "");
-    const digitsOnly = term.replace(/\D/g, "");
-    const isBarcode = digitsOnly.length >= 8;
+    const termNoSpaces = compactSearchTerm(term);
+    const onlyDigits = digitsOnly(term);
+    const isBarcode = isCodeLikeSearch(term);
 
     // Variantes para buscar: con ceros, sin ceros, texto completo
     // Ej: "0722195001326" → también busca "722195001326" y viceversa
-    const digitsStripped = digitsOnly.replace(/^0+/, '') || digitsOnly;
+    const needles = barcodeVariants(term);
+    const digitsStripped = onlyDigits.replace(/^0+/, '') || onlyDigits;
 
     const baseSelect = "*, suplidor:suplidor_id(nombre)";
     const desde = (pagina - 1) * PAGE_SIZE;
@@ -665,18 +669,12 @@ export default function Productos() {
     try {
       if (isBarcode) {
         // Busca exacto con TODAS las variantes (con ceros y sin ceros)
-        const needles = Array.from(new Set([
-          termNoSpaces,   // tal como se escribió/escaneó (con ceros si los tiene)
-          digitsOnly,     // solo dígitos del input
-          digitsStripped, // sin ceros al inicio
-        ].filter(Boolean)));
-
         if (needles.length > 0) {
           const { data: exactData, count: exactCount, error: exactErr } = await supabase
             .from("productos")
             .select(baseSelect, { count: "exact" })
             .in("codigo", needles)
-            .limit(1);
+            .limit(PAGE_SIZE);
 
           if (exactErr) throw exactErr;
           if (mySeq !== searchSeq.current) return;
@@ -695,9 +693,8 @@ export default function Productos() {
       if (term) {
         if (isBarcode) {
           // Fallback ilike: busca prefijo con y sin ceros
-          query = query.or(
-            `codigo.ilike.${termNoSpaces}%,codigo.ilike.${digitsStripped}%`
-          );
+          const prefixFilters = needles.map((code) => `codigo.ilike.${code}%`).join(",");
+          query = query.or(prefixFilters || `codigo.ilike.${termNoSpaces}%,codigo.ilike.${digitsStripped}%`);
         } else if (/^\d+$/.test(termNoSpaces)) {
           query = query.or(`codigo.ilike.${termNoSpaces}%,nombre.ilike.%${term}%,marca.ilike.%${term}%,categoria.ilike.%${term}%`);
         } else {
@@ -728,7 +725,7 @@ export default function Productos() {
     setTimeout(() => {
       const searchInput = document.querySelector('input[placeholder="Search by code, name, brand, category..."]');
       if (searchInput) { searchInput.focus(); searchInput.select(); }
-    }, 300);
+    }, 60);
     setPagina(1);
     setBusqueda(raw);
   };
@@ -811,6 +808,7 @@ export default function Productos() {
     setEditMode(true);
     setCodigoExisteInfo(null);
     setCodigoVerificando(false);
+    if (codigoCheckTimerRef.current) clearTimeout(codigoCheckTimerRef.current);
   }
 
   function agregarProductoNuevo(codigoForzado = "") {
@@ -859,16 +857,19 @@ export default function Productos() {
 
   async function checkCodigoExiste(codigo) {
     if (!codigo || codigo.trim() === "") { setCodigoExisteInfo(null); return; }
+    const qid = ++codigoCheckSeq.current;
     setCodigoVerificando(true);
     setCodigoExisteInfo(null);
     const { data } = await supabase
       .from("productos")
       .select("id, nombre")
       .eq("codigo", codigo.trim())
-      .maybeSingle();
+      .limit(1);
+    if (qid !== codigoCheckSeq.current) return;
     setCodigoVerificando(false);
-    if (data && (!productoActual?.id || data.id !== productoActual.id)) {
-      setCodigoExisteInfo({ nombre: data.nombre, id: data.id });
+    const match = data?.[0] || null;
+    if (match && (!productoActual?.id || match.id !== productoActual.id)) {
+      setCodigoExisteInfo({ nombre: match.nombre, id: match.id });
     } else {
       setCodigoExisteInfo(null);
     }
@@ -885,13 +886,17 @@ export default function Productos() {
       return;
     }
 
-    const { data: existentes, error: errorExistente } = await supabase.from("productos").select("id").eq("codigo", productoActual.codigo);
+    const { data: existentes, error: errorExistente } = await supabase
+      .from("productos")
+      .select("id")
+      .eq("codigo", productoActual.codigo.trim());
     if (errorExistente) {
       setMensaje("Error checking for duplicate code: " + errorExistente.message);
       setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
       return;
     }
-    if (existentes && existentes.length > 0 && (!productoActual.id || existentes[0].id !== productoActual.id)) {
+    const duplicated = (existentes || []).some((item) => !productoActual.id || item.id !== productoActual.id);
+    if (duplicated) {
       setMensaje("Error: There is already a product with this code/UPC.");
       setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
       return;
@@ -1437,7 +1442,15 @@ export default function Productos() {
                           <input
                             className={`border-2 rounded-lg pl-9 pr-3 py-2.5 w-full font-mono text-sm tracking-widest focus:ring-2 outline-none bg-gray-50 uppercase ${codigoExisteInfo ? "border-amber-400 focus:ring-amber-400 focus:border-amber-400" : "border-gray-200 focus:ring-blue-500 focus:border-blue-400"}`}
                             value={productoActual.codigo ?? ""}
-                            onChange={(e) => { setProductoActual({ ...productoActual, codigo: e.target.value.toUpperCase() }); setCodigoExisteInfo(null); }}
+                            onChange={(e) => {
+                              const nextCode = e.target.value.toUpperCase();
+                              setProductoActual({ ...productoActual, codigo: nextCode });
+                              setCodigoExisteInfo(null);
+                              if (codigoCheckTimerRef.current) clearTimeout(codigoCheckTimerRef.current);
+                              if (isCodeLikeSearch(nextCode)) {
+                                codigoCheckTimerRef.current = setTimeout(() => checkCodigoExiste(nextCode), 90);
+                              }
+                            }}
                             onBlur={(e) => checkCodigoExiste(e.target.value)}
                             placeholder="Scan or type barcode..."
                             required autoFocus disabled={disabled || guardandoProducto}
