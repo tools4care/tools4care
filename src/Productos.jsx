@@ -732,7 +732,7 @@ export default function Productos() {
 
   function handleBuscar(e) {
     setPagina(1);
-    setBusqueda((e.target.value || "").replace(/\s+/g, ""));
+    setBusqueda(e.target.value || "");
     setHl(-1);
   }
   
