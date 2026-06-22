@@ -731,21 +731,21 @@ const fetchPage = async (opts = {}) => {
 
   const from = (p - 1) * ps;
   const to = from + ps - 1;
+  const qDigits = clientDigits(q);
+  const phoneLike = isPhoneLikeSearch(q);
 
   let query = supabase
     .from(CLIENTS_VIEW)
     .select("*", { count: "exact" })
-    .order("nombre", { ascending: true })
-    .range(from, to);
+    .order("nombre", { ascending: true });
 
   if (q) {
     const like = `%${q}%`;
-    const qDigits = clientDigits(q);
-    const phoneLike = isPhoneLikeSearch(q);
     const phoneVariants = phoneSearchVariants(q);
+    const strictPhoneSearch = phoneLike && qDigits.length >= 7;
 
     // 🔍 BÚSQUEDA COMPLETA: Nombre, Email, Negocio, Teléfono, Dirección
-    const filtros = [
+    const textFilters = [
       `nombre.ilike.${like}`,
       `email.ilike.${like}`,
       `negocio.ilike.${like}`,
@@ -756,22 +756,26 @@ const fetchPage = async (opts = {}) => {
       `dir_estado.ilike.${like}`,    // ✅ Estado
       `dir_zip.ilike.${like}`,       // ✅ ZIP
     ];
+    const phoneFilters = [];
 
     // 🔍 Búsqueda por dígitos de teléfono (si hay al menos 3 dígitos)
     if (qDigits.length >= 3) {
       const likeDigits = `%${qDigits}%`;
-      filtros.push(
+      phoneFilters.push(
         ...(phoneLike ? phoneVariants.flatMap((v) => [
           `tel_norm.ilike.${clientDigits(v)}%`,
-          `telefono.ilike.%${v}%`,
+          `tel_norm.ilike.%${clientDigits(v)}%`,
         ]) : []),
         `tel_norm.ilike.${likeDigits}`,
         `tel_norm.ilike.%1${qDigits}%`
       );
     }
 
+    const filtros = strictPhoneSearch ? phoneFilters : [...textFilters, `telefono.ilike.${like}`, ...phoneFilters];
     query = query.or(filtros.join(","));
   }
+
+  query = query.range(q ? 0 : from, q ? Math.max(to, phoneLike ? 99 : to) : to);
 
   const { data, error, count } = await query;
   if (error) {
@@ -780,7 +784,9 @@ const fetchPage = async (opts = {}) => {
     return;
   }
 
-  setClientes(data || []);
+  const rows = data || [];
+  const orderedRows = q ? filterClientsLocal(rows, q, rows.length).slice(from, to + 1) : rows;
+  setClientes(orderedRows);
   setTotalRows(count || 0);
   setIsLoading(false);
 

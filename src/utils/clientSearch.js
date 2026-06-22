@@ -33,8 +33,7 @@ export function phoneSearchVariants(value) {
     add(`+${digits}`);
   }
   if (digits.length >= 7) add(digits.slice(-7));
-  if (digits.length >= 4) add(digits.slice(-4));
-  if (digits.length >= 3) add(digits.slice(0, 3));
+  if (digits.length >= 4 && digits.length < 7) add(digits.slice(-4));
 
   return variants;
 }
@@ -54,12 +53,22 @@ export function clientSearchScore(client, term) {
   const safe = normalizeClientTerm(term).toLowerCase();
   const digits = clientDigits(term);
   const phoneDigits = clientDigits(client?.telefono);
-  const variants = phoneSearchVariants(term).map(clientDigits).filter(Boolean);
+  const variants = phoneSearchVariants(term)
+    .map(clientDigits)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
 
   if (digits && phoneDigits) {
     if (phoneDigits === digits || variants.includes(phoneDigits)) return 0;
-    if (variants.some((v) => phoneDigits.startsWith(v))) return 1;
-    if (variants.some((v) => phoneDigits.includes(v))) return 2;
+    const startsMatch = variants.find((v) => phoneDigits.startsWith(v));
+    const includesMatch = variants.find((v) => phoneDigits.includes(v));
+    const bestPhoneMatch = [startsMatch, includesMatch]
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)[0];
+    if (bestPhoneMatch) {
+      const positionPenalty = phoneDigits.startsWith(bestPhoneMatch) ? 0 : 0.01;
+      return 1 + (20 - bestPhoneMatch.length) / 100 + positionPenalty;
+    }
   }
 
   const name = String(client?.nombre || "").toLowerCase();
