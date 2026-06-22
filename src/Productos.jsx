@@ -7,7 +7,7 @@ import { useVan } from "./hooks/VanContext";
 import { logAudit } from "./lib/auditLog";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useToast } from "./hooks/useToast";
-import { Package, Check, X } from "lucide-react";
+import { Package, Check, X, Search } from "lucide-react";
 import PageHeader from "./components/ui/PageHeader";
 import Avatar from "./components/ui/Avatar";
 import { SkeletonCard } from "./components/ui/Skeleton";
@@ -1117,22 +1117,26 @@ export default function Productos() {
       {/* BARRA DE BÚSQUEDA Y ACCIONES */}
       <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
         <div className="flex gap-2 w-full">
-          <input
-            type="text"
-            placeholder="Search by code, name, brand, category..."
-            value={busqueda}
-            onChange={handleBuscar}
-            onKeyDown={(e) => {
-              const list = productos || [];
-              if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1)); }
-              else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
-              else if (e.key === "PageDown") { e.preventDefault(); if (pagina * 20 < total) setPagina(pagina + 1); }
-              else if (e.key === "PageUp") { e.preventDefault(); if (pagina > 1) setPagina(pagina - 1); }
-              else if (e.key === "Enter") { if (hl >= 0 && list[hl]) abrirModal(list[hl]); else if (list.length > 0) abrirModal(list[0]); }
-              else if (e.key === "Escape") { setHl(-1); }
-            }}
-            className="border rounded p-2 flex-1"
-          />
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-500" size={20} />
+            <input
+              type="text"
+              autoFocus
+              placeholder="Search by code, name, brand, category..."
+              value={busqueda}
+              onChange={handleBuscar}
+              onKeyDown={(e) => {
+                const list = productos || [];
+                if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1)); }
+                else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
+                else if (e.key === "PageDown") { e.preventDefault(); if (pagina * 20 < total) setPagina(pagina + 1); }
+                else if (e.key === "PageUp") { e.preventDefault(); if (pagina > 1) setPagina(pagina - 1); }
+                else if (e.key === "Enter") { if (hl >= 0 && list[hl]) abrirModal(list[hl]); else if (list.length > 0) abrirModal(list[0]); }
+                else if (e.key === "Escape") { setHl(-1); }
+              }}
+              className="w-full pl-11 pr-4 py-3 border-2 border-blue-300 rounded-2xl focus:ring-4 focus:ring-blue-200 focus:border-blue-500 transition-all duration-200 bg-white shadow-md hover:shadow-lg text-base sm:text-lg font-semibold placeholder:font-normal placeholder:text-gray-400"
+            />
+          </div>
           {/* 🆕 BOTÓN ESCÁNER MEJORADO */}
           <button
             onClick={() => setShowScanner(true)}
