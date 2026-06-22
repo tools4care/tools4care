@@ -15,7 +15,10 @@ export function isCodeLikeSearch(value) {
   if (!compact) return false;
   const digits = digitsOnly(compact);
   if (digits.length >= 4 && digits.length >= compact.length - 2) return true;
-  return compact.length >= 6 && /^[a-z0-9._-]+$/i.test(compact);
+  // Alphanumeric SKU-style code (e.g. "ABC123") — must contain a digit,
+  // otherwise a plain word like "babyliss" gets mistaken for a barcode
+  // and skips name/brand matching entirely.
+  return compact.length >= 6 && digits.length > 0 && /^[a-z0-9._-]+$/i.test(compact);
 }
 
 export function barcodeVariants(value) {
