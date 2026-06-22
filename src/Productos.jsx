@@ -1400,7 +1400,15 @@ export default function Productos() {
                   <div className="bg-blue-50 rounded-xl p-2.5 text-center">
                     <div className="text-[10px] text-blue-500 font-bold uppercase tracking-wide">On Hand</div>
                     <div className="text-xl font-bold text-blue-800 leading-tight">{stockResumen.unidades}</div>
-                    <div className="text-[10px] text-blue-400">units</div>
+                    {stockPorUbicacion.length > 0 ? (
+                      <div className="text-[10px] text-blue-400 leading-tight mt-0.5 space-y-px">
+                        {stockPorUbicacion.map((d) => (
+                          <div key={d.nombre} className="truncate">{d.nombre}: {d.cantidad}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-blue-400">units</div>
+                    )}
                   </div>
                   <div className="bg-emerald-50 rounded-xl p-2.5 text-center">
                     <div className="text-[10px] text-emerald-500 font-bold uppercase tracking-wide">Stock Value</div>
@@ -1419,19 +1427,6 @@ export default function Productos() {
                 </div>
               )}
 
-              {/* Stock breakdown by location — where is it physically located */}
-              {productoActual.id && stockPorUbicacion.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-1.5">
-                  {stockPorUbicacion.map((d) => (
-                    <span
-                      key={d.nombre}
-                      className="inline-flex items-center gap-1 text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-1"
-                    >
-                      📍 {d.nombre}: {d.cantidad}
-                    </span>
-                  ))}
-                </div>
-              )}
               {productoActual.id && stockResumen.unidades > 0 && stockPorUbicacion.length === 0 && (
                 <div className="mb-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                   ⚠️ Stock location unknown — units aren't assigned to the warehouse or a specific van.
