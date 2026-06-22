@@ -1621,6 +1621,7 @@ export default function CuentasPorCobrar() {
   const [debouncedQ, setDebouncedQ] = useState("");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [lastPayInfo, setLastPayInfo] = useState({}); // cliente_id -> { days, label }
 
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
   const [page, setPage] = useState(1);
@@ -1872,6 +1873,60 @@ export default function CuentasPorCobrar() {
     setReloadTick((t) => t + 1);
   }
 
+  // ── Días sin pago por cliente (aging) ──
+  // Una sola query agregada por página en vez de N queries por cliente.
+  async function loadLastPayInfo(clienteIds) {
+    const ids = (clienteIds || []).filter(Boolean);
+    if (ids.length === 0) { setLastPayInfo({}); return; }
+
+    const [ventasRes, pagosRes] = await Promise.all([
+      supabase
+        .from("ventas")
+        .select("cliente_id, fecha, created_at")
+        .in("cliente_id", ids)
+        .gt("total_pagado", 0)
+        .order("fecha", { ascending: false })
+        .limit(2000),
+      supabase
+        .from("pagos")
+        .select("cliente_id, fecha_pago")
+        .in("cliente_id", ids)
+        .order("fecha_pago", { ascending: false })
+        .limit(2000),
+    ]);
+
+    const lastDateByClient = {};
+    const consider = (clienteId, rawDate) => {
+      if (!clienteId || !rawDate) return;
+      const d = new Date(rawDate);
+      if (Number.isNaN(d.getTime())) return;
+      const current = lastDateByClient[clienteId];
+      if (!current || d > current) lastDateByClient[clienteId] = d;
+    };
+    (ventasRes.data || []).forEach((v) => consider(v.cliente_id, v.fecha || v.created_at));
+    (pagosRes.data || []).forEach((p) => consider(p.cliente_id, p.fecha_pago));
+
+    const info = {};
+    ids.forEach((id) => {
+      const last = lastDateByClient[id];
+      if (!last) { info[id] = { days: null, lastDate: null }; return; }
+      const days = Math.max(0, Math.floor((Date.now() - last.getTime()) / 86400000));
+      info[id] = { days, lastDate: last };
+    });
+    setLastPayInfo(info);
+  }
+
+  function payAgingBadge(info) {
+    if (!info || info.days == null) {
+      return { text: "No payments recorded", className: "bg-gray-100 text-gray-500 border-gray-200" };
+    }
+    const { days } = info;
+    if (days <= 30) return { text: `${days}d since last payment`, className: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+    if (days <= 60) return { text: `${days}d since last payment`, className: "bg-amber-50 text-amber-700 border-amber-200" };
+    if (days <= 90) return { text: `${days}d since last payment`, className: "bg-orange-50 text-orange-700 border-orange-200" };
+    return { text: `${days}d since last payment`, className: "bg-red-50 text-red-700 border-red-200" };
+  }
+
   useEffect(() => {
     let ignore = false;
     async function load() {
@@ -1933,6 +1988,8 @@ export default function CuentasPorCobrar() {
               );
               setGlobalSaldo(total);
             }
+
+            loadLastPayInfo((result.data || []).map((r) => r.cliente_id));
           }
         }
       } catch (e) {
@@ -2229,6 +2286,7 @@ export default function CuentasPorCobrar() {
               const usePct = r.limite_politica > 0 ? Math.min(100, Math.round((r.saldo / r.limite_politica) * 100)) : 0;
               const addrStr = parseAddr(r.direccion);
               const stale = scoreEstaDesactualizado(r.score_base, usePct);
+              const aging = payAgingBadge(lastPayInfo[r.cliente_id]);
               return (
                 <div key={r.cliente_id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-md overflow-hidden">
                   {/* Header */}
@@ -2254,6 +2312,11 @@ export default function CuentasPorCobrar() {
                   </div>
 
                   <div className="px-4 py-3 space-y-3">
+                    {/* Aging: days since last payment */}
+                    <span className={`inline-flex text-xs px-2 py-1 rounded-full border font-semibold ${aging.className}`}>
+                      🕐 {aging.text}
+                    </span>
+
                     {/* Credit usage bar */}
                     <div>
                       <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -2339,6 +2402,7 @@ export default function CuentasPorCobrar() {
                     const usePct = r.limite_politica > 0 ? Math.min(100, Math.round((r.saldo / r.limite_politica) * 100)) : 0;
                     const addrStr = parseAddr(r.direccion);
                     const stale = scoreEstaDesactualizado(r.score_base, usePct);
+                    const aging = payAgingBadge(lastPayInfo[r.cliente_id]);
                     return (
                       <tr key={r.cliente_id} className="hover:bg-blue-50/50 transition-colors">
                         <td className="px-5 py-3">
@@ -2346,7 +2410,7 @@ export default function CuentasPorCobrar() {
                           {r.nombre_negocio && <div className="text-xs text-gray-500 mt-0.5">🏪 {r.nombre_negocio}</div>}
                           {addrStr && <div className="text-xs text-gray-400 mt-0.5">📍 {addrStr}</div>}
                           {r.telefono && <div className="text-xs text-gray-400 mt-0.5">📞 {r.telefono}</div>}
-                          <div className="mt-1 flex items-center gap-2">
+                          <div className="mt-1 flex items-center gap-2 flex-wrap">
                             {adminMode && (
                               <button
                                 className="text-xs px-2 py-0.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 font-semibold"
@@ -2360,6 +2424,9 @@ export default function CuentasPorCobrar() {
                                 override
                               </span>
                             )}
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${aging.className}`}>
+                              🕐 {aging.text}
+                            </span>
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right font-bold text-red-600 text-base">{fmt(r.saldo)}</td>
