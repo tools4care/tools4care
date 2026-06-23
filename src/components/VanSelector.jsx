@@ -102,38 +102,54 @@ export default function VanSelector({ onSelect }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl items-center px-4 py-6 sm:px-6">
-        <div className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl md:grid-cols-[0.88fr_1.12fr]">
-          <section className="bg-slate-950 p-6 text-white sm:p-8">
+    <div className="relative min-h-screen overflow-hidden bg-[#07111f] text-slate-950">
+      <div className="absolute inset-0 opacity-80 [background-image:linear-gradient(rgba(148,163,184,0.09)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.09)_1px,transparent_1px)] [background-size:42px_42px]" />
+      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(6,182,212,0.18),transparent_28%,rgba(16,185,129,0.13)_62%,transparent)]" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl items-center px-4 py-6 sm:px-6">
+        <div className="grid w-full overflow-hidden rounded-[28px] border border-white/10 bg-white shadow-2xl shadow-black/30 md:grid-cols-[0.92fr_1.08fr]">
+          <section className="bg-[#081524] p-6 text-white sm:p-8">
             <div className="flex h-full min-h-[360px] flex-col justify-between gap-8">
               <div>
                 <div className="mb-8 flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white shadow-lg shadow-blue-950/30">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-lg shadow-cyan-950/30 ring-1 ring-white/20">
                     <img src={TOOLS4CARE_LOGO} alt="Tools4Care" className="h-10 w-10 rounded-lg object-contain" />
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-200">Tools4Care</p>
-                    <h1 className="text-xl font-black">Select Workspace</h1>
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200">Tools4Care</p>
+                    <h1 className="text-xl font-black text-white">Select Workspace</h1>
                   </div>
                 </div>
 
-                <h2 className="max-w-sm text-3xl font-black leading-tight sm:text-4xl">
+                <div className="mb-5 inline-flex rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
+                  Route finance console
+                </div>
+                <h2 className="max-w-sm text-3xl font-black leading-tight text-white sm:text-4xl">
                   Choose your workspace.
                 </h2>
                 <p className="mt-4 max-w-sm text-sm leading-6 text-slate-300">
                   Your selection is saved on this device and synced to your session when connection is available.
                 </p>
+
+                <div className="mt-8 grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Access</p>
+                    <p className="mt-1 text-lg font-black text-white">Secure</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Sync</p>
+                    <p className="mt-1 text-lg font-black text-emerald-200">Live</p>
+                  </div>
+                </div>
               </div>
 
               <div className="grid gap-3 text-sm">
-                <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                  <Wifi size={18} className="text-emerald-300" />
+                <div className="flex items-center gap-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3">
+                  <Wifi size={18} className="text-cyan-200" />
                   <span className="text-slate-200">{navigator.onLine ? "Online sync ready" : "Offline mode"}</span>
                 </div>
                 {selectedVan?.id && (
-                  <div className="flex items-center gap-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3">
-                    <CheckCircle2 size={18} className="text-emerald-300" />
+                  <div className="flex items-center gap-3 rounded-2xl border border-emerald-300/30 bg-emerald-300/10 px-4 py-3">
+                    <CheckCircle2 size={18} className="text-emerald-200" />
                     <span className="text-slate-100">Current: {getVanName(selectedVan)}</span>
                   </div>
                 )}
@@ -141,19 +157,19 @@ export default function VanSelector({ onSelect }) {
             </div>
           </section>
 
-          <section className="p-5 sm:p-8">
+          <section className="bg-[#f7fafc] p-5 sm:p-8">
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">VAN / Route</p>
-                <h3 className="mt-1 text-2xl font-black">Select a VAN</h3>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">VAN / Route</p>
+                <h3 className="mt-1 text-2xl font-black text-[#0b1728]">Select a VAN</h3>
+                <p className="mt-1 text-sm font-medium text-slate-500">
                   {loading ? "Loading routes..." : `${filteredVans.length} of ${vans.length} available`}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => loadVans()}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={loading}
               >
                 <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
@@ -162,7 +178,7 @@ export default function VanSelector({ onSelect }) {
             </div>
 
             <div className="relative mb-4">
-              <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-blue-500" size={19} />
+              <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-emerald-600" size={19} />
               <input
                 ref={searchRef}
                 value={query}
@@ -170,7 +186,7 @@ export default function VanSelector({ onSelect }) {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && filteredVans.length === 1) handleSeleccionar(filteredVans[0]);
                 }}
-                className="h-12 w-full rounded-xl border-2 border-slate-200 bg-slate-50 pl-12 pr-4 text-base font-bold outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                className="h-12 w-full rounded-2xl border-2 border-slate-200 bg-white pl-12 pr-4 text-base font-bold text-[#0b1728] outline-none shadow-sm transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
                 placeholder="Search by name or plate..."
               />
             </div>
@@ -188,12 +204,12 @@ export default function VanSelector({ onSelect }) {
             {loading && vans.length === 0 ? (
               <div className="grid gap-3">
                 {[0, 1, 2].map((item) => (
-                  <div key={item} className="h-20 animate-pulse rounded-xl bg-slate-100" />
+                  <div key={item} className="h-20 animate-pulse rounded-2xl bg-slate-100" />
                 ))}
               </div>
             ) : filteredVans.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-                <p className="font-bold text-slate-700">No vans available</p>
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+                <p className="font-bold text-[#0b1728]">No vans available</p>
                 <p className="mt-1 text-sm text-slate-500">Try clearing the search or refreshing the list.</p>
               </div>
             ) : (
@@ -209,23 +225,23 @@ export default function VanSelector({ onSelect }) {
                       key={v.id}
                       onClick={() => handleSeleccionar(v)}
                       disabled={!!savingId}
-                      className={`group grid min-h-[76px] grid-cols-[auto_1fr_auto] items-center gap-4 rounded-xl border-2 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-wait disabled:opacity-70 ${
+                      className={`group grid min-h-[76px] grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-wait disabled:opacity-70 ${
                         active
-                          ? "border-blue-500 bg-blue-50"
-                          : "border-slate-200 bg-white hover:border-blue-300"
+                          ? "border-emerald-400 bg-emerald-50 shadow-emerald-900/10"
+                          : "border-slate-200 bg-white hover:border-cyan-300"
                       }`}
                     >
-                      <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${
-                        online ? "bg-violet-100 text-violet-700" : "bg-blue-100 text-blue-700"
+                      <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+                        online ? "bg-cyan-100 text-cyan-700" : "bg-emerald-100 text-emerald-700"
                       }`}>
                         {online ? <Monitor size={23} /> : <Truck size={23} />}
                       </div>
 
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-base font-black text-slate-950">{getVanName(v)}</p>
+                          <p className="truncate text-base font-black text-[#0b1728]">{getVanName(v)}</p>
                           {active && (
-                            <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-black uppercase text-white">
+                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-black uppercase text-white">
                               Current
                             </span>
                           )}
@@ -235,7 +251,7 @@ export default function VanSelector({ onSelect }) {
                         </p>
                       </div>
 
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500 transition group-hover:bg-blue-600 group-hover:text-white">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition group-hover:bg-[#0b1728] group-hover:text-white">
                         {isSaving ? <RefreshCw size={18} className="animate-spin" /> : <ArrowRight size={19} />}
                       </div>
                     </button>
