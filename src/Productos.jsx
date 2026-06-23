@@ -14,6 +14,15 @@ import { SkeletonCard } from "./components/ui/Skeleton";
 import { barcodeVariants, compactSearchTerm, digitsOnly, isCodeLikeSearch } from "./utils/productSearch";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
+const UBICACION_COLORS = [
+  { bar: "bg-blue-500", dot: "bg-blue-500" },
+  { bar: "bg-emerald-500", dot: "bg-emerald-500" },
+  { bar: "bg-amber-500", dot: "bg-amber-500" },
+  { bar: "bg-purple-500", dot: "bg-purple-500" },
+  { bar: "bg-pink-500", dot: "bg-pink-500" },
+  { bar: "bg-cyan-500", dot: "bg-cyan-500" },
+];
+
 // Generate a unique in-store product code (12-digit, starts with 2 = internal UPC-A range)
 function generateProductCode() {
   const digits = Array.from({ length: 11 }, () => Math.floor(Math.random() * 10)).join("");
@@ -1400,15 +1409,7 @@ export default function Productos() {
                   <div className="bg-blue-50 rounded-xl p-2.5 text-center">
                     <div className="text-[10px] text-blue-500 font-bold uppercase tracking-wide">On Hand</div>
                     <div className="text-xl font-bold text-blue-800 leading-tight">{stockResumen.unidades}</div>
-                    {stockPorUbicacion.length > 0 ? (
-                      <div className="text-[10px] text-blue-400 leading-tight mt-0.5 space-y-px">
-                        {stockPorUbicacion.map((d) => (
-                          <div key={d.nombre} className="truncate">{d.nombre}: {d.cantidad}</div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-[10px] text-blue-400">units</div>
-                    )}
+                    <div className="text-[10px] text-blue-400">units</div>
                   </div>
                   <div className="bg-emerald-50 rounded-xl p-2.5 text-center">
                     <div className="text-[10px] text-emerald-500 font-bold uppercase tracking-wide">Stock Value</div>
@@ -1423,6 +1424,31 @@ export default function Productos() {
                     {ultimaVenta && (
                       <div className="text-[10px] text-gray-400">{new Date(ultimaVenta).getFullYear()}</div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {productoActual.id && stockPorUbicacion.length > 0 && (
+                <div className="mb-3 border border-gray-200 rounded-xl p-3">
+                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Stock by Location</div>
+                  <div className="flex h-2 w-full rounded-full overflow-hidden bg-gray-100 mb-2.5">
+                    {stockPorUbicacion.map((d, i) => (
+                      <div
+                        key={d.nombre}
+                        className={UBICACION_COLORS[i % UBICACION_COLORS.length].bar}
+                        style={{ width: `${(d.cantidad / stockResumen.unidades) * 100}%` }}
+                        title={`${d.nombre}: ${d.cantidad}`}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {stockPorUbicacion.map((d, i) => (
+                      <div key={d.nombre} className="flex items-center gap-1.5 text-xs text-gray-600">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${UBICACION_COLORS[i % UBICACION_COLORS.length].dot}`} />
+                        <span className="truncate">{d.nombre}</span>
+                        <span className="font-bold text-gray-800">{d.cantidad}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
