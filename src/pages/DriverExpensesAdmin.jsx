@@ -12,10 +12,24 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { supabase } from "../supabaseClient";
 import PageHeader from "../components/ui/PageHeader";
 
 const PAGE_SIZE = 50;
+const CHART_LIMIT = 1000;
+const CHART_COLORS = ["#059669", "#2563eb", "#f59e0b", "#e11d48", "#7c3aed", "#0891b2", "#475569"];
 
 const CATEGORY_OPTIONS = [
   { value: "ALL", label: "All categories" },
@@ -76,6 +90,28 @@ function StatCard({ icon, label, value, tone = "blue" }) {
   );
 }
 
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <div className="mb-3">
+        <h2 className="text-sm font-black text-slate-900 dark:text-white">{title}</h2>
+        {subtitle && <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">{subtitle}</p>}
+      </div>
+      <div className="h-[260px]">{children}</div>
+    </div>
+  );
+}
+
+function MoneyTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-slate-700 dark:bg-slate-950">
+      <div className="font-bold text-slate-800 dark:text-slate-100">{label || payload[0]?.name}</div>
+      <div className="mt-1 text-emerald-600 dark:text-emerald-300">{money(payload[0]?.value)}</div>
+    </div>
+  );
+}
+
 function EmptyState({ loading }) {
   return (
     <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
@@ -96,6 +132,7 @@ function EmptyState({ loading }) {
 
 export default function DriverExpensesAdmin() {
   const [rows, setRows] = useState([]);
+  const [chartRows, setChartRows] = useState([]);
   const [vans, setVans] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -134,29 +171,47 @@ export default function DriverExpensesAdmin() {
       const start = (page - 1) * PAGE_SIZE;
       const end = start + PAGE_SIZE - 1;
 
-      let request = supabase
+      const applyFilters = (request) => {
+        let filtered = request;
+        if (from) filtered = filtered.gte("fecha", from);
+        if (to) filtered = filtered.lte("fecha", to);
+        if (vanId !== "ALL") filtered = filtered.eq("van_id", vanId);
+        if (driverId !== "ALL") filtered = filtered.eq("usuario_id", driverId);
+        if (category !== "ALL") filtered = filtered.eq("categoria", category);
+        if (receiptOnly) filtered = filtered.not("factura_url", "is", null);
+        if (query.trim()) {
+          const needle = query.trim();
+          filtered = filtered.or(`descripcion.ilike.%${needle}%,categoria.ilike.%${needle}%`);
+        }
+        return filtered;
+      };
+
+      const request = applyFilters(supabase
         .from("gastos_conductor")
         .select("id, van_id, usuario_id, cierre_id, fecha, categoria, descripcion, monto, factura_url, created_at", {
           count: "exact",
         })
         .order("fecha", { ascending: false })
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false }));
 
-      if (from) request = request.gte("fecha", from);
-      if (to) request = request.lte("fecha", to);
-      if (vanId !== "ALL") request = request.eq("van_id", vanId);
-      if (driverId !== "ALL") request = request.eq("usuario_id", driverId);
-      if (category !== "ALL") request = request.eq("categoria", category);
-      if (receiptOnly) request = request.not("factura_url", "is", null);
-      if (query.trim()) {
-        const needle = query.trim();
-        request = request.or(`descripcion.ilike.%${needle}%,categoria.ilike.%${needle}%`);
-      }
+      const chartRequest = applyFilters(supabase
+        .from("gastos_conductor")
+        .select("id, van_id, usuario_id, fecha, categoria, monto, factura_url")
+        .order("fecha", { ascending: false })
+        .limit(CHART_LIMIT));
 
-      const { data, count, error: fetchError } = await request.range(start, end);
+      const [
+        { data, count, error: fetchError },
+        { data: chartData, error: chartError },
+      ] = await Promise.all([
+        request.range(start, end),
+        chartRequest,
+      ]);
       if (fetchError) throw fetchError;
+      if (chartError) throw chartError;
 
       setRows(data || []);
+      setChartRows(chartData || []);
       setTotal(count || 0);
     } catch (err) {
       setError(err?.message || "Could not load driver expenses.");
@@ -178,11 +233,41 @@ export default function DriverExpensesAdmin() {
   }, [from, to, vanId, driverId, category, receiptOnly, query]);
 
   const totals = useMemo(() => {
-    const amount = rows.reduce((sum, row) => sum + Number(row.monto || 0), 0);
-    const withReceipt = rows.filter((row) => row.factura_url).length;
-    const drivers = new Set(rows.map((row) => row.usuario_id).filter(Boolean)).size;
+    const amount = chartRows.reduce((sum, row) => sum + Number(row.monto || 0), 0);
+    const withReceipt = chartRows.filter((row) => row.factura_url).length;
+    const drivers = new Set(chartRows.map((row) => row.usuario_id).filter(Boolean)).size;
     return { amount, withReceipt, drivers };
-  }, [rows]);
+  }, [chartRows]);
+
+  const byVan = useMemo(() => {
+    const map = new Map();
+    chartRows.forEach((row) => {
+      const van = vanById.get(row.van_id);
+      const name = van?.nombre_van || van?.placa || "Unknown VAN";
+      const current = map.get(row.van_id || name) || { name, amount: 0, count: 0 };
+      current.amount += Number(row.monto || 0);
+      current.count += 1;
+      map.set(row.van_id || name, current);
+    });
+    return [...map.values()]
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 8)
+      .map((item) => ({ ...item, amount: Number(item.amount.toFixed(2)) }));
+  }, [chartRows, vanById]);
+
+  const byCategory = useMemo(() => {
+    const map = new Map();
+    chartRows.forEach((row) => {
+      const name = categoryLabel(row.categoria);
+      const current = map.get(name) || { name, amount: 0, count: 0 };
+      current.amount += Number(row.monto || 0);
+      current.count += 1;
+      map.set(name, current);
+    });
+    return [...map.values()]
+      .sort((a, b) => b.amount - a.amount)
+      .map((item) => ({ ...item, amount: Number(item.amount.toFixed(2)) }));
+  }, [chartRows]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -241,10 +326,58 @@ export default function DriverExpensesAdmin() {
       />
 
       <div className="mb-4 grid gap-3 md:grid-cols-4">
-        <StatCard icon={WalletCards} label="Page total" value={money(totals.amount)} tone="emerald" />
-        <StatCard icon={Receipt} label="Expenses shown" value={rows.length.toString()} tone="blue" />
+        <StatCard icon={WalletCards} label="Filtered total" value={money(totals.amount)} tone="emerald" />
+        <StatCard icon={Receipt} label="Expenses loaded" value={chartRows.length.toString()} tone="blue" />
         <StatCard icon={FileImage} label="With receipts" value={totals.withReceipt.toString()} tone="amber" />
         <StatCard icon={UserRound} label="Drivers" value={totals.drivers.toString()} tone="slate" />
+      </div>
+
+      <div className="mb-4 grid gap-4 xl:grid-cols-2">
+        <ChartCard title="Spend by VAN" subtitle="Shows which VAN is spending the most in the selected filters">
+          {byVan.length ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byVan} layout="vertical" margin={{ top: 4, right: 18, left: 8, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                <XAxis type="number" tickFormatter={(value) => `$${value}`} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="name" width={118} tick={{ fontSize: 11 }} />
+                <Tooltip content={<MoneyTooltip />} />
+                <Bar dataKey="amount" radius={[0, 8, 8, 0]} fill="#059669" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyState loading={loading} />
+          )}
+        </ChartCard>
+
+        <ChartCard title="Spend by Category" subtitle="Breakdown of fuel, tolls, meals, maintenance, parking, and other expenses">
+          {byCategory.length ? (
+            <div className="grid h-full gap-3 md:grid-cols-[1fr_180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={byCategory} dataKey="amount" nameKey="name" innerRadius={48} outerRadius={86} paddingAngle={3}>
+                    {byCategory.map((entry, index) => (
+                      <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<MoneyTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex flex-col justify-center gap-2">
+                {byCategory.slice(0, 6).map((entry, index) => (
+                  <div key={entry.name} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="flex min-w-0 items-center gap-2 font-semibold text-slate-600 dark:text-slate-300">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
+                      <span className="truncate">{entry.name}</span>
+                    </span>
+                    <span className="font-black text-slate-900 dark:text-white">{money(entry.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyState loading={loading} />
+          )}
+        </ChartCard>
       </div>
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">

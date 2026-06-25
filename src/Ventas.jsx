@@ -3225,6 +3225,7 @@ function clearSale() {
         _pricing: { ...meta, base: meta.base || unit || 0 },
         precio_unitario: unit,
         cantidad: 1,
+        stock_available: stockNow,
       }];
     });
     setProductSearch("");
@@ -3235,7 +3236,19 @@ function clearSale() {
     setCart((cart) =>
       cart.map((item) => {
         if (item.producto_id !== producto_id) return item;
-        const qty = Math.max(1, Number(cantidad));
+        const requestedQty = Number(cantidad);
+        const maxStock = Number(item.stock_available ?? item.cantidad_disponible ?? item.stock);
+        const hasStockLimit = Number.isFinite(maxStock) && maxStock > 0;
+        const safeRequestedQty = Number.isFinite(requestedQty) ? requestedQty : 1;
+        const qty = Math.max(1, hasStockLimit ? Math.min(safeRequestedQty, maxStock) : safeRequestedQty);
+
+        if (hasStockLimit && safeRequestedQty > maxStock) {
+          toast.warning(
+            `Only ${maxStock} available for "${item.nombre}". Quantity adjusted to available stock.`,
+            4500
+          );
+        }
+
         const meta = item._pricing ?? extractPricingFromRow(item);
         const unit =
           unitPriceFromProduct(
@@ -3250,7 +3263,7 @@ function clearSale() {
         return { ...item, cantidad: qty, precio_unitario: unit };
       })
     );
-  }, []); // functional updater — no captura estado externo
+  }, [toast]); // functional updater — no captura estado externo
 
   const handleRemoveProduct = useCallback((producto_id) => {
     setCart((cart) => cart.filter((p) => p.producto_id !== producto_id));
@@ -3762,6 +3775,29 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
       if (!van?.id) throw new Error("Select a VAN first.");
 	      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
 	      if (cartSafe.length === 0) throw new Error("Add at least one product.");
+
+      const stockIssuesInCart = cartSafe
+        .map((item) => {
+          const available = Number(item.stock_available ?? item.cantidad_disponible ?? item.stock);
+          const requested = Number(item.cantidad || 0);
+          if (!Number.isFinite(available) || available <= 0 || requested <= available) return null;
+          return {
+            producto_id: item.producto_id,
+            nombre: item.nombre,
+            requested,
+            available,
+          };
+        })
+        .filter(Boolean);
+
+      if (stockIssuesInCart.length > 0) {
+        setPendingStockIssues(stockIssuesInCart);
+        setStep(2);
+        setPaymentError("Some product quantities are higher than available stock. Adjust them before saving.");
+        toast.warning("Quantity is higher than available stock. Review the stock warning in the cart.", 5000);
+        setSaving(false);
+        return;
+      }
 
 	      if (!selectedClient?.id && amountToCredit > 0.005) {
 	        setPaymentError(
@@ -5598,6 +5634,9 @@ function renderStepProducts() {
               const basePrice = Number(p._pricing?.base || unitSafe);
               const hasDiscount = p._manualDescuento > 0;
               const isDiscountOpen = discountTarget === p.producto_id;
+              const stockAvailable = Number(p.stock_available ?? p.cantidad_disponible ?? p.stock);
+              const hasStockLimit = Number.isFinite(stockAvailable) && stockAvailable > 0;
+              const isAtStockLimit = hasStockLimit && Number(p.cantidad || 0) >= stockAvailable;
               return (
                 <div key={p.producto_id} className="flex items-center gap-3 px-4 py-3">
                   <div className="flex-1 min-w-0">
@@ -5620,6 +5659,7 @@ function renderStepProducts() {
                         <>
                           <span>{fmt(unitSafe)} ea.</span>
                           {isBulk && <span className="text-emerald-600 font-semibold">• bulk</span>}
+                          {hasStockLimit && <span className="text-amber-600 font-semibold">• {stockAvailable} available</span>}
                           <button
                             className="text-gray-300 hover:text-blue-500 transition-colors text-[10px] border border-gray-200 hover:border-blue-400 rounded px-1 py-0.5 leading-none"
                             title="Apply discount"
@@ -5666,7 +5706,12 @@ function renderStepProducts() {
                     >−</button>
                     <span className="w-8 text-center font-bold text-lg tabular-nums">{p.cantidad}</span>
                     <button
-                      className="bg-emerald-500 text-white w-9 h-9 rounded-xl font-bold text-lg hover:bg-emerald-600 active:scale-95 transition-all shadow"
+                      className={`w-9 h-9 rounded-xl font-bold text-lg active:scale-95 transition-all shadow ${
+                        isAtStockLimit
+                          ? "bg-amber-500 text-white hover:bg-amber-600"
+                          : "bg-emerald-500 text-white hover:bg-emerald-600"
+                      }`}
+                      title={isAtStockLimit ? `Only ${stockAvailable} available` : "Increase quantity"}
                       onClick={() => handleEditQuantity(p.producto_id, p.cantidad + 1)}
                     >+</button>
                   </div>
@@ -5897,7 +5942,7 @@ function renderStepProducts() {
                         max={stock}
                         value={inCart.cantidad}
                         onChange={(e) =>
-                          handleEditQuantity(p.producto_id, Math.max(1, Math.min(Number(e.target.value), stock)))
+                          handleEditQuantity(p.producto_id, Number(e.target.value))
                         }
                         className="w-12 h-9 border-2 border-gray-200 rounded-lg text-center font-bold text-sm focus:border-blue-500 outline-none"
                       />
