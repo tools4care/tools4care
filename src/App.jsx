@@ -35,6 +35,7 @@ const Suplidores = lazy(() => import("./Suplidores"));
 
 // 💰 Comisiones (NUEVO)
 const ComisionesPage = lazy(() => import('./pages/ComisionesPage'));
+const AdminHub = lazy(() => import("./pages/AdminHub"));
 const DriverExpensesAdmin = lazy(() => import("./pages/DriverExpensesAdmin"));
 const UsuariosAdmin = lazy(() => import("./pages/UsuariosAdmin"));
 const AuditoriaLog = lazy(() => import("./pages/AuditoriaLog"));
@@ -222,6 +223,9 @@ export default function App() {
             <Route path="cxc" element={<CuentasPorCobrar />} />
             <Route path="cxc/sim" element={<CreditoSimulador />} />
             <Route path="suplidores" element={<PrivilegedRoute><Suplidores /></PrivilegedRoute>} />
+
+            {/* Admin hub */}
+            <Route path="admin" element={<AdminRoute><AdminHub /></AdminRoute>} />
 
             {/* 💰 COMISIONES (ADMIN) */}
             <Route path="comisiones" element={<AdminRoute><ComisionesPage /></AdminRoute>} />
