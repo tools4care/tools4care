@@ -100,7 +100,8 @@ export default function Sidebar() {
   // ── Admin-only section (never per-user configurable) ──
   const adminMenu = [
     { to: "/online",   icon: <Globe      {...iconProps} />, gradient: "from-sky-400 to-blue-600",      text: "Online Store" },
-    { to: "/tax",      icon: <Receipt    {...iconProps} />, gradient: "from-amber-400 to-orange-600",  text: "Tax / Impuestos" },
+    { to: "/driver-expenses", icon: <Receipt {...iconProps} />, gradient: "from-emerald-400 to-teal-600", text: "Driver Expenses" },
+    { to: "/tax",      icon: <Receipt    {...iconProps} />, gradient: "from-amber-400 to-orange-600",  text: "Taxes" },
     { to: "/usuarios", icon: <Shield     {...iconProps} />, gradient: "from-purple-500 to-fuchsia-600", text: "Users" },
     { to: "/auditoria", icon: <Scroll {...iconProps} />, gradient: "from-rose-400 to-red-600",      text: "Audit Log" },
   ];
