@@ -691,6 +691,7 @@ useEffect(() => {
         await supabase.from("gastos_conductor").insert(
           gastosValidos.map((g) => ({
             van_id: van.id,
+            usuario_id: usuario.id,
             fecha: g.fecha || fechasSeleccionadas[0],
             categoria: g.categoria,
             descripcion: g.descripcion || "",

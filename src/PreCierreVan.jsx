@@ -344,6 +344,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     try {
       const { data, error } = await supabase.from("gastos_conductor").insert({
         van_id: van.id,
+        usuario_id: usuario?.id || null,
         fecha: newGasto.fecha,
         categoria: newGasto.categoria,
         descripcion: newGasto.descripcion || "",
