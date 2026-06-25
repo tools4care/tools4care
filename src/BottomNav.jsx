@@ -22,6 +22,7 @@ import {
   X,
   Warning,
   Wrench,
+  Shield,
 } from "@phosphor-icons/react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -50,6 +51,13 @@ const MORE_ITEMS = [
   { path: "/van",            label: "Change VAN",    icon: Compass,       gradient: "from-amber-400 to-orange-600" },
   { path: "/emergencia",    label: "Essentials",    icon: Warning,       gradient: "from-cyan-400 to-blue-600" },
 ];
+
+const ADMIN_MORE_ITEM = {
+  path: "/admin",
+  label: "Admin",
+  icon: Shield,
+  gradient: "from-purple-500 to-fuchsia-600",
+};
 
 let salesPreload;
 function preloadSales() {
@@ -108,6 +116,7 @@ export default function BottomNav() {
   };
 
   const userInitial = (usuario?.email || usuario?.nombre || "?")[0].toUpperCase();
+  const moreItems = usuario?.rol === "admin" ? [...MORE_ITEMS, ADMIN_MORE_ITEM] : MORE_ITEMS;
 
   return (
     <>
@@ -116,7 +125,8 @@ export default function BottomNav() {
         className="fixed bottom-2 left-2 right-2 bg-white/95 dark:bg-slate-800/95 border border-slate-200/80 dark:border-slate-700/80 shadow-[0_12px_35px_rgba(15,23,42,0.18)] z-50 flex justify-around items-center h-[66px] rounded-2xl lg:hidden backdrop-blur-md overflow-hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        {items.map(({ to, label, icon: Icon, action, activeColor, gradient }) => {
+        {items.map(({ to, label, icon, action, activeColor, gradient }) => {
+          const Icon = icon;
           /* "More" button */
           if (action === "more") {
             return (
@@ -294,18 +304,21 @@ export default function BottomNav() {
             <div className="overflow-y-auto flex-1 px-4 pb-2">
               {/* 3-col icon grid */}
               <div className="grid grid-cols-3 gap-2.5 mb-3">
-                {MORE_ITEMS.map(({ path, label, icon: Icon, gradient }) => (
-                  <button
-                    key={path}
-                    onClick={() => handleNav(path)}
-                    className="flex flex-col items-center justify-center gap-2 min-h-[104px] p-3 rounded-2xl bg-white ring-1 ring-gray-100 shadow-sm active:scale-[0.97] transition-transform"
-                  >
-                    <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${gradient} shadow-sm flex items-center justify-center`}>
-                      <Icon size={22} weight="duotone" className="text-white" />
-                    </div>
-                    <span className="text-[11px] font-semibold text-gray-700 text-center leading-tight">{label}</span>
-                  </button>
-                ))}
+                {moreItems.map(({ path, label, icon, gradient }) => {
+                  const Icon = icon;
+                  return (
+                    <button
+                      key={path}
+                      onClick={() => handleNav(path)}
+                      className="flex flex-col items-center justify-center gap-2 min-h-[104px] p-3 rounded-2xl bg-white ring-1 ring-gray-100 shadow-sm active:scale-[0.97] transition-transform"
+                    >
+                      <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${gradient} shadow-sm flex items-center justify-center`}>
+                        <Icon size={22} weight="duotone" className="text-white" />
+                      </div>
+                      <span className="text-[11px] font-semibold text-gray-700 text-center leading-tight">{label}</span>
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Divider */}

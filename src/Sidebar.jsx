@@ -17,16 +17,12 @@ import {
   SignOut,
   CreditCard,
   UserCircle,
-  CurrencyDollar,
   ChartBar,
   Shield,
-  Globe,
   Star,
-  Receipt,
   CalendarCheck,
   CaretRight,
   MapPin,
-  Scroll,
   Wrench,
 } from "@phosphor-icons/react";
 
@@ -92,19 +88,9 @@ export default function Sidebar() {
     { key: "suscripciones", to: "/suscripciones", icon: <CalendarCheck {...iconProps} />, gradient: "from-violet-500 to-purple-600", text: "Subscriptions" },
     { key: "alquileres",    to: "/alquileres",    icon: <Wrench        {...iconProps} />, gradient: "from-emerald-500 to-teal-600",  text: "Equipment Rentals" },
     { key: "suplidores",    to: "/suplidores",    icon: <UserCircle    {...iconProps} />, gradient: "from-indigo-400 to-blue-600",   text: "Suppliers" },
-    { key: "comisiones",    to: "/comisiones",    icon: <CurrencyDollar {...iconProps} />, gradient: "from-emerald-400 to-teal-600", text: "Commissions" },
   ];
 
   const menuBase = allMenuItems.filter(item => puedeVerModulo(item.key));
-
-  // ── Admin-only section (never per-user configurable) ──
-  const adminMenu = [
-    { to: "/online",   icon: <Globe      {...iconProps} />, gradient: "from-sky-400 to-blue-600",      text: "Online Store" },
-    { to: "/driver-expenses", icon: <Receipt {...iconProps} />, gradient: "from-emerald-400 to-teal-600", text: "Driver Expenses" },
-    { to: "/tax",      icon: <Receipt    {...iconProps} />, gradient: "from-amber-400 to-orange-600",  text: "Taxes" },
-    { to: "/usuarios", icon: <Shield     {...iconProps} />, gradient: "from-purple-500 to-fuchsia-600", text: "Users" },
-    { to: "/auditoria", icon: <Scroll {...iconProps} />, gradient: "from-rose-400 to-red-600",      text: "Audit Log" },
-  ];
 
   function handleLogout() {
     localStorage.clear();
@@ -152,12 +138,13 @@ export default function Sidebar() {
           {isAdmin && (
             <>
               <div className="h-px bg-white/10 my-2" />
-              <div className="text-[10px] text-slate-500 px-2 py-1 font-bold uppercase tracking-[0.18em] flex items-center gap-1.5">
-                <Shield weight="duotone" size={10} /> Admin
-              </div>
-              {adminMenu.map(({ to, icon, text, gradient }) => (
-                <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
-              ))}
+              <NavLink
+                to="/admin"
+                icon={<Shield {...iconProps} />}
+                text="Admin"
+                gradient="from-purple-500 to-fuchsia-600"
+                location={location}
+              />
             </>
           )}
         </nav>
