@@ -69,6 +69,32 @@ const TRANSFER_TYPES = [
   { value: "applepay", label: "Apple Pay", color: "#000000" },
 ];
 
+const closeoutModalClasses = {
+  overlay:
+    "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-4",
+  panel:
+    "flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/25",
+  compactPanel:
+    "flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/25",
+  header:
+    "flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-5 py-4 text-white",
+  closeButton:
+    "flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white/80 transition hover:bg-white/20 hover:text-white",
+  body: "flex-grow overflow-y-auto bg-slate-50/80 p-4 sm:p-5",
+  row:
+    "grid grid-cols-[1fr_auto] gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-200/70 sm:grid-cols-[1fr_auto_6rem] sm:items-center",
+  stepperButton:
+    "flex h-10 w-10 items-center justify-center rounded-full border transition active:scale-95",
+  countInput:
+    "h-10 w-16 rounded-xl border border-slate-300 bg-white px-2 text-center font-semibold text-slate-900 shadow-inner shadow-slate-100 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15",
+  footer:
+    "flex flex-col gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between",
+  cancelButton:
+    "rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50",
+  applyButton:
+    "flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition active:scale-[0.99]",
+};
+
 /* ========================= Helper Functions ========================= */
 const fmtCurrency = (n) => {
   return `$${Number(n || 0).toLocaleString(undefined, {
@@ -2771,46 +2797,63 @@ useEffect(() => {
       {/* Cash breakdown modal */}
 
       {showCashBreakdownModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-gray-800">
-                Quick Cash Count
-              </h3>
+        <div className={closeoutModalClasses.overlay}>
+          <div className={closeoutModalClasses.panel}>
+            <div className={closeoutModalClasses.header}>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                  Cash drawer
+                </p>
+                <h3 className="mt-1 text-xl font-bold">
+                  Quick Cash Count
+                </h3>
+              </div>
               <button
                 onClick={() =>
                   setShowCashBreakdownModal(false)
                 }
-                className="text-gray-500 hover:text-gray-700"
+                className={closeoutModalClasses.closeButton}
+                aria-label="Close cash count"
               >
-                <X size={24} />
+                <X size={20} />
               </button>
             </div>
-            <div className="p-4 overflow-y-auto flex-grow">
+            <div className={closeoutModalClasses.body}>
               <div className="mb-4">
-                <div className="flex justify-between items-center mb-4">
-                  <p className="text-gray-700">
+                <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm font-medium text-slate-700">
                     Enter the count for each denomination:
                   </p>
-                  <div className="text-xl font-bold text-green-700">
-                    Total: {fmtCurrency(cashTotal)}
+                  <div className="rounded-xl bg-white px-4 py-2 text-right shadow-sm">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">
+                      Total
+                    </p>
+                    <p className="text-2xl font-black text-emerald-700">
+                      {fmtCurrency(cashTotal)}
+                    </p>
                   </div>
                 </div>
                 <div className="space-y-3">
                   {DENOMINATIONS.map((denom) => (
                     <div
                       key={denom.value}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                      className={closeoutModalClasses.row}
                     >
-                      <span className="font-medium text-gray-700">
-                        {denom.label}
-                      </span>
+                      <div>
+                        <span className="font-semibold text-slate-800">
+                          {denom.label}
+                        </span>
+                        <p className="text-xs text-slate-500">
+                          {fmtCurrency(denom.value)} each
+                        </p>
+                      </div>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() =>
                             subtractCashCount(denom.value)
                           }
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors"
+                          className={`${closeoutModalClasses.stepperButton} border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`}
+                          aria-label={`Subtract ${denom.label}`}
                         >
                           <Minus size={16} />
                         </button>
@@ -2827,18 +2870,19 @@ useEffect(() => {
                               e.target.value.replace(/\D/g, "")
                             )
                           }
-                          className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
+                          className={closeoutModalClasses.countInput}
                         />
                         <button
                           onClick={() =>
                             addCashCount(denom.value)
                           }
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
+                          className={`${closeoutModalClasses.stepperButton} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+                          aria-label={`Add ${denom.label}`}
                         >
                           <Plus size={16} />
                         </button>
                       </div>
-                      <div className="font-medium text-gray-900">
+                      <div className="col-span-2 rounded-lg bg-slate-100 px-3 py-2 text-right font-bold text-slate-900 sm:col-span-1 sm:bg-transparent sm:px-0">
                         {fmtCurrency(
                           (cashCounts[denom.value] || 0) *
                             denom.value
@@ -2849,18 +2893,18 @@ useEffect(() => {
                 </div>
               </div>
             </div>
-            <div className="p-4 border-t border-gray-200 flex justify-between">
+            <div className={closeoutModalClasses.footer}>
               <button
                 onClick={() =>
                   setShowCashBreakdownModal(false)
                 }
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                className={closeoutModalClasses.cancelButton}
               >
                 Cancel
               </button>
               <button
                 onClick={applyCashBreakdown}
-                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                className={`${closeoutModalClasses.applyButton} bg-emerald-600 shadow-emerald-600/25 hover:bg-emerald-700`}
               >
                 <CheckCircle size={18} />
                 Apply to Cash
@@ -2872,46 +2916,63 @@ useEffect(() => {
 
       {/* Card breakdown modal */}
       {showCardBreakdownModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-gray-800">
-                Quick Card Count
-              </h3>
+        <div className={closeoutModalClasses.overlay}>
+          <div className={closeoutModalClasses.panel}>
+            <div className={closeoutModalClasses.header}>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">
+                  Card drawer
+                </p>
+                <h3 className="mt-1 text-xl font-bold">
+                  Quick Card Count
+                </h3>
+              </div>
               <button
                 onClick={() =>
                   setShowCardBreakdownModal(false)
                 }
-                className="text-gray-500 hover:text-gray-700"
+                className={closeoutModalClasses.closeButton}
+                aria-label="Close card count"
               >
-                <X size={24} />
+                <X size={20} />
               </button>
             </div>
-            <div className="p-4 overflow-y-auto flex-grow">
+            <div className={closeoutModalClasses.body}>
               <div className="mb-4">
-                <div className="flex justify-between items-center mb-4">
-                  <p className="text-gray-700">
+                <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm font-medium text-slate-700">
                     Enter the count for each denomination:
                   </p>
-                  <div className="text-xl font-bold text-blue-700">
-                    Total: {fmtCurrency(cardTotal)}
+                  <div className="rounded-xl bg-white px-4 py-2 text-right shadow-sm">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-sky-700">
+                      Total
+                    </p>
+                    <p className="text-2xl font-black text-sky-700">
+                      {fmtCurrency(cardTotal)}
+                    </p>
                   </div>
                 </div>
                 <div className="space-y-3">
                   {DENOMINATIONS.map((denom) => (
                     <div
                       key={denom.value}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                      className={closeoutModalClasses.row}
                     >
-                      <span className="font-medium text-gray-700">
-                        {denom.label}
-                      </span>
+                      <div>
+                        <span className="font-semibold text-slate-800">
+                          {denom.label}
+                        </span>
+                        <p className="text-xs text-slate-500">
+                          {fmtCurrency(denom.value)} each
+                        </p>
+                      </div>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() =>
                             subtractCardCount(denom.value)
                           }
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors"
+                          className={`${closeoutModalClasses.stepperButton} border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`}
+                          aria-label={`Subtract ${denom.label}`}
                         >
                           <Minus size={16} />
                         </button>
@@ -2928,18 +2989,19 @@ useEffect(() => {
                               e.target.value.replace(/\D/g, "")
                             )
                           }
-                          className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
+                          className={closeoutModalClasses.countInput}
                         />
                         <button
                           onClick={() =>
                             addCardCount(denom.value)
                           }
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
+                          className={`${closeoutModalClasses.stepperButton} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+                          aria-label={`Add ${denom.label}`}
                         >
                           <Plus size={16} />
                         </button>
                       </div>
-                      <div className="font-medium text-gray-900">
+                      <div className="col-span-2 rounded-lg bg-slate-100 px-3 py-2 text-right font-bold text-slate-900 sm:col-span-1 sm:bg-transparent sm:px-0">
                         {fmtCurrency(
                           (cardCounts[denom.value] || 0) *
                             denom.value
@@ -2950,18 +3012,18 @@ useEffect(() => {
                 </div>
               </div>
             </div>
-            <div className="p-4 border-t border-gray-200 flex justify-between">
+            <div className={closeoutModalClasses.footer}>
               <button
                 onClick={() =>
                   setShowCardBreakdownModal(false)
                 }
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                className={closeoutModalClasses.cancelButton}
               >
                 Cancel
               </button>
               <button
                 onClick={applyCardBreakdown}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                className={`${closeoutModalClasses.applyButton} bg-sky-600 shadow-sky-600/25 hover:bg-sky-700`}
               >
                 <CheckCircle size={18} />
                 Apply to Card
@@ -2973,50 +3035,56 @@ useEffect(() => {
 
       {/* Transfer breakdown modal */}
       {showTransferBreakdownModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-gray-800">
-                Transfer Breakdown
-              </h3>
+        <div className={closeoutModalClasses.overlay}>
+          <div className={closeoutModalClasses.compactPanel}>
+            <div className={closeoutModalClasses.header}>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-200">
+                  Digital payments
+                </p>
+                <h3 className="mt-1 text-xl font-bold">
+                  Transfer Breakdown
+                </h3>
+              </div>
               <button
                 onClick={() => setShowTransferBreakdownModal(false)}
-                className="text-gray-500 hover:text-gray-700"
+                className={closeoutModalClasses.closeButton}
+                aria-label="Close transfer breakdown"
               >
-                <X size={24} />
+                <X size={20} />
               </button>
             </div>
-            <div className="p-4 overflow-y-auto flex-grow">
+            <div className={closeoutModalClasses.body}>
               {/* System breakdown from sales */}
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
-                <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-2">
+              <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-violet-700">
                   From Sales (System)
                 </p>
-                <div className="space-y-1">
+                <div className="space-y-2">
                   {TRANSFER_TYPES.map((type) => {
                     const sysAmt = transferDesgloseSistema[type.value] || 0;
                     return (
-                      <div key={type.value} className="flex items-center justify-between text-sm">
-                        <span className="flex items-center gap-2 text-gray-600">
-                          <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: type.color }} />
+                      <div key={type.value} className="flex items-center justify-between rounded-xl bg-white/70 px-3 py-2 text-sm">
+                        <span className="flex items-center gap-2 font-medium text-slate-700">
+                          <span className="inline-block h-3 w-3 rounded-full shadow-sm" style={{ backgroundColor: type.color }} />
                           {type.label}
                         </span>
-                        <span className={`font-semibold ${sysAmt > 0 ? "text-purple-700" : "text-gray-400"}`}>
+                        <span className={`font-bold ${sysAmt > 0 ? "text-violet-700" : "text-slate-400"}`}>
                           {fmtCurrency(sysAmt)}
                         </span>
                       </div>
                     );
                   })}
                   {transferDesgloseSistema.other > 0 && (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="flex items-center gap-2 text-gray-600">
-                        <span className="w-3 h-3 rounded-full inline-block bg-gray-400" />
+                    <div className="flex items-center justify-between rounded-xl bg-white/70 px-3 py-2 text-sm">
+                      <span className="flex items-center gap-2 font-medium text-slate-700">
+                        <span className="inline-block h-3 w-3 rounded-full bg-slate-400 shadow-sm" />
                         Other
                       </span>
-                      <span className="font-semibold text-purple-700">{fmtCurrency(transferDesgloseSistema.other)}</span>
+                      <span className="font-bold text-violet-700">{fmtCurrency(transferDesgloseSistema.other)}</span>
                     </div>
                   )}
-                  <div className="border-t border-purple-200 pt-1 mt-1 flex justify-between text-sm font-bold text-purple-800">
+                  <div className="mt-3 flex justify-between border-t border-violet-200 pt-3 text-sm font-black text-violet-800">
                     <span>Total Expected</span>
                     <span>{fmtCurrency(totales.totalTransferencia)}</span>
                   </div>
@@ -3024,7 +3092,7 @@ useEffect(() => {
               </div>
 
               {/* Manual "What I Have" per type */}
-              <p className="text-sm font-semibold text-gray-700 mb-3">
+              <p className="mb-3 text-sm font-bold text-slate-800">
                 What I Have (enter dollar amounts):
               </p>
               <div className="space-y-3">
@@ -3033,14 +3101,14 @@ useEffect(() => {
                   const myAmt = Number(transferCounts[type.value] || 0);
                   const diff = myAmt - sysAmt;
                   return (
-                    <div key={type.value} className="p-3 bg-gray-50 rounded-lg">
+                    <div key={type.value} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-200/70">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: type.color }} />
-                          <span className="font-medium text-gray-700">{type.label}</span>
+                          <div className="h-4 w-4 rounded-full shadow-sm" style={{ backgroundColor: type.color }} />
+                          <span className="font-semibold text-slate-800">{type.label}</span>
                         </div>
                         {sysAmt > 0 && (
-                          <span className="text-xs text-gray-500">
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500">
                             Expected: {fmtCurrency(sysAmt)}
                           </span>
                         )}
@@ -3048,30 +3116,32 @@ useEffect(() => {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => subtractTransferCount(type.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors flex-shrink-0"
+                          className={`${closeoutModalClasses.stepperButton} flex-shrink-0 border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`}
+                          aria-label={`Subtract ${type.label}`}
                         >
                           <Minus size={16} />
                         </button>
                         <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500">$</span>
                           <input
                             type="text"
                             inputMode="decimal"
                             pattern="[0-9]*[.]?[0-9]{0,2}"
                             value={transferCounts[type.value] || 0}
                             onChange={(e) => updateTransferCount(type.value, sanitizeMoneyInput(e.target.value))}
-                            className="w-full pl-7 pr-3 py-1.5 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            className="h-10 w-full rounded-xl border border-slate-300 bg-white py-1.5 pl-7 pr-3 text-center font-semibold text-slate-900 shadow-inner shadow-slate-100 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-500/15"
                           />
                         </div>
                         <button
                           onClick={() => addTransferCount(type.value)}
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors flex-shrink-0"
+                          className={`${closeoutModalClasses.stepperButton} flex-shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+                          aria-label={`Add ${type.label}`}
                         >
                           <Plus size={16} />
                         </button>
                       </div>
                       {myAmt > 0 && sysAmt > 0 && diff !== 0 && (
-                        <p className={`text-xs mt-1 ${diff > 0 ? "text-green-600" : "text-red-500"}`}>
+                        <p className={`mt-2 text-xs font-semibold ${diff > 0 ? "text-emerald-600" : "text-rose-600"}`}>
                           {diff > 0 ? "+" : ""}{fmtCurrency(diff)} vs expected
                         </p>
                       )}
@@ -3080,20 +3150,25 @@ useEffect(() => {
                 })}
               </div>
             </div>
-            <div className="p-4 border-t border-gray-200 flex justify-between items-center">
-              <div className="text-lg font-bold text-purple-700">
-                Total: {fmtCurrency(transferTotal)}
+            <div className={closeoutModalClasses.footer}>
+              <div className="rounded-xl bg-violet-50 px-4 py-2">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-violet-700">
+                  Total
+                </p>
+                <p className="text-xl font-black text-violet-700">
+                  {fmtCurrency(transferTotal)}
+                </p>
               </div>
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowTransferBreakdownModal(false)}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  className={closeoutModalClasses.cancelButton}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={applyTransferBreakdown}
-                  className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                  className={`${closeoutModalClasses.applyButton} bg-violet-600 shadow-violet-600/25 hover:bg-violet-700`}
                 >
                   <CheckCircle size={18} />
                   Apply to Transfer
@@ -3106,46 +3181,63 @@ useEffect(() => {
 
       {/* Other breakdown modal */}
       {showOtherBreakdownModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-gray-800">
-                Quick Other Count
-              </h3>
+        <div className={closeoutModalClasses.overlay}>
+          <div className={closeoutModalClasses.panel}>
+            <div className={closeoutModalClasses.header}>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">
+                  Other drawer
+                </p>
+                <h3 className="mt-1 text-xl font-bold">
+                  Quick Other Count
+                </h3>
+              </div>
               <button
                 onClick={() =>
                   setShowOtherBreakdownModal(false)
                 }
-                className="text-gray-500 hover:text-gray-700"
+                className={closeoutModalClasses.closeButton}
+                aria-label="Close other count"
               >
-                <X size={24} />
+                <X size={20} />
               </button>
             </div>
-            <div className="p-4 overflow-y-auto flex-grow">
+            <div className={closeoutModalClasses.body}>
               <div className="mb-4">
-                <div className="flex justify-between items-center mb-4">
-                  <p className="text-gray-700">
+                <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm font-medium text-slate-700">
                     Enter the count for each denomination:
                   </p>
-                  <div className="text-xl font-bold text-amber-700">
-                    Total: {fmtCurrency(otherTotal)}
+                  <div className="rounded-xl bg-white px-4 py-2 text-right shadow-sm">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-amber-700">
+                      Total
+                    </p>
+                    <p className="text-2xl font-black text-amber-700">
+                      {fmtCurrency(otherTotal)}
+                    </p>
                   </div>
                 </div>
                 <div className="space-y-3">
                   {DENOMINATIONS.map((denom) => (
                     <div
                       key={denom.value}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                      className={closeoutModalClasses.row}
                     >
-                      <span className="font-medium text-gray-700">
-                        {denom.label}
-                      </span>
+                      <div>
+                        <span className="font-semibold text-slate-800">
+                          {denom.label}
+                        </span>
+                        <p className="text-xs text-slate-500">
+                          {fmtCurrency(denom.value)} each
+                        </p>
+                      </div>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() =>
                             subtractOtherCount(denom.value)
                           }
-                          className="w-8 h-8 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors"
+                          className={`${closeoutModalClasses.stepperButton} border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`}
+                          aria-label={`Subtract ${denom.label}`}
                         >
                           <Minus size={16} />
                         </button>
@@ -3162,18 +3254,19 @@ useEffect(() => {
                               e.target.value.replace(/\D/g, "")
                             )
                           }
-                          className="w-16 text-center border border-gray-300 rounded-lg py-1 px-2"
+                          className={closeoutModalClasses.countInput}
                         />
                         <button
                           onClick={() =>
                             addOtherCount(denom.value)
                           }
-                          className="w-8 h-8 flex items-center justify-center bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors"
+                          className={`${closeoutModalClasses.stepperButton} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+                          aria-label={`Add ${denom.label}`}
                         >
                           <Plus size={16} />
                         </button>
                       </div>
-                      <div className="font-medium text-gray-900">
+                      <div className="col-span-2 rounded-lg bg-slate-100 px-3 py-2 text-right font-bold text-slate-900 sm:col-span-1 sm:bg-transparent sm:px-0">
                         {fmtCurrency(
                           (otherCounts[denom.value] || 0) *
                             denom.value
@@ -3184,18 +3277,18 @@ useEffect(() => {
                 </div>
               </div>
             </div>
-            <div className="p-4 border-t border-gray-200 flex justify-between">
+            <div className={closeoutModalClasses.footer}>
               <button
                 onClick={() =>
                   setShowOtherBreakdownModal(false)
                 }
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                className={closeoutModalClasses.cancelButton}
               >
                 Cancel
               </button>
               <button
                 onClick={applyOtherBreakdown}
-                className="px-6 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                className={`${closeoutModalClasses.applyButton} bg-amber-600 shadow-amber-600/25 hover:bg-amber-700`}
               >
                 <CheckCircle size={18} />
                 Apply to Other
