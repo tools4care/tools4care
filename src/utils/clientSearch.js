@@ -2,6 +2,31 @@ export function normalizeClientTerm(value) {
   return String(value || "").trim();
 }
 
+function normalizeText(value) {
+  return normalizeClientTerm(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokensOf(value) {
+  return normalizeText(value).split(/\s+/).filter(Boolean);
+}
+
+function includesAllTokens(haystack, tokens) {
+  if (!tokens.length) return false;
+  return tokens.every((token) => haystack.includes(token));
+}
+
+function startsWithAnyWord(haystack, term) {
+  return haystack
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((word) => word.startsWith(term));
+}
+
 export function clientDigits(value) {
   return normalizeClientTerm(value).replace(/\D/g, "");
 }
@@ -50,7 +75,7 @@ export function addressText(direccion) {
 }
 
 export function clientSearchScore(client, term) {
-  const safe = normalizeClientTerm(term).toLowerCase();
+  const safe = normalizeText(term);
   const digits = clientDigits(term);
   const phoneDigits = clientDigits(client?.telefono);
   const variants = phoneSearchVariants(term)
@@ -71,14 +96,25 @@ export function clientSearchScore(client, term) {
     }
   }
 
-  const name = String(client?.nombre || "").toLowerCase();
-  const business = String(client?.negocio || client?.nombre_negocio || "").toLowerCase();
-  const email = String(client?.email || "").toLowerCase();
-  const address = addressText(client?.direccion).toLowerCase();
-  const credit = String(client?.credito_numero || client?.cliente_id || client?.id || "").toLowerCase();
+  const name = normalizeText(client?.nombre);
+  const business = normalizeText(client?.negocio || client?.nombre_negocio);
+  const email = normalizeText(client?.email);
+  const address = normalizeText(addressText(client?.direccion));
+  const credit = normalizeText(client?.credito_numero || client?.cliente_id || client?.id);
+  const combined = [name, business, email, address, credit].filter(Boolean).join(" ");
+  const tokens = tokensOf(safe);
 
-  if (name.includes(safe)) return 3;
-  if (business.includes(safe)) return 4;
+  if (name === safe) return 2;
+  if (business === safe) return 2.2;
+  if (name.startsWith(safe)) return 2.4;
+  if (business.startsWith(safe)) return 2.6;
+  if (tokens.length >= 2 && includesAllTokens(name, tokens)) return 2.8;
+  if (tokens.length >= 2 && includesAllTokens(business, tokens)) return 3;
+  if (tokens.length >= 2 && includesAllTokens(combined, tokens)) return 3.2;
+  if (startsWithAnyWord(name, safe)) return 3.4;
+  if (name.includes(safe)) return 3.8;
+  if (startsWithAnyWord(business, safe)) return 4;
+  if (business.includes(safe)) return 4.4;
   if (email.includes(safe)) return 5;
   if (address.includes(safe)) return 6;
   if (credit.includes(safe)) return 7;
