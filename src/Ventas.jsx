@@ -1616,7 +1616,16 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
         const recentMatches = filterClientsLocal(recentClients, term, 10);
         for (const row of [...recentMatches, ...(results || [])]) {
           const id = row?.id || row?.cliente_id || `${row?.telefono || ""}:${row?.nombre || ""}`;
-          if (id && !byId.has(id)) byId.set(id, row);
+          if (!id) continue;
+          const existing = byId.get(id);
+          byId.set(id, {
+            ...(existing || {}),
+            ...row,
+            balance: row?.balance ?? existing?.balance,
+            _saldo_real: row?._saldo_real ?? existing?._saldo_real ?? row?.balance ?? existing?.balance,
+            limite_manual: row?.limite_manual ?? existing?.limite_manual,
+            limite_politica: row?.limite_politica ?? existing?.limite_politica,
+          });
         }
         return filterClientsLocal(Array.from(byId.values()), term, 30)
           .map((c) => ({
@@ -5497,6 +5506,9 @@ function renderStepClient() {
           const balance = getClientBalance(c);
           const hasDebt = balance > 0;
           const isFocused = i === focusedClientIdx;
+          const balanceClass = hasDebt
+            ? "bg-red-100 text-red-700 border-red-200"
+            : "bg-emerald-50 text-emerald-700 border-emerald-200";
 
           return (
             <div
@@ -5526,11 +5538,9 @@ function renderStepClient() {
                     </span>
                   )}
                 </div>
-                {hasDebt && (
-                  <span className="bg-red-100 text-red-700 text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap shrink-0">
-                    ⚠ {fmt(balance)}
-                  </span>
-                )}
+                <span className={`border text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap shrink-0 ${balanceClass}`}>
+                  {hasDebt ? "⚠ Balance" : "✓ Balance"} {fmt(balance)}
+                </span>
               </div>
 
               {/* Row 2 — Contact chips */}
@@ -5555,13 +5565,13 @@ function renderStepClient() {
                 )}
               </div>
 
-              {/* Row 3 — Balance / credit line (only when meaningful) */}
-              {(balance > 0) && (
-                <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-100 text-[10px] text-gray-500">
-                  <span className="text-red-600 font-semibold">Balance due: {fmt(balance)}</span>
-                  <span className="text-gray-400">#{getCreditNumber(c)}</span>
-                </div>
-              )}
+              {/* Row 3 — Balance / credit line */}
+              <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-100 text-[10px] text-gray-500">
+                <span className={hasDebt ? "text-red-600 font-semibold" : "text-emerald-600 font-semibold"}>
+                  {hasDebt ? "Balance due" : "No balance due"}: {fmt(balance)}
+                </span>
+                <span className="text-gray-400">#{getCreditNumber(c)}</span>
+              </div>
             </div>
           );
         })}
