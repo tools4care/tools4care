@@ -1611,26 +1611,39 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
         return;
       }
 
+      const promoteRecentMatches = (results) => {
+        const byId = new Map();
+        const recentMatches = filterClientsLocal(recentClients, term, 10);
+        for (const row of [...recentMatches, ...(results || [])]) {
+          const id = row?.id || row?.cliente_id || `${row?.telefono || ""}:${row?.nombre || ""}`;
+          if (id && !byId.has(id)) byId.set(id, row);
+        }
+        return filterClientsLocal(Array.from(byId.values()), term, 30)
+          .map((c) => ({
+            ...c,
+            _saldo_real: Number(c._saldo_real ?? c.balance ?? 0),
+          }));
+      };
+
       if (clientCacheRef.current.has(term)) {
-        setClients(clientCacheRef.current.get(term));
+        setClients(promoteRecentMatches(clientCacheRef.current.get(term)));
         setClientLoading(false);
         return;
       }
 
-      const memoryResults = filterClientsLocal(cachedClientsRef.current, term, 30)
-        .map((c) => ({
-          ...c,
-          _saldo_real: Number(c._saldo_real ?? c.balance ?? 0),
-        }));
+      const memoryResults = promoteRecentMatches(cachedClientsRef.current)
+        .map((c) => ({ ...c }));
 
       if (memoryResults.length > 0) {
         setClients(memoryResults);
         setClientLoading(false);
-        clientCacheRef.current.set(term, memoryResults);
-        if (clientCacheRef.current.size > 18) {
-          clientCacheRef.current.delete(clientCacheRef.current.keys().next().value);
+        if (isOffline) {
+          clientCacheRef.current.set(term, memoryResults);
+          if (clientCacheRef.current.size > 18) {
+            clientCacheRef.current.delete(clientCacheRef.current.keys().next().value);
+          }
+          return;
         }
-        return;
       }
 
       // ✅ OFFLINE: buscar en cache local si no hay conexión
@@ -1686,7 +1699,7 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
           .from("clientes_balance")
           .select(primaryCols)
           .or(primaryOr)
-          .limit(20);
+          .limit(100);
         if (searchId !== clientSearchSeqRef.current) return;
 
         if (e1) {
@@ -1720,7 +1733,7 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
             .from("clientes_balance")
             .select(fbCols)
             .or(fbOr)
-            .limit(20);
+            .limit(100);
           if (searchId !== clientSearchSeqRef.current) return;
 
           if (e2) {
@@ -1737,7 +1750,7 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
             .select("id,nombre,negocio,telefono,email,direccion,balance")
             .ilike("nombre", `%${tokens[0]}%`)
             .or(`negocio.ilike.%${tokens.slice(1).join(" ")}%,telefono.ilike.%${tokens.slice(1).join(" ")}%,email.ilike.%${tokens.slice(1).join(" ")}%`)
-            .limit(10);
+            .limit(50);
           if (searchId !== clientSearchSeqRef.current) return;
           if (eAnd) {
             if (eAnd.code !== "42703") console.warn("AND nombre + negocio/contacto falló:", eAnd);
@@ -1746,15 +1759,38 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
           }
         }
 
+        let tokenData = [];
+        if (tokens.length >= 2) {
+          const tokenFilters = tokens
+            .slice(0, 4)
+            .flatMap((token) => {
+              const cleaned = token.replace(/[(),%]/g, "").slice(0, 40);
+              const fields = ["nombre", "negocio", "telefono", "email"];
+              if (addrSpec.type === "text") fields.push("direccion");
+              return fields.map((field) => `${field}.ilike.%${cleaned}%`);
+            })
+            .join(",");
+
+          if (tokenFilters) {
+            const { data: dTokens, error: eTokens } = await supabase
+              .from("clientes_balance")
+              .select("id,nombre,negocio,telefono,email,direccion,balance")
+              .or(tokenFilters)
+              .limit(120);
+            if (searchId !== clientSearchSeqRef.current) return;
+            if (eTokens) {
+              if (eTokens.code !== "42703") console.warn("Token search for clients failed:", eTokens);
+            } else {
+              tokenData = dTokens || [];
+            }
+          }
+        }
+
         const byId = new Map();
-        for (const row of [...(baseData || []), ...andData]) {
+        for (const row of [...(baseData || []), ...andData, ...tokenData]) {
           if (row && row.id != null) byId.set(row.id, row);
         }
-        const enriched = filterClientsLocal(Array.from(byId.values()), safe, 30)
-          .map((c) => ({
-            ...c,
-            _saldo_real: Number(c._saldo_real ?? c.balance ?? 0),
-          }));
+        const enriched = promoteRecentMatches(Array.from(byId.values()));
 
         clientCacheRef.current.set(term, enriched);
         if (clientCacheRef.current.size > 18) {
@@ -1778,7 +1814,7 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
     }
 
     loadClients();
-  }, [debouncedClientSearch, addrSpec.type, isOffline, searchClientsInOfflineCache, toast]);
+  }, [debouncedClientSearch, addrSpec.type, isOffline, recentClients, searchClientsInOfflineCache, toast]);
 
 /* ---------- Historial al seleccionar cliente ---------- */
 useEffect(() => {
