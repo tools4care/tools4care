@@ -143,7 +143,12 @@ export async function sincronizarVentasPendientes() {
           }
         }
 
-        // ── Actualizar stock — single atomic UPDATE (no read-modify-write race) ──
+        // ── Actualizar stock — decrementar_stock_van now rejects an oversell
+        // instead of silently clamping to 0 (see migration
+        // 20260709_fix_decrementar_stock_van_reject_insufficient.sql). The sale
+        // row itself is already saved at this point, so a stock failure here is
+        // reported (not silently swallowed) rather than rolled back.
+        const stockIssues = [];
         for (const item of venta.items || []) {
           try {
             await supabase.rpc('decrementar_stock_van', {
@@ -152,8 +157,8 @@ export async function sincronizarVentasPendientes() {
               p_cantidad:    item.cantidad,
             });
           } catch (stockErr) {
-            // Stock update failure is non-fatal — sale is already saved; admin can reconcile
-            console.error(`Stock update failed producto ${item.producto_id}:`, stockErr?.message);
+            console.error(`⚠️ Stock update failed for producto ${item.producto_id} on venta ${ventaId}:`, stockErr?.message);
+            stockIssues.push({ producto_id: item.producto_id, error: stockErr?.message });
           }
         }
 
@@ -185,11 +190,21 @@ export async function sincronizarVentasPendientes() {
         }
 
         // ── Marcar como sincronizada ──
+        // The sale row itself is correctly saved even if a stock update above
+        // failed, so it's still marked synced (retrying the insert would
+        // duplicate it — this legacy path has no transaction_id to dedupe on).
+        // The stock issue is surfaced via `errores`/`resultados` instead.
         await marcarVentaSincronizada(venta._offline_id);
 
-        sincronizadas++;
-        resultados.push({ id: venta._offline_id, success: true, ventaId });
-        console.log(`✅ Venta ${venta._offline_id} sincronizada → ID ${ventaId} | ${venta.estado_pago} | $${venta.total_venta ?? venta.total}`);
+        if (stockIssues.length > 0) {
+          errores++;
+          resultados.push({ id: venta._offline_id, success: true, ventaId, stockIssues });
+          console.error(`⚠️ Venta ${venta._offline_id} sincronizada con ${stockIssues.length} problema(s) de stock sin resolver — requiere reconciliación manual.`);
+        } else {
+          sincronizadas++;
+          resultados.push({ id: venta._offline_id, success: true, ventaId });
+          console.log(`✅ Venta ${venta._offline_id} sincronizada → ID ${ventaId} | ${venta.estado_pago} | $${venta.total_venta ?? venta.total}`);
+        }
 
       } catch (error) {
         errores++;

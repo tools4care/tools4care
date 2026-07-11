@@ -12,6 +12,7 @@ import { getAcuerdosResumen, crearAcuerdo, aplicarPagoAAcuerdos, actualizarVenci
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 import { computeSaleFinancials, calcularPagoMinimo, policyLimit, getClientBalance, r2 } from "./lib/saleFinancials";
 import { logAudit } from "./lib/auditLog";
+import { createSubmitGuard } from "./lib/submitGuard";
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useSyncGlobal } from "./hooks/SyncContext";
@@ -1140,6 +1141,11 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [payments, setPayments] = useState([{ forma: "efectivo", monto: 0 }]);
   const [paymentError, setPaymentError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Synchronous double-click/double-tap guard for saveSale — the `saving` state above is
+  // async (React batches the update), so two clicks fired before the first render commit
+  // could both pass a `saving`-only check. This ref is set/read synchronously.
+  const submitGuardRef = useRef(null);
+  if (!submitGuardRef.current) submitGuardRef.current = createSubmitGuard();
 
   // Tax toggle per sale (Option A)
   const [taxEnabled, setTaxEnabled] = useState(false);
@@ -3753,6 +3759,12 @@ async function handleDeletePendingSale(id) {
 
   /* ===================== Guardar venta ===================== */
   async function saveSale(agreementDataOverride = null) {
+    // Blocks a second concurrent call (rapid double-click/double-tap) synchronously —
+    // see submitGuardRef declaration above. Released on every exit path below.
+    if (!submitGuardRef.current.tryAcquire()) {
+      console.warn("saveSale: duplicate submit blocked (double-click guard)");
+      return;
+    }
     const resolvedAgreementData = agreementDataOverride || pendingAgreementData;
     setSaving(true);
     setPaymentError("");
@@ -3773,9 +3785,10 @@ const esCreditoSignificativo = amountToCreditCheck > 20;
     waiting: true,
   });
   setSaving(false);
+  submitGuardRef.current.release();
   return;
 }
-   
+
 
      // 🆕 Generar transaction_id único para esta transacción física
   const transactionId = makeUUID();
@@ -3794,7 +3807,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
         "high_risk",
         `Credit Agent detected HIGH RISK for this client.\n\nRecommendation: request partial payment, reduce amount, or clear old debt first.`
       );
-      if (!note) return;
+      if (!note) { submitGuardRef.current.release(); return; }
       saleOverrideRef.current = `[EXCEPTION: HIGH RISK OVERRIDE] ${note}`;
       setSaving(true);
     }
@@ -3806,7 +3819,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
         "medium_risk",
         `Credit Agent detected MEDIUM RISK for this client.\n\nYou can still approve the sale with a reason.`
       );
-      if (!note) return;
+      if (!note) { submitGuardRef.current.release(); return; }
       saleOverrideRef.current = `[OVERRIDE: MEDIUM RISK] ${note}`;
       setSaving(true);
     }
@@ -4337,6 +4350,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       setPaymentError("❌ " + (err.message || "Error saving sale"));
     } finally {
       setSaving(false);
+      submitGuardRef.current.release();
     }
   }
 
