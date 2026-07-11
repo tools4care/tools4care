@@ -19,6 +19,12 @@ import {
 const fmtCurrency = (n) =>
   `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const fmtPercent = (value, digits = 1) =>
+  `${Number(value || 0).toFixed(digits)}%`;
+
+const percentOf = (value, total) =>
+  Number(total || 0) > 0 ? (Number(value || 0) / Number(total || 0)) * 100 : 0;
+
 const fmtDate = (iso) => {
   if (!iso) return "—";
   const s = String(iso).slice(0, 10);
@@ -63,15 +69,16 @@ const CHART_COLORS = ["#2196F3", "#4CAF50", "#9C27B0", "#FF9800", "#F44336", "#0
 
 /* ========================= Tab Config ========================= */
 const TABS = [
-  { id: "cierre_diario",    label: "Daily Closeout", icon: DollarSign,   color: "text-indigo-600" },
-  { id: "ledger",           label: "Financial Ledger", icon: ShieldCheck, color: "text-emerald-600" },
-  { id: "ventas",           label: "Sales Detail",   icon: ShoppingCart, color: "text-green-600" },
-  { id: "pagos_breakdown",  label: "Payments",       icon: CreditCard,   color: "text-blue-600"   },
-  { id: "devoluciones",     label: "Returns",        icon: RotateCcw,    color: "text-red-600" },
-  { id: "pagos_atrasados",  label: "Late Payments",  icon: AlertTriangle,color: "text-amber-600" },
-  { id: "top_clientes",     label: "Top Clients",    icon: Users,        color: "text-blue-600" },
-  { id: "productos",        label: "Top Products",   icon: Package,      color: "text-purple-600" },
-  { id: "ganancias",        label: "Profit Report",  icon: TrendingUp,   color: "text-emerald-600" },
+  { id: "cierre_diario",    label: "Daily Closeout", icon: DollarSign,   color: "text-indigo-600", description: "Closeout-ready totals, A/R movement, and collection quality by day." },
+  { id: "ledger",           label: "Financial Ledger", icon: ShieldCheck, color: "text-emerald-600", description: "Canonical money movement with an audit trail for sales, refunds, expenses, and A/R." },
+  { id: "ventas",           label: "Sales Detail",   icon: ShoppingCart, color: "text-green-600", description: "Sales performance, open balances, invoice references, and customer-level details." },
+  { id: "pagos_breakdown",  label: "Payments",       icon: CreditCard,   color: "text-blue-600", description: "Payment mix by cash, card, checks, and transfer sub-methods including direct A/R payments." },
+  { id: "ar_risk",          label: "A/R Aging",      icon: AlertTriangle,color: "text-rose-600", description: "Customers with balances, credit risk, last activity, and collection priority." },
+  { id: "discount_audit",   label: "Discounts",      icon: ReceiptText,   color: "text-orange-600", description: "Discounts and price overrides by invoice, product, customer, and seller." },
+  { id: "devoluciones",     label: "Returns",        icon: RotateCcw,    color: "text-red-600", description: "Money refunds versus A/R reductions, with item and reason detail." },
+  { id: "top_clientes",     label: "Top Clients",    icon: Users,        color: "text-blue-600", description: "Best customers, balances, purchase frequency, and inactivity signals." },
+  { id: "productos",        label: "Top Products",   icon: Package,      color: "text-purple-600", description: "Product demand by units, revenue, and average selling price." },
+  { id: "ganancias",        label: "Profit Report",  icon: TrendingUp,   color: "text-emerald-600", description: "Gross profit and margin when product cost data is available." },
 ];
 
 /* ========================= Shared UI ========================= */
@@ -121,6 +128,131 @@ function DateFilterBar({ from, to, onFrom, onTo, onSearch, loading, extraLabel }
 function ErrorBox({ msg }) {
   if (!msg) return null;
   return <div className="text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm">{msg}</div>;
+}
+
+function ChartPanel({ title, subtitle, children, className = "" }) {
+  return (
+    <div className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm ${className}`}>
+      <div className="mb-4">
+        <p className="font-bold text-slate-800">{title}</p>
+        {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function InsightPanel({ title = "Action Insights", insights = [] }) {
+  const visible = insights.filter(Boolean);
+  if (!visible.length) return null;
+  const toneClass = {
+    blue: "border-blue-200 bg-blue-50 text-blue-900",
+    green: "border-green-200 bg-green-50 text-green-900",
+    amber: "border-amber-200 bg-amber-50 text-amber-900",
+    orange: "border-orange-200 bg-orange-50 text-orange-900",
+    red: "border-red-200 bg-red-50 text-red-900",
+    purple: "border-purple-200 bg-purple-50 text-purple-900",
+    slate: "border-slate-200 bg-slate-50 text-slate-900",
+  };
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <TrendingUp size={16} className="text-slate-500" />
+        <h3 className="font-bold text-slate-800">{title}</h3>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        {visible.map((item, index) => (
+          <div key={`${item.title}-${index}`} className={`border rounded-xl p-4 ${toneClass[item.tone || "slate"]}`}>
+            <p className="text-xs font-bold uppercase tracking-wide opacity-70">{item.title}</p>
+            <p className="text-xl font-bold mt-1">{item.value}</p>
+            {item.body && <p className="text-xs mt-1 opacity-75 leading-relaxed">{item.body}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function paymentStatusLabel(status) {
+  const s = String(status || "").toLowerCase();
+  return ({
+    pagado: "Paid",
+    paid: "Paid",
+    pendiente: "Pending",
+    pending: "Pending",
+    parcial: "Partial",
+    partial: "Partial",
+    credito: "Credit",
+    credit: "Credit",
+    credito_tienda: "Store Credit",
+    reembolsado: "Refunded",
+    refunded: "Refunded",
+  })[s] || (status ? String(status).replaceAll("_", " ") : "—");
+}
+
+function statusPillClass(status) {
+  const s = String(status || "").toLowerCase();
+  if (["pagado", "paid"].includes(s)) return "bg-green-100 text-green-800";
+  if (["parcial", "partial"].includes(s)) return "bg-amber-100 text-amber-800";
+  if (["credito", "credit", "pendiente", "pending"].includes(s)) return "bg-red-100 text-red-800";
+  return "bg-gray-100 text-gray-700";
+}
+
+function chunkArray(arr, size = 80) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+  return chunks;
+}
+
+function daysSince(raw) {
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - date.getTime()) / 86400000));
+}
+
+function classifyArRisk({ saldo, age, score, utilization }) {
+  const balance = Number(saldo || 0);
+  const days = age == null ? null : Number(age);
+  const use = utilization == null ? null : Number(utilization);
+
+  if (balance <= 0) return { risk: "Low", reason: "No open balance." };
+  if (balance < 30) return { risk: "Low", reason: "Small balance under $30." };
+  if (balance < 75 && days != null && days <= 14) return { risk: "Low", reason: "Recent activity with a small balance." };
+
+  const high =
+    (balance >= 500 && (days == null || days >= 15)) ||
+    (balance >= 250 && days != null && days >= 45) ||
+    (balance >= 100 && days != null && days >= 60) ||
+    (balance >= 100 && use != null && use >= 100) ||
+    (balance >= 100 && Number(score || 0) > 0 && Number(score || 0) < 500);
+
+  if (high) {
+    return { risk: "High", reason: "Large, old, over-limit, or weak-score balance." };
+  }
+
+  const medium =
+    balance >= 150 ||
+    (balance >= 50 && days != null && days >= 21) ||
+    (balance >= 75 && use != null && use >= 75) ||
+    (balance >= 75 && Number(score || 0) > 0 && Number(score || 0) < 550);
+
+  if (medium) {
+    return { risk: "Medium", reason: "Needs follow-up, but not critical yet." };
+  }
+
+  return { risk: "Low", reason: "Current or low-dollar balance." };
+}
+
+function buildCollectionMessage(row) {
+  const name = row?.cliente_nombre || "there";
+  return `Hi ${name}, this is Tools4Care. Our records show an open balance of ${fmtCurrency(row?.saldo)}. Please let us know when you can take care of it. Thank you.`;
+}
+
+function phoneLink(phone, type = "sms", body = "") {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return null;
+  return type === "tel" ? `tel:${digits}` : `sms:${digits}${body ? `?&body=${encodeURIComponent(body)}` : ""}`;
 }
 
 /* ========================= FINANCIAL LEDGER ========================= */
@@ -258,9 +390,9 @@ function FinancialLedgerReport({ van }) {
 function normMetodo(m) {
   if (!m) return "otro";
   const s = m.toLowerCase();
-  if (s.includes("cash") || s.includes("efectivo")) return "efectivo";
+  if (s.includes("cash app") || s.includes("cashapp") || s.includes("venmo") || s.includes("zelle") || s.includes("paypal") || s.includes("wire") || s.includes("transfer")) return "transferencia";
   if (s.includes("card") || s.includes("tarjeta") || s.includes("credit") || s.includes("debit")) return "tarjeta";
-  if (s.includes("transfer") || s.includes("venmo") || s.includes("zelle") || s.includes("paypal") || s.includes("wire")) return "transferencia";
+  if (s.includes("cash") || s.includes("efectivo")) return "efectivo";
   return "otro";
 }
 
@@ -290,12 +422,12 @@ function CierreDiarioReport({ van }) {
         .neq("tipo", "devolucion");
       if (vErr) throw vErr;
 
-      // 2️⃣ Pagos directos de CxC (standalone — no generados por ventas)
+      // Direct A/R payments, excluding payments generated by sales.
       const { data: pagos } = await supabase
         .from("pagos")
-        .select("id, monto, metodo_pago, fecha_pago")
+        .select("id, monto, metodo_pago, fecha_pago, idem_key")
         .eq("van_id", van.id)
-        .not("idem", "is", null)
+        .is("idem_key", null)
         .gte("fecha_pago", start).lte("fecha_pago", end);
 
       const [{ data: allDebtPayments }, { data: arReductions }] = await Promise.all([
@@ -420,6 +552,45 @@ function CierreDiarioReport({ van }) {
     pendiente:    t.pendiente    + r.pendiente_cxc,
   }), { vendido:0, cobrado:0, efectivo:0, tarjeta:0, transferencia:0, otro:0, total_efectivo:0, total_tarjeta:0, total_transferencia:0, total_otro:0, cxc_extra:0, reembolsos:0, cheques:0, pagos_deuda:0, reducciones:0, pendiente:0 }), [rows]);
   const netArChange = totals.pendiente - totals.reducciones - totals.pagos_deuda;
+  const closeoutInsights = useMemo(() => {
+    if (!rows.length) return [];
+    const collectionRate = percentOf(totals.cobrado, totals.vendido + totals.cxc_extra);
+    const bestDay = rows.reduce((best, row) => row.vendido > (best?.vendido || 0) ? row : best, null);
+    const arRiskDay = rows.reduce((worst, row) => row.pendiente_cxc > (worst?.pendiente_cxc || 0) ? row : worst, null);
+    const transferShare = percentOf(totals.total_transferencia, totals.cobrado);
+    return [
+      {
+        title: "Collection Rate",
+        value: fmtPercent(collectionRate),
+        body: collectionRate >= 95 ? "Most sales were collected during the period." : `${fmtCurrency(Math.max(0, totals.pendiente))} stayed as new A/R from sales.`,
+        tone: collectionRate >= 95 ? "green" : "amber",
+      },
+      {
+        title: "Closeout Cash to Verify",
+        value: fmtCurrency(totals.total_efectivo),
+        body: totals.cheques > 0 ? `${fmtCurrency(totals.cheques)} was recorded as checks inside Other.` : "Use this number against the physical cash count.",
+        tone: "green",
+      },
+      bestDay && {
+        title: "Best Sales Day",
+        value: `${fmtDate(bestDay.fecha)} · ${fmtCurrency(bestDay.vendido)}`,
+        body: `${bestDay.ventas_count} sale${bestDay.ventas_count === 1 ? "" : "s"} recorded that day.`,
+        tone: "blue",
+      },
+      arRiskDay && arRiskDay.pendiente_cxc > 0 && {
+        title: "A/R Watch Day",
+        value: `${fmtDate(arRiskDay.fecha)} · ${fmtCurrency(arRiskDay.pendiente_cxc)}`,
+        body: "Largest new customer balance created in the selected range.",
+        tone: "amber",
+      },
+      totals.total_transferencia > 0 && {
+        title: "Transfer Mix",
+        value: fmtPercent(transferShare),
+        body: `${fmtCurrency(totals.total_transferencia)} collected through transfer methods.`,
+        tone: "purple",
+      },
+    ];
+  }, [rows, totals]);
 
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -430,7 +601,7 @@ function CierreDiarioReport({ van }) {
     doc.setTextColor(0,0,0);
     autoTable(doc, {
       startY: 28,
-      head: [["Date","Sales","Sold","Cash","Card","Transfer","Other","CxC Abonos","= Total Collected","Pending CxC"]],
+      head: [["Date","Sales","Sold","Cash","Card","Transfer","Other","A/R Payments","= Total Collected","New A/R"]],
       body: rows.map(r => [
         fmtDate(r.fecha), r.ventas_count,
         fmtCurrency(r.vendido),
@@ -461,14 +632,14 @@ function CierreDiarioReport({ van }) {
       styles: { fontSize: 9 },
       headStyles: { fillColor: [67,56,202], textColor: 255, fontStyle: "bold" },
     });
-    doc.save(`Cierre_Diario_${from}_${to}.pdf`);
+    doc.save(`Daily_Closeout_${from}_${to}.pdf`);
   };
 
   const chartData = rows.map(r => ({
     day: fmtDate(r.fecha),
-    Vendido: r.vendido,
-    Cobrado: r.total_cobrado,
-    "Pend. CxC": r.pendiente_cxc,
+    Sold: r.vendido,
+    Collected: r.total_cobrado,
+    "New A/R": r.pendiente_cxc,
   }));
 
   return (
@@ -509,7 +680,7 @@ function CierreDiarioReport({ van }) {
           <SummaryCard label="Transfer"        value={fmtCurrency(totals.total_transferencia)}color="blue"    icon={TrendingUp} />
           <SummaryCard label="Other"           value={fmtCurrency(totals.total_otro)}          color="amber"   icon={FileText}
             sub={totals.cheques > 0 ? `${fmtCurrency(totals.cheques)} in checks` : undefined} />
-          <SummaryCard label="Pending CxC"     value={fmtCurrency(totals.pendiente)}    color="amber"   icon={AlertTriangle}
+          <SummaryCard label="New A/R"     value={fmtCurrency(totals.pendiente)}    color="amber"   icon={AlertTriangle}
             sub="from sales only" />
         </div>
 
@@ -525,11 +696,13 @@ function CierreDiarioReport({ van }) {
           </div>
         </div>
 
+        <InsightPanel insights={closeoutInsights} />
+
         {/* CxC standalone note */}
         {totals.cxc_extra > 0 && (
           <div className="mb-4 p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-sm text-indigo-800 flex items-start gap-2">
             <span className="text-lg">ℹ️</span>
-            <span>Includes <strong>{fmtCurrency(totals.cxc_extra)}</strong> in direct CxC payments (Venmo, Zelle, cash abonos) recorded outside of sales.</span>
+            <span>Includes <strong>{fmtCurrency(totals.cxc_extra)}</strong> in direct A/R payments recorded outside of sales.</span>
           </div>
         )}
         {totals.reembolsos > 0 && (
@@ -540,8 +713,7 @@ function CierreDiarioReport({ van }) {
 
         {/* Bar chart */}
         {rows.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6">
-            <p className="font-semibold text-gray-700 mb-3">Daily breakdown — Sold vs Collected vs Pending</p>
+          <ChartPanel title="Daily Breakdown" subtitle="Sold vs collected vs newly created A/R" className="mb-6">
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={chartData} barCategoryGap="25%">
                 <CartesianGrid strokeDasharray="3 3" />
@@ -549,12 +721,12 @@ function CierreDiarioReport({ van }) {
                 <YAxis tickFormatter={v => `$${v}`} tick={{ fontSize: 11 }} />
                 <Tooltip formatter={v => fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
                 <Legend {...CHART_LEGEND_STYLE} />
-                <Bar dataKey="Vendido"    fill="#6366f1" radius={[3,3,0,0]} />
-                <Bar dataKey="Cobrado"    fill="#22c55e" radius={[3,3,0,0]} />
-                <Bar dataKey="Pend. CxC" fill="#f59e0b" radius={[3,3,0,0]} />
+                <Bar dataKey="Sold"    fill="#6366f1" radius={[3,3,0,0]} />
+                <Bar dataKey="Collected"    fill="#22c55e" radius={[3,3,0,0]} />
+                <Bar dataKey="New A/R" fill="#f59e0b" radius={[3,3,0,0]} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </ChartPanel>
         )}
 
         {/* Daily table */}
@@ -562,7 +734,7 @@ function CierreDiarioReport({ van }) {
           <table className="min-w-full text-sm divide-y divide-gray-200">
             <thead className="bg-indigo-50">
               <tr>
-                {["Date","# Sales","Sold","Cash (net)","Card (net)","Transfer (net)","Other (net)","CxC Abonos","= Total Collected","Pending CxC"].map(h => (
+                {["Date","# Sales","Sold","Cash (net)","Card (net)","Transfer (net)","Other (net)","A/R Payments","= Total Collected","New A/R"].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-bold text-indigo-700 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -575,12 +747,10 @@ function CierreDiarioReport({ van }) {
                   <td className="px-4 py-2.5 font-semibold text-gray-800">{fmtDate(r.fecha)}</td>
                   <td className="px-4 py-2.5 text-gray-600 text-center">{r.ventas_count}</td>
                   <td className="px-4 py-2.5 font-bold text-indigo-700">{fmtCurrency(r.vendido)}</td>
-                  {/* Solo pagos de ventas — NO incluyen abonos CxC directos */}
                   <td className="px-4 py-2.5 text-emerald-700">{r.efectivo !== 0 ? fmtCurrency(r.efectivo) : <span className="text-gray-300">—</span>}</td>
                   <td className="px-4 py-2.5 text-purple-700">{r.tarjeta !== 0 ? fmtCurrency(r.tarjeta) : <span className="text-gray-300">—</span>}</td>
                   <td className="px-4 py-2.5 text-blue-700">{r.transferencia !== 0 ? fmtCurrency(r.transferencia) : <span className="text-gray-300">—</span>}</td>
                   <td className="px-4 py-2.5 text-amber-700">{r.otro !== 0 ? fmtCurrency(r.otro) : <span className="text-gray-300">—</span>}</td>
-                  {/* CxC Abonos: pagos DIRECTOS desde CxC (idem_key IS NULL) — se suman a Total, no están en las columnas anteriores */}
                   <td className="px-4 py-2.5 text-indigo-600 font-semibold">
                     {r.cxc_extra > 0 ? fmtCurrency(r.cxc_extra) : <span className="text-gray-300">—</span>}
                   </td>
@@ -622,9 +792,8 @@ function VentasReport({ van, usuario }) {
   const [error, setError]     = useState(null);
   const [searched, setSearched] = useState(false);
   const [usuarios, setUsuarios] = useState([]);
-  const [filtroUsuario, setFiltroUsuario] = useState(""); // admin only
+  const [filtroUsuario, setFiltroUsuario] = useState("");
 
-  // Admin: cargar lista de vendedores de la van
   useEffect(() => {
     if (!isAdmin || !van?.id) return;
     supabase.from("usuarios").select("id, nombre, email, rol").eq("activo", true)
@@ -640,18 +809,17 @@ function VentasReport({ van, usuario }) {
       let q = supabase
         .from("ventas")
         .select(`
-          id, created_at, total_venta, total_pagado, estado_pago, metodo_pago,
+          id, created_at, numero_factura, total_venta, total_pagado, estado_pago, metodo_pago, tipo,
           cliente_id, clientes:cliente_id(nombre),
           usuario_id, usuarios:usuario_id(nombre)
         `)
         .eq("van_id", van.id)
+        .neq("tipo", "devolucion")
         .gte("created_at", start)
         .lte("created_at", end)
         .order("created_at", { ascending: false });
 
-      // Vendedores solo ven sus propias ventas
       if (!isAdmin) q = q.eq("usuario_id", usuario.id);
-      // Admin con filtro específico de vendedor
       else if (filtroUsuario) q = q.eq("usuario_id", filtroUsuario);
 
       const { data: r1, error: e1 } = await q;
@@ -660,8 +828,9 @@ function VentasReport({ van, usuario }) {
       } else {
         let q2 = supabase
           .from("ventas")
-          .select(`id, created_at, total_venta, total_pagado, estado_pago, metodo_pago, cliente_id, clientes:cliente_id(nombre)`)
+          .select(`id, created_at, numero_factura, total_venta, total_pagado, estado_pago, metodo_pago, tipo, cliente_id, clientes:cliente_id(nombre), usuario_id`)
           .eq("van_id", van.id)
+          .neq("tipo", "devolucion")
           .gte("created_at", start)
           .lte("created_at", end)
           .order("created_at", { ascending: false });
@@ -677,16 +846,28 @@ function VentasReport({ van, usuario }) {
     finally { setLoading(false); }
   };
 
-  const summary = useMemo(() => ({
-    total:    data.reduce((s, r) => s + Number(r.total_venta   || 0), 0),
-    cobrado:  data.reduce((s, r) => s + Number(r.total_pagado  || 0), 0),
-    pendiente:data.reduce((s, r) => s + Math.max(0, Number(r.total_venta || 0) - Number(r.total_pagado || 0)), 0),
-    count:    data.length,
-  }), [data]);
+  const summary = useMemo(() => {
+    const total = data.reduce((s, r) => s + Number(r.total_venta || 0), 0);
+    const cobrado = data.reduce((s, r) => s + Number(r.total_pagado || 0), 0);
+    const pendiente = data.reduce((s, r) => s + Math.max(0, Number(r.total_venta || 0) - Number(r.total_pagado || 0)), 0);
+    const openCount = data.filter((r) => Math.max(0, Number(r.total_venta || 0) - Number(r.total_pagado || 0)) > 0.009).length;
+    return {
+      total,
+      cobrado,
+      pendiente,
+      count: data.length,
+      avgTicket: data.length ? total / data.length : 0,
+      collectionRate: percentOf(cobrado, total),
+      openCount,
+    };
+  }, [data]);
 
   const byMethod = useMemo(() => {
     const map = {};
-    data.forEach((r) => { const m = r.metodo_pago || "otro"; map[m] = (map[m] || 0) + Number(r.total_venta || 0); });
+    data.forEach((r) => {
+      const m = normMetodoDisplay(r.metodo_pago);
+      map[m] = (map[m] || 0) + Number(r.total_venta || 0);
+    });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [data]);
 
@@ -695,6 +876,51 @@ function VentasReport({ van, usuario }) {
     data.forEach((r) => { const day = String(r.created_at || "").slice(0, 10); map[day] = (map[day] || 0) + Number(r.total_venta || 0); });
     return Object.entries(map).sort(([a],[b]) => a.localeCompare(b)).map(([day, total]) => ({ day: fmtDate(day), total }));
   }, [data]);
+
+  const salesInsights = useMemo(() => {
+    if (!data.length) return [];
+    const bestDayRaw = Object.entries(data.reduce((map, r) => {
+      const day = String(r.created_at || "").slice(0, 10);
+      map[day] = (map[day] || 0) + Number(r.total_venta || 0);
+      return map;
+    }, {})).sort((a, b) => b[1] - a[1])[0];
+    const biggestPending = [...data]
+      .map((r) => ({ ...r, pending: Math.max(0, Number(r.total_venta || 0) - Number(r.total_pagado || 0)) }))
+      .sort((a, b) => b.pending - a.pending)[0];
+    const topMethod = [...byMethod].sort((a, b) => b.value - a.value)[0];
+    return [
+      {
+        title: "Average Ticket",
+        value: fmtCurrency(summary.avgTicket),
+        body: `${summary.count} sale${summary.count === 1 ? "" : "s"} in the selected period.`,
+        tone: "blue",
+      },
+      {
+        title: "Collection Quality",
+        value: fmtPercent(summary.collectionRate),
+        body: summary.openCount ? `${summary.openCount} sale${summary.openCount === 1 ? "" : "s"} still have a balance.` : "All selected sales are fully collected.",
+        tone: summary.openCount ? "amber" : "green",
+      },
+      bestDayRaw && {
+        title: "Best Sales Day",
+        value: `${fmtDate(bestDayRaw[0])} · ${fmtCurrency(bestDayRaw[1])}`,
+        body: "Highest revenue day in this report.",
+        tone: "green",
+      },
+      biggestPending?.pending > 0 && {
+        title: "Largest Open Balance",
+        value: `${biggestPending.clientes?.nombre || "Customer"} · ${fmtCurrency(biggestPending.pending)}`,
+        body: biggestPending.numero_factura ? `Invoice ${biggestPending.numero_factura}` : "Follow up from the sales table.",
+        tone: "red",
+      },
+      topMethod && {
+        title: "Top Payment Method",
+        value: `${topMethod.name} · ${fmtPercent(percentOf(topMethod.value, summary.total))}`,
+        body: `${fmtCurrency(topMethod.value)} of reported sales.`,
+        tone: "purple",
+      },
+    ];
+  }, [data, byMethod, summary]);
 
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -706,11 +932,14 @@ function VentasReport({ van, usuario }) {
     doc.text(`Period: ${fmtDate(from)} - ${fmtDate(to)} | VAN: ${van?.nombre_van || van?.nombre || "—"} | Generated: ${new Date().toLocaleString()}`, 14, 36);
     autoTable(doc, {
       startY: 44,
-      head: [["#","Date/Time","Client","Seller","Method","Total","Paid","Status"]],
-      body: data.map((r,i) => [i+1, fmtDateTime(r.created_at), r.clientes?.nombre||"—", r.usuarios?.nombre||"—",
-        r.metodo_pago||"—", fmtCurrency(r.total_venta), fmtCurrency(r.total_pagado), r.estado_pago||"—"]),
+      head: [["#","Date/Time","Invoice","Client","Seller","Method","Total","Paid","Pending","Status"]],
+      body: data.map((r,i) => {
+        const pending = Math.max(0, Number(r.total_venta || 0) - Number(r.total_pagado || 0));
+        return [i+1, fmtDateTime(r.created_at), r.numero_factura || "—", r.clientes?.nombre||"—", r.usuarios?.nombre||"—",
+          normMetodoDisplay(r.metodo_pago), fmtCurrency(r.total_venta), fmtCurrency(r.total_pagado), fmtCurrency(pending), paymentStatusLabel(r.estado_pago)];
+      }),
       styles:{fontSize:8}, headStyles:{fillColor:[25,118,210],textColor:255,fontStyle:"bold"},
-      foot:[["","","","","","TOTAL",fmtCurrency(summary.total),""]],
+      foot:[["","","","","","TOTAL",fmtCurrency(summary.total),fmtCurrency(summary.cobrado),fmtCurrency(summary.pendiente),""]],
       footStyles:{fillColor:[240,248,255],fontStyle:"bold"},
     });
     doc.save(`Sales_Report_${from}_to_${to}.pdf`);
@@ -731,10 +960,10 @@ function VentasReport({ van, usuario }) {
         </div>
         {isAdmin && usuarios.length > 0 && (
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Vendedor</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Seller</label>
             <select value={filtroUsuario} onChange={(e) => setFiltroUsuario(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
-              <option value="">Todos los vendedores</option>
+              <option value="">All sellers</option>
               {usuarios.map(u => (
                 <option key={u.id} value={u.id}>{u.nombre || u.email}</option>
               ))}
@@ -744,7 +973,7 @@ function VentasReport({ van, usuario }) {
         {!isAdmin && (
           <div className="flex items-end pb-0.5">
             <span className="text-xs bg-blue-50 border border-blue-200 text-blue-700 px-3 py-2 rounded-lg font-medium">
-              👤 Mis ventas
+              My sales
             </span>
           </div>
         )}
@@ -758,36 +987,35 @@ function VentasReport({ van, usuario }) {
       {searched && (<>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <SummaryCard label="Total Sales"   value={fmtCurrency(summary.total)}    sub={`${summary.count} transactions`} color="blue"   icon={ShoppingCart} />
-          <SummaryCard label="Collected"     value={fmtCurrency(summary.cobrado)}  color="green"  icon={DollarSign} />
-          <SummaryCard label="Pending"       value={fmtCurrency(summary.pendiente)}color="amber"  icon={AlertTriangle} />
-          <SummaryCard label="Transactions"  value={summary.count} sub={`${fmtDate(from)} – ${fmtDate(to)}`} color="purple" icon={FileText} />
+          <SummaryCard label="Collected"     value={fmtCurrency(summary.cobrado)}  sub={`${fmtPercent(summary.collectionRate)} collection rate`} color="green"  icon={DollarSign} />
+          <SummaryCard label="Open Balance"  value={fmtCurrency(summary.pendiente)} sub={`${summary.openCount} open sale${summary.openCount === 1 ? "" : "s"}`} color="amber"  icon={AlertTriangle} />
+          <SummaryCard label="Average Ticket"  value={fmtCurrency(summary.avgTicket)} sub={`${fmtDate(from)} – ${fmtDate(to)}`} color="purple" icon={FileText} />
         </div>
+        <InsightPanel insights={salesInsights} />
         {byDay.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="font-semibold text-gray-700 mb-3">Sales by Day</p>
+            <ChartPanel title="Sales by Day" subtitle="Revenue trend for the selected period">
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={byDay}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" tick={{fontSize:11}} />
                   <YAxis tickFormatter={(v)=>`$${v}`} tick={{fontSize:11}} />
-                  <Tooltip formatter={(v)=>fmtCurrency(v)} />
-                  <Bar dataKey="total" fill="#2196F3" radius={[4,4,0,0]} />
+                  <Tooltip formatter={(v)=>fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
+                  <Bar dataKey="total" fill="#2563eb" radius={[5,5,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="font-semibold text-gray-700 mb-3">By Payment Method</p>
+            </ChartPanel>
+            <ChartPanel title="Sales by Payment Method" subtitle="Which methods drive the selected sales">
               <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={byMethod} cx="50%" cy="50%" outerRadius={80} dataKey="value"
-                    label={({name,percent})=>`${name}: ${(percent*100).toFixed(0)}%`} labelLine={false}>
-                    {byMethod.map((_,i)=><Cell key={i} fill={CHART_COLORS[i%CHART_COLORS.length]}/>)}
-                  </Pie>
-                  <Tooltip formatter={(v)=>fmtCurrency(v)} />
-                </PieChart>
+                <BarChart data={[...byMethod].sort((a, b) => b.value - a.value)} layout="vertical" margin={{ left: 20, right: 16 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(v)=>`$${v}`} tick={{fontSize:11}} />
+                  <YAxis type="category" dataKey="name" width={80} tick={{fontSize:11}} />
+                  <Tooltip formatter={(v)=>fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
+                  <Bar dataKey="value" fill="#10b981" radius={[0,5,5,0]} />
+                </BarChart>
               </ResponsiveContainer>
-            </div>
+            </ChartPanel>
           </div>
         )}
         <div className="flex justify-between items-center mb-3">
@@ -799,30 +1027,522 @@ function VentasReport({ van, usuario }) {
         <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
           <table className="min-w-full text-sm divide-y divide-gray-200">
             <thead className="bg-gray-50">
-              <tr>{["Date/Time","Client","Seller","Method","Total","Paid","Pending","Status"].map(h=>(
+              <tr>{["Date/Time","Invoice","Client","Seller","Method","Total","Paid","Pending","Status"].map(h=>(
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {data.length===0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-gray-400">No sales found for this period</td></tr>
+                <tr><td colSpan={9} className="text-center py-10 text-gray-400">No sales found for this period</td></tr>
               ) : data.map(r=>{
                 const pend=Math.max(0,Number(r.total_venta||0)-Number(r.total_pagado||0));
                 return (<tr key={r.id} className="hover:bg-gray-50">
                   <td className="px-4 py-2 whitespace-nowrap text-gray-600 text-xs">{fmtDateTime(r.created_at)}</td>
+                  <td className="px-4 py-2 text-gray-600 text-xs font-semibold">{r.numero_factura || "—"}</td>
                   <td className="px-4 py-2 font-medium text-gray-900">{r.clientes?.nombre||"—"}</td>
                   <td className="px-4 py-2 text-gray-600">{r.usuarios?.nombre||"—"}</td>
-                  <td className="px-4 py-2"><span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{r.metodo_pago||"—"}</span></td>
+                  <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${metodoTag(normMetodoDisplay(r.metodo_pago))}`}>{normMetodoDisplay(r.metodo_pago)}</span></td>
                   <td className="px-4 py-2 font-semibold text-gray-900">{fmtCurrency(r.total_venta)}</td>
                   <td className="px-4 py-2 text-green-700 font-medium">{fmtCurrency(r.total_pagado)}</td>
                   <td className="px-4 py-2 text-amber-700 font-medium">{fmtCurrency(pend)}</td>
                   <td className="px-4 py-2">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                      r.estado_pago==="pagado"?"bg-green-100 text-green-800":r.estado_pago==="credito"?"bg-amber-100 text-amber-800":"bg-red-100 text-red-800"
-                    }`}>{r.estado_pago||"—"}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusPillClass(r.estado_pago)}`}>{paymentStatusLabel(r.estado_pago)}</span>
                   </td>
                 </tr>);
               })}
+            </tbody>
+          </table>
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+/* ========================= A/R AGING REPORT ========================= */
+function ARAgingReport({ van }) {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [searched, setSearched] = useState(false);
+
+  const search = async () => {
+    if (!van?.id) return;
+    setLoading(true); setError(null);
+    try {
+      const { data: balances, error: balErr } = await supabase
+        .from("v_cxc_cliente_detalle_ext")
+        .select("cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, telefono, direccion, nombre_negocio")
+        .gt("saldo", 0.01)
+        .order("saldo", { ascending: false })
+        .limit(250);
+      if (balErr) throw balErr;
+
+      const clients = balances || [];
+      const ids = clients.map((c) => c.cliente_id).filter(Boolean);
+      const sales = [];
+      const payments = [];
+
+      for (const group of chunkArray(ids, 80)) {
+        const [{ data: saleRows }, { data: paymentRows }] = await Promise.all([
+          supabase.from("ventas")
+            .select("cliente_id, created_at, fecha, total_venta, total_pagado, numero_factura")
+            .eq("van_id", van.id)
+            .in("cliente_id", group)
+            .neq("tipo", "devolucion")
+            .order("created_at", { ascending: false }),
+          supabase.from("pagos")
+            .select("cliente_id, fecha_pago, monto, metodo_pago")
+            .eq("van_id", van.id)
+            .in("cliente_id", group)
+            .order("fecha_pago", { ascending: false }),
+        ]);
+        sales.push(...(saleRows || []));
+        payments.push(...(paymentRows || []));
+      }
+
+      const saleMap = new Map();
+      sales.forEach((sale) => {
+        const key = sale.cliente_id;
+        const current = saleMap.get(key);
+        const date = sale.created_at || sale.fecha;
+        if (!current || String(date || "") > String(current.created_at || current.fecha || "")) saleMap.set(key, sale);
+      });
+
+      const paymentMap = new Map();
+      payments.forEach((payment) => {
+        const key = payment.cliente_id;
+        const current = paymentMap.get(key);
+        if (!current || String(payment.fecha_pago || "") > String(current.fecha_pago || "")) paymentMap.set(key, payment);
+      });
+
+      setData(clients.map((c) => {
+        const lastSale = saleMap.get(c.cliente_id);
+        const lastPayment = paymentMap.get(c.cliente_id);
+        const lastActivity = [lastSale?.created_at || lastSale?.fecha, lastPayment?.fecha_pago].filter(Boolean).sort().at(-1) || null;
+        const age = daysSince(lastActivity);
+        const saldo = Number(c.saldo || 0);
+        const limit = Number(c.limite_politica || 0);
+        const score = Number(c.score_base || 0);
+        const utilization = limit > 0 ? percentOf(saldo, limit) : null;
+        const riskInfo = classifyArRisk({ saldo, age, score, utilization });
+        return {
+          ...c,
+          saldo,
+          limit,
+          score,
+          lastSale,
+          lastPayment,
+          lastActivity,
+          age,
+          risk: riskInfo.risk,
+          riskReason: riskInfo.reason,
+          utilization,
+        };
+      }));
+      setSearched(true);
+    } catch (e) {
+      setError(e.message || "Could not load A/R aging.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const summary = useMemo(() => ({
+    balance: data.reduce((s, r) => s + Number(r.saldo || 0), 0),
+    clients: data.length,
+    highRisk: data.filter((r) => r.risk === "High").length,
+    over30: data.filter((r) => Number(r.age || 0) >= 30).length,
+  }), [data]);
+
+  const agingChart = useMemo(() => {
+    const buckets = [
+      { name: "0-7d", min: 0, max: 7, balance: 0, clients: 0 },
+      { name: "8-14d", min: 8, max: 14, balance: 0, clients: 0 },
+      { name: "15-30d", min: 15, max: 30, balance: 0, clients: 0 },
+      { name: "31-60d", min: 31, max: 60, balance: 0, clients: 0 },
+      { name: "60+d", min: 61, max: Infinity, balance: 0, clients: 0 },
+      { name: "No activity", min: null, max: null, balance: 0, clients: 0 },
+    ];
+    data.forEach((row) => {
+      const age = row.age;
+      const bucket = age == null
+        ? buckets[5]
+        : buckets.find((b) => b.min != null && age >= b.min && age <= b.max);
+      if (!bucket) return;
+      bucket.balance += Number(row.saldo || 0);
+      bucket.clients += 1;
+    });
+    return buckets.filter((b) => b.clients > 0 || b.balance > 0);
+  }, [data]);
+
+  const riskChart = useMemo(() => {
+    const map = { High: 0, Medium: 0, Low: 0 };
+    data.forEach((row) => { map[row.risk] = (map[row.risk] || 0) + Number(row.saldo || 0); });
+    return Object.entries(map).map(([name, value]) => ({ name, value })).filter((r) => r.value > 0);
+  }, [data]);
+
+  const insights = useMemo(() => {
+    if (!data.length) return [];
+    const largest = [...data].sort((a, b) => b.saldo - a.saldo)[0];
+    const oldest = [...data].filter((r) => r.age != null).sort((a, b) => b.age - a.age)[0];
+    return [
+      largest && {
+        title: "Largest Balance",
+        value: `${largest.cliente_nombre || "Customer"} · ${fmtCurrency(largest.saldo)}`,
+        body: largest.telefono ? `Phone: ${largest.telefono}` : "Highest collection priority by amount.",
+        tone: "red",
+      },
+      oldest && {
+        title: "Oldest Activity",
+        value: `${oldest.cliente_nombre || "Customer"} · ${oldest.age}d`,
+        body: "Days since last sale or payment activity.",
+        tone: oldest.age >= 30 ? "amber" : "blue",
+      },
+      {
+        title: "High Risk Accounts",
+        value: summary.highRisk,
+        body: `${fmtCurrency(data.filter((r) => r.risk === "High").reduce((s, r) => s + r.saldo, 0))} in high-risk balances.`,
+        tone: summary.highRisk ? "red" : "green",
+      },
+      {
+        title: "30+ Day Watchlist",
+        value: summary.over30,
+        body: "Customers with no recent sale/payment activity.",
+        tone: summary.over30 ? "amber" : "green",
+      },
+    ];
+  }, [data, summary]);
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <p className="text-sm text-gray-600">Open customer balances ranked by collection priority.</p>
+        <button onClick={search} disabled={loading}
+          className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""}/>
+          Refresh
+        </button>
+      </div>
+      <ErrorBox msg={error} />
+      {searched && (<>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <SummaryCard label="Open A/R" value={fmtCurrency(summary.balance)} color="red" icon={DollarSign} />
+          <SummaryCard label="Clients With Balance" value={summary.clients} color="blue" icon={Users} />
+          <SummaryCard label="High Risk" value={summary.highRisk} color="red" icon={AlertTriangle} />
+          <SummaryCard label="30+ Days" value={summary.over30} color="amber" icon={FileText} />
+        </div>
+        <InsightPanel insights={insights} />
+        {data.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <ChartPanel title="A/R Aging Buckets" subtitle="Balance by days since last customer activity">
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={agingChart}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={(v) => `$${v}`} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v, name) => name === "clients" ? [v, "Clients"] : [fmtCurrency(v), "Balance"]} {...CHART_TOOLTIP_STYLE} />
+                  <Legend {...CHART_LEGEND_STYLE} />
+                  <Bar dataKey="balance" name="Balance" fill="#e11d48" radius={[5,5,0,0]} />
+                  <Bar dataKey="clients" name="Clients" fill="#fb923c" radius={[5,5,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartPanel>
+            <ChartPanel title="Risk Mix" subtitle="Open balance grouped by risk level">
+              <ResponsiveContainer width="100%" height={240}>
+                <PieChart>
+                  <Pie data={riskChart} cx="50%" cy="50%" innerRadius={48} outerRadius={82} dataKey="value"
+                    label={({ name, percent }) => `${name} ${fmtPercent(percent * 100, 0)}`}>
+                    {riskChart.map((row) => (
+                      <Cell key={row.name} fill={row.name === "High" ? "#ef4444" : row.name === "Medium" ? "#f59e0b" : "#22c55e"} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(v) => fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartPanel>
+          </div>
+        )}
+        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
+          <table className="min-w-full text-sm divide-y divide-gray-200">
+            <thead className="bg-rose-50">
+              <tr>{["Customer","Business","Phone","Balance","Credit Limit","Utilization","Score","Last Sale","Last Payment","Days","Risk","Action"].map(h => (
+                <th key={h} className="px-4 py-3 text-left text-xs font-bold text-rose-700 uppercase tracking-wide">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {data.length === 0 ? (
+                <tr><td colSpan={12} className="text-center py-10 text-gray-400">No open A/R balances found</td></tr>
+              ) : data.map((r) => (
+                <tr key={r.cliente_id} className="hover:bg-rose-50">
+                  <td className="px-4 py-2.5 font-semibold text-gray-900">{r.cliente_nombre || "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{r.nombre_negocio || "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{r.telefono || "—"}</td>
+                  <td className="px-4 py-2.5 font-bold text-red-700">{fmtCurrency(r.saldo)}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{r.limit > 0 ? fmtCurrency(r.limit) : "—"}</td>
+                  <td className="px-4 py-2.5">{r.utilization != null ? fmtPercent(r.utilization, 0) : "—"}</td>
+                  <td className="px-4 py-2.5">{r.score > 0 ? r.score : "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{r.lastSale ? fmtDate(r.lastSale.created_at || r.lastSale.fecha) : "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{r.lastPayment ? fmtDate(r.lastPayment.fecha_pago) : "—"}</td>
+                  <td className="px-4 py-2.5 font-semibold">{r.age == null ? "—" : `${r.age}d`}</td>
+                  <td className="px-4 py-2.5">
+                    <span title={r.riskReason} className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                      r.risk === "High" ? "bg-red-100 text-red-800" : r.risk === "Medium" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"
+                    }`}>{r.risk}</span>
+                    <div className="text-[10px] text-gray-400 mt-1 max-w-[140px]">{r.riskReason}</div>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {phoneLink(r.telefono, "sms", buildCollectionMessage(r)) && (
+                        <a
+                          href={phoneLink(r.telefono, "sms", buildCollectionMessage(r))}
+                          className="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-xs font-bold hover:bg-emerald-200"
+                        >
+                          Reminder
+                        </a>
+                      )}
+                      {phoneLink(r.telefono, "tel") && (
+                        <a
+                          href={phoneLink(r.telefono, "tel")}
+                          className="px-2 py-1 rounded-lg bg-blue-100 text-blue-800 text-xs font-bold hover:bg-blue-200"
+                        >
+                          Call
+                        </a>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+/* ========================= DISCOUNTS / PRICE OVERRIDES ========================= */
+function DiscountAuditReport({ van, usuario }) {
+  const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
+  const [from, setFrom] = useState(get30DaysAgo());
+  const [to, setTo] = useState(getToday());
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [searched, setSearched] = useState(false);
+
+  const search = async () => {
+    if (!van?.id) return;
+    setLoading(true); setError(null);
+    try {
+      const { start, end } = dateRangeBounds(from, to);
+      let salesQuery = supabase
+        .from("ventas")
+        .select("id, created_at, numero_factura, cliente_id, usuario_id, clientes:cliente_id(nombre), usuarios:usuario_id(nombre)")
+        .eq("van_id", van.id)
+        .neq("tipo", "devolucion")
+        .gte("created_at", start)
+        .lte("created_at", end)
+        .order("created_at", { ascending: false });
+      if (!isAdmin && usuario?.id) salesQuery = salesQuery.eq("usuario_id", usuario.id);
+
+      const { data: sales, error: saleErr } = await salesQuery;
+      if (saleErr) throw saleErr;
+      const saleRows = sales || [];
+      const saleMap = new Map(saleRows.map((s) => [s.id, s]));
+      const ids = saleRows.map((s) => s.id);
+      const details = [];
+
+      for (const group of chunkArray(ids, 80)) {
+        const { data: detailRows, error: detailErr } = await supabase
+          .from("detalle_ventas")
+          .select("venta_id, cantidad, precio_unitario, descuento, subtotal, producto_id, productos:producto_id(id, nombre, codigo, precio)")
+          .in("venta_id", group);
+        if (detailErr) throw detailErr;
+        details.push(...(detailRows || []));
+      }
+
+      const audited = details.map((d) => {
+        const sale = saleMap.get(d.venta_id) || {};
+        const qty = Number(d.cantidad || 1);
+        const pct = Number(d.descuento || 0);
+        const subtotal = Number(d.subtotal || 0);
+        const storedUnit = Number(d.precio_unitario || 0);
+        const chargedUnit = qty > 0
+          ? (pct > 0 ? storedUnit * (1 - pct / 100) : subtotal > 0 ? subtotal / qty : storedUnit)
+          : 0;
+        const productRegular = Number(d.productos?.precio || 0);
+        const percentRegular = pct > 0 && pct < 100 && chargedUnit > 0
+          ? chargedUnit / (1 - pct / 100)
+          : 0;
+        const regularUnit = Math.max(productRegular, storedUnit, percentRegular, chargedUnit);
+        const regularTotal = Number((regularUnit * qty).toFixed(2));
+        const chargedTotal = Number((chargedUnit * qty).toFixed(2));
+        const discountAmount = Number(Math.max(0, regularTotal - chargedTotal).toFixed(2));
+        const discountPct = regularTotal > 0 ? percentOf(discountAmount, regularTotal) : 0;
+        const hasOverride = discountAmount > 0.009;
+        return {
+          id: `${d.venta_id}-${d.producto_id}`,
+          date: sale.created_at,
+          invoice: sale.numero_factura,
+          customer: sale.clientes?.nombre || "—",
+          seller: sale.usuarios?.nombre || "—",
+          product: d.productos?.nombre || "Product",
+          code: d.productos?.codigo || "—",
+          qty,
+          regularUnit,
+          chargedUnit,
+          regularTotal,
+          chargedTotal,
+          discountAmount,
+          discountPct,
+          savedPct: pct,
+          hasOverride,
+        };
+      }).filter((r) => r.hasOverride).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+      setRows(audited);
+      setSearched(true);
+    } catch (e) {
+      setError(e.message || "Could not load discounts.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const summary = useMemo(() => ({
+    count: rows.length,
+    regular: rows.reduce((s, r) => s + r.regularTotal, 0),
+    charged: rows.reduce((s, r) => s + r.chargedTotal, 0),
+    discounts: rows.reduce((s, r) => s + r.discountAmount, 0),
+  }), [rows]);
+
+  const sellerChart = useMemo(() => {
+    const map = {};
+    rows.forEach((row) => {
+      const key = row.seller || "Unknown";
+      if (!map[key]) map[key] = { name: key, discount: 0, lines: 0 };
+      map[key].discount += row.discountAmount;
+      map[key].lines += 1;
+    });
+    return Object.values(map).sort((a, b) => b.discount - a.discount).slice(0, 8);
+  }, [rows]);
+
+  const productChart = useMemo(() => {
+    const map = {};
+    rows.forEach((row) => {
+      const key = row.product || "Product";
+      if (!map[key]) map[key] = { name: key.length > 18 ? `${key.slice(0, 18)}...` : key, discount: 0, lines: 0 };
+      map[key].discount += row.discountAmount;
+      map[key].lines += 1;
+    });
+    return Object.values(map).sort((a, b) => b.discount - a.discount).slice(0, 8);
+  }, [rows]);
+
+  const insights = useMemo(() => {
+    if (!rows.length) return [];
+    const largest = [...rows].sort((a, b) => b.discountAmount - a.discountAmount)[0];
+    const bySeller = rows.reduce((map, r) => {
+      map[r.seller] = (map[r.seller] || 0) + r.discountAmount;
+      return map;
+    }, {});
+    const topSeller = Object.entries(bySeller).sort((a, b) => b[1] - a[1])[0];
+    const avgDiscount = rows.length ? summary.discounts / rows.length : 0;
+    return [
+      {
+        title: "Total Discounts",
+        value: fmtCurrency(summary.discounts),
+        body: `${rows.length} discounted line${rows.length === 1 ? "" : "s"} in this period.`,
+        tone: "orange",
+      },
+      largest && {
+        title: "Largest Override",
+        value: `${largest.product} · ${fmtCurrency(largest.discountAmount)}`,
+        body: `${largest.customer} · Invoice ${largest.invoice || "—"}`,
+        tone: "red",
+      },
+      topSeller && {
+        title: "Top Seller Discounts",
+        value: `${topSeller[0]} · ${fmtCurrency(topSeller[1])}`,
+        body: "Most discounted value by seller.",
+        tone: "amber",
+      },
+      {
+        title: "Average Discount",
+        value: fmtCurrency(avgDiscount),
+        body: `${fmtPercent(percentOf(summary.discounts, summary.regular))} off regular value.`,
+        tone: "purple",
+      },
+    ];
+  }, [rows, summary]);
+
+  return (
+    <div>
+      <DateFilterBar from={from} to={to} onFrom={setFrom} onTo={setTo} onSearch={search} loading={loading} />
+      <ErrorBox msg={error} />
+      {searched && (<>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <SummaryCard label="Discounted Lines" value={summary.count} color="amber" icon={ReceiptText} />
+          <SummaryCard label="Regular Value" value={fmtCurrency(summary.regular)} color="blue" icon={DollarSign} />
+          <SummaryCard label="Charged Value" value={fmtCurrency(summary.charged)} color="green" icon={DollarSign} />
+          <SummaryCard label="Discount Value" value={fmtCurrency(summary.discounts)} color="red" icon={AlertTriangle} />
+        </div>
+        <InsightPanel insights={insights} />
+        {rows.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <ChartPanel title="Discounts by Seller" subtitle="Total discount value and number of discounted lines">
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={sellerChart} layout="vertical" margin={{ left: 20, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(v) => `$${v}`} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v, name) => name === "lines" ? [v, "Lines"] : [fmtCurrency(v), "Discount"]} {...CHART_TOOLTIP_STYLE} />
+                  <Legend {...CHART_LEGEND_STYLE} />
+                  <Bar dataKey="discount" name="Discount" fill="#f97316" radius={[0,5,5,0]} />
+                  <Bar dataKey="lines" name="Lines" fill="#fdba74" radius={[0,5,5,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartPanel>
+            <ChartPanel title="Most Discounted Products" subtitle="Products with the highest discount value">
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={productChart} layout="vertical" margin={{ left: 24, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(v) => `$${v}`} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={112} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v, name) => name === "lines" ? [v, "Lines"] : [fmtCurrency(v), "Discount"]} {...CHART_TOOLTIP_STYLE} />
+                  <Bar dataKey="discount" name="Discount" fill="#ea580c" radius={[0,5,5,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartPanel>
+          </div>
+        )}
+        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
+          <table className="min-w-full text-sm divide-y divide-gray-200">
+            <thead className="bg-orange-50">
+              <tr>{["Date","Invoice","Customer","Seller","Product","Qty","Regular","Charged","Discount","Discount %"].map(h => (
+                <th key={h} className="px-4 py-3 text-left text-xs font-bold text-orange-700 uppercase tracking-wide">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rows.length === 0 ? (
+                <tr><td colSpan={10} className="text-center py-10 text-gray-400">No discounts or price overrides found</td></tr>
+              ) : rows.map((r) => (
+                <tr key={r.id} className="hover:bg-orange-50">
+                  <td className="px-4 py-2.5 text-gray-600 text-xs whitespace-nowrap">{fmtDateTime(r.date)}</td>
+                  <td className="px-4 py-2.5 font-semibold text-gray-700">{r.invoice || "—"}</td>
+                  <td className="px-4 py-2.5 font-semibold text-gray-900">{r.customer}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{r.seller}</td>
+                  <td className="px-4 py-2.5 text-gray-900">{r.product}</td>
+                  <td className="px-4 py-2.5 text-center">{r.qty}</td>
+                  <td className="px-4 py-2.5 text-blue-700">{fmtCurrency(r.regularUnit)}</td>
+                  <td className="px-4 py-2.5 text-green-700">{fmtCurrency(r.chargedUnit)}</td>
+                  <td className="px-4 py-2.5 font-bold text-red-700">{fmtCurrency(r.discountAmount)}</td>
+                  <td className="px-4 py-2.5 font-semibold text-orange-700">{fmtPercent(r.discountPct)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -1248,6 +1968,41 @@ function TopClientesReport({ van, usuario }) {
   ).slice(0,20), [data, sortBy]);
 
   const top10Chart = sorted.slice(0,10).map(c => ({ name:(c.nombre||"—").split(" ")[0], total:c.totalCompras, balance:c.balance }));
+  const clientInsights = useMemo(() => {
+    if (!data.length) return [];
+    const topBuyer = [...data].sort((a, b) => b.totalCompras - a.totalCompras)[0];
+    const biggestBalance = [...data].sort((a, b) => b.balance - a.balance)[0];
+    const inactiveHighValue = [...data]
+      .filter((c) => c.totalCompras > 0 && c.daysSinceLast > 14)
+      .sort((a, b) => b.totalCompras - a.totalCompras)[0];
+    const totalRevenue = data.reduce((s, c) => s + c.totalCompras, 0);
+    return [
+      topBuyer && {
+        title: "Best Customer",
+        value: `${topBuyer.nombre || "Customer"} · ${fmtCurrency(topBuyer.totalCompras)}`,
+        body: `${topBuyer.count} purchase${topBuyer.count === 1 ? "" : "s"} in this period.`,
+        tone: "blue",
+      },
+      biggestBalance?.balance > 0 && {
+        title: "Highest Balance",
+        value: `${biggestBalance.nombre || "Customer"} · ${fmtCurrency(biggestBalance.balance)}`,
+        body: "Prioritize this customer for collection follow-up.",
+        tone: "amber",
+      },
+      inactiveHighValue && {
+        title: "Reactivation Target",
+        value: `${inactiveHighValue.nombre || "Customer"} · ${inactiveHighValue.daysSinceLast}d`,
+        body: `${fmtCurrency(inactiveHighValue.totalCompras)} in recent value but no purchase in more than 14 days.`,
+        tone: "purple",
+      },
+      {
+        title: "Client Concentration",
+        value: topBuyer ? fmtPercent(percentOf(topBuyer.totalCompras, totalRevenue)) : "0.0%",
+        body: "Share of revenue from the top customer.",
+        tone: "green",
+      },
+    ];
+  }, [data]);
 
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -1276,6 +2031,7 @@ function TopClientesReport({ van, usuario }) {
           <SummaryCard label="Total Revenue"  value={fmtCurrency(data.reduce((s,c)=>s+c.totalCompras,0))}           color="green" icon={DollarSign} />
           <SummaryCard label="Total Pending"  value={fmtCurrency(data.reduce((s,c)=>s+c.balance,0))}                color="amber" icon={AlertTriangle} />
         </div>
+        <InsightPanel insights={clientInsights} />
         {top10Chart.length>0 && (
           <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6">
             <p className="font-semibold text-gray-700 mb-3">Top 10 Clients by Sales</p>
@@ -1400,6 +2156,33 @@ function ProductosReport({ van, usuario }) {
   };
 
   const top10 = data.slice(0,10).map(p => ({ name:(p.nombre||"—").slice(0,18), qty:p.totalQty, revenue:p.totalRevenue }));
+  const productInsights = useMemo(() => {
+    if (!data.length) return [];
+    const byRevenue = [...data].sort((a, b) => b.totalRevenue - a.totalRevenue)[0];
+    const byUnits = [...data].sort((a, b) => b.totalQty - a.totalQty)[0];
+    const totalRevenue = data.reduce((s, p) => s + p.totalRevenue, 0);
+    const totalUnits = data.reduce((s, p) => s + p.totalQty, 0);
+    return [
+      byRevenue && {
+        title: "Revenue Driver",
+        value: `${byRevenue.nombre || "Product"} · ${fmtCurrency(byRevenue.totalRevenue)}`,
+        body: `${fmtPercent(percentOf(byRevenue.totalRevenue, totalRevenue))} of product revenue.`,
+        tone: "green",
+      },
+      byUnits && {
+        title: "Fastest Mover",
+        value: `${byUnits.nombre || "Product"} · ${byUnits.totalQty} units`,
+        body: "Keep this item stocked before the next route.",
+        tone: "purple",
+      },
+      {
+        title: "Average Unit Price",
+        value: totalUnits > 0 ? fmtCurrency(totalRevenue / totalUnits) : "$0.00",
+        body: `${totalUnits} unit${totalUnits === 1 ? "" : "s"} sold across ${data.length} product${data.length === 1 ? "" : "s"}.`,
+        tone: "blue",
+      },
+    ];
+  }, [data]);
 
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -1428,6 +2211,7 @@ function ProductosReport({ van, usuario }) {
           <SummaryCard label="Total Units"   value={data.reduce((s,p)=>s+p.totalQty,0)}                   color="blue"   icon={ShoppingCart} />
           <SummaryCard label="Revenue"       value={fmtCurrency(data.reduce((s,p)=>s+p.totalRevenue,0))}  color="green"  icon={DollarSign} />
         </div>
+        <InsightPanel insights={productInsights} />
         {top10.length>0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <div className="bg-white border border-gray-200 rounded-xl p-4">
@@ -1940,13 +2724,13 @@ function PaymentBreakdownReport({ van, usuario }) {
         });
       }
 
-      /* ─ Step 2: Standalone CxC payments (`idem`), not captured in ventas ─ */
+      /* ─ Step 2: Standalone A/R payments, not captured in sales ─ */
       {
         let pq = supabase
           .from("pagos")
-          .select("id,monto,metodo_pago,fecha_pago,cliente_id,clientes:cliente_id(nombre)")
+          .select("id,monto,metodo_pago,fecha_pago,cliente_id,clientes:cliente_id(nombre),idem_key")
           .eq("van_id", effectiveVanId)
-          .not("idem", "is", null)
+          .is("idem_key", null)
           .gte("fecha_pago", start)
           .lte("fecha_pago", end);
 
@@ -1965,34 +2749,34 @@ function PaymentBreakdownReport({ van, usuario }) {
           const mp    = (p.metodo_pago || "").toLowerCase();
           const disp  = normMetodoDisplay(p.metodo_pago);
 
-          const isCash = mp.includes("cash") || mp.includes("efectivo");
-          const isCard = mp.includes("card") || mp.includes("tarjeta");
           const isZ  = mp.includes("zelle");
           const isCA = mp.includes("cash app") || mp.includes("cashapp");
           const isV  = mp.includes("venmo");
           const isAP = mp.includes("apple pay") || mp.includes("applepay");
           const isCheck = mp.includes("check") || mp.includes("cheque");
           const isTransfer = isZ || isCA || isV || isAP || mp.includes("transfer");
+          const isCash = (mp.includes("cash") || mp.includes("efectivo")) && !isCA;
+          const isCard = mp.includes("card") || mp.includes("tarjeta");
           if (metodo === "efectivo" && !isCash) return;
           if (metodo === "tarjeta" && !isCard) return;
           if (isCheck && !["all", "cheque"].includes(metodo)) return;
           if (!isCheck && metodo === "cheque") return;
           if (metodo === "transfer_all" && !isTransfer) return;
 
-          if (isCash)    dayMap[iso].cash           += monto;
-          else if (isCard) dayMap[iso].card          += monto;
-          else if (isCheck) dayMap[iso].checks       += monto;
-          else if (isZ)  dayMap[iso].zelle          += monto;
+          if (isZ)       dayMap[iso].zelle          += monto;
           else if (isCA) dayMap[iso].cashapp        += monto;
           else if (isV)  dayMap[iso].venmo          += monto;
           else if (isAP) dayMap[iso].applepay       += monto;
+          else if (isCash) dayMap[iso].cash         += monto;
+          else if (isCard) dayMap[iso].card          += monto;
+          else if (isCheck) dayMap[iso].checks       += monto;
           else           dayMap[iso].transfer_other += monto;
           dayMap[iso].count++;
 
           txList.push({
             id: `cxc_${p.id}`,
             fecha: p.fecha_pago,
-            tipo: "CxC Payment",
+            tipo: "A/R Payment",
             cliente: p.clientes?.nombre || "—",
             metodo_display: disp,
             amount: monto,
@@ -2040,6 +2824,49 @@ function PaymentBreakdownReport({ van, usuario }) {
     transfer_other: dayRows.reduce((s, r) => s + (r.transfer_other || 0), 0),
     count:    dayRows.reduce((s, r) => s + r.count, 0),
   }), [dayRows]);
+
+  const paymentInsights = useMemo(() => {
+    if (!dayRows.length) return [];
+    const methods = [
+      { name: "Cash", value: totals.cash, tone: "green" },
+      { name: "Card", value: totals.card, tone: "purple" },
+      { name: "Checks", value: totals.checks, tone: "amber" },
+      { name: "Zelle", value: totals.zelle, tone: "purple" },
+      { name: "Cash App", value: totals.cashapp, tone: "green" },
+      { name: "Venmo", value: totals.venmo, tone: "blue" },
+      { name: "Apple Pay", value: totals.applepay, tone: "slate" },
+      { name: "Other Transfer", value: totals.transfer_other, tone: "blue" },
+    ].filter((m) => m.value > 0).sort((a, b) => b.value - a.value);
+    const top = methods[0];
+    const bestDay = [...dayRows].sort((a, b) => b.total - a.total)[0];
+    const transferShare = percentOf(totals.transfer, totals.total);
+    return [
+      top && {
+        title: "Dominant Method",
+        value: `${top.name} · ${fmtPercent(percentOf(top.value, totals.total))}`,
+        body: `${fmtCurrency(top.value)} collected through this method.`,
+        tone: top.tone,
+      },
+      {
+        title: "Transfer Share",
+        value: fmtPercent(transferShare),
+        body: `${fmtCurrency(totals.transfer)} collected through transfer methods.`,
+        tone: transferShare > 50 ? "purple" : "blue",
+      },
+      bestDay && {
+        title: "Best Collection Day",
+        value: `${fmtDate(bestDay.fecha)} · ${fmtCurrency(bestDay.total)}`,
+        body: `${bestDay.count} transaction${bestDay.count === 1 ? "" : "s"} in this report.`,
+        tone: "green",
+      },
+      totals.transfer_other > 0 && {
+        title: "Needs Method Detail",
+        value: fmtCurrency(totals.transfer_other),
+        body: "Transfers without a selected sub-method. Review if you need exact Zelle/Cash App/Venmo totals.",
+        tone: "amber",
+      },
+    ];
+  }, [dayRows, totals]);
 
   /* ── Chart data ── */
   const chartData = useMemo(() => dayRows.map(r => ({
@@ -2235,6 +3062,8 @@ function PaymentBreakdownReport({ van, usuario }) {
               sub="unclassified sub-type" />}
         </div>
 
+        <InsightPanel title="Payment Insights" insights={paymentInsights} />
+
         {/* ── Warning: unclassified transfers exist when filtering by sub-type ── */}
         {isSubType && totals.transfer_other > 0 && (
           <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm">
@@ -2385,22 +3214,36 @@ export default function Reportes() {
       <div className="w-full max-w-7xl mx-auto">
 
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-700 to-blue-700 bg-clip-text text-transparent">
-            Custom Reports
-          </h1>
-          <p className="text-gray-500 mt-1 text-sm">
-            VAN: <span className="font-medium text-gray-700">{van?.nombre_van || van?.nombre || "—"}</span>
-            {usuario && <>&nbsp;·&nbsp; User: <span className="font-medium text-gray-700">{usuario.nombre || usuario.email}</span></>}
-          </p>
+        <div className="mb-5 bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-500">Operations Intelligence</p>
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">
+                Business Reports
+              </h1>
+              <p className="text-gray-500 mt-1 text-sm max-w-3xl">
+                Actionable sales, payments, A/R, returns, product and profit reporting for daily decisions.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 min-w-[140px]">
+                <div className="text-slate-400 font-bold uppercase">VAN</div>
+                <div className="text-slate-800 font-semibold truncate">{van?.nombre_van || van?.nombre || "—"}</div>
+              </div>
+              <div className="border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 min-w-[140px]">
+                <div className="text-slate-400 font-bold uppercase">User</div>
+                <div className="text-slate-800 font-semibold truncate">{usuario?.nombre || usuario?.email || "—"}</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Tab Bar */}
         <div className="flex gap-1 sm:gap-2 flex-wrap mb-6 bg-white rounded-xl border border-gray-200 p-2 shadow-sm">
           {TABS.map(({ id, label, icon: Icon, color }) => (
             <button key={id} onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
-                activeTab===id ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md" : "text-gray-600 hover:bg-gray-100"
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 border ${
+                activeTab===id ? "bg-slate-900 border-slate-900 text-white shadow-md" : "border-transparent text-gray-600 hover:bg-gray-100 hover:border-gray-200"
               }`}>
               <Icon size={15} className={activeTab===id ? "text-white" : color} />
               <span className="hidden sm:inline">{label}</span>
@@ -2410,15 +3253,26 @@ export default function Reportes() {
 
         {/* Tab Content */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
-          <div className="flex items-center gap-2 mb-5 pb-4 border-b border-gray-100">
-            {(() => { const t=TABS.find(x=>x.id===activeTab); const I=t?.icon; return (<>{I&&<I size={20} className={t?.color}/>}<h2 className="text-lg font-bold text-gray-800">{t?.label}</h2></>); })()}
+          <div className="flex items-start gap-2 mb-5 pb-4 border-b border-gray-100">
+            {(() => {
+              const t=TABS.find(x=>x.id===activeTab);
+              const I=t?.icon;
+              return (<>
+                {I&&<I size={20} className={`${t?.color} mt-0.5`}/>}
+                <div>
+                  <h2 className="text-lg font-bold text-gray-800">{t?.label}</h2>
+                  {t?.description && <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>}
+                </div>
+              </>);
+            })()}
           </div>
           {activeTab==="cierre_diario"    && <CierreDiarioReport      van={van} usuario={usuario}/>}
           {activeTab==="ledger"           && <FinancialLedgerReport   van={van}/>}
           {activeTab==="ventas"          && <VentasReport           van={van} usuario={usuario}/>}
           {activeTab==="pagos_breakdown" && <PaymentBreakdownReport van={van} usuario={usuario}/>}
+          {activeTab==="ar_risk"         && <ARAgingReport          van={van}/>}
+          {activeTab==="discount_audit"  && <DiscountAuditReport    van={van} usuario={usuario}/>}
           {activeTab==="devoluciones"    && <DevolucionesReport     van={van} usuario={usuario}/>}
-          {activeTab==="pagos_atrasados" && <PagosAtrasadosReport  van={van} usuario={usuario}/>}
           {activeTab==="top_clientes"    && <TopClientesReport     van={van} usuario={usuario}/>}
           {activeTab==="productos"       && <ProductosReport       van={van} usuario={usuario}/>}
           {activeTab==="ganancias"       && <GananciasReport       van={van} usuario={usuario}/>}

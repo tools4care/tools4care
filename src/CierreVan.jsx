@@ -78,6 +78,8 @@ const DENOMINATIONS = [
   { value: 1, label: "$1 Bill" },
 ];
 
+const NOTE_REQUIRED_DISCREPANCY = 1;
+
 const closeoutModalClasses = {
   overlay:
     "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-4",
@@ -391,14 +393,14 @@ function AmountReconciliationModal({
 
 function normalizeCloseoutMethod(raw) {
   const value = String(raw || "").toLowerCase();
-  if (value.includes("cash") || value.includes("efectivo")) return "cash";
-  if (value.includes("card") || value.includes("tarjeta")) return "card";
   if (
     value.includes("transfer") || value.includes("zelle") ||
     value.includes("venmo") || value.includes("cash app") ||
     value.includes("cashapp") || value.includes("apple pay") ||
     value.includes("applepay")
   ) return "transfer";
+  if (value.includes("cash") || value.includes("efectivo")) return "cash";
+  if (value.includes("card") || value.includes("tarjeta")) return "card";
   return "other";
 }
 
@@ -681,14 +683,14 @@ export default function CierreVan() {
             .neq("tipo", "devolucion")
             .gte("fecha", p_from + "T00:00:00")
             .lte("fecha", p_to + "T23:59:59"), { data: [] }),
-          // Pagos CxC standalone desde pantalla Clientes. `idem` identifica
-          // pagos directos de CxC; pagos aplicados dentro de una venta usan
-          // `idem_key` y ya están incluidos en los totales de la venta.
+          // Pagos CxC standalone desde pantalla Clientes. Los pagos aplicados
+          // dentro de una venta usan `idem_key` y ya están incluidos en los
+          // totales de la venta; los directos no tienen `idem_key`.
           safe(supabase
             .from("pagos")
-            .select("id, monto, metodo_pago, fecha_pago, cliente_id, clientes:cliente_id(nombre)")
+            .select("id, monto, metodo_pago, fecha_pago, idem_key, cliente_id, clientes:cliente_id(nombre)")
             .eq("van_id", van.id)
-            .not("idem", "is", null)
+            .is("idem_key", null)
             .gte("fecha_pago", p_from + "T00:00:00")
             .lte("fecha_pago", p_to + "T23:59:59"), { data: [] }),
           // Descontar únicamente devoluciones donde realmente salió dinero.
@@ -767,14 +769,13 @@ export default function CierreVan() {
         (pagosData || []).forEach((p) => {
           const iso = String(p.fecha_pago || "").slice(0, 10);
           if (!iso) return;
-          if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0 };
+          if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
           const amount = Number(p.monto || 0);
           const method = normalizeCloseoutMethod(p.metodo_pago);
-          // The closeout RPC already includes standalone CxC cash, card and
-          // transfer payments. It has no "other" bucket, so only supplement
-          // checks/other here to avoid counting standard methods twice.
-          if (method === "other") {
-            map[iso].other = Number(map[iso].other || 0) + amount;
+          // The RPC already includes direct CxC cash/card, but misses transfer
+          // sub-method strings like "Transfer - Zelle". Keep checks/other too.
+          if (method === "transfer" || method === "other") {
+            map[iso][method] = Number(map[iso][method] || 0) + amount;
           }
         });
         setAbonosCxC(pagosData || []);
@@ -931,7 +932,7 @@ useEffect(() => {
       return;
     }
 
-    if (totales.diferencia > 0 && !observaciones.trim()) {
+    if (totales.diferencia >= NOTE_REQUIRED_DISCREPANCY && !observaciones.trim()) {
       setMensaje("You must provide a note for the discrepancy");
       setTipoMensaje("warning");
       return;
@@ -1084,6 +1085,431 @@ useEffect(() => {
     }, 1500);
   };
 
+  const buildCloseoutPdf = (doc, autoTable) => {
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 14;
+    const contentWidth = pageWidth - margin * 2;
+    const generatedAt = new Date().toLocaleString();
+    const totalReal = cashReal + cardReal + transferReal + otherReal;
+    const variance = totales.diferencia;
+    const salesRows = Object.values(ventasPorFecha).flat();
+    const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+    const avgSale = salesRows.length ? totales.totalVentas / salesRows.length : 0;
+    const totalPayments = totales.totalCaja;
+    const collectionRate = totales.totalVentas > 0 ? (totalPayments / totales.totalVentas) * 100 : 0;
+    const expenseRate = totales.totalCaja > 0 ? (totales.gastosTotal / totales.totalCaja) * 100 : 0;
+    const status = variance <= 0.01 ? "Balanced" : variance < NOTE_REQUIRED_DISCREPANCY ? "Minor variance" : "Needs review";
+    const statusColor = variance <= 0.01 ? [22, 163, 74] : variance < NOTE_REQUIRED_DISCREPANCY ? [217, 119, 6] : [220, 38, 38];
+
+    const customerMap = new Map();
+    salesRows.forEach((sale) => {
+      const name = sale.clientes?.nombre || "Walk-in";
+      const current = customerMap.get(name) || { name, sales: 0, paid: 0, count: 0 };
+      current.sales += Number(sale.total_venta || 0);
+      current.paid += Number(sale.total_pagado || 0);
+      current.count += 1;
+      customerMap.set(name, current);
+    });
+    const topCustomers = Array.from(customerMap.values())
+      .sort((a, b) => b.sales - a.sales)
+      .slice(0, 8);
+
+    const largeTransactions = transaccionesCompletas
+      .slice()
+      .sort((a, b) => Number(b.monto || 0) - Number(a.monto || 0))
+      .slice(0, 8);
+
+    const recommendations = [];
+    if (variance >= NOTE_REQUIRED_DISCREPANCY) {
+      recommendations.push(`Variance of ${fmtCurrency(variance)} requires review against receipts and counted money.`);
+    }
+    if (totales.gastosTotal > 0) {
+      recommendations.push(`Confirm ${fmtCurrency(totales.gastosTotal)} in driver expenses and receipt photos before final filing.`);
+    }
+    if (cxcResumen.cambioNeto > 0) {
+      recommendations.push(`A/R increased by ${fmtCurrency(cxcResumen.cambioNeto)}. Follow up on customers with new balance.`);
+    }
+    if (collectionRate < 75 && totales.totalVentas > 0) {
+      recommendations.push(`Collections were ${collectionRate.toFixed(1)}% of sales. Review credit exposure.`);
+    }
+    if (recommendations.length === 0) {
+      recommendations.push("Closeout is clean. File report with receipts and continue normal operations.");
+    }
+
+    const addFooter = () => {
+      const page = doc.internal.getNumberOfPages();
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Generated ${generatedAt}`, margin, pageHeight - 8);
+      doc.text(`Tools4Care Financial System - Page ${page}`, pageWidth - margin, pageHeight - 8, { align: "right" });
+    };
+
+    const ensureSpace = (y, needed = 32) => {
+      if (y + needed <= pageHeight - 18) return y;
+      addFooter();
+      doc.addPage();
+      return 18;
+    };
+
+    const sectionHeader = (title, y, color = [30, 64, 175]) => {
+      y = ensureSpace(y, 18);
+      doc.setFillColor(...color);
+      doc.roundedRect(margin, y, contentWidth, 9, 2, 2, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(title, margin + 4, y + 6.2);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      return y + 13;
+    };
+
+    const metricCard = (x, y, w, title, value, note, color = [30, 64, 175]) => {
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(x, y, w, 25, 3, 3, "FD");
+      doc.setTextColor(100, 116, 139);
+      doc.setFontSize(7.5);
+      doc.setFont("helvetica", "bold");
+      doc.text(title.toUpperCase(), x + 4, y + 6);
+      doc.setTextColor(...color);
+      doc.setFontSize(13);
+      doc.text(String(value), x + 4, y + 15);
+      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      doc.text(String(note || ""), x + 4, y + 21, { maxWidth: w - 8 });
+    };
+
+    const moneyTableStyles = {
+      theme: "grid",
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 8, cellPadding: 2.5, lineColor: [226, 232, 240], lineWidth: 0.1 },
+      headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+    };
+
+    doc.setProperties({
+      title: `Tools4Care Van Closeout ${fechasSeleccionadas[0] || ""}`,
+      subject: "Daily van closeout report",
+      author: "Tools4Care",
+    });
+
+    const drawDashboardCard = (x, y, w, h, label, value, helper, color = [37, 99, 235]) => {
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(x, y, w, h, 4, 4, "FD");
+      doc.setFillColor(...color);
+      doc.roundedRect(x, y, 3, h, 2, 2, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text(String(label).toUpperCase(), x + 7, y + 7);
+      doc.setFontSize(15);
+      doc.setTextColor(15, 23, 42);
+      doc.text(String(value), x + 7, y + 18);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text(String(helper || ""), x + 7, y + 27, { maxWidth: w - 12 });
+    };
+
+    const drawProgress = (x, y, w, label, value, total, color) => {
+      const pct = total > 0 ? Math.max(0, Math.min(1, Number(value || 0) / total)) : 0;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(label, x, y);
+      doc.text(fmtCurrency(value), x + w, y, { align: "right" });
+      doc.setFillColor(226, 232, 240);
+      doc.roundedRect(x, y + 3, w, 4, 2, 2, "F");
+      doc.setFillColor(...color);
+      doc.roundedRect(x, y + 3, w * pct, 4, 2, 2, "F");
+    };
+
+    const dashboardTop = 0;
+    doc.setFillColor(8, 15, 33);
+    doc.rect(0, dashboardTop, pageWidth, 36, "F");
+    doc.setFillColor(...statusColor);
+    doc.rect(0, dashboardTop, 8, 36, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(19);
+    doc.text("Daily Closeout Command Center", margin, 13);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(203, 213, 225);
+    doc.text(
+      `${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")}  |  VAN ${van?.nombre || van?.alias || "VAN"}  |  ${usuario?.nombre || usuario?.email || "Unknown user"}`,
+      margin,
+      22
+    );
+    doc.setFillColor(...statusColor);
+    doc.roundedRect(pageWidth - 62, 10, 48, 16, 4, 4, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(status.toUpperCase(), pageWidth - 38, 20, { align: "center" });
+
+    let dashY = 43;
+    const dashGap = 6;
+    const dashCardW = (contentWidth - dashGap * 3) / 4;
+    drawDashboardCard(margin, dashY, dashCardW, 28, "System collected", fmtCurrency(totales.totalCaja), `${collectionRate.toFixed(1)}% of sales collected`, [37, 99, 235]);
+    drawDashboardCard(margin + (dashCardW + dashGap), dashY, dashCardW, 28, "Real counted", fmtCurrency(totalReal), "Manual counted money entered", [5, 150, 105]);
+    drawDashboardCard(margin + (dashCardW + dashGap) * 2, dashY, dashCardW, 28, "Over / short", fmtCurrency(variance), status, statusColor);
+    drawDashboardCard(margin + (dashCardW + dashGap) * 3, dashY, dashCardW, 28, "Net cash turn-in", fmtCurrency(totales.efectivoNeto), `Cash minus ${fmtCurrency(totales.gastosTotal)} expenses`, [79, 70, 229]);
+
+    dashY += 36;
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(margin, dashY, contentWidth * 0.52, 66, 5, 5, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Money Flow", margin + 6, dashY + 9);
+    drawProgress(margin + 6, dashY + 19, contentWidth * 0.52 - 12, "Cash", totales.totalEfectivo, Math.max(1, totales.totalCaja), [34, 197, 94]);
+    drawProgress(margin + 6, dashY + 32, contentWidth * 0.52 - 12, "Card", totales.totalTarjeta, Math.max(1, totales.totalCaja), [99, 102, 241]);
+    drawProgress(margin + 6, dashY + 45, contentWidth * 0.52 - 12, "Transfer", totales.totalTransferencia, Math.max(1, totales.totalCaja), [14, 165, 233]);
+    drawProgress(margin + 6, dashY + 58, contentWidth * 0.52 - 12, "Other / check", totales.totalOtros, Math.max(1, totales.totalCaja), [245, 158, 11]);
+
+    const rightX = margin + contentWidth * 0.55;
+    const rightW = contentWidth * 0.45;
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(rightX, dashY, rightW, 66, 5, 5, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("A/R and Control Signals", rightX + 6, dashY + 9);
+    const signalRows = [
+      ["New A/R", fmtCurrency(cxcResumen.deudaNueva), cxcResumen.deudaNueva > 0 ? [217, 119, 6] : [5, 150, 105]],
+      ["A/R collected", fmtCurrency(cxcResumen.pagosDeuda), [5, 150, 105]],
+      ["Net A/R change", `${cxcResumen.cambioNeto >= 0 ? "+" : ""}${fmtCurrency(cxcResumen.cambioNeto)}`, cxcResumen.cambioNeto > 0 ? [217, 119, 6] : [5, 150, 105]],
+      ["Driver expenses", fmtCurrency(totales.gastosTotal), totales.gastosTotal > 0 ? [234, 88, 12] : [5, 150, 105]],
+    ];
+    signalRows.forEach((row, index) => {
+      const rowY = dashY + 20 + index * 11;
+      doc.setFillColor(...row[2]);
+      doc.circle(rightX + 8, rowY - 1.5, 2, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(row[0], rightX + 14, rowY);
+      doc.setTextColor(...row[2]);
+      doc.text(row[1], rightX + rightW - 6, rowY, { align: "right" });
+    });
+
+    dashY += 76;
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(margin, dashY, contentWidth * 0.5 - 3, 42, 5, 5, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Top Customers Today", margin + 6, dashY + 9);
+    topCustomers.slice(0, 4).forEach((c, index) => {
+      const lineY = dashY + 17 + index * 6;
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(`${index + 1}. ${c.name}`.slice(0, 42), margin + 6, lineY);
+      doc.setFont("helvetica", "bold");
+      doc.text(fmtCurrency(c.sales), margin + contentWidth * 0.5 - 10, lineY, { align: "right" });
+      doc.setFont("helvetica", "normal");
+    });
+
+    const actionX = margin + contentWidth * 0.5 + 3;
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(actionX, dashY, contentWidth * 0.5 - 3, 42, 5, 5, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Action Queue", actionX + 6, dashY + 9);
+    recommendations.slice(0, 4).forEach((item, index) => {
+      const lines = doc.splitTextToSize(item, contentWidth * 0.5 - 18);
+      const lineY = dashY + 17 + index * 6;
+      doc.setFontSize(7);
+      doc.setTextColor(index === 0 && status !== "Balanced" ? 185 : 71, index === 0 && status !== "Balanced" ? 28 : 85, index === 0 && status !== "Balanced" ? 28 : 105);
+      doc.text(`${index + 1}. ${lines[0]}`, actionX + 6, lineY);
+    });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text("Page 2 contains the accounting detail tables used to verify this dashboard.", margin, pageHeight - 8);
+    doc.text(`Generated ${generatedAt}`, pageWidth - margin, pageHeight - 8, { align: "right" });
+
+    doc.addPage();
+
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, pageWidth, 36, "F");
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, 5, 36, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("Tools4Care Daily Closeout", margin, 14);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text(
+      `${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} | VAN ${van?.nombre || van?.alias || "VAN"} | ${usuario?.nombre || usuario?.email || "Unknown user"}`,
+      margin,
+      23
+    );
+    doc.text(`Report status: ${status}`, margin, 31);
+
+    doc.setFillColor(...statusColor);
+    doc.roundedRect(pageWidth - 58, 10, 44, 13, 3, 3, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text(status, pageWidth - 36, 18.5, { align: "center" });
+
+    let y = 45;
+    const cardGap = 4;
+    const cardW = (contentWidth - cardGap * 3) / 4;
+    metricCard(margin, y, cardW, "System collected", fmtCurrency(totales.totalCaja), "Gross money in system", [37, 99, 235]);
+    metricCard(margin + (cardW + cardGap), y, cardW, "Real counted", fmtCurrency(totalReal), "Entered by driver/admin", [5, 150, 105]);
+    metricCard(margin + (cardW + cardGap) * 2, y, cardW, "Variance", fmtCurrency(variance), status, statusColor);
+    metricCard(margin + (cardW + cardGap) * 3, y, cardW, "Net A/R", `${cxcResumen.cambioNeto >= 0 ? "+" : ""}${fmtCurrency(cxcResumen.cambioNeto)}`, "Debt movement today", cxcResumen.cambioNeto > 0 ? [217, 119, 6] : [5, 150, 105]);
+
+    y += 34;
+    y = sectionHeader("Decision Snapshot", y, [15, 23, 42]);
+    autoTable(doc, {
+      ...moneyTableStyles,
+      startY: y,
+      head: [["Metric", "Value", "Why it matters"]],
+      body: [
+        ["Sales volume", fmtCurrency(totales.totalVentas), `${salesRows.length} sale records - avg ${fmtCurrency(avgSale)}`],
+        ["Money collected", fmtCurrency(totales.totalCaja), `${collectionRate.toFixed(1)}% of sales collected today`],
+        ["Net cash to turn in", fmtCurrency(totales.efectivoNeto), `Cash after ${fmtCurrency(totales.gastosTotal)} driver expenses`],
+        ["Driver expenses", fmtCurrency(totales.gastosTotal), `${expenseRate.toFixed(1)}% of collected money`],
+        ["A/R created", fmtCurrency(cxcResumen.deudaNueva), "New customer debt generated by unpaid sales"],
+        ["A/R collected", fmtCurrency(cxcResumen.pagosDeuda), "Payments applied to previous debt"],
+      ],
+      columnStyles: { 0: { fontStyle: "bold" }, 1: { halign: "right", fontStyle: "bold" } },
+    });
+
+    y = doc.lastAutoTable.finalY + 8;
+    y = sectionHeader("Cash Reconciliation by Method", y);
+    const paymentRows = [
+      ["Cash", fmtCurrency(totales.totalEfectivo), fmtCurrency(cashReal), fmtCurrency(cashReal - totales.totalEfectivo), `${totales.totalCaja ? ((totales.totalEfectivo / totales.totalCaja) * 100).toFixed(1) : "0.0"}%`],
+      ["Card", fmtCurrency(totales.totalTarjeta), fmtCurrency(cardReal), fmtCurrency(cardReal - totales.totalTarjeta), `${totales.totalCaja ? ((totales.totalTarjeta / totales.totalCaja) * 100).toFixed(1) : "0.0"}%`],
+      ["Transfer", fmtCurrency(totales.totalTransferencia), fmtCurrency(transferReal), fmtCurrency(transferReal - totales.totalTransferencia), `${totales.totalCaja ? ((totales.totalTransferencia / totales.totalCaja) * 100).toFixed(1) : "0.0"}%`],
+      ["Other/check", fmtCurrency(totales.totalOtros), fmtCurrency(otherReal), fmtCurrency(otherReal - totales.totalOtros), `${totales.totalCaja ? ((totales.totalOtros / totales.totalCaja) * 100).toFixed(1) : "0.0"}%`],
+      ["TOTAL", fmtCurrency(totales.totalCajaNeto), fmtCurrency(totalReal), fmtCurrency(totalReal - totales.totalCajaNeto), "100%"],
+    ];
+    autoTable(doc, {
+      ...moneyTableStyles,
+      startY: y,
+      head: [["Method", "System", "Real", "Over/short", "Mix"]],
+      body: paymentRows,
+      columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
+      didParseCell: (data) => {
+        if (data.row.index === paymentRows.length - 1) {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fillColor = [239, 246, 255];
+        }
+      },
+    });
+
+    y = doc.lastAutoTable.finalY + 8;
+    y = sectionHeader("A/R Movement", y, [79, 70, 229]);
+    autoTable(doc, {
+      ...moneyTableStyles,
+      startY: y,
+      head: [["A/R item", "Amount", "Decision note"]],
+      body: [
+        ["New debt from sales", fmtCurrency(cxcResumen.deudaNueva), "Customers bought more than they paid today"],
+        ["Payments to old debt", fmtCurrency(cxcResumen.pagosDeuda), "Cash collected against previous balances"],
+        ["Returns / credits reducing A/R", fmtCurrency(cxcResumen.reducciones), "Non-cash reductions"],
+        ["Net A/R change", `${cxcResumen.cambioNeto >= 0 ? "+" : ""}${fmtCurrency(cxcResumen.cambioNeto)}`, cxcResumen.cambioNeto > 0 ? "Receivables increased - follow up" : "Receivables decreased"],
+      ],
+      columnStyles: { 0: { fontStyle: "bold" }, 1: { halign: "right", fontStyle: "bold" } },
+    });
+
+    if (gastosValidos.length > 0) {
+      y = doc.lastAutoTable.finalY + 8;
+      y = sectionHeader("Driver Expenses", y, [234, 88, 12]);
+      autoTable(doc, {
+        ...moneyTableStyles,
+        startY: y,
+        head: [["Date", "Category", "Description", "Amount"]],
+        body: [
+          ...gastosValidos.map((g) => [
+            g.fecha || fechasSeleccionadas[0],
+            g.categoria || "other",
+            `${g.descripcion || ""}${g.factura_url ? " - receipt attached" : ""}`,
+            fmtCurrency(g.monto),
+          ]),
+          ["", "", "TOTAL EXPENSES", fmtCurrency(totales.gastosTotal)],
+        ],
+        headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+        columnStyles: { 3: { halign: "right", fontStyle: "bold" } },
+      });
+    }
+
+    y = doc.lastAutoTable.finalY + 8;
+    y = sectionHeader("Top Customers by Sales", y, [8, 145, 178]);
+    autoTable(doc, {
+      ...moneyTableStyles,
+      startY: y,
+      head: [["Customer", "Sales", "Paid", "Open amount", "# Sales"]],
+      body: topCustomers.length
+        ? topCustomers.map((c) => [c.name, fmtCurrency(c.sales), fmtCurrency(c.paid), fmtCurrency(Math.max(0, c.sales - c.paid)), c.count])
+        : [["No customer sales", "$0.00", "$0.00", "$0.00", "0"]],
+      headStyles: { fillColor: [8, 145, 178], textColor: 255, fontStyle: "bold" },
+      columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "center" } },
+    });
+
+    y = doc.lastAutoTable.finalY + 8;
+    y = sectionHeader("Largest Transactions", y, [67, 56, 202]);
+    autoTable(doc, {
+      ...moneyTableStyles,
+      startY: y,
+      head: [["Time", "Customer", "Type", "Method", "Amount"]],
+      body: largeTransactions.length
+        ? largeTransactions.map((t) => [
+            t.created_at ? new Date(t.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "",
+            t.cliente || "Walk-in",
+            t.tipo === "payment" ? "A/R payment" : "Sale",
+            t.subMetodo || t.metodo || "",
+            fmtCurrency(t.monto),
+          ])
+        : [["", "No transactions", "", "", "$0.00"]],
+      headStyles: { fillColor: [67, 56, 202], textColor: 255, fontStyle: "bold" },
+      columnStyles: { 4: { halign: "right", fontStyle: "bold" } },
+    });
+
+    y = doc.lastAutoTable.finalY + 8;
+    y = sectionHeader("Action Items", y, [15, 23, 42]);
+    autoTable(doc, {
+      ...moneyTableStyles,
+      startY: y,
+      head: [["Priority", "Recommended action"]],
+      body: recommendations.map((item, index) => [`${index + 1}`, item]),
+      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold" },
+      columnStyles: { 0: { halign: "center", fontStyle: "bold", cellWidth: 18 } },
+    });
+
+    if (observaciones.trim()) {
+      y = ensureSpace(doc.lastAutoTable.finalY + 8, 30);
+      y = sectionHeader("Notes", y, [71, 85, 105]);
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(248, 250, 252);
+      const noteLines = doc.splitTextToSize(observaciones.trim(), contentWidth - 8);
+      const noteHeight = Math.min(42, Math.max(16, noteLines.length * 4.5 + 8));
+      doc.roundedRect(margin, y, contentWidth, noteHeight, 2, 2, "FD");
+      doc.setTextColor(51, 65, 85);
+      doc.setFontSize(8);
+      doc.text(noteLines.slice(0, 8), margin + 4, y + 7);
+    }
+
+    addFooter();
+    return doc;
+  };
+
   /* ========================= Email Report ========================= */
   const handleSendEmailReport = async () => {
     if (!reportEmail.trim()) return;
@@ -1100,6 +1526,24 @@ useEffect(() => {
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;">${g.descripcion || ""}${g.factura_url ? ` · <a href="${g.factura_url}">View receipt</a>` : ""}</td>
           <td style="padding:4px 8px;border-bottom:1px solid #ffedd5;font-weight:bold;color:#c2410c;text-align:right;">${fmtCurrency(g.monto)}</td>
         </tr>`).join("");
+
+      let pdfDownloadUrl = "";
+      try {
+        const { jsPDF, autoTable } = await loadPdfLibs();
+        const doc = new jsPDF({ orientation: "landscape" });
+        buildCloseoutPdf(doc, autoTable);
+        const pdfBlob = doc.output("blob");
+        const safeVan = String(van?.nombre || van?.nombre_van || "VAN").replace(/[^a-z0-9_-]+/gi, "-");
+        const path = `${van?.id || "van"}/closeout-${safeVan}-${fechasSeleccionadas[0] || "report"}-${Date.now()}.pdf`;
+        const { error: uploadError } = await supabase.storage
+          .from("expense-receipts")
+          .upload(path, pdfBlob, { contentType: "application/pdf", upsert: true });
+        if (uploadError) throw uploadError;
+        const { data: publicPdf } = supabase.storage.from("expense-receipts").getPublicUrl(path);
+        pdfDownloadUrl = publicPdf?.publicUrl || "";
+      } catch (pdfError) {
+        console.warn("Could not create PDF download link for email:", pdfError?.message || pdfError);
+      }
 
       const html = `
         <div style="font-family:Arial,sans-serif;max-width:650px;margin:0 auto;">
@@ -1167,6 +1611,13 @@ useEffect(() => {
             </div>
             ` : ""}
 
+            ${pdfDownloadUrl ? `
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px;margin-bottom:16px;text-align:center;">
+              <div style="font-size:13px;color:#1e3a8a;margin-bottom:10px;font-weight:bold;">PDF report available</div>
+              <a href="${pdfDownloadUrl}" style="display:inline-block;background:#2563eb;color:white;text-decoration:none;border-radius:8px;padding:10px 16px;font-size:13px;font-weight:bold;">Download PDF report</a>
+            </div>
+            ` : ""}
+
             ${observaciones.trim() ? `
             <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">📝 Notes</h2>
             <div style="background:white;border:1px solid #e5e7eb;border-radius:8px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:16px;">${observaciones}</div>
@@ -1221,270 +1672,8 @@ useEffect(() => {
 
     try {
       const { jsPDF, autoTable } = await loadPdfLibs();
-      const doc = new jsPDF();
-      const businessName = "Tools4Care";
-      const reportTitle = "Van Multi-Day Closure Report";
-
-      // Header
-      doc.setFillColor(25, 118, 210);
-      doc.rect(0, 0, 210, 30, "F");
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(20);
-      doc.text(businessName, 14, 20);
-      doc.setFontSize(16);
-      doc.text(reportTitle, 14, 30);
-      doc.setTextColor(0, 0, 0);
-
-      // Business information
-      doc.setFillColor(240, 240, 240);
-      doc.rect(14, 35, 182, 30, "F");
-      doc.setFontSize(10);
-      doc.text(
-        `Dates: ${fechasSeleccionadas
-          .map((f) => formatUS(f))
-          .join(", ")}`,
-        14,
-        45
-      );
-      doc.text(
-        `VAN: ${van?.nombre || van?.alias || "No name"}`,
-        14,
-        52
-      );
-      doc.text(`User: ${usuario?.nombre || "No name"}`, 14, 59);
-
-      // Executive Summary
-      doc.setFillColor(25, 118, 210);
-      doc.rect(14, 70, 182, 10, "F");
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("Executive Summary", 14, 78);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(0, 0, 0);
-
-      const summaryData = [
-        ["Metric", "Value"],
-        ["Number of Dates", fechasSeleccionadas.length],
-        [
-          "Total Sales",
-          totales.totalVentas > 0
-            ? fmtCurrency(totales.totalVentas)
-            : "$0.00",
-        ],
-        [
-          "Total in System",
-          totales.totalCaja > 0
-            ? fmtCurrency(totales.totalCaja)
-            : "$0.00",
-        ],
-        [
-          "Total Real",
-          fmtCurrency(
-            cashReal + cardReal + transferReal + otherReal
-          ),
-        ],
-        [
-          "Discrepancy",
-          totales.diferencia > 0
-            ? fmtCurrency(totales.diferencia)
-            : "$0.00",
-        ],
-        ["New A/R Debt from Sales", fmtCurrency(cxcResumen.deudaNueva)],
-        ["A/R Reduced by Returns", fmtCurrency(cxcResumen.reducciones)],
-        ["Payments Applied to Old Debt", fmtCurrency(cxcResumen.pagosDeuda)],
-        [
-          "Net A/R Change",
-          `${cxcResumen.cambioNeto > 0 ? "+" : ""}${fmtCurrency(cxcResumen.cambioNeto)}`,
-        ],
-      ];
-
-      autoTable(doc, {
-        startY: 83,
-        head: [summaryData[0]],
-        body: summaryData.slice(1),
-        theme: "grid",
-        styles: { fontSize: 8 },
-        headStyles: {
-          fillColor: [25, 118, 210],
-          textColor: 255,
-          fontStyle: "bold",
-        },
-      });
-
-      // Payment Methods
-      const paymentY = doc.lastAutoTable.finalY + 10;
-      doc.setFillColor(25, 118, 210);
-      doc.rect(14, paymentY, 182, 10, "F");
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("Payment Methods Breakdown", 14, paymentY + 8);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(0, 0, 0);
-
-      const paymentData = [
-        [
-          "Method",
-          "System Amount",
-          "Real Amount",
-          "Difference",
-          "Percentage",
-        ],
-        [
-          "Cash",
-          fmtCurrency(totales.totalEfectivo),
-          fmtCurrency(cashReal),
-          fmtCurrency(
-            Math.abs(totales.totalEfectivo - cashReal)
-          ),
-          `${
-            totales.totalCaja > 0
-              ? ((totales.totalEfectivo / totales.totalCaja) *
-                  100
-                ).toFixed(1)
-              : "0.0"
-          }%`,
-        ],
-        [
-          "Card",
-          fmtCurrency(totales.totalTarjeta),
-          fmtCurrency(cardReal),
-          fmtCurrency(
-            Math.abs(totales.totalTarjeta - cardReal)
-          ),
-          `${
-            totales.totalCaja > 0
-              ? ((totales.totalTarjeta / totales.totalCaja) *
-                  100
-                ).toFixed(1)
-              : "0.0"
-          }%`,
-        ],
-        [
-          "Transfer",
-          fmtCurrency(totales.totalTransferencia),
-          fmtCurrency(transferReal),
-          fmtCurrency(
-            Math.abs(
-              totales.totalTransferencia - transferReal
-            )
-          ),
-          `${
-            totales.totalCaja > 0
-              ? (
-                  (totales.totalTransferencia /
-                    totales.totalCaja) *
-                  100
-                ).toFixed(1)
-              : "0.0"
-          }%`,
-        ],
-        [
-          "Other",
-          fmtCurrency(totales.totalOtros),
-          fmtCurrency(otherReal),
-          fmtCurrency(
-            Math.abs(totales.totalOtros - otherReal)
-          ),
-          `${
-            totales.totalCaja > 0
-              ? ((totales.totalOtros / totales.totalCaja) *
-                  100
-                ).toFixed(1)
-              : "0.0"
-          }%`,
-        ],
-        ["", "", "", "", ""],
-        [
-          "Total",
-          fmtCurrency(totales.totalCaja),
-          fmtCurrency(
-            cashReal + cardReal + transferReal + otherReal
-          ),
-          fmtCurrency(totales.diferencia),
-          "100%",
-        ],
-      ];
-
-      autoTable(doc, {
-        startY: paymentY + 12,
-        head: [paymentData[0]],
-        body: paymentData.slice(1),
-        theme: "grid",
-        styles: { fontSize: 8 },
-        headStyles: {
-          fillColor: [25, 118, 210],
-          textColor: 255,
-          fontStyle: "bold",
-        },
-      });
-
-      // Driver Expenses
-      const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
-      if (gastosValidos.length > 0) {
-        const gastosY = doc.lastAutoTable.finalY + 10;
-        doc.setFillColor(234, 88, 12);
-        doc.rect(14, gastosY, 182, 10, "F");
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text("Driver Expenses", 14, gastosY + 8);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(0, 0, 0);
-
-        const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
-        const gastosTableBody = gastosValidos.map((g) => [
-          g.fecha || fechasSeleccionadas[0],
-          g.categoria || "otro",
-          `${g.descripcion || ""}${g.factura_url ? " (receipt attached)" : ""}`,
-          fmtCurrency(g.monto),
-        ]);
-        gastosTableBody.push(["", "", "TOTAL", fmtCurrency(gastosTotal)]);
-
-        autoTable(doc, {
-          startY: gastosY + 12,
-          head: [["Date", "Category", "Description", "Amount"]],
-          body: gastosTableBody,
-          theme: "grid",
-          styles: { fontSize: 8 },
-          headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
-          didParseCell: (data) => {
-            if (data.row.index === gastosTableBody.length - 1) {
-              data.cell.styles.fontStyle = "bold";
-              data.cell.styles.fillColor = [255, 237, 213];
-            }
-          },
-        });
-      }
-
-      // Notes
-      if (observaciones) {
-        const notesY = doc.lastAutoTable.finalY + 10;
-        doc.setFillColor(25, 118, 210);
-        doc.rect(14, notesY, 182, 10, "F");
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text("Notes", 14, notesY + 8);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(0, 0, 0);
-        doc.text(observaciones, 14, notesY + 18, {
-          maxWidth: 180,
-        });
-      }
-
-      // Footer
-      const footerY = 270;
-      doc.setFontSize(8);
-      doc.setTextColor(100, 100, 100);
-      doc.text(
-        `Generated on ${new Date().toLocaleString()}`,
-        14,
-        footerY
-      );
-      doc.text(`Tools4Care Financial System`, 14, footerY + 6);
-
+      const doc = new jsPDF({ orientation: "landscape" });
+      buildCloseoutPdf(doc, autoTable);
       doc.save(
         `VanClosure_${fechasSeleccionadas[0]}_${
           van?.nombre || "VAN"
@@ -2528,7 +2717,7 @@ useEffect(() => {
             {/* Notes */}
             <div className="w-full">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Notes {totales.diferencia > 0 && "(required)"}
+                Notes {totales.diferencia >= NOTE_REQUIRED_DISCREPANCY && "(required)"}
               </label>
               <textarea
                 value={observaciones}
@@ -2555,7 +2744,7 @@ useEffect(() => {
               onClick={handleCierreVan}
               disabled={
                 cargando ||
-                (totales.diferencia > 0 &&
+                (totales.diferencia >= NOTE_REQUIRED_DISCREPANCY &&
                   !observaciones.trim())
               }
               className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
@@ -3126,7 +3315,7 @@ useEffect(() => {
               {/* System breakdown from sales */}
               <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50 p-4">
                 <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-violet-700">
-                  From Sales (System)
+                  From Sales + CxC (System)
                 </p>
                 <div className="space-y-2">
                   {TRANSFER_TYPES.map((type) => {

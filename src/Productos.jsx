@@ -318,7 +318,7 @@ const SIZES_COMUNES = [
   "SAMPLE", "TRAVEL SIZE", "PROFESSIONAL SIZE", "GALLON", "QUART", "PINT"
 ];
 
-function PestañaVentas({ productoId }) {
+function PestañaVentas({ productoId, costoUnit = 0 }) {
   const [allRows, setAllRows] = useState([]);
   const [mesSeleccionado, setMesSeleccionado] = useState("");
   const [loading, setLoading] = useState(false);
@@ -334,6 +334,8 @@ function PestañaVentas({ productoId }) {
     return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
   const fmtCur = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const fmtPct = (n) => `${Number(n || 0).toFixed(1)}%`;
+  const cost = Number(costoUnit || 0);
 
   useEffect(() => {
     if (!productoId) return;
@@ -389,12 +391,13 @@ function PestañaVentas({ productoId }) {
   const porMes = useMemo(() => {
     const agg = {};
     allRows.forEach((r) => {
-      if (!agg[r.mes]) agg[r.mes] = { mes: r.mes, qty: 0, revenue: 0 };
+      if (!agg[r.mes]) agg[r.mes] = { mes: r.mes, qty: 0, revenue: 0, profit: 0 };
       agg[r.mes].qty += r.qty;
       agg[r.mes].revenue += r.total;
+      agg[r.mes].profit += r.total - (r.qty * cost);
     });
     return Object.values(agg).sort((a, b) => b.mes.localeCompare(a.mes));
-  }, [allRows]);
+  }, [allRows, cost]);
 
   const filasMes = useMemo(
     () => allRows.filter((r) => r.mes === mesSeleccionado),
@@ -403,8 +406,15 @@ function PestañaVentas({ productoId }) {
 
   const totalUnits = allRows.reduce((s, r) => s + r.qty, 0);
   const totalRevenue = allRows.reduce((s, r) => s + r.total, 0);
+  const totalCost = allRows.reduce((s, r) => s + (r.qty * cost), 0);
+  const totalProfit = totalRevenue - totalCost;
+  const totalMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+  const avgProfitUnit = totalUnits > 0 ? totalProfit / totalUnits : 0;
   const mesQty = filasMes.reduce((s, r) => s + r.qty, 0);
   const mesRevenue = filasMes.reduce((s, r) => s + r.total, 0);
+  const mesCost = filasMes.reduce((s, r) => s + (r.qty * cost), 0);
+  const mesProfit = mesRevenue - mesCost;
+  const mesMargin = mesRevenue > 0 ? (mesProfit / mesRevenue) * 100 : 0;
 
   if (loading) {
     return (
@@ -437,6 +447,21 @@ function PestañaVentas({ productoId }) {
             <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wide">Total Revenue</p>
             <p className="text-xl font-bold text-emerald-800">{fmtCur(totalRevenue)}</p>
           </div>
+          <div className="bg-violet-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-violet-500 font-bold uppercase tracking-wide">Gross Profit</p>
+            <p className={`text-xl font-bold ${totalProfit >= 0 ? "text-violet-800" : "text-red-700"}`}>{fmtCur(totalProfit)}</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-amber-600 font-bold uppercase tracking-wide">Margin</p>
+            <p className={`text-xl font-bold ${totalMargin >= 30 ? "text-emerald-700" : totalMargin >= 15 ? "text-amber-700" : "text-red-700"}`}>
+              {cost > 0 ? fmtPct(totalMargin) : "—"}
+            </p>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          {cost > 0
+            ? <>Estimated profit uses current cost <strong>{fmtCur(cost)}</strong> per unit. Avg profit/unit: <strong>{fmtCur(avgProfitUnit)}</strong>.</>
+            : <>Add product cost to calculate real gross profit and margin.</>}
         </div>
 
         {/* Chart */}
@@ -454,10 +479,15 @@ function PestañaVentas({ productoId }) {
               />
               <YAxis fontSize={10} />
               <Tooltip
-                formatter={(v, name) => [name === "qty" ? `${v} units` : fmtCur(v), name === "qty" ? "Units" : "Revenue"]}
+                formatter={(v, name) => {
+                  if (name === "qty") return [`${v} units`, "Units"];
+                  if (name === "profit") return [fmtCur(v), "Gross Profit"];
+                  return [fmtCur(v), "Revenue"];
+                }}
                 labelFormatter={fmtMes}
               />
               <Bar dataKey="qty" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+              {cost > 0 && <Bar dataKey="profit" fill="#8B5CF6" radius={[4, 4, 0, 0]} />}
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -488,6 +518,14 @@ function PestañaVentas({ productoId }) {
             <span className="text-xs text-gray-500">Revenue</span>
             <span className="text-sm font-bold text-emerald-700">{fmtCur(mesRevenue)}</span>
           </div>
+          <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+            <span className="text-xs text-gray-500">Profit</span>
+            <span className={`text-sm font-bold ${mesProfit >= 0 ? "text-violet-700" : "text-red-700"}`}>{cost > 0 ? fmtCur(mesProfit) : "—"}</span>
+          </div>
+          <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+            <span className="text-xs text-gray-500">Margin</span>
+            <span className={`text-sm font-bold ${mesMargin >= 30 ? "text-emerald-700" : mesMargin >= 15 ? "text-amber-700" : "text-red-700"}`}>{cost > 0 ? fmtPct(mesMargin) : "—"}</span>
+          </div>
         </div>
       </div>
 
@@ -507,6 +545,11 @@ function PestañaVentas({ productoId }) {
               <p className="text-xs text-gray-400">
                 {f.qty} × {fmtCur(f.unitPrice)}
               </p>
+              {cost > 0 && (
+                <p className={`text-xs font-semibold ${(f.total - f.qty * cost) >= 0 ? "text-violet-600" : "text-red-600"}`}>
+                  Profit {fmtCur(f.total - f.qty * cost)}
+                </p>
+              )}
             </div>
           </div>
         ))}
@@ -1862,7 +1905,7 @@ export default function Productos() {
                 </form>
               ) : (
                 <div className="px-4 sm:px-5 py-4">
-                  <PestañaVentas productoId={productoActual.id} nombre={productoActual.nombre} />
+                  <PestañaVentas productoId={productoActual.id} nombre={productoActual.nombre} costoUnit={Number(productoActual.costo || 0)} />
                 </div>
               )}
             </div>

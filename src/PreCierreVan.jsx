@@ -96,16 +96,21 @@ function sanitizeMoneyInput(value) {
   return decimals.length ? `${whole}.${decimals.join("").slice(0, 2)}` : whole;
 }
 
-function isOtherPaymentMethod(method) {
-  const value = String(method || "").toLowerCase();
-  return !(
-    value.includes("cash") || value.includes("efectivo") ||
-    value.includes("card") || value.includes("tarjeta") ||
+function normalizeCloseoutMethod(raw) {
+  const value = String(raw || "").toLowerCase();
+  if (
     value.includes("transfer") || value.includes("zelle") ||
     value.includes("venmo") || value.includes("cash app") ||
     value.includes("cashapp") || value.includes("apple pay") ||
     value.includes("applepay")
-  );
+  ) return "transfer";
+  if (value.includes("cash") || value.includes("efectivo")) return "cash";
+  if (value.includes("card") || value.includes("tarjeta")) return "card";
+  return "other";
+}
+
+function isOtherPaymentMethod(method) {
+  return normalizeCloseoutMethod(method) === "other";
 }
 
 /* ========================= Custom Hook ========================= */
@@ -194,8 +199,9 @@ function usePrecloseRows(vanId, diasAtras = 21) {
             };
           });
 
-        // The RPC already includes cash/card/transfer. Add sales and direct CxC
-        // checks/other separately because the legacy RPC has no other bucket.
+        // The RPC can miss direct CxC payments. Sale payments have `idem_key`
+        // and are already represented by ventas.pago_*; direct CxC payments do
+        // not, so add them by method here.
         try {
           const [{ data: otherSales }, { data: directPayments }] = await Promise.all([
             supabase.from("ventas")
@@ -203,8 +209,8 @@ function usePrecloseRows(vanId, diasAtras = 21) {
               .eq("van_id", vanId).neq("tipo", "devolucion")
               .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
             supabase.from("pagos")
-              .select("monto, metodo_pago, fecha_pago")
-              .eq("van_id", vanId).not("idem", "is", null)
+              .select("monto, metodo_pago, fecha_pago, idem_key")
+              .eq("van_id", vanId).is("idem_key", null)
               .gte("fecha_pago", p_from + "T00:00:00").lte("fecha_pago", p_to + "T23:59:59"),
           ]);
           (otherSales || []).forEach((sale) => {
@@ -218,7 +224,6 @@ function usePrecloseRows(vanId, diasAtras = 21) {
             row.other_expected += Number(sale.pago_otro || 0);
           });
           (directPayments || []).forEach((p) => {
-            if (!isOtherPaymentMethod(p.metodo_pago)) return;
             const iso = String(p.fecha_pago || "").slice(0, 10);
             if (!iso) return;
             let row = normalized.find((r) => r.dia === iso);
@@ -226,7 +231,12 @@ function usePrecloseRows(vanId, diasAtras = 21) {
               row = { dia: iso, cash_expected: 0, card_expected: 0, transfer_expected: 0, mix_unallocated: 0, other_expected: 0 };
               normalized.push(row);
             }
-            row.other_expected += Number(p.monto || 0);
+            const amount = Number(p.monto || 0);
+            const method = normalizeCloseoutMethod(p.metodo_pago);
+            // The RPC already includes direct CxC cash/card. Supplement
+            // transfer sub-methods and checks/other that the RPC misses.
+            if (method === "other") row.other_expected += amount;
+            else if (method === "transfer") row.transfer_expected += amount;
           });
         } catch (_) { /* pagos table unavailable */ }
 
@@ -382,10 +392,10 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     pagos.forEach((p) => {
       const m = String(p.metodo || "").toLowerCase();
       const key =
-        m.includes("cash") || m.includes("efectivo") ? "efectivo" :
-        m.includes("card") || m.includes("tarjeta") ? "tarjeta" :
         m.includes("transfer") || m.includes("zelle") || m.includes("venmo") ||
         m.includes("cash app") || m.includes("cashapp") || m.includes("apple pay") ? "transferencia" :
+        m.includes("cash") || m.includes("efectivo") ? "efectivo" :
+        m.includes("card") || m.includes("tarjeta") ? "tarjeta" :
         "otro";
       map[key] += Number(p.monto || 0);
     });
@@ -1205,12 +1215,12 @@ function HistorialCierres({ van, usuario }) {
       let pagosRows = [];
       let pagosProbeOk = false;
       for (const col of ["metodo_pago", "metodo", "forma_pago"]) {
-        const sel = `id, monto, ${col}, fecha_pago, idem, cliente_id, clientes:cliente_id(nombre)`;
+        const sel = `id, monto, ${col}, fecha_pago, idem_key, cliente_id, clientes:cliente_id(nombre)`;
         const { data: p, error: pErr } = await supabase
           .from("pagos")
           .select(sel)
           .eq("van_id", van.id)
-          .not("idem", "is", null)
+          .is("idem_key", null)
           .gte("fecha_pago", start)
           .lte("fecha_pago", end)
           .order("fecha_pago", { ascending: false });
@@ -1225,9 +1235,9 @@ function HistorialCierres({ van, usuario }) {
       if (!pagosProbeOk) {
         const { data: p } = await supabase
           .from("pagos")
-          .select("id, monto, fecha_pago, idem, cliente_id, clientes:cliente_id(nombre)")
+          .select("id, monto, fecha_pago, idem_key, cliente_id, clientes:cliente_id(nombre)")
           .eq("van_id", van.id)
-          .not("idem", "is", null)
+          .is("idem_key", null)
           .gte("fecha_pago", start)
           .lte("fecha_pago", end)
           .order("fecha_pago", { ascending: false });

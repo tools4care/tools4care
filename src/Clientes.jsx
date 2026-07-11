@@ -187,6 +187,12 @@ const safe2 = (n) => {
 const fmtSafe = (n) =>
   `$${safe2(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+function chunkArray(arr, size = 80) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+  return chunks;
+}
+
 /** ================== HELPERS DIRECCIÓN ================== */
 /**
  * Acepta un string de dirección libre (ej: "11 Winthrop Ave, Beverly MA 01915")
@@ -1177,7 +1183,7 @@ const fetchPage = async (opts = {}) => {
   useEffect(() => {
     async function cargarResumen() {
       if (!clienteSeleccionado) {
-        setResumen({ ventas: [], pagos: [], balance: 0, cxc: null, timeline: [], timelineLoading: false });
+        setResumen({ ventas: [], pagos: [], productosComprados: [], balance: 0, cxc: null, timeline: [], timelineLoading: false });
         return;
       }
       setResumen((prev) => ({ ...prev, timelineLoading: true }));
@@ -1194,6 +1200,18 @@ const fetchPage = async (opts = {}) => {
       ]);
       const ventas = ventasRes.data || [];
       const pagos = pagosRes.data || [];
+      let productosComprados = [];
+      const ventaIds = ventas
+        .filter((sale) => (sale.tipo || "venta") !== "devolucion")
+        .map((sale) => sale.id)
+        .filter(Boolean);
+      for (const group of chunkArray(ventaIds, 80)) {
+        const { data: detalleRows } = await supabase
+          .from("detalle_ventas")
+          .select("venta_id, cantidad, precio_unitario, subtotal, productos:producto_id(nombre, costo)")
+          .in("venta_id", group);
+        productosComprados.push(...(detalleRows || []));
+      }
       const balanceCxC = cxcInfo ? cxcInfo.saldo : 0;
       const purchaseRecords = ventas
         .filter((sale) => (sale.tipo || "venta") !== "devolucion")
@@ -1225,6 +1243,7 @@ const fetchPage = async (opts = {}) => {
       setResumen({
         ventas,
         pagos,
+        productosComprados,
         balance: balanceCxC,
         cxc: cxcInfo,
         timeline: withBalances,
@@ -2056,6 +2075,30 @@ function ClienteStatsModal({
     comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
     lifetimeTotal += Number(v.total_venta || 0);
   });
+  const pagosPorMes = {};
+  (resumen.pagos || []).forEach(p => {
+    if (!p.fecha_pago) return;
+    const mes = p.fecha_pago.slice(0, 7);
+    pagosPorMes[mes] = (pagosPorMes[mes] || 0) + Number(p.monto || 0);
+  });
+  const productMap = {};
+  (resumen.productosComprados || []).forEach((row) => {
+    const name = row.productos?.nombre || "Unknown product";
+    const qty = Number(row.cantidad || 0);
+    const revenue = Number(row.subtotal || 0) || (qty * Number(row.precio_unitario || 0));
+    const cost = qty * Number(row.productos?.costo || 0);
+    if (!productMap[name]) productMap[name] = { name, qty: 0, revenue: 0, profit: 0 };
+    productMap[name].qty += qty;
+    productMap[name].revenue += revenue;
+    productMap[name].profit += revenue - cost;
+  });
+  const topProducts = Object.values(productMap)
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+  const bestMonth = Object.entries(comprasPorMes)
+    .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0] || null;
+  const totalPaid = Object.values(pagosPorMes).reduce((s, v) => s + Number(v || 0), 0);
+  const paymentCoverage = lifetimeTotal > 0 ? (totalPaid / lifetimeTotal) * 100 : 0;
 
   const mesesGrafico = [];
   const hoy = new Date();
@@ -2064,7 +2107,12 @@ function ClienteStatsModal({
     const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     mesesGrafico.unshift(label);
   }
-  const dataChart = mesesGrafico.map(mes => ({ mes: mes.slice(5), fullMes: mes, compras: comprasPorMes[mes] || 0 }));
+  const dataChart = mesesGrafico.map(mes => ({
+    mes: mes.slice(5),
+    fullMes: mes,
+    compras: comprasPorMes[mes] || 0,
+    pagos: pagosPorMes[mes] || 0,
+  }));
 
   const limite = Number(resumen?.cxc?.limite ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
@@ -2215,6 +2263,79 @@ function ClienteStatsModal({
               </div>
             </div>
 
+            <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-4 mb-6">
+              <div className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                      <BarChart3 size={18} />
+                      Products this client buys most
+                    </h4>
+                    <p className="text-xs text-slate-500">Ranked by revenue, with estimated profit when product cost exists.</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Payment coverage</p>
+                    <p className={`text-lg font-bold ${paymentCoverage >= 90 ? "text-emerald-700" : paymentCoverage >= 70 ? "text-amber-700" : "text-red-700"}`}>
+                      {paymentCoverage.toFixed(0)}%
+                    </p>
+                  </div>
+                </div>
+                {topProducts.length === 0 ? (
+                  <div className="text-sm text-slate-400 py-6 text-center bg-slate-50 rounded-xl">No product detail available yet.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {topProducts.map((p, index) => {
+                      const share = lifetimeTotal > 0 ? (p.revenue / lifetimeTotal) * 100 : 0;
+                      const margin = p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0;
+                      return (
+                        <div key={p.name} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-900 truncate">{index + 1}. {p.name}</p>
+                              <p className="text-xs text-slate-500">{p.qty} units · {share.toFixed(0)}% of client sales</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="font-bold text-blue-700">{fmtSafe(p.revenue)}</p>
+                              <p className={`text-xs font-semibold ${p.profit >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                                Profit {fmtSafe(p.profit)} {p.profit !== p.revenue && `· ${margin.toFixed(0)}%`}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border-2 border-indigo-100 rounded-2xl p-5 shadow-sm">
+                <h4 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                  <TrendingUp size={18} />
+                  Decision snapshot
+                </h4>
+                <div className="space-y-3">
+                  <div className="bg-white/80 rounded-xl p-3 border border-indigo-100">
+                    <p className="text-[10px] uppercase font-bold text-indigo-500">Best purchase month</p>
+                    <p className="text-lg font-bold text-slate-900">{bestMonth ? `${bestMonth[0]} · ${fmtSafe(bestMonth[1])}` : "—"}</p>
+                  </div>
+                  <div className="bg-white/80 rounded-xl p-3 border border-indigo-100">
+                    <p className="text-[10px] uppercase font-bold text-indigo-500">Total paid recorded</p>
+                    <p className="text-lg font-bold text-emerald-700">{fmtSafe(totalPaid)}</p>
+                  </div>
+                  <div className="bg-white/80 rounded-xl p-3 border border-indigo-100">
+                    <p className="text-[10px] uppercase font-bold text-indigo-500">Current buying signal</p>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {saldo <= 30
+                        ? "Small balance. Do not treat as high risk by amount alone."
+                        : saldo > limite && limite > 0
+                          ? "Over credit limit. Review before extending more credit."
+                          : "Review products bought and recent payments before changing credit."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <ClientFinancialTimeline
               entries={resumen.timeline || []}
               loading={resumen.timelineLoading}
@@ -2253,7 +2374,7 @@ function ClienteStatsModal({
                     <XAxis dataKey="mes" fontSize={12} stroke="#6b7280" tickLine={false} fontWeight="600" />
                     <YAxis fontSize={12} stroke="#6b7280" tickLine={false} fontWeight="600" />
                     <Tooltip
-                      formatter={v => [`$${Number(v).toFixed(2)}`, "Sales"]}
+                      formatter={(v, name) => [`$${Number(v).toFixed(2)}`, name === "pagos" ? "Payments" : "Sales"]}
                       labelStyle={{ color: '#374151', fontWeight: '600' }}
                       contentStyle={{
                         backgroundColor: 'white',
@@ -2263,6 +2384,7 @@ function ClienteStatsModal({
                       }}
                     />
                     <Bar dataKey="compras" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+                    <Bar dataKey="pagos" fill="#10b981" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

@@ -84,7 +84,7 @@ const IconSend = () => (
 /* ===================== Utilities ===================== */
 function formatAddress(dir) {
   if (!dir) return "-";
-  
+
   if (typeof dir === "string") {
     try {
       dir = JSON.parse(dir);
@@ -92,7 +92,7 @@ function formatAddress(dir) {
       return dir;
     }
   }
-  
+
   if (typeof dir === "object" && dir !== null) {
     const partes = [
       dir.calle,
@@ -101,10 +101,10 @@ function formatAddress(dir) {
       dir.zip,
       dir.country
     ].filter(Boolean).map(p => String(p).trim()).filter(p => p.length > 0);
-    
+
     return partes.length ? partes.join(", ") : "-";
   }
-  
+
   return String(dir);
 }
 
@@ -136,13 +136,14 @@ function normalizeDetalleRows(rows, productosMap) {
     const qty = Number(d.cantidad || 1);
     const pct = Number(d.descuento ?? 0);
 
-    // precio_unitario_real = lo que realmente se cobró por unidad
-    // Si hay subtotal guardado, se usa. Si no, se aplica el descuento al base.
+    // precio_unitario_real = lo que realmente se cobró por unidad.
+    // Some old rows saved subtotal before discount; when a discount percent exists,
+    // the percent is the source of truth for the final unit price.
     const subtotalGuardado = Number(d.subtotal ?? 0);
-    const unitReal = subtotalGuardado > 0
-      ? Number((subtotalGuardado / qty).toFixed(2))
-      : pct > 0
-        ? Number((base * (1 - pct / 100)).toFixed(2))
+    const unitReal = pct > 0
+      ? Number((base * (1 - pct / 100)).toFixed(2))
+      : subtotalGuardado > 0
+        ? Number((subtotalGuardado / qty).toFixed(2))
         : base;
 
     return {
@@ -242,10 +243,12 @@ async function buildFacturaPDF(factura) {
   doc.text("Product/Service Details", 36, 230);
 
   let subtotalAcumulado = 0;
+  let regularSubtotal = 0;
+  let totalDiscounts = 0;
 
   // Generar filas
   let items = [];
-  
+
   if (factura.detalle_ventas && factura.detalle_ventas.length > 0) {
     items = factura.detalle_ventas.map((d) => {
       const codigo = d.productos?.codigo || "N/A";
@@ -253,28 +256,53 @@ async function buildFacturaPDF(factura) {
       const qty = Number(d.cantidad || 1);
       // precio_unitario ya viene normalizado (con descuento aplicado) desde normalizeDetalleRows
       const unit = Number(d.precio_unitario ?? d.precio_unit ?? 0);
+      const baseUnit = Number(d.precio_base ?? unit);
+      const pct = Number(d.descuento || 0);
       const sub = Number(d.subtotal ?? unit * qty);
+      const regularSub = Number((baseUnit * qty).toFixed(2));
+      const discountAmount = Math.max(0, Number((regularSub - sub).toFixed(2)));
       subtotalAcumulado += sub;
-      return [codigo, nombre, qty, "$" + unit.toFixed(2), "$" + sub.toFixed(2)];
+      regularSubtotal += regularSub;
+      totalDiscounts += discountAmount;
+      const discountText = discountAmount > 0
+        ? `-${"$" + discountAmount.toFixed(2)}${pct > 0 ? ` (${pct.toFixed(2).replace(/\.00$/, "")}%)` : ""}`
+        : "-";
+      return [
+        codigo,
+        nombre,
+        qty,
+        "$" + baseUnit.toFixed(2),
+        discountText,
+        "$" + unit.toFixed(2),
+        "$" + sub.toFixed(2),
+      ];
     });
   } else {
-    items = [["-", "No data loaded", "-", "-", "-"]];
+    items = [["-", "No data loaded", "-", "-", "-", "-", "-"]];
   }
 
   // Lógica de Totales y Balance
   const totalFactura = Number(factura.total || subtotalAcumulado);
-  
+  const invoiceLevelDiscount = Math.max(0, Number((subtotalAcumulado - totalFactura).toFixed(2)));
+  const displayedDiscounts = Number((totalDiscounts + invoiceLevelDiscount).toFixed(2));
+  const subtotalAfterDiscounts = Math.max(0, Number((subtotalAcumulado - invoiceLevelDiscount).toFixed(2)));
+  const paidAmount = factura.total_pagado != null
+    ? Number(factura.total_pagado || 0)
+    : factura.estado_pago === "pagado"
+      ? totalFactura
+      : 0;
+
   let balance = 0;
   let pagadoTexto = "Unpaid";
-  
+
   if (factura.estado_pago === 'pagado') {
     balance = 0;
     pagadoTexto = "Paid";
   } else if (factura.estado_pago === 'parcial') {
-    balance = totalFactura; 
+    balance = Math.max(0, totalFactura - paidAmount);
     pagadoTexto = "Partial";
   } else {
-    balance = totalFactura;
+    balance = Math.max(0, totalFactura - paidAmount);
   }
 
   const taxRate = 0; // Ajustar si aplica impuesto
@@ -282,69 +310,81 @@ async function buildFacturaPDF(factura) {
 
   autoTable(doc, {
     startY: 240,
-    head: [["Code", "Product", "Qty", "Unit Price", "Subtotal"]],
+    head: [["Code", "Product", "Qty", "Regular", "Discount", "Final", "Subtotal"]],
     body: items,
     theme: "grid",
     headStyles: { fillColor: azul, textColor: "#fff", fontStyle: "bold" },
-    styles: { fontSize: 10, lineColor: gris, textColor: "#333" },
+    styles: { fontSize: 8, lineColor: gris, textColor: "#333" },
     columnStyles: {
-      0: { cellWidth: 50 }, 
-      1: { cellWidth: 'auto' }, 
-      2: { cellWidth: 40, halign: 'center' }, 
-      3: { cellWidth: 60, halign: 'right' }, 
-      4: { cellWidth: 60, halign: 'right' }, 
+      0: { cellWidth: 50 },
+      1: { cellWidth: 'auto' },
+      2: { cellWidth: 35, halign: 'center' },
+      3: { cellWidth: 50, halign: 'right' },
+      4: { cellWidth: 58, halign: 'right', textColor: "#B91C1C" },
+      5: { cellWidth: 50, halign: 'right' },
+      6: { cellWidth: 55, halign: 'right' },
     },
     margin: { left: 36, right: 36 },
   });
 
   // --- RESUMEN FINANCIERO ---
   let finalY = doc.lastAutoTable.finalY + 20;
-  const labelX = 420;
-  const valueX = 500;
-  const rowHeight = 20;
+  const labelX = 455;
+  const valueX = 560;
+  const rowHeight = 18;
+  const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const drawSummaryRow = (label, value, y, { labelColor = "#555", valueColor = "#222", bold = false, fontSize = 10 } = {}) => {
+    doc.setFontSize(fontSize);
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setTextColor(labelColor);
+    doc.text(label, labelX, y, { align: "right" });
+    doc.setTextColor(valueColor);
+    doc.text(value, valueX, y, { align: "right" });
+  };
 
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   doc.setTextColor("#555");
-  
-  // Subtotal
-  doc.text("Subtotal:", labelX, finalY);
-  doc.text(`$${subtotalAcumulado.toFixed(2)}`, valueX, finalY, { align: 'right' });
-  
+
+  drawSummaryRow("Regular subtotal:", money(regularSubtotal), finalY);
+
+  finalY += rowHeight;
+  drawSummaryRow(
+    "Discounts:",
+    displayedDiscounts > 0 ? `-${money(displayedDiscounts)}` : "$0.00",
+    finalY,
+    { labelColor: displayedDiscounts > 0 ? "#B91C1C" : "#555", valueColor: displayedDiscounts > 0 ? "#B91C1C" : "#222" }
+  );
+
+  finalY += rowHeight;
+  drawSummaryRow("Subtotal after discounts:", money(subtotalAfterDiscounts), finalY);
+
   // Tax
   finalY += rowHeight;
-  doc.text(`Tax (${(taxRate*100).toFixed(0)}%):`, labelX, finalY);
-  doc.text(`$${taxAmount.toFixed(2)}`, valueX, finalY, { align: 'right' });
+  drawSummaryRow(`Tax (${(taxRate*100).toFixed(0)}%):`, money(taxAmount), finalY);
 
   // Separador
   finalY += 5;
   doc.setDrawColor("#ccc");
   doc.setLineWidth(0.5);
-  doc.line(labelX, finalY, 560, finalY);
+  doc.line(360, finalY, 560, finalY);
   finalY += 10;
 
    // TOTAL
-  doc.setFontSize(12);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(azul);
-  doc.text("Total:", labelX, finalY);
-  doc.text(`$${totalFactura.toFixed(2)}`, valueX, finalY, { align: 'right' });
+  drawSummaryRow("Total:", money(totalFactura), finalY, { labelColor: azul, valueColor: azul, bold: true, fontSize: 12 });
 
-  // Balance (Saldo Pendiente)
-  finalY += 30; // <--- CORRECCIÓN AQUÍ: Aumentado de 20 a 30
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(balance > 0 ? "#D97706" : "#059669"); 
-  const balanceText = balance > 0 ? `Balance Due:` : `Status: Paid`;
-  doc.text(balanceText, labelX, finalY);
-  doc.text(`$${balance.toFixed(2)}`, valueX, finalY, { align: 'right' });
+  finalY += rowHeight + 4;
+  drawSummaryRow("Paid:", money(paidAmount), finalY, { labelColor: "#059669", valueColor: "#059669" });
 
-  // Estado de pago texto abajo
-  finalY += 25; // Esto sube o baja el estado de pago, está bien así
-  //
-  doc.setTextColor(negro);
-  doc.setFontSize(10);
-  doc.text(`Status: ${pagadoTexto}`, 36, finalY);
+  finalY += rowHeight;
+  drawSummaryRow("Balance due:", money(balance), finalY, {
+    labelColor: balance > 0 ? "#D97706" : "#059669",
+    valueColor: balance > 0 ? "#D97706" : "#059669",
+    bold: balance > 0,
+  });
+
+  finalY += rowHeight;
+  drawSummaryRow("Status:", pagadoTexto, finalY, { labelColor: "#555", valueColor: balance > 0 ? "#D97706" : "#059669" });
 
   // --- PIE DE PÁGINA ---
   let yPie = finalY + 40;
@@ -363,14 +403,22 @@ async function descargarPDFFactura(factura) {
   doc.save(`Invoice_${factura.numero_factura || factura.id}.pdf`);
 }
 
-async function getPDFBase64(factura) {
+async function uploadFacturaPDF(factura) {
   const doc = await buildFacturaPDF(factura);
-  const dataUri = doc.output("datauristring");
-  return dataUri.split(",")[1];
+  const pdfBlob = doc.output("blob");
+  const invoiceNum = String(factura.numero_factura || factura.id?.slice(0, 8) || "invoice")
+    .replace(/[^a-z0-9_-]+/gi, "-");
+  const path = `${factura.van_id || "invoices"}/invoice-${invoiceNum}-${Date.now()}.pdf`;
+  const { error } = await supabase.storage
+    .from("expense-receipts")
+    .upload(path, pdfBlob, { contentType: "application/pdf", upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from("expense-receipts").getPublicUrl(path);
+  return data?.publicUrl || "";
 }
 
 /* Build a complete styled HTML invoice — same data as the PDF */
-function buildFullInvoiceHTML(factura) {
+function buildFullInvoiceHTML(factura, { pdfUrl = "" } = {}) {
   const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
   const empresa = {
     nombre: "TOOLS4CARE",
@@ -390,6 +438,8 @@ function buildFullInvoiceHTML(factura) {
 
   const items = (factura.detalle_ventas || []);
   let subtotal = 0;
+  let regularSubtotal = 0;
+  let totalDiscounts = 0;
   const itemRows = items.length
     ? items.map(d => {
         const codigo = d.productos?.codigo || "N/A";
@@ -397,25 +447,44 @@ function buildFullInvoiceHTML(factura) {
         const qty = Number(d.cantidad || 1);
         // precio_unitario ya viene normalizado (con descuento aplicado) desde normalizeDetalleRows
         const unit = Number(d.precio_unitario ?? d.precio_unit ?? 0);
+        const baseUnit = Number(d.precio_base ?? unit);
+        const pct = Number(d.descuento || 0);
         const sub = Number(d.subtotal ?? unit * qty);
+        const regularSub = Number((baseUnit * qty).toFixed(2));
+        const discountAmount = Math.max(0, Number((regularSub - sub).toFixed(2)));
         subtotal += sub;
+        regularSubtotal += regularSub;
+        totalDiscounts += discountAmount;
+        const discountLabel = discountAmount > 0
+          ? `-${fmt(discountAmount)}${pct > 0 ? ` (${pct.toFixed(2).replace(/\.00$/, "")}%)` : ""}`
+          : "-";
         return `
           <tr>
             <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:13px;">${codigo}</td>
             <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:13px;font-weight:500;">${nombre}</td>
             <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:center;font-size:13px;">${qty}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:right;font-size:13px;color:#6b7280;">${fmt(baseUnit)}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:right;font-size:13px;color:${discountAmount > 0 ? "#b91c1c" : "#9ca3af"};font-weight:${discountAmount > 0 ? "700" : "400"};">${discountLabel}</td>
             <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:right;font-size:13px;">${fmt(unit)}</td>
             <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;text-align:right;font-size:13px;font-weight:600;">${fmt(sub)}</td>
           </tr>`;
       }).join("")
-    : `<tr><td colspan="5" style="padding:16px;text-align:center;color:#9ca3af;">No items</td></tr>`;
+    : `<tr><td colspan="7" style="padding:16px;text-align:center;color:#9ca3af;">No items</td></tr>`;
 
   const totalFactura = Number(factura.total || subtotal);
+  const invoiceLevelDiscount = Math.max(0, Number((subtotal - totalFactura).toFixed(2)));
+  const displayedDiscounts = Number((totalDiscounts + invoiceLevelDiscount).toFixed(2));
+  const subtotalAfterDiscounts = Math.max(0, Number((subtotal - invoiceLevelDiscount).toFixed(2)));
   const estadoPago = factura.estado_pago;
   const statusColor = estadoPago === "pagado" ? "#065f46" : estadoPago === "parcial" ? "#1e40af" : "#92400e";
   const statusBg = estadoPago === "pagado" ? "#d1fae5" : estadoPago === "parcial" ? "#dbeafe" : "#fef3c7";
   const statusLabel = estadoPago === "pagado" ? "PAID" : estadoPago === "parcial" ? "PARTIAL" : "PENDING";
-  const balanceDue = estadoPago === "pagado" ? 0 : totalFactura;
+  const paidAmount = factura.total_pagado != null
+    ? Number(factura.total_pagado || 0)
+    : estadoPago === "pagado"
+      ? totalFactura
+      : 0;
+  const balanceDue = estadoPago === "pagado" ? 0 : Math.max(0, totalFactura - paidAmount);
 
   return `<!DOCTYPE html>
 <html>
@@ -463,7 +532,9 @@ function buildFullInvoiceHTML(factura) {
         <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Code</th>
         <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Product / Service</th>
         <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Qty</th>
-        <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Unit Price</th>
+        <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Regular</th>
+        <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Discount</th>
+        <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Final</th>
         <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Subtotal</th>
       </tr>
     </thead>
@@ -474,8 +545,16 @@ function buildFullInvoiceHTML(factura) {
   <div style="padding:20px 32px;border-top:2px solid #f3f4f6;">
     <table style="width:100%;border-collapse:collapse;">
       <tr>
-        <td style="padding:4px 0;color:#6b7280;font-size:13px;">Subtotal</td>
-        <td style="padding:4px 0;text-align:right;font-size:13px;">${fmt(subtotal)}</td>
+        <td style="padding:4px 0;color:#6b7280;font-size:13px;">Regular subtotal</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;">${fmt(regularSubtotal)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${displayedDiscounts > 0 ? "#b91c1c" : "#6b7280"};font-size:13px;font-weight:${displayedDiscounts > 0 ? "700" : "400"};">Discounts</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;color:${displayedDiscounts > 0 ? "#b91c1c" : "#6b7280"};font-weight:${displayedDiscounts > 0 ? "700" : "400"};">${displayedDiscounts > 0 ? `-${fmt(displayedDiscounts)}` : "$0.00"}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:#6b7280;font-size:13px;">Subtotal after discounts</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;">${fmt(subtotalAfterDiscounts)}</td>
       </tr>
       <tr>
         <td style="padding:4px 0;color:#6b7280;font-size:13px;">Tax</td>
@@ -485,16 +564,33 @@ function buildFullInvoiceHTML(factura) {
         <td style="padding:12px 0 4px;font-size:16px;font-weight:800;color:#0b4a6f;border-top:2px solid #e5e7eb;">TOTAL</td>
         <td style="padding:12px 0 4px;text-align:right;font-size:16px;font-weight:800;color:#0b4a6f;border-top:2px solid #e5e7eb;">${fmt(totalFactura)}</td>
       </tr>
+      <tr>
+        <td style="padding:4px 0;color:#059669;font-size:13px;font-weight:600;">Paid</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;font-weight:600;color:#059669;">${fmt(paidAmount)}</td>
+      </tr>
       ${balanceDue > 0 ? `
       <tr>
         <td style="padding:4px 0;color:#d97706;font-size:13px;font-weight:600;">Balance Due</td>
         <td style="padding:4px 0;text-align:right;font-size:13px;font-weight:600;color:#d97706;">${fmt(balanceDue)}</td>
       </tr>` : `
       <tr>
+        <td style="padding:4px 0;color:#059669;font-size:13px;font-weight:600;">Balance Due</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;font-weight:600;color:#059669;">$0.00</td>
+      </tr>
+      <tr>
         <td colspan="2" style="padding:4px 0;color:#059669;font-size:13px;font-weight:600;">✅ Paid in full</td>
       </tr>`}
     </table>
   </div>
+
+  ${pdfUrl ? `
+  <div style="padding:0 32px 20px;">
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px;text-align:center;">
+      <div style="font-size:13px;color:#1e3a8a;margin-bottom:10px;font-weight:bold;">PDF invoice available</div>
+      <a href="${pdfUrl}" style="display:inline-block;background:#0b4a6f;color:white;text-decoration:none;border-radius:8px;padding:10px 16px;font-size:13px;font-weight:bold;">Download PDF Invoice</a>
+    </div>
+  </div>
+  ` : ""}
 
   <!-- Footer -->
   <div style="background:#f8fafc;padding:20px 32px;border-top:1px solid #e5e7eb;text-align:center;">
@@ -606,7 +702,7 @@ export default function Facturas() {
     }
 
     const { data } = await query;
-    
+
     if (data) {
       const totalGeneral = data.reduce((sum, f) => sum + Number(f.total || 0), 0);
       const pagadas = data.filter(f => f.estado_pago === "pagado");
@@ -722,8 +818,8 @@ export default function Facturas() {
     const selectedInvoices = facturas.filter(f => selectedIds.has(f.id));
     if (selectedInvoices.length === 0) return;
 
-    setLoading(true); 
-    
+    setLoading(true);
+
     // Procesar una por una para evitar congelar el navegador
     for (const factura of selectedInvoices) {
       // Asegurar que tenga detalle antes de imprimir
@@ -743,9 +839,9 @@ export default function Facturas() {
         }
         facturaProcesada = { ...facturaProcesada, detalle_ventas: normalizeDetalleRows(rows) };
       }
-      
+
       await descargarPDFFactura(facturaProcesada);
-      
+
       // Pequeña pausa para que el navegador gestione el diálogo de descarga
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -775,9 +871,17 @@ export default function Facturas() {
         return { ...f, detalle_ventas: normalizeDetalleRows(rows) };
       }));
 
-      // 2. Build one full-invoice HTML per selected invoice, concatenated with page breaks
-      const html = withDetail
-        .map(f => buildFullInvoiceHTML(f))
+      // 2. Build one full-invoice HTML per selected invoice, with a PDF link
+      const invoicesWithPdf = await Promise.all(withDetail.map(async (f) => {
+        try {
+          return { factura: f, pdfUrl: await uploadFacturaPDF(f) };
+        } catch (error) {
+          console.warn("Could not create invoice PDF link:", error?.message || error);
+          return { factura: f, pdfUrl: "" };
+        }
+      }));
+      const html = invoicesWithPdf
+        .map(({ factura, pdfUrl }) => buildFullInvoiceHTML(factura, { pdfUrl }))
         .join('<div style="page-break-after:always;height:24px;"></div>');
 
       const count = withDetail.length;
@@ -817,7 +921,14 @@ export default function Facturas() {
         f = { ...f, detalle_ventas: normalizeDetalleRows(rows) };
       }
 
-      const html = buildFullInvoiceHTML(f);
+      let pdfUrl = "";
+      try {
+        pdfUrl = await uploadFacturaPDF(f);
+      } catch (error) {
+        console.warn("Could not create invoice PDF link:", error?.message || error);
+      }
+
+      const html = buildFullInvoiceHTML(f, { pdfUrl });
 
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {
@@ -965,7 +1076,7 @@ export default function Facturas() {
                 onChange={(e) => handleBusquedaChange(e.target.value)}
               />
             </div>
-            
+
             <div className="relative">
               <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
                 <IconCalendar />
@@ -981,7 +1092,7 @@ export default function Facturas() {
                 placeholder="Start date"
               />
             </div>
-            
+
             <div className="relative">
               <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
                 <IconCalendar />
@@ -997,7 +1108,7 @@ export default function Facturas() {
                 placeholder="End date"
               />
             </div>
-            
+
             <select
               className="border-2 border-gray-300 rounded-xl px-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
               value={estadoFiltro}
@@ -1027,7 +1138,7 @@ export default function Facturas() {
           </div>
         </div>
 
-        
+
                 {/* Tabla / Cards */}
         <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl">
           <div className="p-6 border-b border-gray-100 dark:border-slate-700">
@@ -1049,7 +1160,7 @@ export default function Facturas() {
                   <div className="font-bold text-lg">{selectedIds.size} Invoices</div>
                 </div>
               </div>
-              
+
               <div className="h-8 w-px bg-gray-700 hidden sm:block"></div>
 
               <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
@@ -1215,7 +1326,7 @@ export default function Facturas() {
                     onClick={() => setFacturaSeleccionada(f)}
                   >
                     {/* Checkbox Móvil */}
-                    <div 
+                    <div
                         className="absolute top-4 right-4"
                         onClick={e => e.stopPropagation()}
                     >
@@ -1234,7 +1345,7 @@ export default function Facturas() {
                         {f.fecha ? new Date(f.fecha).toLocaleDateString("en-US") : "-"}
                       </div>
                     </div>
-                    
+
                     <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl p-3 mt-3">
                       <div className="flex items-center gap-2">
                         <IconDollar />
@@ -1401,7 +1512,11 @@ export default function Facturas() {
                     {(facturaSeleccionada.detalle_ventas || []).map((item, idx) => {
                       // precio_unitario ya viene normalizado (con descuento) desde normalizeDetalleRows
                       const unit = Number(item.precio_unitario ?? item.precio_unit ?? 0);
+                      const baseUnit = Number(item.precio_base ?? unit);
+                      const pct = Number(item.descuento || 0);
                       const subtotal = Number(item.subtotal ?? unit * Number(item.cantidad || 1));
+                      const regularSubtotal = Number((baseUnit * Number(item.cantidad || 1)).toFixed(2));
+                      const discountAmount = Math.max(0, Number((regularSubtotal - subtotal).toFixed(2)));
                       return (
                         <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
                           <div className="flex justify-between items-start">
@@ -1413,6 +1528,13 @@ export default function Facturas() {
                                 Code: {item.productos?.codigo || 'N/A'} <br/>
                                 Quantity: <span className="font-semibold">{item.cantidad || 1}</span> × ${unit.toFixed(2)}
                               </div>
+                              {discountAmount > 0 && (
+                                <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                                  <span>Regular ${baseUnit.toFixed(2)}</span>
+                                  <span>Discount -${discountAmount.toFixed(2)}{pct > 0 ? ` (${pct.toFixed(2).replace(/\.00$/, "")}%)` : ""}</span>
+                                  <span>Final ${unit.toFixed(2)}</span>
+                                </div>
+                              )}
                             </div>
                             <div className="text-right">
                               <div className="text-xs text-gray-500">Subtotal</div>
