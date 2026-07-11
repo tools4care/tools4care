@@ -32,7 +32,7 @@ import { useSyncGlobal } from "./hooks/SyncContext";
 import { useToast } from "./hooks/useToast";
 import SyncStatusWidget from "./components/SyncStatusWidget";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
-import { classifyArRisk, buildCollectionMessage, phoneLink } from "./lib/arRisk";
+import { classifyArRisk, buildCollectionMessage, phoneLink, daysSince } from "./lib/arRisk";
 const BackupManagerModal = lazy(() => import("./components/BackupManagerModal"));
 
 /* ---------- Helpers ---------- */
@@ -2065,6 +2065,8 @@ export default function Dashboard() {
 
   const [clientes, setClientes] = useState([]);
   const [collectionsToday, setCollectionsToday] = useState([]);
+  const [collectionsFrozen, setCollectionsFrozen] = useState({ count: 0, total: 0 });
+  const FROZEN_AFTER_DAYS = 60;
   const [dailyActions, setDailyActions] = useState({
     loading: true,
     pendingCloseouts: 0,
@@ -2183,25 +2185,53 @@ export default function Dashboard() {
         nextRental: rentalRows[0] || null,
       });
 
-      // Reuses the same debt query (no extra request) to rank the top
-      // collection priorities for today — same risk logic as the A/R Aging
-      // report (src/lib/arRisk.js), just without the last-activity join to
-      // keep this dashboard load light.
-      const ranked = debtRows
-        .map((row) => {
-          const saldo = Number(row.saldo || 0);
-          const limit = Number(row.limite_politica || 0);
-          const utilization = limit > 0 ? (saldo / limit) * 100 : null;
-          const { risk } = classifyArRisk({ saldo, age: null, score: Number(row.score_base || 0), utilization });
-          return { ...row, saldo, risk };
-        })
-        .sort((a, b) => {
-          const order = { High: 0, Medium: 1, Low: 2 };
-          if (order[a.risk] !== order[b.risk]) return order[a.risk] - order[b.risk];
-          return b.saldo - a.saldo;
-        })
-        .slice(0, 5);
-      setCollectionsToday(ranked);
+      // Real last-activity per client, so a big-but-inactive ("frozen")
+      // balance doesn't permanently outrank a smaller balance from a client
+      // who is still active and actually reachable today. Without this, a
+      // null `age` made classifyArRisk treat every $500+ balance as High
+      // risk regardless of recency, so the same handful of dormant clients
+      // occupied every slot forever.
+      const debtClientIds = debtRows.map((r) => r.cliente_id).filter(Boolean);
+      const lastActivityMap = new Map();
+      if (debtClientIds.length > 0) {
+        const [salesAct, paymentsAct] = await Promise.all([
+          supabase.from("ventas").select("cliente_id, created_at, fecha")
+            .eq("van_id", vanId).in("cliente_id", debtClientIds).neq("tipo", "devolucion"),
+          supabase.from("pagos").select("cliente_id, fecha_pago")
+            .eq("van_id", vanId).in("cliente_id", debtClientIds),
+        ]);
+        const bump = (id, date) => {
+          if (!date) return;
+          const prev = lastActivityMap.get(id);
+          if (!prev || String(date) > String(prev)) lastActivityMap.set(id, date);
+        };
+        (salesAct.data || []).forEach((s) => bump(s.cliente_id, s.created_at || s.fecha));
+        (paymentsAct.data || []).forEach((p) => bump(p.cliente_id, p.fecha_pago));
+      }
+
+      const classified = debtRows.map((row) => {
+        const saldo = Number(row.saldo || 0);
+        const limit = Number(row.limite_politica || 0);
+        const utilization = limit > 0 ? (saldo / limit) * 100 : null;
+        const age = daysSince(lastActivityMap.get(row.cliente_id));
+        const { risk } = classifyArRisk({ saldo, age, score: Number(row.score_base || 0), utilization });
+        return { ...row, saldo, risk, age };
+      });
+
+      // Split so long-dormant balances stay visible (never disappear — the
+      // point is to never lose track of who owes money) without crowding out
+      // clients who are still active and worth a reminder call today.
+      const active = classified.filter((c) => c.age != null && c.age <= FROZEN_AFTER_DAYS);
+      const frozen = classified.filter((c) => c.age == null || c.age > FROZEN_AFTER_DAYS);
+
+      const order = { High: 0, Medium: 1, Low: 2 };
+      active.sort((a, b) => (order[a.risk] !== order[b.risk] ? order[a.risk] - order[b.risk] : b.saldo - a.saldo));
+
+      setCollectionsToday(active.slice(0, 5));
+      setCollectionsFrozen({
+        count: frozen.length,
+        total: frozen.reduce((sum, c) => sum + c.saldo, 0),
+      });
     } catch (error) {
       console.error("Error loading daily priorities:", error);
       setDailyActions((prev) => ({ ...prev, loading: false }));
@@ -2758,16 +2788,19 @@ export default function Dashboard() {
 
         {/* Collect Today — top A/R priorities surfaced here instead of only
             inside Reports → A/R Aging, so collections become a daily habit
-            instead of a report someone has to remember to open. */}
-        {collectionsToday.length > 0 && (
-          <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
-            <div className="flex items-center justify-between gap-3 mb-4">
+            instead of a report someone has to remember to open. Split into
+            active (still reachable, worth a reminder today) vs. frozen
+            (long-dormant balances) so the same handful of dormant clients
+            can't permanently crowd out clients who are actually active. */}
+        {(collectionsToday.length > 0 || collectionsFrozen.count > 0) && (
+          <div className="bg-white rounded-3xl shadow-xl p-3 sm:p-5">
+            <div className="flex items-center justify-between gap-3 mb-3 sm:mb-4">
               <div>
-                <h2 className="text-xl font-bold text-gray-800 leading-tight flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-bold text-gray-800 leading-tight flex items-center gap-2">
                   <DollarSign size={18} className="text-rose-600" />
                   Collect Today
                 </h2>
-                <p className="text-xs text-gray-500">Top open balances, ranked by collection priority</p>
+                <p className="text-[11px] sm:text-xs text-gray-500">Active balances worth a call or reminder today</p>
               </div>
               <button
                 onClick={() => navigate("/reportes")}
@@ -2776,41 +2809,58 @@ export default function Dashboard() {
                 See all <ChevronRight size={14} />
               </button>
             </div>
-            <div className="space-y-2">
-              {collectionsToday.map((c) => (
-                <div key={c.cliente_id} className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
-                  <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                    c.risk === "High" ? "bg-red-100 text-red-800" : c.risk === "Medium" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"
-                  }`}>
-                    {c.risk}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-gray-900 truncate">{c.cliente_nombre || "Customer"}</p>
+
+            {collectionsToday.length > 0 ? (
+              <div className="space-y-1.5 sm:space-y-2">
+                {collectionsToday.map((c) => (
+                  <div key={c.cliente_id} className="flex items-center gap-2 sm:gap-3 rounded-xl border border-gray-100 bg-gray-50 px-2.5 sm:px-3 py-2">
+                    <span className={`shrink-0 px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      c.risk === "High" ? "bg-red-100 text-red-800" : c.risk === "Medium" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"
+                    }`}>
+                      {c.risk}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-sm text-gray-900 truncate">{c.cliente_nombre || "Customer"}</p>
+                    </div>
+                    <p className="font-bold text-sm text-rose-700 shrink-0">{fmtMoney(c.saldo)}</p>
+                    <div className="flex gap-1 shrink-0">
+                      {phoneLink(c.telefono, "sms", buildCollectionMessage(c)) && (
+                        <a
+                          href={phoneLink(c.telefono, "sms", buildCollectionMessage(c))}
+                          className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                          title="Send payment reminder"
+                        >
+                          <SendHorizonal size={14} />
+                        </a>
+                      )}
+                      {phoneLink(c.telefono, "tel") && (
+                        <a
+                          href={phoneLink(c.telefono, "tel")}
+                          className="p-1.5 rounded-lg bg-blue-100 text-blue-800 hover:bg-blue-200"
+                          title="Call customer"
+                        >
+                          <Phone size={14} />
+                        </a>
+                      )}
+                    </div>
                   </div>
-                  <p className="font-bold text-rose-700 shrink-0">{fmtMoney(c.saldo)}</p>
-                  <div className="flex gap-1.5 shrink-0">
-                    {phoneLink(c.telefono, "sms", buildCollectionMessage(c)) && (
-                      <a
-                        href={phoneLink(c.telefono, "sms", buildCollectionMessage(c))}
-                        className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                        title="Send payment reminder"
-                      >
-                        <SendHorizonal size={14} />
-                      </a>
-                    )}
-                    {phoneLink(c.telefono, "tel") && (
-                      <a
-                        href={phoneLink(c.telefono, "tel")}
-                        className="p-1.5 rounded-lg bg-blue-100 text-blue-800 hover:bg-blue-200"
-                        title="Call customer"
-                      >
-                        <Phone size={14} />
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400 py-2">No active balances need a nudge right now.</p>
+            )}
+
+            {collectionsFrozen.count > 0 && (
+              <button
+                onClick={() => navigate("/reportes")}
+                className="mt-3 w-full flex items-center justify-between gap-3 rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-left hover:border-gray-300"
+              >
+                <span className="text-xs text-gray-500">
+                  <span className="font-bold text-gray-700">{collectionsFrozen.count}</span> long-inactive {collectionsFrozen.count === 1 ? "client" : "clients"} (60+ days, {fmtMoney(collectionsFrozen.total)}) — not shown above so they don't crowd out active ones, but still owed
+                </span>
+                <ChevronRight size={14} className="text-gray-400 shrink-0" />
+              </button>
+            )}
           </div>
         )}
 
