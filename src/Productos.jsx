@@ -7,7 +7,7 @@ import { useVan } from "./hooks/VanContext";
 import { logAudit } from "./lib/auditLog";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useToast } from "./hooks/useToast";
-import { Package, Check, X, Search } from "lucide-react";
+import { Package, Check, X, Search, ChevronDown } from "lucide-react";
 import PageHeader from "./components/ui/PageHeader";
 import Avatar from "./components/ui/Avatar";
 import { SkeletonCard } from "./components/ui/Skeleton";
@@ -322,6 +322,17 @@ function PestañaVentas({ productoId, costoUnit = 0 }) {
   const [allRows, setAllRows] = useState([]);
   const [mesSeleccionado, setMesSeleccionado] = useState("");
   const [loading, setLoading] = useState(false);
+  const [monthOpen, setMonthOpen] = useState(false);
+  const monthPickerRef = useRef(null);
+
+  useEffect(() => {
+    if (!monthOpen) return;
+    const onClickOutside = (e) => {
+      if (monthPickerRef.current && !monthPickerRef.current.contains(e.target)) setMonthOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [monthOpen]);
 
   const fmtMes = (ym) => {
     if (!ym) return "";
@@ -398,6 +409,11 @@ function PestañaVentas({ productoId, costoUnit = 0 }) {
     });
     return Object.values(agg).sort((a, b) => b.mes.localeCompare(a.mes));
   }, [allRows, cost]);
+
+  const currentMonthData = useMemo(
+    () => porMes.find((m) => m.mes === mesSeleccionado) || null,
+    [porMes, mesSeleccionado]
+  );
 
   const filasMes = useMemo(
     () => allRows.filter((r) => r.mes === mesSeleccionado),
@@ -492,20 +508,48 @@ function PestañaVentas({ productoId, costoUnit = 0 }) {
           </ResponsiveContainer>
         </div>
 
-        {/* Month selector */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500 font-semibold whitespace-nowrap">Month:</span>
-          <select
-            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-            value={mesSeleccionado}
-            onChange={(e) => setMesSeleccionado(e.target.value)}
+        {/* Month selector — custom dropdown so each row can show units/revenue/profit
+            aligned in columns, which a native <select> can't style. */}
+        <div className="relative" ref={monthPickerRef}>
+          <span className="text-xs text-gray-500 font-semibold whitespace-nowrap mb-1 block">Month</span>
+          <button
+            type="button"
+            onClick={() => setMonthOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-blue-300 focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
           >
-            {porMes.map((m) => (
-              <option key={m.mes} value={m.mes}>
-                {fmtMes(m.mes)} — {m.qty} units · {fmtCur(m.revenue)}
-              </option>
-            ))}
-          </select>
+            <span className="font-semibold text-gray-800 truncate">{fmtMes(mesSeleccionado) || "Select a month"}</span>
+            <span className="flex items-center gap-2 shrink-0">
+              <span className="text-xs text-gray-400">{currentMonthData?.qty ?? 0} units</span>
+              <span className="text-xs font-bold text-emerald-700">{fmtCur(currentMonthData?.revenue)}</span>
+              <ChevronDown size={14} className={`text-gray-400 transition-transform ${monthOpen ? "rotate-180" : ""}`} />
+            </span>
+          </button>
+          {monthOpen && (
+            <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-64 overflow-y-auto py-1">
+              {porMes.map((m) => {
+                const isSelected = m.mes === mesSeleccionado;
+                return (
+                  <button
+                    key={m.mes}
+                    type="button"
+                    onClick={() => { setMesSeleccionado(m.mes); setMonthOpen(false); }}
+                    className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-sm text-left transition-colors ${
+                      isSelected ? "bg-blue-50" : "hover:bg-gray-50"
+                    }`}
+                  >
+                    <span className={`font-semibold ${isSelected ? "text-blue-700" : "text-gray-800"}`}>{fmtMes(m.mes)}</span>
+                    <span className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs text-gray-400 w-14 text-right">{m.qty} units</span>
+                      <span className="text-xs font-bold text-emerald-700 w-16 text-right">{fmtCur(m.revenue)}</span>
+                      {isSelected
+                        ? <Check size={14} className="text-blue-600 shrink-0" />
+                        : <span className="w-[14px] shrink-0" />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Month summary bar */}

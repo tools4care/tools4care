@@ -1267,37 +1267,42 @@ function ARAgingReport({ van }) {
         <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
           <table className="min-w-full text-sm divide-y divide-gray-200">
             <thead className="bg-rose-50">
-              <tr>{["Customer","Business","Phone","Balance","Credit Limit","Utilization","Score","Last Sale","Last Payment","Days","Risk","Action"].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-bold text-rose-700 uppercase tracking-wide">{h}</th>
-              ))}</tr>
+              <tr>
+                {["Customer","Business","Phone","Balance","Credit Limit","Utilization","Score","Last Sale","Last Payment","Days","Risk"].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-bold text-rose-700 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}
+                <th className="sticky right-0 z-10 bg-rose-50 px-4 py-3 text-left text-xs font-bold text-rose-700 uppercase tracking-wide shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.15)]">
+                  Action
+                </th>
+              </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {data.length === 0 ? (
                 <tr><td colSpan={12} className="text-center py-10 text-gray-400">No open A/R balances found</td></tr>
               ) : data.map((r) => (
-                <tr key={r.cliente_id} className="hover:bg-rose-50">
-                  <td className="px-4 py-2.5 font-semibold text-gray-900">{r.cliente_nombre || "—"}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{r.nombre_negocio || "—"}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{r.telefono || "—"}</td>
-                  <td className="px-4 py-2.5 font-bold text-red-700">{fmtCurrency(r.saldo)}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{r.limit > 0 ? fmtCurrency(r.limit) : "—"}</td>
-                  <td className="px-4 py-2.5">{r.utilization != null ? fmtPercent(r.utilization, 0) : "—"}</td>
-                  <td className="px-4 py-2.5">{r.score > 0 ? r.score : "—"}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{r.lastSale ? fmtDate(r.lastSale.created_at || r.lastSale.fecha) : "—"}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{r.lastPayment ? fmtDate(r.lastPayment.fecha_pago) : "—"}</td>
-                  <td className="px-4 py-2.5 font-semibold">{r.age == null ? "—" : `${r.age}d`}</td>
-                  <td className="px-4 py-2.5">
-                    <span title={r.riskReason} className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                <tr key={r.cliente_id} className="group hover:bg-rose-50">
+                  <td className="px-4 py-2.5 font-semibold text-gray-900 whitespace-nowrap">{r.cliente_nombre || "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{r.nombre_negocio || "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{r.telefono || "—"}</td>
+                  <td className="px-4 py-2.5 font-bold text-red-700 whitespace-nowrap">{fmtCurrency(r.saldo)}</td>
+                  <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{r.limit > 0 ? fmtCurrency(r.limit) : "—"}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">{r.utilization != null ? fmtPercent(r.utilization, 0) : "—"}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">{r.score > 0 ? r.score : "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{r.lastSale ? fmtDate(r.lastSale.created_at || r.lastSale.fecha) : "—"}</td>
+                  <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{r.lastPayment ? fmtDate(r.lastPayment.fecha_pago) : "—"}</td>
+                  <td className="px-4 py-2.5 font-semibold whitespace-nowrap">{r.age == null ? "—" : `${r.age}d`}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">
+                    <span title={r.riskReason} className={`px-2 py-0.5 rounded-full text-xs font-bold cursor-help ${
                       r.risk === "High" ? "bg-red-100 text-red-800" : r.risk === "Medium" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"
                     }`}>{r.risk}</span>
-                    <div className="text-[10px] text-gray-400 mt-1 max-w-[140px]">{r.riskReason}</div>
                   </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex flex-wrap gap-1.5">
+                  {/* Sticky so Remind/Call stay visible without scrolling through all 11 columns first */}
+                  <td className="sticky right-0 z-10 bg-white group-hover:bg-rose-50 px-4 py-2.5 shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.15)]">
+                    <div className="flex flex-nowrap gap-1.5">
                       {phoneLink(r.telefono, "sms", buildCollectionMessage(r)) && (
                         <a
                           href={phoneLink(r.telefono, "sms", buildCollectionMessage(r))}
-                          className="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-xs font-bold hover:bg-emerald-200"
+                          className="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-xs font-bold hover:bg-emerald-200 whitespace-nowrap"
                         >
                           Reminder
                         </a>
@@ -1305,7 +1310,7 @@ function ARAgingReport({ van }) {
                       {phoneLink(r.telefono, "tel") && (
                         <a
                           href={phoneLink(r.telefono, "tel")}
-                          className="px-2 py-1 rounded-lg bg-blue-100 text-blue-800 text-xs font-bold hover:bg-blue-200"
+                          className="px-2 py-1 rounded-lg bg-blue-100 text-blue-800 text-xs font-bold hover:bg-blue-200 whitespace-nowrap"
                         >
                           Call
                         </a>
