@@ -2803,7 +2803,7 @@ export default function Dashboard() {
                 <p className="text-[11px] sm:text-xs text-gray-500">Active balances worth a call or reminder today</p>
               </div>
               <button
-                onClick={() => navigate("/reportes")}
+                onClick={() => navigate("/reportes?tab=ar_risk")}
                 className="text-xs font-semibold text-rose-700 hover:text-rose-800 flex items-center gap-1 shrink-0"
               >
                 See all <ChevronRight size={14} />
@@ -2852,7 +2852,7 @@ export default function Dashboard() {
 
             {collectionsFrozen.count > 0 && (
               <button
-                onClick={() => navigate("/reportes")}
+                onClick={() => navigate("/reportes?tab=ar_risk")}
                 className="mt-3 w-full flex items-center justify-between gap-3 rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-left hover:border-gray-300"
               >
                 <span className="text-xs text-gray-500">

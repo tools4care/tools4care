@@ -1,5 +1,6 @@
 // src/Reportes.jsx - Custom Reports Hub (Fixed)
 import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
@@ -3166,7 +3167,11 @@ function PaymentBreakdownReport({ van, usuario }) {
 export default function Reportes() {
   const { van }     = useVan();
   const { usuario } = useUsuario();
-  const [activeTab, setActiveTab] = useState("cierre_diario");
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    const requested = searchParams.get("tab");
+    return TABS.some((t) => t.id === requested) ? requested : "cierre_diario";
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-slate-100 p-2 sm:p-4">
