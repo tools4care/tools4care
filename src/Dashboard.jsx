@@ -32,6 +32,7 @@ import { useSyncGlobal } from "./hooks/SyncContext";
 import { useToast } from "./hooks/useToast";
 import SyncStatusWidget from "./components/SyncStatusWidget";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
+import { classifyArRisk, buildCollectionMessage, phoneLink } from "./lib/arRisk";
 const BackupManagerModal = lazy(() => import("./components/BackupManagerModal"));
 
 /* ---------- Helpers ---------- */
@@ -2063,6 +2064,7 @@ export default function Dashboard() {
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
 
   const [clientes, setClientes] = useState([]);
+  const [collectionsToday, setCollectionsToday] = useState([]);
   const [dailyActions, setDailyActions] = useState({
     loading: true,
     pendingCloseouts: 0,
@@ -2151,7 +2153,12 @@ export default function Dashboard() {
       const [salesResult, closeoutsResult, debtResult, subscriptionsResult, rentalsResult] = await Promise.all([
         supabase.from("ventas").select("fecha").eq("van_id", vanId).gte("fecha", from),
         supabase.from("cierres_dia").select("fecha").eq("van_id", vanId).gte("fecha", from),
-        supabase.from("v_cxc_cliente_detalle_ext").select("saldo").gt("saldo", 0.01),
+        supabase
+          .from("v_cxc_cliente_detalle_ext")
+          .select("cliente_id, cliente_nombre, saldo, limite_politica, score_base, telefono")
+          .gt("saldo", 0.01)
+          .order("saldo", { ascending: false })
+          .limit(50),
         supabase
           .from("subscription_clientes")
           .select("id, proxima_entrega")
@@ -2175,6 +2182,26 @@ export default function Dashboard() {
         rentalsDue: rentalRows.length,
         nextRental: rentalRows[0] || null,
       });
+
+      // Reuses the same debt query (no extra request) to rank the top
+      // collection priorities for today — same risk logic as the A/R Aging
+      // report (src/lib/arRisk.js), just without the last-activity join to
+      // keep this dashboard load light.
+      const ranked = debtRows
+        .map((row) => {
+          const saldo = Number(row.saldo || 0);
+          const limit = Number(row.limite_politica || 0);
+          const utilization = limit > 0 ? (saldo / limit) * 100 : null;
+          const { risk } = classifyArRisk({ saldo, age: null, score: Number(row.score_base || 0), utilization });
+          return { ...row, saldo, risk };
+        })
+        .sort((a, b) => {
+          const order = { High: 0, Medium: 1, Low: 2 };
+          if (order[a.risk] !== order[b.risk]) return order[a.risk] - order[b.risk];
+          return b.saldo - a.saldo;
+        })
+        .slice(0, 5);
+      setCollectionsToday(ranked);
     } catch (error) {
       console.error("Error loading daily priorities:", error);
       setDailyActions((prev) => ({ ...prev, loading: false }));
@@ -2728,6 +2755,64 @@ export default function Dashboard() {
           actions={priorityActions}
           onOpen={(action) => action.onClick ? action.onClick() : navigate(action.path)}
         />
+
+        {/* Collect Today — top A/R priorities surfaced here instead of only
+            inside Reports → A/R Aging, so collections become a daily habit
+            instead of a report someone has to remember to open. */}
+        {collectionsToday.length > 0 && (
+          <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-800 leading-tight flex items-center gap-2">
+                  <DollarSign size={18} className="text-rose-600" />
+                  Collect Today
+                </h2>
+                <p className="text-xs text-gray-500">Top open balances, ranked by collection priority</p>
+              </div>
+              <button
+                onClick={() => navigate("/reportes")}
+                className="text-xs font-semibold text-rose-700 hover:text-rose-800 flex items-center gap-1 shrink-0"
+              >
+                See all <ChevronRight size={14} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {collectionsToday.map((c) => (
+                <div key={c.cliente_id} className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                  <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    c.risk === "High" ? "bg-red-100 text-red-800" : c.risk === "Medium" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"
+                  }`}>
+                    {c.risk}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-gray-900 truncate">{c.cliente_nombre || "Customer"}</p>
+                  </div>
+                  <p className="font-bold text-rose-700 shrink-0">{fmtMoney(c.saldo)}</p>
+                  <div className="flex gap-1.5 shrink-0">
+                    {phoneLink(c.telefono, "sms", buildCollectionMessage(c)) && (
+                      <a
+                        href={phoneLink(c.telefono, "sms", buildCollectionMessage(c))}
+                        className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                        title="Send payment reminder"
+                      >
+                        <SendHorizonal size={14} />
+                      </a>
+                    )}
+                    {phoneLink(c.telefono, "tel") && (
+                      <a
+                        href={phoneLink(c.telefono, "tel")}
+                        className="p-1.5 rounded-lg bg-blue-100 text-blue-800 hover:bg-blue-200"
+                        title="Call customer"
+                      >
+                        <Phone size={14} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Daily Route */}
         <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">

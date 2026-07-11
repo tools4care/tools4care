@@ -862,27 +862,80 @@ function PendingSaleAlertModal({ client, pendingSale, onResume, onStartNew, onCa
 }
 
 /* ── Sale Block / Override Modal ── */
-function SaleBlockModal({ type, message, onOverride, onCancel }) {
+const QUICK_OVERRIDE_REASONS = [
+  "Client confirmed payment today",
+  "Manager approved by phone",
+  "Long-time reliable customer",
+];
+
+function SaleBlockModal({ type, message, clientRisk, onOverride, onCancel }) {
   const [note, setNote] = useState("");
   const isHard = type === "high_risk" || type === "credit_limit";
   const icon = type === "high_risk" ? "⛔" : type === "credit_limit" ? "🚫" : "⚠️";
-  const color = isHard ? "red" : "amber";
   const headerBg = isHard ? "bg-red-700" : "bg-amber-600";
   const btnColor = isHard
     ? "bg-red-600 hover:bg-red-700 focus:ring-red-500"
     : "bg-amber-500 hover:bg-amber-600 focus:ring-amber-400";
 
+  // Show the client's real risk data for high/medium risk blocks — previously
+  // this modal only showed a generic canned sentence, with no visibility into
+  // *why* the credit agent flagged the client (score, PPR, payment history).
+  const showRiskDetail = (type === "high_risk" || type === "medium_risk") && clientRisk && !clientRisk.error;
+
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
-        <div className={`${headerBg} text-white px-6 py-4`}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden max-h-[90vh] flex flex-col">
+        <div className={`${headerBg} text-white px-6 py-4 shrink-0`}>
           <div className="text-2xl mb-1">{icon} Sale Blocked</div>
           <div className="text-sm opacity-90 whitespace-pre-line">{message}</div>
         </div>
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto">
+          {showRiskDetail && (
+            <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Why this client is flagged</span>
+                <span className="text-sm font-bold text-gray-800">Score {clientRisk.score}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs mb-2">
+                <div className="bg-white rounded-lg px-2 py-1.5 border border-gray-100">
+                  <div className="text-gray-400">Payment ratio (PPR)</div>
+                  <div className="font-bold text-gray-800">{clientRisk.ppr?.ppr != null ? clientRisk.ppr.ppr.toFixed(2) : "—"}</div>
+                </div>
+                <div className="bg-white rounded-lg px-2 py-1.5 border border-gray-100">
+                  <div className="text-gray-400">Days inactive</div>
+                  <div className="font-bold text-gray-800">{clientRisk.diasInactivo ?? "—"}</div>
+                </div>
+                <div className="bg-white rounded-lg px-2 py-1.5 border border-gray-100">
+                  <div className="text-gray-400">Days overdue</div>
+                  <div className="font-bold text-gray-800">{clientRisk.diasRetraso ?? "—"}</div>
+                </div>
+                <div className="bg-white rounded-lg px-2 py-1.5 border border-gray-100">
+                  <div className="text-gray-400">Available credit</div>
+                  <div className="font-bold text-gray-800">{clientRisk.disponible != null ? `$${Number(clientRisk.disponible).toFixed(2)}` : "—"}</div>
+                </div>
+              </div>
+              {Array.isArray(clientRisk.recomendaciones) && clientRisk.recomendaciones.length > 0 && (
+                <ul className="text-xs text-gray-600 space-y-0.5">
+                  {clientRisk.recomendaciones.slice(0, 3).map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
           <label className="block text-sm font-semibold text-gray-700 mb-2">
             Override reason <span className="text-red-500">*</span>
           </label>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {QUICK_OVERRIDE_REASONS.map((reason) => (
+              <button
+                key={reason}
+                type="button"
+                onClick={() => setNote(reason)}
+                className="px-2.5 py-1 rounded-full border border-gray-200 text-xs font-semibold text-gray-600 hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+              >
+                {reason}
+              </button>
+            ))}
+          </div>
           <textarea
             value={note}
             onChange={e => setNote(e.target.value)}
@@ -6990,6 +7043,7 @@ function renderStepPayment() {
         <SaleBlockModal
           type={saleBlockModal.type}
           message={saleBlockModal.message}
+          clientRisk={clientRisk}
           onOverride={(note) => {
             const r = saleBlockModal.resolve;
             setSaleBlockModal(null);
