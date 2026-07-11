@@ -1197,7 +1197,12 @@ function ARAgingReport({ van }) {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" tick={{ fontSize: 11 }} />
                   <YAxis tickFormatter={(v) => `$${v}`} tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v, name) => name === "clients" ? [v, "Clients"] : [fmtCurrency(v), "Balance"]} {...CHART_TOOLTIP_STYLE} />
+                  {/* recharts passes each <Bar>'s `name` prop here, not its
+                      dataKey, so this must match "Clients"/"Balance" (as set
+                      below) — matching lowercase "clients" never fired,
+                      which mislabeled the client-count bar as a dollar
+                      "Balance" in the tooltip. */}
+                  <Tooltip formatter={(v, name) => name === "Clients" ? [v, "Clients"] : [fmtCurrency(v), "Balance"]} {...CHART_TOOLTIP_STYLE} />
                   <Legend {...CHART_LEGEND_STYLE} />
                   <Bar dataKey="balance" name="Balance" fill="#e11d48" radius={[5,5,0,0]} />
                   <Bar dataKey="clients" name="Clients" fill="#fb923c" radius={[5,5,0,0]} />
@@ -1459,7 +1464,7 @@ function DiscountAuditReport({ van, usuario }) {
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(v) => `$${v}`} tick={{ fontSize: 11 }} />
                   <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v, name) => name === "lines" ? [v, "Lines"] : [fmtCurrency(v), "Discount"]} {...CHART_TOOLTIP_STYLE} />
+                  <Tooltip formatter={(v, name) => name === "Lines" ? [v, "Lines"] : [fmtCurrency(v), "Discount"]} {...CHART_TOOLTIP_STYLE} />
                   <Legend {...CHART_LEGEND_STYLE} />
                   <Bar dataKey="discount" name="Discount" fill="#f97316" radius={[0,5,5,0]} />
                   <Bar dataKey="lines" name="Lines" fill="#fdba74" radius={[0,5,5,0]} />
@@ -1472,7 +1477,7 @@ function DiscountAuditReport({ van, usuario }) {
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(v) => `$${v}`} tick={{ fontSize: 11 }} />
                   <YAxis type="category" dataKey="name" width={112} tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v, name) => name === "lines" ? [v, "Lines"] : [fmtCurrency(v), "Discount"]} {...CHART_TOOLTIP_STYLE} />
+                  <Tooltip formatter={(v, name) => name === "Lines" ? [v, "Lines"] : [fmtCurrency(v), "Discount"]} {...CHART_TOOLTIP_STYLE} />
                   <Bar dataKey="discount" name="Discount" fill="#ea580c" radius={[0,5,5,0]} />
                 </BarChart>
               </ResponsiveContainer>
