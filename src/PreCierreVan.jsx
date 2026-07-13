@@ -6,6 +6,7 @@ import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { loadPdfLibs } from "./utils/lazyPdf";
+import { renderCloseoutPdfReport } from "./lib/closeoutPdfReport";
 import {
   DollarSign, FileText, Download, RefreshCw, CheckCircle, AlertCircle,
   Calculator, Calendar, TrendingUp, AlertTriangle, X, Plus, Minus, Send, MoreHorizontal, CreditCard,
@@ -333,7 +334,11 @@ const getPaymentMethodLabel = (method) => {
 
 // Preview modal: shows closure details for a date range (read-only)
 function CierrePreviewModal({ van, usuario, previewData, onClose }) {
-  const { ventas = [], pagos = [], fechas = [], resumen = {}, gastos = [], observaciones = "" } = previewData || {};
+  const {
+    ventas = [], pagos = [], fechas = [], resumen = {}, gastos = [], observaciones = "",
+    cxc = { deudaNueva: 0, pagosDeuda: 0, reducciones: 0, cambioNeto: 0 },
+    cierreRecord = null,
+  } = previewData || {};
   const { toast } = useToast();
 
   // Email state
@@ -586,112 +591,70 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
 
   const handlePDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
-    const doc = new jsPDF();
-    doc.setFillColor(25, 118, 210);
-    doc.rect(0, 0, 210, 28, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.text("Tools4Care - Closure Report", 14, 18);
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(10);
-    const dateRange = fechas.length ? `${formatUS(fechas[0])} - ${formatUS(fechas[fechas.length - 1])}` : "—";
-    doc.text(`Period: ${dateRange} | VAN: ${van?.nombre_van || van?.nombre || "—"}`, 14, 36);
-    doc.text(`User: ${usuario?.nombre || usuario?.email || "—"} | Generated: ${new Date().toLocaleString()}`, 14, 43);
+    const doc = new jsPDF({ orientation: "landscape" });
 
-    // Payment methods summary
-    doc.setFontSize(12);
-    doc.text("Payment Summary", 14, 54);
-    autoTable(doc, {
-      startY: 58,
-      head: [["Method", "Amount"]],
-      body: [
-        ["Cash", fmtCurrency(byMethod.efectivo)],
-        ["Card", fmtCurrency(byMethod.tarjeta)],
-        ["Transfer", fmtCurrency(byMethod.transferencia)],
-        ["Other", fmtCurrency(byMethod.otro)],
-        ["TOTAL", fmtCurrency(grandTotal)],
-      ],
-      styles: { fontSize: 10 },
-      headStyles: { fillColor: [25, 118, 210], textColor: 255, fontStyle: "bold" },
-      bodyStyles: {},
-      rowStyles: { 4: { fontStyle: "bold", fillColor: [219, 234, 254] } },
+    const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+    const totalVentas = cierreRecord
+      ? Number(cierreRecord.total_ventas || 0)
+      : ventas.reduce((s, v) => s + Number(v.total_venta || 0), 0);
+    const totalEfectivo = cierreRecord ? Number(cierreRecord.total_efectivo || 0) : byMethod.efectivo;
+    const totalTarjeta = cierreRecord ? Number(cierreRecord.total_tarjeta || 0) : byMethod.tarjeta;
+    const totalTransferencia = cierreRecord ? Number(cierreRecord.total_transferencia || 0) : byMethod.transferencia;
+    const totalOtros = cierreRecord ? Number(cierreRecord.total_otros || 0) : byMethod.otro;
+    const totalCaja = totalEfectivo + totalTarjeta + totalTransferencia + totalOtros;
+    const efectivoNeto = totalEfectivo - gastosTotal;
+    const totalCajaNeto = efectivoNeto + totalTarjeta + totalTransferencia + totalOtros;
+
+    const real = cierreRecord
+      ? { cash: null, card: null, transfer: null, other: null, total: Number(cierreRecord.caja_real || 0) }
+      : null;
+    const variance = cierreRecord ? Math.abs(Number(cierreRecord.discrepancia || 0)) : null;
+
+    const customerMap = new Map();
+    ventas.forEach((sale) => {
+      const name = sale.clientes?.nombre || "Walk-in";
+      const current = customerMap.get(name) || { name, sales: 0, paid: 0, count: 0 };
+      current.sales += Number(sale.total_venta || 0);
+      current.paid += Number(sale.total_pagado || 0);
+      current.count += 1;
+      customerMap.set(name, current);
+    });
+    const topCustomers = Array.from(customerMap.values()).sort((a, b) => b.sales - a.sales).slice(0, 8);
+
+    const largeTransactions = [
+      ...ventas.map((v) => ({
+        created_at: v.created_at,
+        cliente: v.clientes?.nombre || "Walk-in",
+        tipo: "sale",
+        metodo: v.metodo_pago || "—",
+        monto: Number(v.total_pagado || v.total_venta || 0),
+      })),
+      ...pagos.map((p) => ({
+        created_at: p.created_at,
+        cliente: p.clientes?.nombre || "Walk-in",
+        tipo: "payment",
+        metodo: p.metodo || "—",
+        monto: Number(p.monto || 0),
+      })),
+    ].sort((a, b) => b.monto - a.monto).slice(0, 8);
+
+    renderCloseoutPdfReport(doc, autoTable, {
+      fechasLabel: fechas.length ? `${formatUS(fechas[0])} - ${formatUS(fechas[fechas.length - 1])}` : "—",
+      docTitleDate: fechas[0] || "",
+      vanLabel: van?.nombre || van?.nombre_van || van?.alias || "VAN",
+      userLabel: usuario?.nombre || usuario?.email || "Unknown user",
+      totales: { totalVentas, totalCaja, totalEfectivo, totalTarjeta, totalTransferencia, totalOtros, totalCajaNeto, efectivoNeto, gastosTotal },
+      real,
+      variance,
+      cxc,
+      salesCount: ventas.length,
+      gastos,
+      topCustomers,
+      largeTransactions,
+      observaciones,
     });
 
-    // Sales table
-    doc.setFontSize(12);
-    doc.text("Sales Detail", 14, doc.lastAutoTable.finalY + 12);
-    autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 16,
-      head: [["Time", "Client", "Seller", "Method", "Total", "Paid", "Status"]],
-      body: ventas.map((v) => [
-        new Date(v.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }),
-        v.clientes?.nombre || "—",
-        v.usuarios?.nombre || "—",
-        v.metodo_pago || "—",
-        fmtCurrency(v.total_venta),
-        fmtCurrency(v.total_pagado),
-        v.estado_pago || "—",
-      ]),
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [75, 85, 99], textColor: 255 },
-    });
-
-    // Payments table
-    if (pagos.length > 0) {
-      doc.setFontSize(12);
-      doc.text("Direct Payments", 14, doc.lastAutoTable.finalY + 12);
-      autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 16,
-        head: [["Time", "Client", "Method", "Amount"]],
-        body: pagos.map((p) => [
-          new Date(p.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }),
-          p.clientes?.nombre || "—",
-          p.metodo || "—",
-          fmtCurrency(p.monto),
-        ]),
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [75, 85, 99], textColor: 255 },
-      });
-    }
-
-    // Driver Expenses
-    if (gastos.length > 0) {
-      const gastosY = doc.lastAutoTable.finalY + 12;
-      doc.setFontSize(12);
-      doc.text("Driver Expenses", 14, gastosY);
-      const gastosRows = gastos.map((g) => [
-        formatUS(g.fecha),
-        getExpenseCategoryLabel(g.categoria),
-        g.descripcion || "—",
-        fmtCurrency(Number(g.monto) || 0),
-      ]);
-      const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
-      gastosRows.push(["", "", "TOTAL", fmtCurrency(gastosTotal)]);
-      autoTable(doc, {
-        startY: gastosY + 4,
-        head: [["Date", "Category", "Description", "Amount"]],
-        body: gastosRows,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
-        didParseCell: (data) => {
-          if (data.row.index === gastosRows.length - 1) {
-            data.cell.styles.fontStyle = "bold";
-            data.cell.styles.fillColor = [255, 237, 213];
-          }
-        },
-      });
-    }
-
-    // Notes / Observaciones
-    if (observaciones) {
-      const notesY = doc.lastAutoTable.finalY + 12;
-      doc.setFontSize(12);
-      doc.text("Notes", 14, notesY);
-      doc.setFontSize(9);
-      doc.text(observaciones, 14, notesY + 8, { maxWidth: 180 });
-    }
-
-    doc.save(`Closure_${van?.nombre_van || "VAN"}_${fechas[0] || "report"}.pdf`);
+    doc.save(`VanClosure_${fechas[0] || "report"}_${van?.nombre || van?.nombre_van || "VAN"}.pdf`);
   };
 
   if (!previewData) return null;
@@ -1160,7 +1123,7 @@ function HistorialCierres({ van, usuario }) {
     }
   };
 
-  const generatePreview = async (fechas, previewObservaciones = "", period = null) => {
+  const generatePreview = async (fechas, previewObservaciones = "", period = null, cierreRecord = null) => {
     if (!van?.id || !fechas.length) return;
     setGenerating(true);
     setError(null);
@@ -1264,6 +1227,27 @@ function HistorialCierres({ van, usuario }) {
         .lte("fecha", sortedFechas[sortedFechas.length - 1])
         .order("fecha", { ascending: true });
 
+      // A/R movement for the period (van-wide, not affected by the client name
+      // filter — mirrors the same summary shown on the actual closeout report).
+      let cxc = { deudaNueva: 0, pagosDeuda: 0, reducciones: 0, cambioNeto: 0 };
+      try {
+        const deudaNueva = (ventas || []).reduce(
+          (s, v) => s + Math.max(0, Number(v.total_venta || 0) - Number(v.total_pagado || 0)), 0
+        );
+        const [{ data: allPagos }, { data: arMoves }] = await Promise.all([
+          supabase.from("pagos").select("monto")
+            .eq("van_id", van.id).gte("fecha_pago", start).lte("fecha_pago", end),
+          supabase.from("cxc_movimientos").select("monto,tipo")
+            .eq("van_id", van.id).in("tipo", ["devolucion", "credito_tienda"])
+            .gte("fecha", start).lte("fecha", end),
+        ]);
+        const pagosDeuda = (allPagos || []).reduce((s, p) => s + Number(p.monto || 0), 0);
+        const reducciones = (arMoves || []).reduce((s, m) => s + Number(m.monto || 0), 0);
+        cxc = { deudaNueva, pagosDeuda, reducciones, cambioNeto: deudaNueva - reducciones - pagosDeuda };
+      } catch (e) {
+        console.warn("A/R movement summary unavailable for this period", e);
+      }
+
       setPreviewData({
         ventas: filteredVentas,
         pagos: filteredPagos,
@@ -1271,6 +1255,8 @@ function HistorialCierres({ van, usuario }) {
         resumen: {},
         gastos: gastosData || [],
         observaciones: previewObservaciones,
+        cxc,
+        cierreRecord,
       });
     } catch (e) {
       setError(e.message);
@@ -1283,7 +1269,8 @@ function HistorialCierres({ van, usuario }) {
   const handleViewCierre = (cierre) => generatePreview(
     [cierre.fecha],
     cierre.observaciones || "",
-    { start: cierre.periodo_desde, end: cierre.periodo_hasta || cierre.created_at }
+    { start: cierre.periodo_desde, end: cierre.periodo_hasta || cierre.created_at },
+    cierre
   );
 
   return (
