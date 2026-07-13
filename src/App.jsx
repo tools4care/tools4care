@@ -39,6 +39,7 @@ const AdminHub = lazy(() => import("./pages/AdminHub"));
 const DriverExpensesAdmin = lazy(() => import("./pages/DriverExpensesAdmin"));
 const UsuariosAdmin = lazy(() => import("./pages/UsuariosAdmin"));
 const AuditoriaLog = lazy(() => import("./pages/AuditoriaLog"));
+const SystemHealth = lazy(() => import("./pages/SystemHealth"));
 
 // 📊 Reportes (NUEVO)
 const Reportes = lazy(() => import('./Reportes'));
@@ -238,6 +239,9 @@ export default function App() {
 
             {/* 📜 AUDITORÍA (ADMIN) */}
             <Route path="auditoria" element={<AdminRoute><AuditoriaLog /></AdminRoute>} />
+
+            {/* 🩺 SYSTEM HEALTH (ADMIN) */}
+            <Route path="system-health" element={<AdminRoute><SystemHealth /></AdminRoute>} />
 
             {/* 📊 REPORTES (NUEVO) */}
             <Route path="reportes" element={<Reportes />} />

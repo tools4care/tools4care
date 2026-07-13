@@ -1,6 +1,9 @@
 import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
+import { initSentry, SentryErrorBoundary } from "./sentry";
 
 import { UsuarioProvider } from "./UsuarioContext";
 import VanProvider from "./hooks/VanContext";
@@ -8,6 +11,8 @@ import { ToastProvider } from "./hooks/useToast";
 import { ThemeProvider } from "./hooks/useTheme.jsx";
 
 import "./index.css";
+
+initSentry();
 
 // ── Storefront público (sin providers del POS) ──────────────────────────
 const Storefront        = lazy(() => import("./storefront/Storefront.jsx"));
@@ -33,10 +38,29 @@ const POSFallback = () => (
   </div>
 );
 
+const AppErrorFallback = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+    <div className="max-w-md rounded-lg border border-slate-200 bg-white p-6 text-center shadow-sm">
+      <h1 className="text-lg font-semibold text-slate-900">Something went wrong</h1>
+      <p className="mt-2 text-sm text-slate-600">
+        The error was reported automatically. Please reload the app and try again.
+      </p>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+      >
+        Reload
+      </button>
+    </div>
+  </div>
+);
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <Routes>
+    <SentryErrorBoundary fallback={<AppErrorFallback />}>
+      <BrowserRouter>
+        <Routes>
         {/* ─── Rutas públicas del storefront ───────────────────────────
             Completamente independientes del POS:
             - Sin UsuarioProvider / VanProvider del POS
@@ -105,8 +129,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             </ThemeProvider>
           }
         />
-      </Routes>
-    </BrowserRouter>
+        </Routes>
+      </BrowserRouter>
+      <Analytics />
+      <SpeedInsights />
+    </SentryErrorBoundary>
   </React.StrictMode>
 );
 
