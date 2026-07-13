@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import {
+  Activity,
   BarChart3,
   FileCog,
   Globe2,
@@ -53,6 +54,13 @@ const ADMIN_TOOLS = [
     description: "Track important changes, discounts, returns, and stock actions.",
     icon: ScrollText,
     tone: "from-rose-500 to-red-700",
+  },
+  {
+    to: "/system-health",
+    title: "System Health",
+    description: "Live status for the app, CxC API, and Supabase, with response times and monitoring links.",
+    icon: Activity,
+    tone: "from-cyan-500 to-teal-700",
   },
   {
     to: "/admin/new-client",
