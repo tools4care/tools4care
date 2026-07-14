@@ -1068,6 +1068,7 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
       setClientRisk(null);
       setCreditAvailableAfter(0);
       setAcuerdosResumen(null);
+      setAcuerdosCuotasReales(null);
       setReglasCredito(null);
       setAgentLoading(false);
       return;
@@ -1100,6 +1101,21 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
       }
 
       setAcuerdosResumen(acuerdos);
+
+      // Cuotas reales (no aproximadas) del/de los acuerdo(s) activo(s) —
+      // tras la consolidación normalmente es uno solo con sus montos y
+      // fechas exactas, en vez de reconstruir un calendario estimado.
+      try {
+        const activosDetalle = await getAcuerdosActivos(clienteId);
+        const cuotasReales = activosDetalle
+          .flatMap((a) => a.cuotas_acuerdo || [])
+          .filter((c) => Number(c.monto || 0) - Number(c.monto_pagado || 0) > 0.001)
+          .sort((a, b) => new Date(a.fecha_vencimiento) - new Date(b.fecha_vencimiento));
+        setAcuerdosCuotasReales(cuotasReales);
+      } catch (e) {
+        console.warn('⚠️ Error cargando cuotas reales:', e.message);
+        setAcuerdosCuotasReales(null);
+      }
 
       const diasDeuda = await getDiasDeudaMasVieja(clienteId);
       const montoPagando = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
@@ -1404,6 +1420,7 @@ useEffect(() => {
 
   // ---- ACUERDOS DE PAGO
 const [acuerdosResumen, setAcuerdosResumen] = useState(null);
+const [acuerdosCuotasReales, setAcuerdosCuotasReales] = useState(null);
 const [reglasCredito, setReglasCredito] = useState(null);
 const [showAgreementModal, setShowAgreementModal] = useState(false);
 const [agreementPlan, setAgreementPlan] = useState(null);
@@ -1914,6 +1931,7 @@ useEffect(() => {
       setCxcBalance(cachedBalance);
       setClientStoreCredit(0);
       setAcuerdosResumen(null);
+      setAcuerdosCuotasReales(null);
       setReglasCredito(null);
       return;
     }
@@ -2948,7 +2966,6 @@ useEffect(() => {
       ? `Collect ${fmt(remainingToCollect)}`
       : "Save Sale";
   const canSendToAR = hasClientAccount;
-  const hasARPaymentRow = payments.some((p) => p?.toAR);
 
   /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
   useEffect(() => {
@@ -3238,6 +3255,7 @@ function clearSale() {
 
   // Limpiar acuerdos
   setAcuerdosResumen(null);
+  setAcuerdosCuotasReales(null);
   setReglasCredito(null);
   setAgreementPlan(null);
   setAgreementException(false);
@@ -3430,14 +3448,6 @@ function clearSale() {
   const handleRemovePayment = useCallback((index) => {
     setPayments((ps) => (ps.length === 1 ? ps : ps.filter((_, i) => i !== index)));
   }, []); // functional updater — no captura estado externo
-
-  const handleSendSaleToAR = useCallback(() => {
-    if (!selectedClient?.id) return;
-    setPayments([{ forma: "efectivo", monto: 0, toAR: true }]);
-    setPaymentAutoFilled(false);
-    setPaymentError("");
-    toast.info("This sale balance will be sent to A/R for the selected customer.");
-  }, [selectedClient?.id, toast]);
 
   const handleBarcodeScanned = useCallback((code) => {
     setProductSearch(code.trim());
@@ -6293,99 +6303,6 @@ function renderStepPayment() {
         )}
       </div>
 
-      {/* ── FIFO BREAKDOWN — only when there IS a payment being applied ─── */}
-      {oldDebt > 0 && paid > 0 && (
-        <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm overflow-hidden">
-          <button
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
-            onClick={() => setShowFifo(v => !v)}
-          >
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">💡 How this payment is applied</span>
-            <span className={`text-gray-400 text-xs transition-transform duration-200 ${showFifo ? "rotate-180" : ""}`}>▼</span>
-          </button>
-          {showFifo && (
-            <div className="px-4 pb-4 space-y-2">
-              <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                <div className="text-sm text-red-700">
-                  <span className="font-bold">1️⃣ Prior balance</span>
-                  <span className="text-xs ml-2 text-red-500">({fmt(oldDebt)})</span>
-                </div>
-                <div className="font-bold text-red-800">{fmt(paidToOldDebt)} applied</div>
-              </div>
-              <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                <div className="text-sm text-blue-700">
-                  <span className="font-bold">2️⃣ This sale</span>
-                  <span className="text-xs ml-2 text-blue-500">({fmt(saleTotal)})</span>
-                </div>
-                <div className="font-bold text-blue-800">{fmt(paidForSale)} applied</div>
-              </div>
-              <div className="flex items-center justify-between bg-gray-50 border-2 border-gray-300 rounded-lg px-3 py-2">
-                <div className="text-sm font-bold text-gray-700">Remaining on A/R</div>
-                <div className={`font-bold text-lg ${amountToCredit > 0 ? "text-amber-700" : "text-emerald-700"}`}>{fmt(amountToCredit)}</div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* New balance highlight — replaces the full summary block (detail is in the Show to Client modal) */}
-      {selectedClient?.id && (
-        <div className={`rounded-xl px-5 py-4 flex items-center justify-between border-2 ${balanceAfter === 0 ? "bg-emerald-50 border-emerald-300" : "bg-gray-50 border-gray-200"}`}>
-          <span className="font-bold text-gray-700 text-sm">New Balance</span>
-          <div className="text-right">
-            <div className={`text-3xl font-extrabold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-600"}`}>
-              {fmt(balanceAfter)}
-            </div>
-            {balanceAfter === 0 && <div className="text-xs text-emerald-600 font-semibold mt-0.5">🎉 Account fully paid!</div>}
-          </div>
-        </div>
-      )}
-
-      {/* ── SHOW TO CLIENT (big prominent button) ─── */}
-      {selectedClient?.id && (
-        <button
-          onClick={() => setShowBalanceSummary(true)}
-          className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white py-4 rounded-xl font-bold text-base shadow-lg hover:shadow-xl active:scale-98 transition-all flex items-center justify-center gap-3"
-        >
-          <span className="text-xl">📱</span>
-          Show Summary to Client
-          <span className="text-xl">👤</span>
-        </button>
-      )}
-
-      {/* ── MIN PAYMENT ALERT ─────────────────────────── */}
-      {oldDebt > 0 && pagoMinimo > 0 && (
-        <div className={`rounded-xl border-2 p-4 ${cubrioMinimo ? "bg-green-50 border-green-300" : "bg-amber-50 border-amber-400"}`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className={`font-bold ${cubrioMinimo ? "text-green-800" : "text-amber-800"}`}>
-                {cubrioMinimo ? "✅ Minimum payment met" : "⚠️ Minimum payment not met"}
-              </div>
-              <div className="text-sm text-gray-600 mt-1">
-                Prior balance: <b>{fmt(oldDebt)}</b> · Min. required: <b>{fmt(pagoMinimo)}</b>
-                {pagoMinimo >= oldDebt ? " (full balance)" : " (20% or $30)"}
-              </div>
-            </div>
-            {!cubrioMinimo && (
-              <div className="text-right">
-                <div className="text-xs text-amber-700">Still needed</div>
-                <div className="text-xl font-bold text-amber-800">{fmt(faltaParaMinimo)}</div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── CREDIT LIMIT WARNING ──────────────────────── */}
-      {hasClientAccount && excesoCredito > 0 && (
-        <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3 text-center">
-          <div className="text-rose-700 font-semibold">❌ Credit Limit Exceeded</div>
-          <div className="text-rose-600 text-sm mt-1">
-            Needed: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
-          </div>
-        </div>
-      )}
-
       {!hasClientAccount && (
         <div className={`rounded-xl border-2 px-4 py-3 flex items-center justify-between gap-3 ${
           quickSaleNeedsFullPayment ? "bg-blue-50 border-blue-200" : "bg-emerald-50 border-emerald-200"
@@ -6403,41 +6320,6 @@ function renderStepPayment() {
             <div className={`text-xl font-black ${quickSaleNeedsFullPayment ? "text-blue-700" : "text-emerald-700"}`}>
               {fmt(remainingToCollect)}
             </div>
-          </div>
-        </div>
-      )}
-
-      {hasClientAccount && (
-        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <div className="text-sm font-bold text-amber-900">A/R option available</div>
-            <div className="text-xs text-amber-700 mt-0.5">
-              {hasARPaymentRow
-                ? `Current unpaid sale amount: ${fmt(amountToCredit)}`
-                : "Use this when the customer will pay later. Not available for no-client sales."}
-            </div>
-          </div>
-          <div className="flex gap-2">
-            {hasARPaymentRow && (
-              <button
-                type="button"
-                onClick={() => {
-                  setPayments([{ forma: "efectivo", monto: Number(totalAPagar.toFixed(2)) }]);
-                  setPaymentAutoFilled(true);
-                }}
-                className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100"
-              >
-                Undo
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleSendSaleToAR}
-              disabled={saleTotalWithTax <= 0}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 disabled:opacity-50"
-            >
-              Send this sale to A/R
-            </button>
           </div>
         </div>
       )}
@@ -6580,7 +6462,7 @@ function renderStepPayment() {
 	                        setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: true } : x));
 	                      }}
 	                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-colors shadow-md flex items-center justify-center gap-1"
-	                    >📋 Send to A/R</button>
+	                    >📋 Charge to A/R</button>
 	                  ) : null}
 	                  {!p?.toAR && p.forma === "tarjeta" && (
 	                    <button
@@ -6629,6 +6511,87 @@ function renderStepPayment() {
         </div>
       </div>
 
+      {/* ── MIN PAYMENT ALERT ─────────────────────────── */}
+      {oldDebt > 0 && pagoMinimo > 0 && (
+        <div className={`rounded-xl border-2 p-4 ${cubrioMinimo ? "bg-green-50 border-green-300" : "bg-amber-50 border-amber-400"}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className={`font-bold ${cubrioMinimo ? "text-green-800" : "text-amber-800"}`}>
+                {cubrioMinimo ? "✅ Minimum payment met" : "⚠️ Minimum payment not met"}
+              </div>
+              <div className="text-sm text-gray-600 mt-1">
+                Prior balance: <b>{fmt(oldDebt)}</b> · Min. required: <b>{fmt(pagoMinimo)}</b>
+                {pagoMinimo >= oldDebt ? " (full balance)" : " (20% or $30)"}
+              </div>
+            </div>
+            {!cubrioMinimo && (
+              <div className="text-right">
+                <div className="text-xs text-amber-700">Still needed</div>
+                <div className="text-xl font-bold text-amber-800">{fmt(faltaParaMinimo)}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── CREDIT LIMIT WARNING ──────────────────────── */}
+      {hasClientAccount && excesoCredito > 0 && (
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-3 text-center">
+          <div className="text-rose-700 font-semibold">❌ Credit Limit Exceeded</div>
+          <div className="text-rose-600 text-sm mt-1">
+            Needed: <b>{fmt(amountToCredit)}</b> · Available: <b>{fmt(creditAvailable)}</b> · Excess: <b>{fmt(excesoCredito)}</b>
+          </div>
+        </div>
+      )}
+
+      {/* ── FIFO BREAKDOWN — only when there IS a payment being applied ─── */}
+      {oldDebt > 0 && paid > 0 && (
+        <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm overflow-hidden">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+            onClick={() => setShowFifo(v => !v)}
+          >
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">💡 How this payment is applied</span>
+            <span className={`text-gray-400 text-xs transition-transform duration-200 ${showFifo ? "rotate-180" : ""}`}>▼</span>
+          </button>
+          {showFifo && (
+            <div className="px-4 pb-4 space-y-2">
+              <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                <div className="text-sm text-red-700">
+                  <span className="font-bold">1️⃣ Prior balance</span>
+                  <span className="text-xs ml-2 text-red-500">({fmt(oldDebt)})</span>
+                </div>
+                <div className="font-bold text-red-800">{fmt(paidToOldDebt)} applied</div>
+              </div>
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <div className="text-sm text-blue-700">
+                  <span className="font-bold">2️⃣ This sale</span>
+                  <span className="text-xs ml-2 text-blue-500">({fmt(saleTotal)})</span>
+                </div>
+                <div className="font-bold text-blue-800">{fmt(paidForSale)} applied</div>
+              </div>
+              <div className="flex items-center justify-between bg-gray-50 border-2 border-gray-300 rounded-lg px-3 py-2">
+                <div className="text-sm font-bold text-gray-700">Remaining on A/R</div>
+                <div className={`font-bold text-lg ${amountToCredit > 0 ? "text-amber-700" : "text-emerald-700"}`}>{fmt(amountToCredit)}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* New balance highlight — replaces the full summary block (detail is in the Show to Client modal) */}
+      {selectedClient?.id && (
+        <div className={`rounded-xl px-5 py-4 flex items-center justify-between border-2 ${balanceAfter === 0 ? "bg-emerald-50 border-emerald-300" : "bg-gray-50 border-gray-200"}`}>
+          <span className="font-bold text-gray-700 text-sm">New Balance</span>
+          <div className="text-right">
+            <div className={`text-3xl font-extrabold ${balanceAfter > 0 ? "text-red-700" : "text-emerald-600"}`}>
+              {fmt(balanceAfter)}
+            </div>
+            {balanceAfter === 0 && <div className="text-xs text-emerald-600 font-semibold mt-0.5">🎉 Account fully paid!</div>}
+          </div>
+        </div>
+      )}
+
       {/* ── PAYMENT AGREEMENTS ───────────────────────── */}
       {selectedClient?.id && (
         <Suspense fallback={null}>
@@ -6640,9 +6603,21 @@ function renderStepPayment() {
             ventaHoy={saleTotal}
             montoAPagar={paid}
             pagoMinimo={pagoMinimo}
-            acuerdosData={acuerdosResumen}
+            acuerdosData={acuerdosCuotasReales != null ? { cuotasPendientes: acuerdosCuotasReales } : acuerdosResumen}
           />
         </Suspense>
+      )}
+
+      {/* ── SHOW TO CLIENT (big prominent button) ─── */}
+      {selectedClient?.id && (
+        <button
+          onClick={() => setShowBalanceSummary(true)}
+          className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white py-4 rounded-xl font-bold text-base shadow-lg hover:shadow-xl active:scale-98 transition-all flex items-center justify-center gap-3"
+        >
+          <span className="text-xl">📱</span>
+          Show Summary to Client
+          <span className="text-xl">👤</span>
+        </button>
       )}
 
       {/* ── NAVIGATION ───────────────────────────────── */}
