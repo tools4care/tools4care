@@ -25,6 +25,10 @@ import {
   Cell,
 } from "recharts";
 import { SkeletonCard } from "./components/ui/Skeleton";
+import { usePermisos } from "./hooks/usePermisos";
+import { getAcuerdosActivos } from "./lib/paymentAgreements";
+import ClientPaymentView from "./components/ClientPaymentView";
+import ModifyAgreementModal from "./components/ModifyAgreementModal";
 
 const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = import.meta.env.VITE_CXC_SECRET || "#cxcadmin2025";
@@ -350,6 +354,9 @@ const IconTrending = ({ up }) => (
 
 /* ====================== Customer History Modal ====================== */
 function CustomerHistoryModal({ cliente, onClose }) {
+  const { van } = useVan();
+  const { usuario } = useUsuario();
+  const { isPrivileged } = usePermisos();
   const [loading, setLoading] = useState(true);
   const [historyData, setHistoryData] = useState({
     monthlyBalance: [],
@@ -359,6 +366,34 @@ function CustomerHistoryModal({ cliente, onClose }) {
   });
   const [activeTab, setActiveTab] = useState("balance");
   const [showMore, setShowMore] = useState(false);
+  const [agreementActivos, setAgreementActivos] = useState([]);
+  const [agreementLoading, setAgreementLoading] = useState(false);
+  const [showModifyAgreement, setShowModifyAgreement] = useState(false);
+
+  const loadAgreementData = useCallback(async () => {
+    if (!cliente?.cliente_id) return;
+    setAgreementLoading(true);
+    try {
+      const activos = await getAcuerdosActivos(cliente.cliente_id);
+      setAgreementActivos(activos);
+    } catch {
+      setAgreementActivos([]);
+    } finally {
+      setAgreementLoading(false);
+    }
+  }, [cliente?.cliente_id]);
+
+  useEffect(() => {
+    loadAgreementData();
+  }, [loadAgreementData]);
+
+  const agreementCuotasReales = agreementActivos
+    .flatMap((a) => a.cuotas_acuerdo || [])
+    .filter((c) => Number(c.monto || 0) - Number(c.monto_pagado || 0) > 0.001)
+    .sort((a, b) => new Date(a.fecha_vencimiento) - new Date(b.fecha_vencimiento));
+  const agreementMontoPendiente = agreementActivos.reduce(
+    (s, a) => s + Number(a.monto_pendiente || 0), 0
+  );
 
   useEffect(() => {
     loadHistoryData();
@@ -617,6 +652,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
     { key: 'balance', label: 'Balance History', icon: '💰' },
     { key: 'score', label: 'Credit Score', icon: '📊' },
     { key: 'payments', label: 'Payments', icon: '💳' },
+    { key: 'agreement', label: 'Payment Plan', icon: '📋' },
   ];
 
   return (
@@ -1336,10 +1372,62 @@ function CustomerHistoryModal({ cliente, onClose }) {
                     )}
                   </div>
                 )}
+
+                {/* Payment Plan Tab */}
+                {activeTab === 'agreement' && (
+                  <div className="space-y-4">
+                    {agreementLoading ? (
+                      <div className="flex items-center justify-center py-16 text-gray-400">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mr-3" />
+                        Loading payment plan...
+                      </div>
+                    ) : agreementActivos.length === 0 ? (
+                      <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-6 text-center">
+                        <div className="text-4xl mb-2">✅</div>
+                        <div className="font-bold text-emerald-800">No active payment plan</div>
+                        <div className="text-sm text-emerald-700 mt-1">
+                          {Number(cliente?.saldo) > 0
+                            ? `This customer has a balance of ${currency(cliente.saldo)} but no installment agreement.`
+                            : "This customer has no outstanding agreement."}
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <ClientPaymentView
+                          clienteId={cliente.cliente_id}
+                          clienteName={cliente?.cliente_nombre || cliente?.cliente}
+                          balanceActual={agreementMontoPendiente}
+                          acuerdosData={{ cuotasPendientes: agreementCuotasReales }}
+                        />
+                        {isPrivileged && (
+                          <button
+                            onClick={() => setShowModifyAgreement(true)}
+                            className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-lg text-white py-3 rounded-xl font-bold transition-all"
+                          >
+                            ✏️ Modify Payment Plan
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
         </div>
+
+        {showModifyAgreement && (
+          <ModifyAgreementModal
+            clienteId={cliente.cliente_id}
+            clienteName={cliente?.cliente_nombre || cliente?.cliente}
+            vanId={van?.id || null}
+            usuarioId={usuario?.id || null}
+            montoPendiente={agreementMontoPendiente}
+            numCuotasActual={agreementActivos[0]?.num_cuotas || null}
+            onClose={() => setShowModifyAgreement(false)}
+            onSaved={loadAgreementData}
+          />
+        )}
 
         {/* Footer - Con safe area bottom */}
         <div className="flex-shrink-0 bg-white border-t-2 border-gray-200 p-4 sm:p-6 pb-safe">
