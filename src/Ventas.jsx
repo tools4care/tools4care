@@ -1118,7 +1118,7 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
       }
 
       const diasDeuda = await getDiasDeudaMasVieja(clienteId);
-      const montoPagando = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+      const montoPagando = payments.reduce((s, p) => s + (p?.toAR ? 0 : Number(p.monto || 0)), 0);
 
       reglas = evaluarReglasCredito({
         montoVenta: montoVenta || saleTotal,
@@ -2905,7 +2905,7 @@ useEffect(() => {
     [cartSafe]
   );
   const paid = useMemo(
-    () => payments.reduce((s, p) => s + Number(p.monto || 0), 0),
+    () => payments.reduce((s, p) => s + (p?.toAR ? 0 : Number(p.monto || 0)), 0),
     [payments]
   );
 
@@ -3018,7 +3018,7 @@ useEffect(() => {
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
 useEffect(() => {
   // Resetear auto-fill cuando cambia el total de la venta
-  if (step === 3 && totalAPagar > 0 && payments.length === 1) {
+  if (step === 3 && totalAPagar > 0 && payments.length === 1 && !payments[0]?.toAR) {
     const currentPayment = Number(payments[0].monto);
     
     // Si el pago actual es diferente al total a pagar, resetear auto-fill
@@ -3033,6 +3033,7 @@ useEffect(() => {
     totalAPagar > 0 && 
     !paymentAutoFilled && 
     payments.length === 1 && 
+    !payments[0]?.toAR &&
     Number(payments[0].monto) === 0
   ) {
     // ⚠️ VERIFICAR: Solo auto-fill si acabamos de entrar al paso 3
@@ -3837,7 +3838,9 @@ async function handleDeletePendingSale(id) {
     setSaving(true);
     setPaymentError("");
      // Si hay crédito y el modal de acuerdo no se ha confirmado aún, mostrarlo
-    const amountToCreditCheck = saleTotalWithTax - payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+    // Use the same FIFO/store-credit-aware value shown in the checkout UI.
+    // This is only the NEW credit created by this sale, not the prior A/R balance.
+    const amountToCreditCheck = amountToCredit;
 
    // Solo mostrar modal de acuerdo si:
 // 1. Esta venta deja crédito nuevo real (evita solo ruido de centavos)
@@ -3954,14 +3957,14 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
       if (isOffline) {
         try {
           // Calcular pagos y estado igual que en modo online
-          const paid_offline = payments.reduce((s, p) => s + Number(p.monto || 0), 0);
+          const paid_offline = payments.reduce((s, p) => s + (p?.toAR ? 0 : Number(p.monto || 0)), 0);
           const oldDebt_offline = Math.max(0, balanceBefore);
           const payOldDebt_offline = Math.min(paid_offline, oldDebt_offline);
           const paidForSale_offline = Math.min(saleTotalWithTax, Math.max(0, paid_offline - payOldDebt_offline));
           const pendingFromSale_offline = Math.max(0, saleTotalWithTax - paidForSale_offline);
           const estadoPago_offline = pendingFromSale_offline === 0 ? "pagado" : paidForSale_offline > 0 ? "parcial" : "pendiente";
 
-          const nonZeroPays_offline = payments.filter((p) => Number(p.monto) > 0);
+          const nonZeroPays_offline = payments.filter((p) => !p?.toAR && Number(p.monto) > 0);
           const payMap_offline = { efectivo: 0, tarjeta: 0, transferencia: 0, cheque: 0, otro: 0 };
           for (const p of nonZeroPays_offline) {
             if (payMap_offline[p.forma] !== undefined) payMap_offline[p.forma] += Number(p.monto || 0);
@@ -4018,7 +4021,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
               };
             }),
             // Pagos originales para referencia
-            payments: payments.filter((p) => Number(p.monto) > 0),
+            payments: payments.filter((p) => !p?.toAR && Number(p.monto) > 0),
             // Fecha real de la transacción (sin campo fecha_venta — no existe en BD)
             created_at: new Date().toISOString(),
           };
@@ -4118,7 +4121,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       const estadoPago =
         pendingFromThisSale === 0 ? "pagado" : totalSettledForSaleNow > 0 ? "parcial" : "pendiente";
 
-      const nonZeroPayments = payments.filter((p) => Number(p.monto) > 0);
+      const nonZeroPayments = payments.filter((p) => !p?.toAR && Number(p.monto) > 0);
 
       // 🔴 Require transfer sub-type (Zelle, Cash App, Venmo, Apple Pay)
       const missingSubType = nonZeroPayments.find(
@@ -6173,10 +6176,21 @@ function renderStepProducts() {
 }
 /* ======================== Step 3: Payment ======================== */
 function renderStepPayment() {
-  const getPaymentLabel = (p) => {
-    if (p?.toAR) return "Amount to A/R";
-    const found = PAYMENT_METHODS.find(fp => fp.key === p.forma);
-    return found?.label ?? p.forma ?? "Method";
+  const isSaleToAR = payments.length === 1 && !!payments[0]?.toAR;
+
+  const sendSaleToAR = () => {
+    setPayments([{ forma: "efectivo", monto: 0, toAR: true }]);
+    setPaymentAutoFilled(false);
+    setPaymentError("");
+  };
+
+  const collectPaymentInstead = () => {
+    setPayments([{
+      forma: payments[0]?.forma || "efectivo",
+      monto: Number(totalAPagar.toFixed(2)),
+    }]);
+    setPaymentAutoFilled(true);
+    setPaymentError("");
   };
 
   return (
@@ -6210,22 +6224,26 @@ function renderStepPayment() {
       </div>
 
       {/* One clear total, like a checkout/POS screen. */}
-      <section className="bg-slate-900 rounded-2xl px-5 py-4 text-white shadow-sm" aria-label="Sale total">
+      <section className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl px-5 py-4 text-white shadow-md shadow-blue-200/60" aria-label="Sale total">
         <div className="flex items-start justify-between gap-5">
           <div className="min-w-0 pt-1">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wider font-semibold">Customer</div>
+            <div className="text-blue-100 text-[11px] uppercase tracking-wider font-semibold">Customer</div>
             <div className="font-semibold truncate mt-0.5">{selectedClient?.nombre || "Walk-in / Quick Sale"}</div>
             {selectedClient?.id && (
-              <div className="text-slate-400 text-xs font-mono mt-0.5">#{getCreditNumber(selectedClient)}</div>
+              <div className="text-blue-100 text-xs font-mono mt-0.5">#{getCreditNumber(selectedClient)}</div>
             )}
           </div>
           <div className="text-right shrink-0">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wider font-semibold">Total to collect</div>
-            <div className="text-3xl lg:text-4xl font-black tracking-tight mt-0.5">{fmt(totalAPagar)}</div>
+            <div className="text-blue-100 text-[11px] uppercase tracking-wider font-semibold">
+              {isSaleToAR ? "Balance after sale" : "Total to collect"}
+            </div>
+            <div className="text-3xl lg:text-4xl font-black tracking-tight mt-0.5">
+              {fmt(isSaleToAR ? balanceAfter : totalAPagar)}
+            </div>
           </div>
         </div>
 
-        <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-300">
+        <div className="mt-4 pt-3 border-t border-white/20 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-blue-100">
           <span>Sale <b className="text-white">{fmt(saleTotalWithTax)}</b></span>
           {balanceBefore > 0 && <span>Previous balance <b className="text-white">{fmt(balanceBefore)}</b></span>}
           {storeCreditApplied > 0 && <span className="text-emerald-300">Credit applied <b>-{fmt(storeCreditApplied)}</b></span>}
@@ -6234,17 +6252,27 @@ function renderStepPayment() {
       </section>
 
       {/* Primary task: choose method and enter amount. */}
-      <section className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Collect payment">
-        <div className="px-5 pt-4 pb-3 flex items-center justify-between gap-3">
+      <section className="bg-white rounded-2xl border border-blue-100 shadow-sm overflow-hidden" aria-label="Collect payment">
+        <div className="px-5 py-4 bg-gradient-to-r from-blue-50 to-white flex items-center justify-between gap-3">
           <div>
-            <h3 className="font-bold text-gray-900">Collect payment</h3>
+            <h3 className="font-bold text-blue-950">{isSaleToAR ? "Sale on customer account" : "Collect payment"}</h3>
             <p className="text-xs text-gray-500 mt-0.5">Choose a method and confirm the amount</p>
           </div>
-          {payments.length > 1 && (
-            <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full">
-              {payments.length} methods
-            </span>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {payments.length > 1 && (
+              <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-2.5 py-1 rounded-full">
+                {payments.length} methods
+              </span>
+            )}
+            {hasClientAccount && !isSaleToAR && totalAPagar > 0 && (
+              <button
+                onClick={sendSaleToAR}
+                className="px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-xs font-bold hover:bg-amber-100 transition-colors"
+              >
+                Send sale to A/R
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="px-5 pb-4 space-y-3">
@@ -6252,68 +6280,70 @@ function renderStepPayment() {
             <div className={`${i > 0 ? "pt-3 border-t border-gray-100" : ""}`} key={i}>
               <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(150px,190px)_auto] gap-2 items-center">
                 {p?.toAR ? (
-                  <div className="border border-amber-200 bg-amber-50 rounded-xl px-3 py-3 font-semibold text-amber-800">
-                    {getPaymentLabel(p)}
+                  <div className="sm:col-span-3 border border-amber-200 bg-amber-50 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-amber-900">Full unpaid sale goes to A/R</div>
+                      <div className="text-xs text-amber-700 mt-0.5">No payment is collected now. Credit rules still apply.</div>
+                    </div>
+                    <div className="flex items-center gap-3 sm:justify-end">
+                      <div className="text-right">
+                        <div className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold">Added to A/R</div>
+                        <div className="text-xl font-black text-amber-900">{fmt(amountToCredit)}</div>
+                      </div>
+                      <button
+                        onClick={collectPaymentInstead}
+                        className="h-10 px-3 rounded-lg border border-blue-200 bg-white text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                      >
+                        Collect instead
+                      </button>
+                    </div>
                   </div>
                 ) : (
-                  <select
-                    aria-label={`Payment method ${i + 1}`}
-                    value={p.forma}
-                    onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
-                    className="w-full border border-gray-300 bg-white rounded-xl px-3 py-3 font-medium text-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all"
-                  >
-                    {PAYMENT_METHODS.map((fp) => (
-                      <option key={fp.key} value={fp.key}>{fp.label}</option>
-                    ))}
-                  </select>
+                  <>
+                    <select
+                      aria-label={`Payment method ${i + 1}`}
+                      value={p.forma}
+                      onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
+                      className="w-full border border-gray-300 bg-white rounded-xl px-3 py-3 font-medium text-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all"
+                    >
+                      {PAYMENT_METHODS.map((fp) => (
+                        <option key={fp.key} value={fp.key}>{fp.label}</option>
+                      ))}
+                    </select>
+
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
+                      <input
+                        aria-label={`Payment amount ${i + 1}`}
+                        inputMode="decimal"
+                        type="text"
+                        value={p.monto === 0 ? "" : p.monto}
+                        onChange={(e) => handleChangePayment(i, "monto", e.target.value.trim() || 0)}
+                        onFocus={(e) => { if (p.monto === 0) e.target.value = ""; }}
+                        onBlur={(e) => {
+                          const val = e.target.value.trim();
+                          if (!val || val === "." || val === "0") handleChangePayment(i, "monto", 0);
+                          else {
+                            const num = parseFloat(val);
+                            handleChangePayment(i, "monto", !isNaN(num) && num > 0 ? Number(num.toFixed(2)) : 0);
+                          }
+                        }}
+                        className="w-full border border-gray-300 rounded-xl pl-7 pr-3 py-3 text-right text-lg font-bold text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                        placeholder="0.00"
+                      />
+                    </div>
+
+                    {payments.length > 1 ? (
+                      <button
+                        onClick={() => handleRemovePayment(i)}
+                        className="h-11 w-11 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        aria-label={`Remove payment method ${i + 1}`}
+                      >
+                        ✕
+                      </button>
+                    ) : <div className="hidden sm:block w-11" />}
+                  </>
                 )}
-
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">$</span>
-                  <input
-                    aria-label={`Payment amount ${i + 1}`}
-                    inputMode="decimal"
-                    type="text"
-                    value={p?.toAR ? String(Number(amountToCredit).toFixed(2)) : (p.monto === 0 ? "" : p.monto)}
-                    onChange={(e) => {
-                      if (p?.toAR) return;
-                      handleChangePayment(i, "monto", e.target.value.trim() || 0);
-                    }}
-                    onFocus={(e) => { if (!p?.toAR && p.monto === 0) e.target.value = ""; }}
-                    onBlur={(e) => {
-                      if (p?.toAR) return;
-                      const val = e.target.value.trim();
-                      if (!val || val === "." || val === "0") handleChangePayment(i, "monto", 0);
-                      else {
-                        const num = parseFloat(val);
-                        handleChangePayment(i, "monto", !isNaN(num) && num > 0 ? Number(num.toFixed(2)) : 0);
-                      }
-                    }}
-                    readOnly={!!p?.toAR}
-                    disabled={!!p?.toAR}
-                    className={`w-full border rounded-xl pl-7 pr-3 py-3 text-right text-lg font-bold focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none ${
-                      p?.toAR ? "bg-amber-50 border-amber-200 text-amber-800" : "border-gray-300 text-gray-900"
-                    }`}
-                    placeholder="0.00"
-                  />
-                </div>
-
-                {p?.toAR ? (
-                  <button
-                    onClick={() => setPayments(prev => prev.map((x, idx) => idx === i ? { ...x, toAR: false } : x))}
-                    className="h-11 px-3 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50"
-                  >
-                    Undo
-                  </button>
-                ) : payments.length > 1 ? (
-                  <button
-                    onClick={() => handleRemovePayment(i)}
-                    className="h-11 w-11 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                    aria-label={`Remove payment method ${i + 1}`}
-                  >
-                    ✕
-                  </button>
-                ) : <div className="hidden sm:block w-11" />}
               </div>
 
               {p.forma === "transferencia" && !p?.toAR && (
@@ -6329,7 +6359,7 @@ function renderStepPayment() {
                           key={s.key}
                           onClick={() => handleChangePayment(i, "subMetodo", active ? null : s.key)}
                           className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                            active ? "bg-slate-800 text-white border-slate-800" : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+                            active ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:border-blue-300"
                           }`}
                         >
                           {s.label}
@@ -6388,15 +6418,17 @@ function renderStepPayment() {
             </div>
           ))}
 
-          <button
-            onClick={handleAddPayment}
-            className="text-sm font-semibold text-blue-700 hover:text-blue-800 py-1"
-          >
-            + Split payment
-          </button>
+          {!isSaleToAR && (
+            <button
+              onClick={handleAddPayment}
+              className="text-sm font-semibold text-blue-700 hover:text-blue-800 py-1"
+            >
+              + Split payment
+            </button>
+          )}
         </div>
 
-        <div className="border-t border-gray-100 bg-gray-50 px-5 py-3 grid grid-cols-2 gap-4">
+        <div className="border-t border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-3 grid grid-cols-2 gap-4">
           <div>
             <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Paid now</div>
             <div className="text-xl font-bold text-gray-900">{fmt(paid)}</div>
@@ -6422,6 +6454,22 @@ function renderStepPayment() {
           </div>
         )}
       </section>
+
+      {selectedClient?.id && (
+        <button
+          onClick={() => setShowBalanceSummary(true)}
+          className="w-full border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-900 rounded-xl px-4 py-3 flex items-center justify-between gap-3 shadow-sm transition-colors"
+        >
+          <span className="flex items-center gap-3 text-left">
+            <span className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center text-lg">👤</span>
+            <span>
+              <span className="block font-bold">Show summary to customer</span>
+              <span className="block text-xs text-blue-700 font-normal">Clear balance and payment view</span>
+            </span>
+          </span>
+          <span className="text-blue-600 font-bold">→</span>
+        </button>
+      )}
 
       {/* Only actionable warnings stay visible. */}
       {((oldDebt > 0 && pagoMinimo > 0 && !cubrioMinimo) || excesoCredito > 0 || quickSaleNeedsFullPayment || mostrarAdvertencia) && (
@@ -6462,8 +6510,8 @@ function renderStepPayment() {
       )}
 
       {/* Secondary information is available without competing with checkout. */}
-      <details className="group bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <summary className="list-none cursor-pointer px-4 py-3 flex items-center justify-between text-sm font-semibold text-gray-600 hover:bg-gray-50">
+      <details className="group bg-white rounded-xl border border-blue-100 overflow-hidden">
+        <summary className="list-none cursor-pointer px-4 py-3 flex items-center justify-between text-sm font-semibold text-gray-600 hover:bg-blue-50">
           <span>Account and payment details</span>
           <span className="text-gray-400 group-open:rotate-180 transition-transform">⌄</span>
         </summary>
@@ -6498,21 +6546,12 @@ function renderStepPayment() {
               </div>
             </div>
           )}
-
-          {selectedClient?.id && (
-            <button
-              onClick={() => setShowBalanceSummary(true)}
-              className="text-sm font-semibold text-indigo-700 hover:text-indigo-800"
-            >
-              Show simple summary to customer →
-            </button>
-          )}
         </div>
       </details>
 
       {selectedClient?.id && (
-        <details className="group bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <summary className="list-none cursor-pointer px-4 py-3 flex items-center justify-between text-sm font-semibold text-gray-600 hover:bg-gray-50">
+        <details className="group bg-white rounded-xl border border-blue-100 overflow-hidden">
+          <summary className="list-none cursor-pointer px-4 py-3 flex items-center justify-between text-sm font-semibold text-gray-600 hover:bg-blue-50">
             <span>Payment plan and installments</span>
             <span className="text-gray-400 group-open:rotate-180 transition-transform">⌄</span>
           </summary>

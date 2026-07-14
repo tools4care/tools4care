@@ -127,6 +127,12 @@ describe("computeSaleFinancials — FIFO with existing CxC debt", () => {
     expect(res.totalAPagar).toBe(150);
   });
 
+  it("a zero payment keeps prior A/R and sends only the new sale to A/R", () => {
+    const res = computeSaleFinancials(withDebt);
+    expect(res.balanceAfter).toBe(150);
+    expect(res.amountToCredit).toBe(100);
+  });
+
   it("a payment smaller than the old debt is applied entirely to the old debt first", () => {
     const res = computeSaleFinancials({ ...withDebt, paid: 30 });
     expect(res.paidToOldDebt).toBe(30);
