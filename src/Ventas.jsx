@@ -8,7 +8,7 @@ import { usePermisos } from "./hooks/usePermisos";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getClientHistory, evaluateCredit } from "./agents/creditAgent";
 import { evaluarReglasCredito, generarPlanPago, buildPaymentAgreementSMS } from "./lib/creditRulesEngine";
-import { getAcuerdosResumen, crearAcuerdo, aplicarPagoAAcuerdos, actualizarVencidas, getDiasDeudaMasVieja, isAgreementSystemAvailable } from "./lib/paymentAgreements";
+import { getAcuerdosResumen, getAcuerdosActivos, crearAcuerdo, aplicarPagoAAcuerdos, actualizarVencidas, getDiasDeudaMasVieja, isAgreementSystemAvailable } from "./lib/paymentAgreements";
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 import { computeSaleFinancials, calcularPagoMinimo, policyLimit, getClientBalance, r2 } from "./lib/saleFinancials";
 import { logAudit } from "./lib/auditLog";
@@ -3830,18 +3830,24 @@ async function handleDeletePendingSale(id) {
     setPaymentError("");
      // Si hay crédito y el modal de acuerdo no se ha confirmado aún, mostrarlo
     const amountToCreditCheck = saleTotalWithTax - payments.reduce((s, p) => s + Number(p.monto || 0), 0);
-    
+
    // Solo mostrar modal de acuerdo si:
-// 1. Hay crédito significativo (> $20)
+// 1. Esta venta deja crédito nuevo real (evita solo ruido de centavos)
 // 2. El sistema está disponible
 // 3. No se ha respondido ya
-const esCreditoSignificativo = amountToCreditCheck > 20;
+const esCreditoSignificativo = amountToCreditCheck > 0.01;
 
 	if (selectedClient?.id && esCreditoSignificativo && agreementSystemReady && !resolvedAgreementData) {
+  const acuerdosPrevios = await getAcuerdosActivos(selectedClient.id);
+  const deudaPrevia = Number(
+    acuerdosPrevios.reduce((s, a) => s + Number(a.monto_pendiente || 0), 0).toFixed(2)
+  );
   setPendingAgreementData({
     montoCredito: Number(amountToCreditCheck.toFixed(2)),
     saldoActual: creditProfile?.saldo || 0,
     clientName: selectedClient?.nombre || '',
+    deudaPrevia,
+    acuerdosPrevios,
     waiting: true,
   });
   setSaving(false);
@@ -6810,6 +6816,8 @@ function renderStepPayment() {
             montoCredito={pendingAgreementData?.montoCredito || 0}
             clientName={pendingAgreementData?.clientName || ''}
             saldoActual={pendingAgreementData?.saldoActual || 0}
+            deudaPrevia={pendingAgreementData?.deudaPrevia || 0}
+            acuerdosPrevios={pendingAgreementData?.acuerdosPrevios || []}
             reglasCredito={reglasCredito}
           /></Suspense>}
 

@@ -13,26 +13,35 @@ export default function AgreementModal({
   montoCredito = 0,
   clientName = "",
   saldoActual = 0,
+  deudaPrevia = 0,
+  acuerdosPrevios = [],
   reglasCredito = null,
 }) {
   const [numCuotas, setNumCuotas] = useState(null); // null = auto
   const [isException, setIsException] = useState(false);
   const [exceptionNote, setExceptionNote] = useState("");
 
+  const tieneAcuerdosPrevios = acuerdosPrevios.length > 0 && deudaPrevia > 0;
+  // El plan se genera sobre el TOTAL a consolidar (deuda de acuerdos previos
+  // + el crédito de esta venta) porque eso es lo que crearAcuerdo() va a
+  // crear realmente — mostrar solo el monto de la venta aquí desalinearía
+  // la vista previa del monto real que se le va a pedir al cliente.
+  const montoTotal = Number((Number(montoCredito || 0) + Number(deudaPrevia || 0)).toFixed(2));
+
   // Generar plan según cuotas seleccionadas
   const plan = useMemo(() => {
-    if (montoCredito <= 0) return null;
+    if (montoTotal <= 0) return null;
     try {
-      return generarPlanPago(montoCredito, {
+      return generarPlanPago(montoTotal, {
         numCuotas: numCuotas || undefined,
       });
     } catch (e) {
       console.warn("Error generando plan:", e);
       return null;
     }
-  }, [montoCredito, numCuotas]);
+  }, [montoTotal, numCuotas]);
 
-  if (!isOpen || montoCredito <= 0) return null;
+  if (!isOpen || montoTotal <= 0) return null;
 
   const needsException = reglasCredito?.requiereExcepcion || false;
   const warnings = reglasCredito?.advertencias || [];
@@ -78,7 +87,7 @@ export default function AgreementModal({
             </button>
           </div>
           <p className="text-sm opacity-90 mt-1">
-            {clientName} — Credit: ${montoCredito.toFixed(2)}
+            {clientName} — This sale: ${montoCredito.toFixed(2)}
           </p>
           {saldoActual > 0 && (
             <p className="text-xs opacity-75 mt-0.5">
@@ -86,6 +95,18 @@ export default function AgreementModal({
             </p>
           )}
         </div>
+
+        {/* Consolidation notice */}
+        {tieneAcuerdosPrevios && (
+          <div className="mx-4 mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="font-semibold text-blue-800 text-sm mb-1">
+              🔄 This will replace {acuerdosPrevios.length > 1 ? "their active agreements" : "their active agreement"}
+            </div>
+            <div className="text-xs text-blue-700">
+              {acuerdosPrevios.length === 1 ? "1 agreement" : `${acuerdosPrevios.length} agreements`} with ${deudaPrevia.toFixed(2)} still owed will be combined with this sale into ONE new plan of ${montoTotal.toFixed(2)}. The old plan will be marked as renegotiated, not deleted.
+            </div>
+          </div>
+        )}
 
         {/* Warnings */}
         {warnings.length > 0 && (
@@ -102,7 +123,7 @@ export default function AgreementModal({
         {/* Cuotas Selector */}
         <div className="p-4">
           <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Number of Installments:
+            Number of Installments{tieneAcuerdosPrevios ? " (total consolidated plan)" : ""}:
           </label>
           <div className="grid grid-cols-4 gap-2">
             {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
@@ -123,7 +144,7 @@ export default function AgreementModal({
             {!numCuotas && "Auto-selected based on amount"}
             {numCuotas &&
               `${numCuotas} payment${numCuotas > 1 ? "s" : ""} of $${
-                plan?.cuotas?.[0]?.monto?.toFixed(2) || (montoCredito / numCuotas).toFixed(2)
+                plan?.cuotas?.[0]?.monto?.toFixed(2) || (montoTotal / numCuotas).toFixed(2)
               }`}
           </p>
         </div>
@@ -154,7 +175,7 @@ export default function AgreementModal({
             </div>
             <div className="mt-2 pt-2 border-t flex justify-between text-sm font-bold">
               <span>Total:</span>
-              <span className="text-blue-700">${montoCredito.toFixed(2)}</span>
+              <span className="text-blue-700">${montoTotal.toFixed(2)}</span>
             </div>
           </div>
         )}

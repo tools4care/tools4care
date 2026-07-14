@@ -210,7 +210,14 @@ async function _diasDeudaFallback(clienteId) {
 // ========================= CREAR ACUERDO =========================
 
 /**
- * Crea un acuerdo de pago con sus cuotas
+ * Crea un acuerdo de pago con sus cuotas. Si el cliente ya tiene acuerdos
+ * activos/rotos, los CONSOLIDA en uno solo: el monto del acuerdo nuevo es
+ * la suma de lo pendiente de los anteriores + el crédito de esta venta, y
+ * los anteriores quedan marcados como renegociados (no se borran, se
+ * conserva su historial de pagos). Esto evita que un cliente termine con
+ * varios planes de pago corriendo en paralelo, algo que en la práctica
+ * nadie recuerda ni cobra bien — se queda solo con el último plan que le
+ * dieron y el anterior se pierde de vista aunque la deuda siga ahí.
  * @param {Object} params
  * @param {string} params.clienteId
  * @param {string} [params.ventaId]
@@ -220,7 +227,7 @@ async function _diasDeudaFallback(clienteId) {
  * @param {number} [params.numCuotas] - Número de cuotas (auto si no se da)
  * @param {boolean} [params.excepcionVendedor] - Si fue aprobada con excepción
  * @param {string} [params.excepcionNota] - Nota de la excepción
- * @returns {Promise<{ok: boolean, acuerdo?: Object, error?: string}>}
+ * @returns {Promise<{ok: boolean, acuerdo?: Object, deudaPrevia?: number, consolidado?: boolean, error?: string}>}
  */
 export async function crearAcuerdo({
   clienteId,
@@ -232,13 +239,24 @@ export async function crearAcuerdo({
   excepcionVendedor = false,
   excepcionNota = null,
 }) {
-  if (!clienteId || !montoCredito || montoCredito <= 0) {
+  if (!clienteId || montoCredito == null || montoCredito < 0) {
     return { ok: false, error: "Cliente y monto son requeridos" };
   }
 
   try {
-    // Generar plan de pago
-    const plan = generarPlanPago(montoCredito, { numCuotas });
+    // 0) Detectar acuerdos previos sin saldar para consolidarlos en este
+    const previos = await getAcuerdosActivos(clienteId);
+    const deudaPrevia = Number(
+      previos.reduce((s, a) => s + Number(a.monto_pendiente || 0), 0).toFixed(2)
+    );
+    const montoTotal = Number((deudaPrevia + Number(montoCredito || 0)).toFixed(2));
+
+    if (montoTotal <= 0) {
+      return { ok: false, error: "Monto total inválido" };
+    }
+
+    // Generar plan de pago por el total consolidado
+    const plan = generarPlanPago(montoTotal, { numCuotas });
 
     // 1) Insertar acuerdo
     const { data: acuerdo, error: errAcuerdo } = await supabase
@@ -255,6 +273,7 @@ export async function crearAcuerdo({
           fecha_limite: plan.fecha_limite,
           excepcion_vendedor: excepcionVendedor,
           excepcion_nota: excepcionNota,
+          acuerdo_padre_id: previos.length === 1 ? previos[0].id : null,
         },
       ])
       .select()
@@ -281,7 +300,24 @@ export async function crearAcuerdo({
       throw errCuotas;
     }
 
-    console.log(`✅ Acuerdo creado: ${acuerdo.id} — ${plan.num_cuotas} cuotas de ${plan.monto_total}`);
+    // 3) Cerrar los acuerdos previos — quedan consolidados en el nuevo
+    if (previos.length > 0) {
+      const idsViejos = previos.map((a) => a.id);
+      await supabase
+        .from("acuerdos_pago")
+        .update({ estado: "renegociado", fue_renegociado: true })
+        .in("id", idsViejos);
+      await supabase
+        .from("cuotas_acuerdo")
+        .update({ estado: "cancelado" })
+        .in("acuerdo_id", idsViejos)
+        .in("estado", ["pendiente", "vencida", "parcial"]);
+    }
+
+    console.log(
+      `✅ Acuerdo ${previos.length > 0 ? "consolidado" : "creado"}: ${acuerdo.id} — ${plan.num_cuotas} cuotas de ${plan.monto_total}` +
+      (previos.length > 0 ? ` (incluye ${fmtNum(deudaPrevia)} de deuda previa de ${previos.length} acuerdo(s))` : "")
+    );
 
     return {
       ok: true,
@@ -290,11 +326,18 @@ export async function crearAcuerdo({
         cuotas: cuotas || cuotasInsert,
         plan, // incluir plan para SMS
       },
+      deudaPrevia,
+      consolidado: previos.length > 0,
+      acuerdosPrevios: previos.map((a) => a.id),
     };
   } catch (err) {
     console.error("Error creando acuerdo:", err);
     return { ok: false, error: err.message || "Error desconocido" };
   }
+}
+
+function fmtNum(n) {
+  return `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 
