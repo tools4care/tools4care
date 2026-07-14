@@ -43,6 +43,7 @@ export function usePermisos() {
     isAdmin,
     isSupervisor,
     isVendedor,
+    isPrivileged,
     rol,
 
     // ── Products ──────────────────────────────────────────────
