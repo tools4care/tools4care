@@ -15,6 +15,7 @@ import { logAudit } from "./lib/auditLog";
 import { createSubmitGuard } from "./lib/submitGuard";
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
+import { useProductosHabituales } from "./hooks/useProductosHabituales";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import {
   barcodeVariants,
@@ -1184,6 +1185,12 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productError, setProductError] = useState("");
   const [cart, setCart] = useState([]);
+  const { productos: productosHabituales } = useProductosHabituales(selectedClient?.id);
+  const productosHabitualesConStock = useMemo(() => {
+    return (productosHabituales || [])
+      .map((ph) => ({ ...ph, _row: allProducts.find((p) => p.producto_id === ph.producto_id) }))
+      .filter((ph) => ph._row && !cart.some((c) => c.producto_id === ph.producto_id));
+  }, [productosHabituales, allProducts, cart]);
   const [notes, setNotes] = useState("");
   const [noProductFound, setNoProductFound] = useState("");
   const [productExistsNotInVan, setProductExistsNotInVan] = useState("");
@@ -5224,6 +5231,11 @@ function renderStepClient() {
                   cxcAvailable={cxcAvailable}
                   saleTotal={saleTotal}
                   onRefresh={() => runCreditAgent(selectedClient.id, saleTotal)}
+                  productosHabituales={productosHabitualesConStock}
+                  onAddHabitual={(productoId) => {
+                    const match = productosHabitualesConStock.find((p) => p.producto_id === productoId);
+                    if (match?._row) handleAddProduct(match._row);
+                  }}
                 />
               </Suspense>
             </div>

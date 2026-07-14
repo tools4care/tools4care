@@ -1,4 +1,5 @@
 import React from "react";
+import ProductosHabituales from "./ProductosHabituales";
 
 const fmt = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -51,6 +52,8 @@ export default function CreditRiskPanel({
   cxcAvailable,
   saleTotal,
   onRefresh,
+  productosHabituales,
+  onAddHabitual,
 }) {
   if (!clientRisk) return null;
 
@@ -142,25 +145,6 @@ export default function CreditRiskPanel({
       </div>
 
       <div className="bg-white px-4 py-4 space-y-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <div className="rounded-xl border border-gray-200 p-3">
-            <div className="text-[10px] uppercase font-bold text-gray-500">Balance</div>
-            <div className="text-lg font-black text-gray-900">{fmt(balance)}</div>
-          </div>
-          <div className="rounded-xl border border-gray-200 p-3">
-            <div className="text-[10px] uppercase font-bold text-gray-500">Limit</div>
-            <div className="text-lg font-black text-gray-900">{limit > 0 ? fmt(limit) : "Cash"}</div>
-          </div>
-          <div className="rounded-xl border border-gray-200 p-3">
-            <div className="text-[10px] uppercase font-bold text-gray-500">Available</div>
-            <div className={`text-lg font-black ${available > 0 ? "text-emerald-700" : "text-red-700"}`}>{fmt(available)}</div>
-          </div>
-          <div className="rounded-xl border border-gray-200 p-3">
-            <div className="text-[10px] uppercase font-bold text-gray-500">This Sale</div>
-            <div className="text-lg font-black text-blue-700">{fmt(sale)}</div>
-          </div>
-        </div>
-
         {limit > 0 && (
           <div className="rounded-xl border border-gray-200 p-3">
             <div className="flex items-center justify-between text-[11px] font-bold uppercase text-gray-500 mb-2">
@@ -186,6 +170,10 @@ export default function CreditRiskPanel({
               </div>
             ))}
           </div>
+        )}
+
+        {onAddHabitual && (
+          <ProductosHabituales productos={productosHabituales} onAdd={onAddHabitual} />
         )}
 
         {(clientRisk.recomendaciones || []).length > 0 && (
