@@ -11,6 +11,7 @@ import { evaluarReglasCredito, generarPlanPago, buildPaymentAgreementSMS } from 
 import { getAcuerdosResumen, getAcuerdosActivos, crearAcuerdo, aplicarPagoAAcuerdos, actualizarVencidas, getDiasDeudaMasVieja, isAgreementSystemAvailable } from "./lib/paymentAgreements";
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 import { computeSaleFinancials, calcularPagoMinimo, policyLimit, getClientBalance, r2 } from "./lib/saleFinancials";
+import { isCloudPendingSale, resolvePendingSaleClient } from "./lib/pendingSale";
 import { logAudit } from "./lib/auditLog";
 import { createSubmitGuard } from "./lib/submitGuard";
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
@@ -3511,7 +3512,7 @@ function clearSale() {
       try {
         const { data: pending } = await supabase
           .from("ventas_pendientes")
-          .select("id, cart, total_estimado, updated_at, step, notes, payments")
+          .select("id, cliente_id, cliente_data, cart, total_estimado, updated_at, step, notes, payments")
           .eq("van_id", van.id)
           .eq("cliente_id", c.id)
           .in("estado", ["preparada", "en_progreso"])
@@ -3535,9 +3536,9 @@ function clearSale() {
     runCreditAgent(c.id);
   }
 
-  async function handleSelectPendingSale(sale) {
+  async function handleSelectPendingSale(sale, fallbackClient = null) {
     // Si es una pending sale de la nube
-    if (sale.id && sale.cliente_data) {
+    if (isCloudPendingSale(sale, fallbackClient)) {
       try {
         // Intentar "tomar" la venta (lock)
         await takePendingSale(sale.id);
@@ -3547,11 +3548,8 @@ function clearSale() {
       }
       
       // Restaurar datos del cliente
-      const clientData = sale.cliente_data || {};
-      setSelectedClient({
-        ...clientData,
-        id: sale.cliente_id || clientData.id,
-      });
+      const restoredClient = resolvePendingSaleClient(sale, fallbackClient);
+      setSelectedClient(restoredClient || { id: null, nombre: "Quick sale", balance: 0 });
       
       const restoredCart = Array.isArray(sale.cart) ? sale.cart : [];
       setCart(restoredCart);
@@ -3569,8 +3567,8 @@ function clearSale() {
       if (van?.id) checkPendingCartStock(restoredCart, van.id);
 
       // Ejecutar agente de crédito si tiene cliente
-      if (sale.cliente_id) {
-        runCreditAgent(sale.cliente_id);
+      if (restoredClient?.id) {
+        runCreditAgent(restoredClient.id);
       }
     } else {
       // Legacy: pending sale de localStorage
@@ -6956,9 +6954,9 @@ function renderStepPayment() {
           client={pendingSaleAlert.client}
           pendingSale={pendingSaleAlert.pendingSale}
           onResume={() => {
-            const { pendingSale } = pendingSaleAlert;
+            const { pendingSale, client } = pendingSaleAlert;
             setPendingSaleAlert(null);
-            handleSelectPendingSale(pendingSale);
+            handleSelectPendingSale(pendingSale, client);
           }}
           onStartNew={() => {
             const { client } = pendingSaleAlert;
