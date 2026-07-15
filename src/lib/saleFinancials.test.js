@@ -82,6 +82,10 @@ describe("getClientBalance", () => {
     expect(getClientBalance({ saldo_total: 12.5 })).toBe(12.5);
     expect(getClientBalance({ saldo: 12.5 })).toBe(12.5);
   });
+
+  it("never exposes an overpayment as negative customer debt", () => {
+    expect(getClientBalance({ _saldo_real: -110.97 })).toBe(0);
+  });
 });
 
 describe("computeSaleFinancials — cash sale, no debt", () => {
@@ -290,6 +294,21 @@ describe("computeSaleFinancials — credit limit / availability", () => {
     });
     expect(res.creditLimit).toBe(300);
     expect(res.creditAvailable).toBe(250);
+    expect(res.creditAvailableAfter).toBe(150);
+  });
+
+  it("keeps available credit unchanged when the sale is paid in full", () => {
+    const res = computeSaleFinancials({
+      ...baseArgs,
+      selectedClient: { id: "c1", score_credito: 700 },
+      clientHistoryHas: true,
+      cxcBalance: 50,
+      cxcLimit: 300,
+      cxcAvailable: 250,
+      paid: 100,
+    });
+    expect(res.amountToCredit).toBe(0);
+    expect(res.creditAvailableAfter).toBe(250);
   });
 
   it("reports excess credit when the new debt would exceed availability", () => {

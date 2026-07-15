@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVan } from "../hooks/VanContext";
 import { supabase } from "../supabaseClient";
-import { AlertCircle, ArrowRight, CheckCircle2, Monitor, RefreshCw, Search, Truck, Wifi } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, Monitor, RefreshCw, Search, Store, Truck, Wifi } from "lucide-react";
+import { getLocationLabel, getLocationType, LOCATION_TYPES } from "../lib/locationTypes";
 
 const VANS_CACHE_KEY = "tools4care_vans_cache_v1";
 const TOOLS4CARE_LOGO = "/icons/icon-192.png";
@@ -14,10 +15,6 @@ function getVanName(van) {
 
 function getVanPlate(van) {
   return van?.placa || van?.plate || "";
-}
-
-function isOnlineVan(van) {
-  return getVanName(van).toLowerCase().includes("online");
 }
 
 export default function VanSelector({ onSelect }) {
@@ -34,11 +31,23 @@ export default function VanSelector({ onSelect }) {
     if (!silent) setLoading(true);
     setErr("");
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("v_vans_app")
-        .select("id, nombre, placa, activo")
+        .select("id, nombre, placa, activo, tipo")
         .eq("activo", true)
         .order("nombre", { ascending: true });
+
+      // The frontend can be released before the additive DB migration.
+      // Fall back to the existing view so current VAN users are never blocked.
+      if (error && /tipo/i.test(error.message || "")) {
+        const fallback = await supabase
+          .from("v_vans_app")
+          .select("id, nombre, placa, activo")
+          .eq("activo", true)
+          .order("nombre", { ascending: true });
+        data = fallback.data;
+        error = fallback.error;
+      }
 
       if (error) throw error;
       setVans(data || []);
@@ -97,7 +106,7 @@ export default function VanSelector({ onSelect }) {
     if (onSelect) {
       onSelect(compatible);
     } else {
-      navigate(isOnlineVan(v) ? "/online" : "/");
+      navigate(getLocationType(v) === LOCATION_TYPES.ONLINE ? "/online" : "/");
     }
   }
 
@@ -121,10 +130,10 @@ export default function VanSelector({ onSelect }) {
                 </div>
 
                 <div className="mb-5 inline-flex rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
-                  Route finance console
+                  Multi-location sales system
                 </div>
                 <h2 className="max-w-sm text-3xl font-black leading-tight text-white sm:text-4xl">
-                  Choose your workspace.
+                  Choose where you are working.
                 </h2>
                 <p className="mt-4 max-w-sm text-sm leading-6 text-slate-300">
                   Your selection is saved on this device and synced to your session when connection is available.
@@ -160,8 +169,8 @@ export default function VanSelector({ onSelect }) {
           <section className="bg-[#f7fafc] p-5 sm:p-8">
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">VAN / Route</p>
-                <h3 className="mt-1 text-2xl font-black text-[#0b1728]">Select a VAN</h3>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Workspace</p>
+                <h3 className="mt-1 text-2xl font-black text-[#0b1728]">Select a location</h3>
                 <p className="mt-1 text-sm font-medium text-slate-500">
                   {loading ? "Loading routes..." : `${filteredVans.length} of ${vans.length} available`}
                 </p>
@@ -187,7 +196,7 @@ export default function VanSelector({ onSelect }) {
                   if (e.key === "Enter" && filteredVans.length === 1) handleSeleccionar(filteredVans[0]);
                 }}
                 className="h-12 w-full rounded-2xl border-2 border-slate-200 bg-white pl-12 pr-4 text-base font-bold text-[#0b1728] outline-none shadow-sm transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
-                placeholder="Search by name or plate..."
+                placeholder="Search store, VAN or online..."
               />
             </div>
 
@@ -216,7 +225,9 @@ export default function VanSelector({ onSelect }) {
               <div className="grid max-h-[54vh] gap-3 overflow-y-auto pr-1">
                 {filteredVans.map((v) => {
                   const active = selectedVan?.id === v.id;
-                  const online = isOnlineVan(v);
+                  const locationType = getLocationType(v);
+                  const online = locationType === LOCATION_TYPES.ONLINE;
+                  const store = locationType === LOCATION_TYPES.STORE;
                   const plate = getVanPlate(v);
                   const isSaving = savingId === v.id;
 
@@ -232,9 +243,9 @@ export default function VanSelector({ onSelect }) {
                       }`}
                     >
                       <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
-                        online ? "bg-cyan-100 text-cyan-700" : "bg-emerald-100 text-emerald-700"
+                        online ? "bg-cyan-100 text-cyan-700" : store ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"
                       }`}>
-                        {online ? <Monitor size={23} /> : <Truck size={23} />}
+                        {online ? <Monitor size={23} /> : store ? <Store size={23} /> : <Truck size={23} />}
                       </div>
 
                       <div className="min-w-0">
@@ -247,7 +258,7 @@ export default function VanSelector({ onSelect }) {
                           )}
                         </div>
                         <p className="mt-1 text-sm font-semibold text-slate-500">
-                          {plate || (online ? "Online workspace" : "Route workspace")}
+                          {getLocationLabel(v)}{plate ? ` · ${plate}` : ""}
                         </p>
                       </div>
 

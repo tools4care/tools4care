@@ -5,6 +5,8 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../supabaseClient";
 import { useVan } from "../hooks/VanContext";
 import { useToast } from "../hooks/useToast";
+import { useLocationSettings } from "../hooks/useLocationSettings";
+import { getSaleTaxParts } from "../lib/saleTax";
 
 const fmt = (n) =>
   (Number(n) || 0).toLocaleString("en-US", {
@@ -13,10 +15,10 @@ const fmt = (n) =>
   });
 
 const PERIODS = [
-  { key: "today", label: "Hoy" },
-  { key: "7d",    label: "7 días" },
-  { key: "30d",   label: "30 días" },
-  { key: "month", label: "Este mes" },
+  { key: "today", label: "Today" },
+  { key: "7d",    label: "7 days" },
+  { key: "30d",   label: "30 days" },
+  { key: "month", label: "This month" },
 ];
 
 function getPeriodRange(key) {
@@ -42,19 +44,6 @@ function getPeriodRange(key) {
   return { start: null, end };
 }
 
-// ── Storage: persist tax settings in localStorage ──
-const TAX_KEY = "tools4care_tax_config";
-function loadTaxConfig() {
-  try {
-    const raw = localStorage.getItem(TAX_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { rate: 0, enabled: false, name: "Sales Tax", includeInPrice: false };
-}
-function saveTaxConfig(cfg) {
-  localStorage.setItem(TAX_KEY, JSON.stringify(cfg));
-}
-
 function StatCard({ label, value, sub, color = "blue" }) {
   const colors = {
     blue:   "from-blue-500 to-indigo-600",
@@ -76,9 +65,18 @@ function StatCard({ label, value, sub, color = "blue" }) {
 export default function TaxConfig() {
   const { van } = useVan();
   const { toast } = useToast();
+  const { settings, saveSettings } = useLocationSettings();
 
   // ── Tax settings ──
-  const [config, setConfig] = useState(loadTaxConfig);
+  const [config, setConfig] = useState({
+    rate: 0,
+    enabled: false,
+    name: "Sales Tax",
+    includeInPrice: false,
+    customerDisplay: false,
+    receiptPrinting: true,
+    cashDrawer: true,
+  });
   const [saving, setSaving]  = useState(false);
 
   // ── Report ──
@@ -87,16 +85,16 @@ export default function TaxConfig() {
   const [ventas, setVentas]   = useState([]);
 
   // Load sales for selected period
-  const loadVentas = useCallback(async (p = period) => {
+  const loadVentas = useCallback(async (p) => {
     if (!van?.id) return;
     setLoading(true);
     try {
       const { start, end } = getPeriodRange(p);
       let q = supabase
         .from("ventas")
-        .select("id,fecha,total,pago_efectivo,pago_tarjeta,pago_transferencia,pago_otro,estado_pago")
+        .select("id,fecha,total,total_venta,pago_json,pago_efectivo,pago_tarjeta,pago_transferencia,pago_otro,estado_pago")
         .eq("van_id", van.id)
-        .eq("tipo", "venta")
+        .or("tipo.eq.venta,tipo.is.null")
         .order("fecha", { ascending: false })
         .limit(5000);
       if (start) q = q.gte("fecha", start.toISOString());
@@ -105,35 +103,35 @@ export default function TaxConfig() {
       if (error) throw error;
       setVentas(data || []);
     } catch (e) {
-      toast.error("Error cargando ventas: " + e.message);
+      toast.error("Could not load sales: " + e.message);
     } finally {
       setLoading(false);
     }
-  }, [van?.id, period, toast]);
+  }, [van?.id, toast]);
 
-  useEffect(() => { loadVentas(period); }, [period, van?.id]);
+  useEffect(() => { loadVentas(period); }, [loadVentas, period]);
+
+  useEffect(() => {
+    setConfig({
+      rate: settings.tax_rate,
+      enabled: settings.tax_enabled,
+      name: settings.tax_name,
+      includeInPrice: settings.tax_included,
+      customerDisplay: settings.customer_display_enabled,
+      receiptPrinting: settings.receipt_printing_enabled,
+      cashDrawer: settings.cash_drawer_enabled,
+    });
+  }, [settings]);
 
   // ── Tax calculations ──
   const report = useMemo(() => {
-    const rate = config.enabled ? (Number(config.rate) || 0) / 100 : 0;
     let subtotal = 0, taxTotal = 0, grandTotal = 0;
 
     ventas.forEach((v) => {
-      const total = Number(v.total || 0);
-      if (config.includeInPrice) {
-        // Tax included in price: subtotal = total / (1 + rate)
-        const sub = rate > 0 ? total / (1 + rate) : total;
-        const tax = total - sub;
-        subtotal   += sub;
-        taxTotal   += tax;
-        grandTotal += total;
-      } else {
-        // Tax on top
-        const tax = total * rate;
-        subtotal   += total;
-        taxTotal   += tax;
-        grandTotal += total + tax;
-      }
+      const parts = getSaleTaxParts(v, config);
+      subtotal += parts.subtotal;
+      taxTotal += parts.tax;
+      grandTotal += parts.grand;
     });
 
     return {
@@ -145,18 +143,31 @@ export default function TaxConfig() {
     };
   }, [ventas, config]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const rate = parseFloat(config.rate);
     if (isNaN(rate) || rate < 0 || rate > 99) {
-      toast.error("La tasa debe estar entre 0% y 99%");
+      toast.error("Tax rate must be between 0% and 99%.");
       return;
     }
     setSaving(true);
-    saveTaxConfig({ ...config, rate });
-    setTimeout(() => {
+    try {
+      await saveSettings({
+        tax_enabled: config.enabled,
+        tax_rate: rate,
+        tax_name: config.name,
+        tax_included: config.includeInPrice,
+        customer_display_enabled: config.customerDisplay,
+        receipt_printing_enabled: config.receiptPrinting,
+        cash_drawer_enabled: config.cashDrawer,
+      });
+      // Keep the old key synchronized during the gradual rollout.
+      localStorage.setItem("tools4care_tax_config", JSON.stringify({ ...config, rate }));
+      toast.success("Tax settings saved for this location.");
+    } catch (error) {
+      toast.error(error?.message || "Could not save tax settings.");
+    } finally {
       setSaving(false);
-      toast.success("Configuración de impuesto guardada");
-    }, 300);
+    }
   };
 
   return (
@@ -165,16 +176,16 @@ export default function TaxConfig() {
 
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Impuestos / Tax</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Sales Tax</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Configura la tasa de impuesto y visualiza el reporte de tax por período.
+            Configure optional tax for this location and review actual tax collected.
           </p>
         </div>
 
         {/* Config card */}
         <div className="bg-white rounded-2xl border shadow-sm p-5 space-y-5">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 text-lg">Configuración</h2>
+            <h2 className="font-semibold text-gray-900 text-lg">Location Settings</h2>
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <div
                 className={`relative w-11 h-6 rounded-full transition-colors ${config.enabled ? "bg-blue-600" : "bg-gray-300"}`}
@@ -183,7 +194,7 @@ export default function TaxConfig() {
                 <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${config.enabled ? "translate-x-5" : ""}`} />
               </div>
               <span className="text-sm font-semibold text-gray-700">
-                {config.enabled ? "Activo" : "Desactivado"}
+                {config.enabled ? "Enabled" : "Disabled"}
               </span>
             </label>
           </div>
@@ -191,7 +202,7 @@ export default function TaxConfig() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Nombre del impuesto
+                Tax name
               </label>
               <input
                 type="text"
@@ -203,7 +214,7 @@ export default function TaxConfig() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Tasa (%)
+                Rate (%)
               </label>
               <div className="relative">
                 <input
@@ -230,8 +241,33 @@ export default function TaxConfig() {
               onChange={(e) => setConfig((c) => ({ ...c, includeInPrice: e.target.checked }))}
             />
             <label htmlFor="includeInPrice" className="text-sm text-amber-800 font-medium cursor-pointer">
-              El impuesto ya está incluido en el precio de venta (tax-inclusive)
+              Tax is already included in the product price
             </label>
+          </div>
+
+          <div className="border-t border-gray-100 pt-5">
+            <h3 className="font-semibold text-gray-900">Store checkout tools</h3>
+            <p className="mt-0.5 text-xs text-gray-500">Optional tools appear only when they are enabled for this location.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              {[
+                ["customerDisplay", "Customer display", "Show the cart and totals to the customer"],
+                ["receiptPrinting", "Receipt printing", "Enable thermal receipt actions"],
+                ["cashDrawer", "Cash drawer", "Enable open-drawer actions"],
+              ].map(([key, label, detail]) => (
+                <label key={key} className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600"
+                    checked={Boolean(config[key])}
+                    onChange={(event) => setConfig((current) => ({ ...current, [key]: event.target.checked }))}
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-800">{label}</span>
+                    <span className="mt-0.5 block text-xs leading-4 text-gray-500">{detail}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
 
           {config.enabled && (
@@ -249,7 +285,7 @@ export default function TaxConfig() {
             disabled={saving}
             className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors"
           >
-            {saving ? "Guardando..." : "💾 Guardar configuración"}
+            {saving ? "Saving..." : "Save tax settings"}
           </button>
         </div>
 
@@ -257,7 +293,7 @@ export default function TaxConfig() {
         <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4 border-b">
             <h2 className="font-semibold text-gray-900 text-lg">
-              Reporte de {config.enabled ? config.name : "Ventas"}
+              {config.enabled ? config.name : "Sales"} Report
             </h2>
             <div className="flex items-center gap-2">
               <div className="inline-flex rounded-xl border bg-gray-50 overflow-hidden">
@@ -296,10 +332,10 @@ export default function TaxConfig() {
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-                <StatCard label="Ventas" value={report.count} sub="transacciones" color="blue" />
-                <StatCard label="Subtotal" value={fmt(report.subtotal)} sub="antes de tax" color="green" />
-                <StatCard label={config.name || "Tax"} value={fmt(report.taxTotal)} sub={`${config.rate || 0}% tasa`} color="amber" />
-                <StatCard label="Total con Tax" value={fmt(report.grandTotal)} sub="ingresos totales" color="purple" />
+                <StatCard label="Sales" value={report.count} sub="transactions" color="blue" />
+                <StatCard label="Subtotal" value={fmt(report.subtotal)} sub="before tax" color="green" />
+                <StatCard label={config.name || "Tax"} value={fmt(report.taxTotal)} sub="actual collected" color="amber" />
+                <StatCard label="Grand Total" value={fmt(report.grandTotal)} sub="recorded revenue" color="purple" />
               </div>
             )}
 
@@ -307,9 +343,9 @@ export default function TaxConfig() {
             {!loading && ventas.length === 0 ? (
               <div className="text-center py-12">
                 <div className="text-5xl mb-3">🧾</div>
-                <div className="text-gray-500 font-semibold">Sin ventas en este período</div>
+                <div className="text-gray-500 font-semibold">No sales in this period</div>
                 <div className="text-sm text-gray-400 mt-1">
-                  Cambia el filtro de período para ver más datos
+                  Choose another period to view more data.
                 </div>
               </div>
             ) : !loading && (
@@ -317,7 +353,7 @@ export default function TaxConfig() {
                 <table className="w-full text-sm min-w-[500px]">
                   <thead>
                     <tr className="border-b border-gray-100">
-                      <th className="text-left py-2 px-3 text-xs font-bold text-gray-500 uppercase">Fecha</th>
+                      <th className="text-left py-2 px-3 text-xs font-bold text-gray-500 uppercase">Date</th>
                       <th className="text-right py-2 px-3 text-xs font-bold text-gray-500 uppercase">Subtotal</th>
                       <th className="text-right py-2 px-3 text-xs font-bold text-gray-500 uppercase">{config.name || "Tax"}</th>
                       <th className="text-right py-2 px-3 text-xs font-bold text-gray-500 uppercase">Total</th>
@@ -325,15 +361,11 @@ export default function TaxConfig() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {ventas.slice(0, 50).map((v) => {
-                      const total = Number(v.total || 0);
-                      const rate  = config.enabled ? (Number(config.rate) || 0) / 100 : 0;
-                      const sub   = config.includeInPrice && rate > 0 ? total / (1 + rate) : total;
-                      const tax   = config.includeInPrice && rate > 0 ? total - sub : total * rate;
-                      const grand = config.includeInPrice ? total : total + tax;
+                      const { subtotal: sub, tax, grand } = getSaleTaxParts(v, config);
                       return (
                         <tr key={v.id} className="hover:bg-gray-50">
                           <td className="py-2 px-3 text-gray-700">
-                            {new Date(v.fecha).toLocaleDateString("es-MX", {
+                            {new Date(v.fecha).toLocaleDateString("en-US", {
                               month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
                             })}
                           </td>
@@ -348,7 +380,7 @@ export default function TaxConfig() {
                     <tfoot>
                       <tr>
                         <td colSpan={4} className="py-2 px-3 text-center text-xs text-gray-400">
-                          Mostrando 50 de {ventas.length} registros — usa filtro de período para acotar
+                          Showing 50 of {ventas.length} records — narrow the period to see fewer results.
                         </td>
                       </tr>
                     </tfoot>

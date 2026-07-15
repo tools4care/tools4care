@@ -33,7 +33,10 @@ export function policyLimit(score) {
 
 export function getClientBalance(c) {
   if (!c) return 0;
-  return Number(c?._saldo_real ?? c?.balance ?? c?.saldo_total ?? c?.saldo ?? 0);
+  const rawBalance = Number(c?._saldo_real ?? c?.balance ?? c?.saldo_total ?? c?.saldo ?? 0);
+  // This helper represents debt owed by the customer. A negative ledger
+  // balance is an overpayment/credit, never a negative debt to display.
+  return Math.max(0, Number.isFinite(rawBalance) ? rawBalance : 0);
 }
 
 /**
@@ -98,6 +101,10 @@ export function computeSaleFinancials({
           : Math.max(0, creditLimit - balanceBefore)
       )
     : 0;
+  const creditAvailableAfter = Math.max(
+    0,
+    Number((creditAvailable - amountToCredit).toFixed(2))
+  );
   const excesoCredito = amountToCredit > creditAvailable ? amountToCredit - creditAvailable : 0;
 
   return {
@@ -106,6 +113,6 @@ export function computeSaleFinancials({
     pagoMinimo, cubrioMinimo, faltaParaMinimo,
     change, mostrarAdvertencia, balanceAfter, amountToCredit,
     clientScore, showCreditPanel, computedLimit,
-    creditLimit, creditAvailable, excesoCredito,
+    creditLimit, creditAvailable, creditAvailableAfter, excesoCredito,
   };
 }

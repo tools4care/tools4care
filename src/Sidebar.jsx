@@ -26,6 +26,7 @@ import {
   Wrench,
   Warning,
   CaretDown,
+  Gear,
 } from "@phosphor-icons/react";
 
 const ICON_SIZE = 22;
@@ -41,26 +42,26 @@ function preloadSales() {
   return salesPreload;
 }
 
-function NavLink({ to, icon, text, gradient, location }) {
+function NavLink({ to, icon, text, gradient, location, large = false }) {
   const isActive = location.pathname === to || location.pathname.startsWith(to + "/");
   return (
     <Link
       to={to}
       onPointerEnter={to === "/ventas" ? preloadSales : undefined}
       onPointerDown={to === "/ventas" ? preloadSales : undefined}
-      className={`group relative flex items-center gap-3 px-2.5 py-2 rounded-xl font-medium transition-colors duration-150 ${
+      className={`group relative flex items-center gap-3 px-2.5 rounded-xl font-medium transition-colors duration-150 ${large ? "py-3" : "py-2"} ${
         isActive
           ? "bg-white/10 text-white ring-1 ring-white/10"
           : "hover:bg-white/[0.06] hover:text-white text-slate-300"
       }`}
     >
       {isActive && <span className="absolute -left-3.5 top-2 bottom-2 w-1 rounded-r-full bg-cyan-400" />}
-      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all bg-gradient-to-br ${gradient} ${
+      <div className={`${large ? "h-11 w-11" : "h-9 w-9"} rounded-xl flex items-center justify-center flex-shrink-0 transition-all bg-gradient-to-br ${gradient} ${
         isActive ? "shadow-md shadow-black/20 ring-2 ring-white/25" : "opacity-80 group-hover:opacity-100"
       }`}>
         {icon}
       </div>
-      <span className="text-sm font-semibold truncate">{text}</span>
+      <span className={`${large ? "text-[15px]" : "text-sm"} font-semibold truncate`}>{text}</span>
       <CaretRight size={14} weight="bold" className={`ml-auto transition-all ${isActive ? "opacity-80" : "opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0"}`} />
     </Link>
   );
@@ -72,7 +73,7 @@ export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { isAdmin, isSupervisor, puedeVerModulo, puedeCambiarVan } = usePermisos();
-  const { storeMode, toggle: toggleStoreMode } = useStoreMode();
+  const { storeMode, isExplicitStore, setStoreMode } = useStoreMode();
   const [servicesOpen, setServicesOpen] = useState(
     () => location.pathname.startsWith("/suscripciones") || location.pathname.startsWith("/alquileres")
   );
@@ -80,34 +81,39 @@ export default function Sidebar() {
   // ── Main menu filtered by per-user module permissions ──
   const iconProps = { size: ICON_SIZE, weight: "duotone", className: "text-white" };
   const allMenuItems = [
-    { key: "dashboard",  to: "/",          icon: <Gauge          {...iconProps} />, gradient: "from-blue-500 to-indigo-600",   text: "Dashboard" },
+    { key: "dashboard",  to: "/",          icon: <Gauge          {...iconProps} />, gradient: "from-blue-500 to-indigo-600",   text: storeMode ? "Store Dashboard" : "Dashboard" },
     { key: "ventas",     to: "/ventas",    icon: <ShoppingCart   {...iconProps} />, gradient: "from-emerald-400 to-green-600", text: "Sales" },
+    ...(storeMode ? [{ key: "returns", to: "/ventas?mode=return", icon: <ArrowsClockwise {...iconProps} />, gradient: "from-amber-400 to-orange-600", text: "Returns" }] : []),
     { key: "facturas",   to: "/facturas",  icon: <FileText       {...iconProps} />, gradient: "from-purple-500 to-violet-600", text: "Invoices" },
     { key: "clientes",   to: "/clientes",  icon: <Users          {...iconProps} />, gradient: "from-amber-400 to-orange-500",  text: "Customers" },
     { key: "productos",  to: "/productos", icon: <Package        {...iconProps} />, gradient: "from-pink-500 to-rose-600",     text: "Products" },
     { key: "inventario", to: "/inventario",icon: <Stack          {...iconProps} />, gradient: "from-teal-400 to-cyan-600",     text: "Inventory" },
     { key: "emergencia", to: "/emergencia",icon: <Warning        {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: "Essentials" },
-    { key: "cierres",    to: "/cierres",   icon: <ArrowsClockwise {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: storeMode ? "Daily Closeout" : "Van Closeout" },
+    { key: "cierres",    to: "/cierres",   icon: <ArrowsClockwise {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: storeMode ? "Store Closeout" : "Van Closeout" },
     { key: "cxc",        to: "/cxc",       icon: <CreditCard     {...iconProps} />, gradient: "from-orange-400 to-amber-600",  text: "Accounts Receivable" },
     { key: "reportes",       to: "/reportes",      icon: <ChartBar      {...iconProps} />, gradient: "from-rose-400 to-pink-600",     text: "Reports" },
     { key: "suscripciones", to: "/suscripciones", icon: <CalendarCheck {...iconProps} />, gradient: "from-violet-500 to-purple-600", text: "Subscriptions" },
     { key: "alquileres",    to: "/alquileres",    icon: <Wrench        {...iconProps} />, gradient: "from-emerald-500 to-teal-600",  text: "Equipment Rentals" },
     { key: "suplidores",    to: "/suplidores",    icon: <UserCircle    {...iconProps} />, gradient: "from-indigo-400 to-blue-600",   text: "Suppliers" },
+    ...(storeMode && isAdmin ? [{ key: "tax", to: "/tax", icon: <Gear {...iconProps} />, gradient: "from-slate-500 to-slate-700", text: "Store Settings" }] : []),
   ];
 
   // Essentials is a core route available to every role (it is already always
   // visible in the mobile More menu). Keep it visible for users whose older
   // explicit module allowlist does not yet contain the new key.
   const serviceKeys = new Set(["suscripciones", "alquileres"]);
-  const visibleItems = allMenuItems.filter(item => item.key === "emergencia" || puedeVerModulo(item.key));
+  const storeKeys = new Set(["dashboard", "ventas", "returns", "productos", "clientes", "inventario", "facturas", "cxc", "emergencia", "reportes", "cierres", "suplidores", "tax"]);
+  const visibleItems = allMenuItems.filter(item =>
+    (!storeMode || storeKeys.has(item.key)) && (item.key === "emergencia" || item.key === "returns" || item.key === "tax" || puedeVerModulo(item.key))
+  );
   const services = visibleItems.filter(item => serviceKeys.has(item.key));
   const primaryItems = visibleItems.filter(item => !serviceKeys.has(item.key));
 
   // A counter workstation starts with the actions used throughout a sale.
   // Van mode keeps the route-oriented order users already know.
   const storeOrder = [
-    "ventas", "productos", "clientes", "inventario", "facturas", "cxc",
-    "emergencia", "dashboard", "reportes", "cierres", "suplidores",
+    "dashboard", "ventas", "returns", "productos", "clientes", "inventario", "facturas", "cxc",
+    "emergencia", "reportes", "cierres", "suplidores", "tax",
   ];
   const menuBase = storeMode
     ? [...primaryItems].sort((a, b) => storeOrder.indexOf(a.key) - storeOrder.indexOf(b.key))
@@ -161,7 +167,7 @@ export default function Sidebar() {
         </div>
         <nav className="flex flex-col gap-0.5 overflow-y-auto pr-1 pb-3 sidebar-scroll">
           {menuBase.map(({ to, icon, text, gradient }) => (
-            <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
+            <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} large={storeMode} />
           ))}
 
           {services.length > 0 && (
@@ -224,7 +230,7 @@ export default function Sidebar() {
           <div className="min-w-0 flex-1">
             <div className="font-semibold text-xs truncate">{usuario?.nombre || usuario?.email || "—"}</div>
             <div className="text-[10px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
-              <MapPin size={9} /> {van?.nombre_van || van?.nombre || "No VAN"}
+              <MapPin size={9} /> {van?.nombre_van || van?.nombre || "No location"}
             </div>
           </div>
         </div>
@@ -238,7 +244,7 @@ export default function Sidebar() {
             }}
             className="w-full bg-amber-400/10 hover:bg-amber-400/20 text-amber-200 border border-amber-300/20 py-2 px-3 rounded-xl font-semibold text-xs transition-colors"
           >
-            Change VAN
+            Change Location
           </button>
         )}
         <button
@@ -248,23 +254,16 @@ export default function Sidebar() {
           <SignOut weight="duotone" size={15} /> Log out
         </button>
 
-        {/* Store Mode toggle */}
-        <button
-          onClick={toggleStoreMode}
-          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-colors text-xs font-semibold border ${
-            storeMode
-              ? "bg-blue-900/60 border-blue-600 text-blue-200"
-              : "bg-gray-800/60 border-gray-600 text-gray-400"
-          }`}
-        >
-          <span className="flex items-center gap-2">
-            <span>{storeMode ? "🏪" : "🚐"}</span>
-            <span>{storeMode ? "Physical Store" : "Van / Route"}</span>
-          </span>
-          <span className={`w-9 h-5 rounded-full flex items-center transition-all px-0.5 ${storeMode ? "bg-blue-500" : "bg-gray-600"}`}>
-            <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${storeMode ? "translate-x-4" : "translate-x-0"}`} />
-          </span>
-        </button>
+        {/* Temporary escape hatch for devices that still have the old local
+            counter toggle saved. Explicit Store locations never show it. */}
+        {storeMode && !isExplicitStore && (
+          <button
+            onClick={() => setStoreMode(false)}
+            className="w-full rounded-xl border border-amber-300/20 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-200 transition-colors hover:bg-amber-400/20"
+          >
+            Exit legacy Store Mode
+          </button>
+        )}
 
       </div>
     </aside>

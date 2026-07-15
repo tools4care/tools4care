@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
+import { isStoreLocation } from "./lib/locationTypes";
 import { useUsuario } from "./UsuarioContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { loadPdfLibs } from "./utils/lazyPdf";
@@ -1394,6 +1395,7 @@ function HistorialCierres({ van, usuario }) {
 /* ========================= Main Component ========================= */
 export default function PreCierreVan() {
   const { van } = useVan();
+  const storeWorkspace = isStoreLocation(van);
   const { usuario } = useUsuario();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -1735,7 +1737,7 @@ export default function PreCierreVan() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 sm:gap-4">
             <div>
               <h1 className="text-xl sm:text-2xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Van Closeout
+                {storeWorkspace ? "Store Closeout" : "Van Closeout"}
               </h1>
               <p className="text-gray-600 mt-1 text-xs sm:text-sm">
                 {activeTab === "pending" ? "Select dates to process pre-closure" : "Search and view past closures"}

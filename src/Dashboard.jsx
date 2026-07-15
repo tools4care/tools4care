@@ -2613,7 +2613,7 @@ export default function Dashboard() {
     });
   };
 
-  const sparklineData = ventasSerie.slice(-7).map(d => ({ value: d.total }));
+  const sparklineData = ventasSerie.map(d => ({ value: d.total }));
   const maxProducto = productosTop.length > 0 ? productosTop[0].cantidad : 1;
 
   // Normaliza direcciones que pueden venir como JSON string o texto plano
@@ -2726,21 +2726,6 @@ export default function Dashboard() {
                   "Select a VAN"
                 )}
               </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {[7, 14, 30].map((d) => (
-                <button
-                  key={d}
-                  className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                    rangeDays === d
-                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg scale-105"
-                      : "bg-white dark:bg-slate-700 text-gray-700 dark:text-slate-200 border-2 border-gray-200 dark:border-slate-600 hover:border-blue-400 hover:shadow-md"
-                  }`}
-                  onClick={() => setRangeDays(d)}
-                >
-                  {d} days
-                </button>
-              ))}
             </div>
           </div>
         </div>
@@ -3069,7 +3054,7 @@ export default function Dashboard() {
             </div>
             <MiniSparkline data={sparklineData} color="#3b82f6" />
             <div className="flex items-center justify-between mt-2">
-              <div className="text-xs text-gray-500">Last 7 days</div>
+              <div className="text-xs text-gray-500">Last {rangeDays} days</div>
               <div className="text-xs text-blue-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">View details →</div>
             </div>
           </div>
@@ -3087,9 +3072,9 @@ export default function Dashboard() {
                 <IconShoppingCart />
               </div>
             </div>
-            <MiniSparkline data={ventasSerie.slice(-7).map(d => ({ value: d.orders }))} color="#10b981" />
+            <MiniSparkline data={ventasSerie.map(d => ({ value: d.orders }))} color="#10b981" />
             <div className="flex items-center justify-between mt-2">
-              <div className="text-xs text-gray-500">Last 7 days</div>
+              <div className="text-xs text-gray-500">Last {rangeDays} days</div>
               <div className="text-xs text-emerald-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">View details →</div>
             </div>
           </div>
@@ -3149,8 +3134,26 @@ export default function Dashboard() {
                     <p className="text-slate-400 text-sm mt-0.5">Last {rangeDays} days · revenue & orders</p>
                   </div>
 
-                  {/* Quick stats pills */}
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col items-end gap-3">
+                    <div className="inline-flex rounded-xl bg-white/10 p-1 ring-1 ring-white/10" aria-label="Sales performance period">
+                      {[7, 14, 30].map((days) => (
+                        <button
+                          key={days}
+                          type="button"
+                          onClick={() => setRangeDays(days)}
+                          className={`rounded-lg px-3.5 py-2 text-xs font-black transition-all ${
+                            rangeDays === days
+                              ? "bg-white text-slate-900 shadow"
+                              : "text-slate-300 hover:bg-white/10 hover:text-white"
+                          }`}
+                        >
+                          {days} days
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Quick stats pills */}
+                    <div className="flex flex-wrap justify-end gap-2">
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 text-center min-w-[80px]">
                       <div className="text-lg font-bold text-white">{fmtMoney(totalRevenue)}</div>
                       <div className="text-[10px] text-slate-400 font-semibold uppercase">Revenue</div>
@@ -3164,6 +3167,7 @@ export default function Dashboard() {
                         {metricas.crecimiento >= 0 ? '+' : ''}{metricas.crecimiento.toFixed(1)}%
                       </div>
                       <div className="text-[10px] text-slate-400 font-semibold uppercase">Growth</div>
+                    </div>
                     </div>
                   </div>
                 </div>

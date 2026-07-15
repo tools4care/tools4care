@@ -23,6 +23,7 @@ import {
   Warning,
   Wrench,
   Shield,
+  Storefront,
 } from "@phosphor-icons/react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -48,7 +49,7 @@ const MORE_ITEMS = [
   { path: "/cierres",    key: "cierres",    label: "Van Closeout", icon: Truck,         gradient: "from-emerald-400 to-green-600" },
   { path: "/suplidores", key: "suplidores", label: "Suppliers",    icon: UserCircle,    gradient: "from-blue-400 to-indigo-600" },
   { path: "/reportes",   key: "reportes",   label: "Reports",       icon: ChartBar,      gradient: "from-rose-400 to-pink-600" },
-  { path: "/van",            label: "Change VAN",    icon: Compass,       gradient: "from-amber-400 to-orange-600" },
+  { path: "/van",            label: "Change Location", icon: Compass,      gradient: "from-amber-400 to-orange-600" },
 ];
 
 const SERVICE_ITEMS = [
@@ -79,7 +80,7 @@ export default function BottomNav() {
   const [showServices, setShowServices] = useState(false);
   const { usuario, setUsuario }       = useUsuario();
   const { van }                       = useVan();
-  const { storeMode, toggle: toggleStoreMode } = useStoreMode();
+  const { storeMode, isExplicitStore, setStoreMode } = useStoreMode();
   const { puedeVerModulo, puedeCambiarVan } = usePermisos();
   const navigate                      = useNavigate();
   const location                      = useLocation();
@@ -122,12 +123,14 @@ export default function BottomNav() {
   };
 
   const userInitial = (usuario?.email || usuario?.nombre || "?")[0].toUpperCase();
+  const storeMoreKeys = new Set(["emergencia", "cxc", "inventario", "facturas", "cierres", "suplidores", "reportes"]);
   const moreItemsBase = MORE_ITEMS
+    .filter(({ key }) => !storeMode || !key || storeMoreKeys.has(key))
     .filter(({ key }) => !key || key === "emergencia" || puedeVerModulo(key))
     .filter(({ path }) => path !== "/van" || puedeCambiarVan)
     .map((item) => item.path === "/cierres" && storeMode ? { ...item, label: "Store Closeout" } : item);
   const moreItems = usuario?.rol === "admin" ? [...moreItemsBase, ADMIN_MORE_ITEM] : moreItemsBase;
-  const serviceItems = SERVICE_ITEMS.filter(({ key }) => puedeVerModulo(key));
+  const serviceItems = storeMode ? [] : SERVICE_ITEMS.filter(({ key }) => puedeVerModulo(key));
 
   return (
     <>
@@ -379,32 +382,14 @@ export default function BottomNav() {
               {/* Divider */}
               <div className="h-px bg-gray-100 mx-1 mb-3" />
 
-              {/* Store Mode toggle */}
-              <button
-                onClick={toggleStoreMode}
-                className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl mb-3 ring-1 active:scale-[0.98] transition-all ${
-                  storeMode
-                    ? "bg-blue-50 ring-blue-300"
-                    : "bg-gray-50 ring-gray-200"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${storeMode ? "bg-blue-100" : "bg-gray-100"}`}>
-                    <span className="text-xl">{storeMode ? "🏪" : "🚐"}</span>
-                  </div>
-                  <div className="text-left">
-                    <div className={`font-semibold text-sm ${storeMode ? "text-blue-800" : "text-gray-700"}`}>
-                      {storeMode ? "Physical Store Mode" : "Van / Route Mode"}
-                    </div>
-                    <div className="text-[10px] text-gray-400">
-                      {storeMode ? "Scanner, receipt printer & counter tools" : "Tap to enable store counter tools"}
-                    </div>
-                  </div>
-                </div>
-                <div className={`w-11 h-6 rounded-full flex items-center px-0.5 transition-all ${storeMode ? "bg-blue-500" : "bg-gray-300"}`}>
-                  <div className={`w-5 h-5 bg-white rounded-full shadow transition-all ${storeMode ? "translate-x-5" : "translate-x-0"}`} />
-                </div>
-              </button>
+              {storeMode && !isExplicitStore && (
+                <button
+                  onClick={() => setStoreMode(false)}
+                  className="mb-3 w-full rounded-2xl bg-amber-50 px-4 py-3 text-left text-sm font-semibold text-amber-800 ring-1 ring-amber-200"
+                >
+                  Exit legacy Store Mode
+                </button>
+              )}
 
               {/* User info card */}
               <div className="bg-gray-50 rounded-2xl px-4 py-3 mb-3 flex items-center gap-3">
@@ -418,7 +403,9 @@ export default function BottomNav() {
                   <div className="text-[10px] text-gray-500 truncate">{usuario?.email}</div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 bg-white rounded-xl px-2.5 py-1.5 shadow-sm ring-1 ring-gray-200">
-                  <Truck size={13} weight="duotone" color="#059669" />
+                  {isExplicitStore
+                    ? <Storefront size={13} weight="duotone" color="#2563eb" />
+                    : <Truck size={13} weight="duotone" color="#059669" />}
                   <span className="text-[10px] font-semibold text-gray-700 max-w-[72px] truncate">
                     {van?.nombre_van || van?.nombre || "No VAN"}
                   </span>

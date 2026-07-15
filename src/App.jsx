@@ -6,6 +6,7 @@ import BottomNav from "./BottomNav";
 const Login = lazy(() => import("./Login"));
 const VanSelector = lazy(() => import("./components/VanSelector"));
 const Dashboard = lazy(() => import("./Dashboard"));
+const StoreDashboard = lazy(() => import("./store/StoreDashboard"));
 const Clientes = lazy(() => import("./Clientes"));
 const Productos = lazy(() => import("./Productos"));
 const Inventario = lazy(() => import("./Inventario"));
@@ -29,6 +30,7 @@ import { SyncToast } from "./components/SyncToast";
 
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
+import { isOnlineLocation, isStoreLocation } from "./lib/locationTypes";
 
 
 const Suplidores = lazy(() => import("./Suplidores"));
@@ -93,9 +95,13 @@ function PrivateRouteWithVan({ children }) {
   if (!usuario) return <Navigate to="/login" />;
   if (!van) return <Navigate to="/van" />;
 
-  // Only redirect if the van has an explicit tipo === "online" field — never match by name
-  if (van?.tipo === "online") return <Navigate to="/online" replace />;
+  if (isOnlineLocation(van)) return <Navigate to="/online" replace />;
   return children;
+}
+
+function WorkspaceDashboard() {
+  const { van } = useVan();
+  return isStoreLocation(van) ? <StoreDashboard /> : <Dashboard />;
 }
 
 // Redirects non-admins away from admin-only routes
@@ -211,7 +217,7 @@ export default function App() {
               </PrivateRouteWithVan>
             }
           >
-            <Route index element={<Dashboard />} />
+            <Route index element={<WorkspaceDashboard />} />
             <Route path="clientes" element={<Clientes />} />
             <Route path="clientes/nuevo" element={<Clientes />} />
             <Route path="productos/nuevo" element={<Productos />} />

@@ -124,7 +124,7 @@ export default function OnlineSidebar({ mobile = false, onNavigate }) {
                 <circle cx="5.5" cy="18.5" r="2.5" />
                 <circle cx="18.5" cy="18.5" r="2.5" />
               </svg>
-              Change VAN
+              Change Location
             </>
           )}
         </NavLink>

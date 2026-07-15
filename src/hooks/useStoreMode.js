@@ -6,17 +6,20 @@
 
 import { useState, useEffect } from "react";
 import { useVan } from "./VanContext";
+import { isStoreLocation } from "../lib/locationTypes";
 
 const getKey = (vanId) => `t4c_store_mode_${vanId}`;
 const STORE_MODE_EVENT = "tools4care:store-mode-change";
 
 export function useStoreMode() {
   const { van } = useVan();
+  const isExplicitStore = isStoreLocation(van);
 
-  const [storeMode, setStoreModeState] = useState(() => {
+  const [legacyStoreMode, setStoreModeState] = useState(() => {
     if (!van?.id) return false;
     return localStorage.getItem(getKey(van.id)) === "1";
   });
+  const storeMode = isExplicitStore || legacyStoreMode;
 
   // Re-sync when the active van changes
   useEffect(() => {
@@ -53,7 +56,10 @@ export function useStoreMode() {
     }));
   };
 
-  const toggle = () => setStoreMode(!storeMode);
+  const toggle = () => {
+    if (isExplicitStore) return;
+    setStoreMode(!storeMode);
+  };
 
-  return { storeMode, setStoreMode, toggle };
+  return { storeMode, isExplicitStore, setStoreMode, toggle };
 }

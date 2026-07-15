@@ -7,6 +7,7 @@ import { useUsuario } from "./UsuarioContext";
 import { guardarInventarioVan, obtenerInventarioVan } from "./utils/offlineDB";
 import { usePermisos } from "./hooks/usePermisos";
 import { logAudit } from "./lib/auditLog";
+import { getLocationType, isStoreLocation, LOCATION_TYPES } from "./lib/locationTypes";
 import {
   barcodeVariants,
   filterProductRowsLocal,
@@ -32,6 +33,7 @@ export default function Inventory() {
   const { usuario } = useUsuario();
   const { isOnline } = useOffline();
   const { puedeAgregarAlmacen } = usePermisos();
+  const storeWorkspace = isStoreLocation(van);
 
   const [locations, setLocations] = useState([
     { key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" },
@@ -124,7 +126,7 @@ export default function Inventory() {
         item.producto_id === producto_id ? { ...item, cantidad: newQty } : item
       ));
     } catch (err) {
-      setError("Error al guardar: " + err.message);
+      setError("Could not save inventory: " + err.message);
     } finally {
       setSavingQtyIds((s) => { const n = new Set(s); n.delete(producto_id); return n; });
     }
@@ -145,12 +147,17 @@ export default function Inventory() {
   // ── Load locations ────────────────────────────────────────
   useEffect(() => {
     (async () => {
-      const { data: vansData, error: vErr } = await supabase
-        .from("vans").select("id, nombre_van").order("id", { ascending: true });
+      let { data: vansData, error: vErr } = await supabase
+        .from("vans").select("id, nombre_van, tipo").order("id", { ascending: true });
+      if (vErr && /tipo/i.test(vErr.message || "")) {
+        const fallback = await supabase.from("vans").select("id, nombre_van").order("id", { ascending: true });
+        vansData = fallback.data;
+        vErr = fallback.error;
+      }
       if (vErr) {
         // Fallback: show current van from context if DB query fails
         if (van?.id) {
-          const vanLoc = { key: `van_${van.id}`, id: van.id, nombre: van.nombre_van || van.nombre || `Van ${van.id}`, tipo: "van" };
+          const vanLoc = { key: `van_${van.id}`, id: van.id, nombre: van.nombre_van || van.nombre || `Van ${van.id}`, tipo: "van", workspaceType: getLocationType(van) };
           setLocations([{ key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" }, vanLoc]);
           setSelected(vanLoc);
         }
@@ -158,19 +165,26 @@ export default function Inventory() {
       }
 
       const vansLocations = (vansData || []).map((v) => ({
-        key: `van_${v.id}`, id: v.id, nombre: v.nombre_van, tipo: "van",
+        key: `van_${v.id}`, id: v.id, nombre: v.nombre_van, tipo: "van", workspaceType: getLocationType(v),
       }));
       const warehouse = { key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" };
-      setLocations([warehouse, ...vansLocations]);
 
       if (van?.id) {
         const current = vansLocations.find((x) => x.id === van.id);
-        setSelected(current || warehouse);
+        if (storeWorkspace) {
+          const storeLocation = current || { key: `van_${van.id}`, id: van.id, nombre: van.nombre_van || van.nombre || "Physical Store", tipo: "van", workspaceType: LOCATION_TYPES.STORE };
+          setLocations([warehouse, ...vansLocations]);
+          setSelected(storeLocation);
+        } else {
+          setLocations([warehouse, ...vansLocations]);
+          setSelected(current || warehouse);
+        }
       } else {
+        setLocations([warehouse, ...vansLocations]);
         setSelected(warehouse);
       }
     })();
-  }, [van?.id]);
+  }, [storeWorkspace, van?.id]);
 
   // ── Reset on location/refresh change ─────────────────────
   useEffect(() => {
@@ -337,6 +351,9 @@ export default function Inventory() {
     const mem = filterProductRowsLocal(inventory, term, { limit: 1000 });
     return mem.length > 0 ? mem : (dbSearchResults || []);
   }, [inventory, search, dbSearchResults]);
+  const visibleLocationTabs = storeWorkspace
+    ? locations.filter((location) => location.id === van?.id)
+    : locations;
 
   const handleBarcodeScanned = (code) => {
     setSearch(String(code || "").trim()); setShowScanner(false);
@@ -361,9 +378,9 @@ export default function Inventory() {
           </div>
 
           {/* Location tabs (pills) */}
-          {locations.length <= 5 ? (
+          {visibleLocationTabs.length <= 5 ? (
             <div className="flex gap-2 mt-4 overflow-x-auto pb-1 scrollbar-none">
-              {locations.map((loc) => (
+              {visibleLocationTabs.map((loc) => (
                 <button
                   key={loc.key}
                   onClick={() => setSelected(loc)}
@@ -373,7 +390,7 @@ export default function Inventory() {
                       : "bg-blue-600/50 text-white hover:bg-blue-600/80"
                   }`}
                 >
-                  {loc.tipo === "warehouse" ? "🏭" : "🚐"} {loc.nombre}
+                  {loc.tipo === "warehouse" ? "🏭" : loc.workspaceType === LOCATION_TYPES.STORE ? "🏪" : loc.workspaceType === LOCATION_TYPES.ONLINE ? "🌐" : "🚐"} {loc.nombre}
                 </button>
               ))}
             </div>
@@ -383,7 +400,7 @@ export default function Inventory() {
               value={selected.key}
               onChange={(e) => setSelected(locations.find(l => l.key === e.target.value) || locations[0])}
             >
-              {locations.map(loc => (
+              {visibleLocationTabs.map(loc => (
                 <option key={loc.key} value={loc.key}>{loc.nombre}</option>
               ))}
             </select>

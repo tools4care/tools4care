@@ -4,6 +4,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
+import { isStoreLocation } from "./lib/locationTypes";
 import { useUsuario } from "./UsuarioContext";
 import { useNavigate } from "react-router-dom";
 import {
@@ -439,6 +440,7 @@ function easternDayBounds(isoDay) {
 /* ========================= Main Component ========================= */
 export default function CierreVan() {
   const { van } = useVan();
+  const storeWorkspace = isStoreLocation(van);
   const { usuario, setUsuario } = useUsuario();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -1768,7 +1770,7 @@ useEffect(() => {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 sm:gap-4">
             <div>
               <h1 className="text-xl sm:text-2xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Van Multi-Day Closure
+                {storeWorkspace ? "Store Multi-Day Closeout" : "Van Multi-Day Closeout"}
               </h1>
               <p className="text-gray-600 mt-1 sm:mt-2 text-xs sm:text-sm md:text-base">
                 Closing {fechasSeleccionadas.length} selected date

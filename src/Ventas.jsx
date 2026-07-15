@@ -16,6 +16,7 @@ import { logAudit } from "./lib/auditLog";
 import { createSubmitGuard } from "./lib/submitGuard";
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
+import { useLocationSettings } from "./hooks/useLocationSettings";
 import { useProductosHabituales } from "./hooks/useProductosHabituales";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import {
@@ -1045,7 +1046,6 @@ export default function Sales() {
   const [clientBehavior, setClientBehavior] = useState(null);
   const [creditProfile, setCreditProfile] = useState(null);
   const [agentLoading, setAgentLoading] = useState(false);
-  const [creditAvailableAfter, setCreditAvailableAfter] = useState(0);
 
 
 // ===========================================================
@@ -1067,7 +1067,6 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
 
     if (!profile) {
       setClientRisk(null);
-      setCreditAvailableAfter(0);
       setAcuerdosResumen(null);
       setAcuerdosCuotasReales(null);
       setReglasCredito(null);
@@ -1077,9 +1076,6 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
 
     const limite = Number(String(profile.limite).replace(/[^0-9.-]+/g, ""));
     const saldo  = Number(String(profile.saldo).replace(/[^0-9.-]+/g, ""));
-    const disponible = Math.max(0, limite - saldo);
-    setCreditAvailableAfter(disponible);
-
     // 3) 🆕 Acuerdos de pago
     let acuerdos = null;
     let reglas = null;
@@ -1313,7 +1309,7 @@ useEffect(() => {
     if (!navigator.onLine) {
       await refreshOfflineReady();
       if (!silent) {
-        toast.warning("Sin internet. Estoy usando los datos offline que ya estén guardados.");
+        toast.warning("No internet connection. Using saved offline data.");
       }
       return;
     }
@@ -1335,8 +1331,8 @@ useEffect(() => {
           .limit(1200),
       ]);
 
-      if (clientsError) throw new Error(`Clientes: ${clientsError.message}`);
-      if (inventoryError) throw new Error(`Inventario: ${inventoryError.message}`);
+      if (clientsError) throw new Error(`Customers: ${clientsError.message}`);
+      if (inventoryError) throw new Error(`Inventory: ${inventoryError.message}`);
 
       const cachedClients = (clientes || []).map((c) => ({
         ...c,
@@ -1372,10 +1368,10 @@ useEffect(() => {
       await refreshOfflineReady();
 
       if (!silent) {
-        toast.success(`Offline listo: ${cachedClients.length} clientes y ${cachedInventory.length} productos guardados.`);
+        toast.success(`Offline ready: ${cachedClients.length} customers and ${cachedInventory.length} products saved.`);
       }
     } catch (err) {
-      const message = err?.message || "No se pudo preparar el modo offline.";
+      const message = err?.message || "Could not prepare offline mode.";
       setOfflineReady((prev) => ({ ...prev, error: message }));
       if (!silent) toast.error(message);
     } finally {
@@ -1443,6 +1439,11 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
 
   // ---- PHYSICAL STORE MODE
   const { storeMode } = useStoreMode();
+  const { settings: locationSettings } = useLocationSettings();
+
+  useEffect(() => {
+    setTaxEnabled(Boolean(locationSettings.tax_enabled));
+  }, [locationSettings.tax_enabled, van?.id]);
 
   // ---- WALK-IN RETURN (devolucion sin cliente)
   const [walkinDevolucion, setWalkinDevolucion] = useState(false);
@@ -1475,6 +1476,10 @@ const [pendingAgreementData, setPendingAgreementData] = useState(null);
   useEffect(() => {
     if (searchParams.get("new") === "1") {
       clearSale();
+      setSearchParams({}, { replace: true });
+    } else if (searchParams.get("mode") === "return") {
+      clearSale();
+      setAppMode("devolucion");
       setSearchParams({}, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2226,7 +2231,7 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
 	      if (cachedProducts.length > 0) {
 	        return;
 	      }
-	      setProductError("📵 Sin conexión y no hay productos en caché. Conecta internet para cargar productos.");
+	      setProductError("📵 No connection and no cached products. Connect to the internet to load products.");
       return;
     }
 
@@ -2373,7 +2378,7 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
         return;
       }
       setTopProducts([]);
-      setProductError("No se pudieron cargar los productos. No hay caché offline para esta van.");
+      setProductError("Products could not be loaded and this location has no offline cache.");
     }
   }
 
@@ -2910,14 +2915,10 @@ useEffect(() => {
     [payments]
   );
 
-  // Tax calculation — reads config from TaxConfig localStorage key
-  const taxConfig = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem("tools4care_tax_config") || "{}"); }
-    catch { return {}; }
-  }, []);
-  const taxRate     = Number(taxConfig.rate ?? 0);
-  const taxName     = taxConfig.name || "Tax";
-  const taxIncluded = taxConfig.taxIncluded ?? false;
+  // Per-location tax settings. Store, VAN and Online can have different rules.
+  const taxRate     = Number(locationSettings.tax_rate ?? 0);
+  const taxName     = locationSettings.tax_name || "Sales Tax";
+  const taxIncluded = Boolean(locationSettings.tax_included);
   const taxAmount   = useMemo(() => {
     if (!taxEnabled || taxRate === 0) return 0;
     if (taxIncluded) {
@@ -2941,7 +2942,7 @@ useEffect(() => {
     pagoMinimo, cubrioMinimo, faltaParaMinimo,
     change, mostrarAdvertencia, balanceAfter, amountToCredit,
     clientScore, showCreditPanel,
-    creditLimit, creditAvailable, excesoCredito,
+    creditLimit, creditAvailable, creditAvailableAfter, excesoCredito,
   } = useMemo(() => computeSaleFinancials({
     saleTotalWithTax,
     paid,
@@ -3666,7 +3667,7 @@ async function handleProcessReturn() {
     }
 
     if (itemsToReturn.length === 0) {
-      toast.warning("Selecciona al menos un producto para devolver");
+      toast.warning("Select at least one product to return.");
       setProcessingReturn(false);
       return;
     }
@@ -4689,7 +4690,7 @@ function renderReturnDetails() {
       )}
 
       <div className="space-y-2 mb-4">
-        <p className="text-sm text-gray-600 font-semibold">Selecciona productos a devolver:</p>
+        <p className="text-sm text-gray-600 font-semibold">Select products to return:</p>
         
         {selectedInvoice.detalle_ventas.map((item) => {
           // 🆕 Usar cantidad disponible (descontando devoluciones previas)
@@ -4703,7 +4704,7 @@ function renderReturnDetails() {
               <div key={item.id} className="flex items-center justify-between border p-2 rounded bg-gray-100 opacity-50">
                 <div className="flex-1">
                   <span className="font-semibold text-sm line-through">{item.productos.nombre}</span>
-                  <span className="text-xs text-gray-500 ml-2">✅ Completamente devuelto</span>
+                  <span className="text-xs text-gray-500 ml-2">✅ Fully returned</span>
                 </div>
               </div>
             );
@@ -4748,15 +4749,15 @@ function renderReturnDetails() {
         })}
       </div>
 
-      {/* Motivo */}
+      {/* Return reason */}
       <div className="mb-4">
         <label className="block text-xs font-bold text-gray-700 mb-1">
-          Motivo de devolución (Opcional):
+          Return reason (optional)
         </label>
         <input
           type="text"
           className={`w-full border-2 border-gray-200 rounded-xl text-sm focus:border-orange-400 outline-none ${storeMode ? "p-4 text-base" : "p-2"}`}
-          placeholder="Ej. Producto dañado, No le gustó, Error en pedido..."
+          placeholder="Example: damaged product or incorrect item"
           value={returnReason}
           onChange={(e) => setReturnReason(e.target.value)}
         />
@@ -5027,9 +5028,9 @@ function renderPendingSalesModal() {
                           <button
                             className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md transition-all duration-200"
                             onClick={() => handleForceUnlockAndTake(v)}
-                            title="Forzar desbloqueo y tomar esta venta"
+                            title="Force unlock and resume this sale"
                           >
-                            🔓 Desbloquear
+                            🔓 Unlock
                           </button>
                         ) : (
                           // Si no está bloqueada, botón normal de Retomar
@@ -5223,22 +5224,15 @@ function renderStepClient() {
 
           {/* Credit metrics grid — only for real clients */}
           {selectedClient.id && (
-            <div className="px-4 py-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 gap-3 px-4 py-4 sm:grid-cols-3">
               <div className="text-center bg-blue-50 border border-blue-200 rounded-xl p-3">
                 <div className="text-[10px] text-blue-600 font-bold uppercase tracking-wide">Limit</div>
                 <div className="text-lg font-bold text-blue-800 mt-1">{fmt(Number(cxcLimit ?? policyLimit(clientScore)))}</div>
               </div>
               <div className="text-center bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-                <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wide">Available</div>
+                <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-wide">Available Now</div>
                 <div className="text-lg font-bold text-emerald-800 mt-1">{fmt(creditAvailable)}</div>
               </div>
-              {/* "After Sale" only differs from "Available" once products are in the cart */}
-              {saleTotal > 0 && (
-                <div className={`text-center border rounded-xl p-3 ${creditAvailableAfter >= 0 ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-300"}`}>
-                  <div className={`text-[10px] font-bold uppercase tracking-wide ${creditAvailableAfter >= 0 ? "text-emerald-600" : "text-red-600"}`}>After Sale</div>
-                  <div className={`text-lg font-bold mt-1 ${creditAvailableAfter >= 0 ? "text-emerald-800" : "text-red-700"}`}>{fmt(creditAvailableAfter)}</div>
-                </div>
-              )}
               {balanceBefore > 0 ? (
                 <div className="text-center bg-red-50 border-2 border-red-300 rounded-xl p-3">
                   <div className="text-[10px] text-red-600 font-bold uppercase tracking-wide">⚠ Balance Due</div>
@@ -5765,7 +5759,7 @@ function renderStepClient() {
                   )}
                 </div>
                 <span className={`shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${balanceClass}`}>
-                  {hasDebt ? "⚠ Balance" : "✓ Balance"} {fmt(balance)}
+                  {hasDebt ? `⚠ Balance ${fmt(balance)}` : "✓ No balance"}
                 </span>
               </div>
 
@@ -5794,7 +5788,7 @@ function renderStepClient() {
               {/* Row 3 — Balance / credit line */}
               <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-100 text-[10px] text-gray-500">
                 <span className={hasDebt ? "text-red-600 font-semibold" : "text-emerald-600 font-semibold"}>
-                  {hasDebt ? "Balance due" : "No balance due"}: {fmt(balance)}
+                  {hasDebt ? `Balance due: ${fmt(balance)}` : "No balance due"}
                 </span>
                 <span className="text-gray-400">#{getCreditNumber(c)}</span>
               </div>
@@ -6635,7 +6629,7 @@ function renderStepPayment() {
         )}
       </section>
 
-      {(storeMode || selectedClient?.id) && (
+      {((storeMode && locationSettings.customer_display_enabled) || (!storeMode && selectedClient?.id)) && (
         <button
           onClick={() => setShowBalanceSummary(true)}
           className={`w-full border-2 text-white rounded-2xl flex items-center justify-between gap-3 shadow-lg active:scale-[0.99] transition-all ${
@@ -6791,7 +6785,7 @@ function renderStepPayment() {
               <span className="text-slate-300 text-sm font-semibold">Customer display · review before checkout</span>
             </div>
             <div className="flex items-center gap-2">
-              {storeMode && (
+              {storeMode && locationSettings.receipt_printing_enabled && (
                 <button
                   onClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}
                   className="hidden sm:inline-flex bg-white/10 hover:bg-white/20 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
@@ -7032,7 +7026,7 @@ function renderStepPayment() {
           <div className="flex-1" />
 
           {/* Customer-facing checkout — store mode only */}
-          {storeMode && step === 3 && cartSafe.length > 0 && (
+          {storeMode && locationSettings.customer_display_enabled && step === 3 && cartSafe.length > 0 && (
             <button
               onClick={() => setShowBalanceSummary(true)}
               className="flex items-center gap-2 px-5 py-3 min-h-12 rounded-xl text-sm font-black bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-lg shadow-indigo-900/30"
@@ -7043,7 +7037,7 @@ function renderStepPayment() {
           )}
 
           {/* Print last receipt — store mode only */}
-          {storeMode && lastReceiptRef.current && (
+          {storeMode && locationSettings.receipt_printing_enabled && lastReceiptRef.current && (
             <button
               onClick={() => printThermalReceipt(lastReceiptRef.current)}
               className="flex items-center gap-2 px-4 py-3 min-h-12 rounded-xl text-sm font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all"
@@ -7054,7 +7048,7 @@ function renderStepPayment() {
           )}
 
           {/* Open cash drawer — store mode only */}
-          {storeMode && (
+          {storeMode && locationSettings.cash_drawer_enabled && (
             <button
               onClick={() => openCashDrawer()}
               className="flex items-center gap-2 px-4 py-3 min-h-12 rounded-xl text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-all"
@@ -7270,7 +7264,7 @@ function renderStepPayment() {
             {/* Actions grid */}
             <div className="p-5 grid grid-cols-2 gap-3">
               {/* Print Receipt — store mode only */}
-              {storeMode && (
+              {storeMode && locationSettings.cash_drawer_enabled && (
                 <button
                   onClick={() => { if (lastReceiptRef.current) printThermalReceipt(lastReceiptRef.current); }}
                   className="flex flex-col items-center gap-2 bg-gray-900 hover:bg-black text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
