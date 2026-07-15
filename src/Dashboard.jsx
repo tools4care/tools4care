@@ -33,6 +33,7 @@ import { useToast } from "./hooks/useToast";
 import SyncStatusWidget from "./components/SyncStatusWidget";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import { classifyArRisk, buildCollectionMessage, phoneLink, daysSince } from "./lib/arRisk";
+import { loadVanReorderRecommendations } from "./lib/reorderRecommendations";
 const BackupManagerModal = lazy(() => import("./components/BackupManagerModal"));
 
 /* ---------- Helpers ---------- */
@@ -96,6 +97,8 @@ const IconLocation    = () => <MapPin       size={20} />;
 const IconSearch      = () => <Search       size={20} />;
 
 const EMERGENCY_KEY = "lista_emergencia_v1";
+const REORDER_CACHE_PREFIX = "smart_reorder_v2_";
+const REORDER_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
 function loadEmergencyList() {
   try { return JSON.parse(localStorage.getItem(EMERGENCY_KEY) || "[]"); }
@@ -103,6 +106,24 @@ function loadEmergencyList() {
 }
 function saveEmergencyList(items) {
   localStorage.setItem(EMERGENCY_KEY, JSON.stringify(items));
+}
+
+function loadReorderCache(vanId) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(`${REORDER_CACHE_PREFIX}${vanId}`) || "null");
+    if (!cached?.savedAt || !Array.isArray(cached.items)) return null;
+    return Date.now() - cached.savedAt <= REORDER_CACHE_MAX_AGE_MS ? cached.items : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveReorderCache(vanId, items) {
+  try {
+    localStorage.setItem(`${REORDER_CACHE_PREFIX}${vanId}`, JSON.stringify({ savedAt: Date.now(), items }));
+  } catch {
+    // Storage can be unavailable in private browsing; fresh data still works.
+  }
 }
 
 /* ---------- Modal Low Stock ---------- */
@@ -131,7 +152,6 @@ function LowStockModal({ open, items, onClose }) {
   const criticos      = filtered.filter(p => p.urgencia === "critico");
   const bajos         = filtered.filter(p => p.urgencia === "bajo");
   const vigilar       = filtered.filter(p => p.urgencia === "watch");
-  const sinMovimiento = filtered.filter(p => p.urgencia === "sin_movimiento");
 
   const toggleSelect = useCallback((id) => {
     setSelected(prev => {
@@ -150,8 +170,12 @@ function LowStockModal({ open, items, onClose }) {
     const merged = [...current];
     toAdd.forEach(p => {
       const key = p.producto_id || p.id;
-      if (!merged.find(it => it.id === key)) {
-        merged.push({ id: key, nombre: p.nombre, marca: p.marca || "", size: p.size || "", codigo: p.codigo || "", cantidad: 1, notas: "" });
+      const existing = merged.find(it => it.id === key);
+      const recommendedQuantity = Math.max(1, Number(p.cantidadRecomendada) || 1);
+      if (!existing) {
+        merged.push({ id: key, nombre: p.nombre, marca: p.marca || "", size: p.size || "", codigo: p.codigo || "", cantidad: recommendedQuantity, notas: "" });
+      } else {
+        existing.cantidad = Math.max(Number(existing.cantidad) || 1, recommendedQuantity);
       }
     });
     saveEmergencyList(merged);
@@ -163,19 +187,15 @@ function LowStockModal({ open, items, onClose }) {
     const isSelected = selected.has(id);
     const diasLabel = p.cantidad === 0
       ? "OUT OF STOCK"
-      : p.urgencia === "sin_movimiento" || p.diasRestantes >= 999
-      ? `${p.cantidad} u.`
       : `~${p.diasRestantes}d left`;
     const urgColor = p.urgencia === "critico"
       ? { border: "border-red-500",    badge: "bg-red-500 text-white",        bg: "from-red-50 to-red-50" }
       : p.urgencia === "bajo"
       ? { border: "border-orange-400", badge: "bg-orange-100 text-orange-700", bg: "from-orange-50 to-orange-50" }
-      : p.urgencia === "sin_movimiento"
-      ? { border: "border-gray-300",   badge: "bg-gray-100 text-gray-600",    bg: "from-gray-50 to-gray-50" }
       : { border: "border-yellow-400", badge: "bg-yellow-100 text-yellow-700", bg: "from-yellow-50 to-yellow-50" };
     const ultimaLabel = p.ultimaVenta
       ? `Last sale ${dayjs().diff(dayjs(p.ultimaVenta), "day")}d ago`
-      : p.urgencia === "sin_movimiento" ? "No recent sales" : null;
+      : null;
 
     return (
       <li
@@ -199,6 +219,16 @@ function LowStockModal({ open, items, onClose }) {
               {p.codigo && <span className="text-xs text-gray-400 font-mono">{p.codigo}</span>}
               {p.vendido30d > 0 && <span className="text-xs text-gray-500">{p.vendido30d} u./30d · {p.velocidad}/day</span>}
               {ultimaLabel && <span className="text-xs text-gray-400">{ultimaLabel}</span>}
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {p.esMasVendido && (
+                <span className="text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-700 px-2 py-0.5">
+                  BEST SELLER #{p.rankingVentas}
+                </span>
+              )}
+              <span className="text-[10px] font-bold rounded-full bg-blue-100 text-blue-700 px-2 py-0.5">
+                ORDER {p.cantidadRecomendada}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -234,8 +264,8 @@ function LowStockModal({ open, items, onClose }) {
           <div className="flex items-center gap-2">
             <IconAlert />
             <div>
-              <h3 className="font-bold text-lg">Running Low</h3>
-              <p className="text-xs opacity-80">Tap products to select · {items.length} products</p>
+              <h3 className="font-bold text-lg">Smart Restock</h3>
+              <p className="text-xs opacity-80">Sales velocity + current stock · {items.length} recommendations</p>
             </div>
           </div>
           <button className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors" onClick={onClose}>
@@ -264,9 +294,8 @@ function LowStockModal({ open, items, onClose }) {
           ) : (
             <>
               <Grupo titulo="🔴 Critical — less than 7 days"  color="text-red-600"    items={criticos}      />
-              <Grupo titulo="🟠 Low Stock — less than 14 days" color="text-orange-600" items={bajos}         />
-              <Grupo titulo="🟡 Watch — less than 30 days"     color="text-yellow-600" items={vigilar}       />
-              <Grupo titulo="⚪ No Recent Sales — no movement" color="text-gray-500"   items={sinMovimiento} />
+              <Grupo titulo="🟠 Reorder Soon — less than 14 days" color="text-orange-600" items={bajos}   />
+              <Grupo titulo="🟡 Best Sellers to Watch — less than 30 days" color="text-yellow-600" items={vigilar} />
             </>
           )}
         </div>
@@ -2047,6 +2076,7 @@ export default function Dashboard() {
   const [productosTop, setProductosTop] = useState([]);
   const [topMode, setTopMode] = useState("units"); // 'units' | 'revenue'
   const [stockVan, setStockVan] = useState([]);
+  const [stockLoading, setStockLoading] = useState(true);
 
   const [showAllLow, setShowAllLow] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
@@ -2111,10 +2141,22 @@ export default function Dashboard() {
     if (van?.id) {
       cargarStockVan(van.id);
       cargarPrioridades(van.id);
+      const refreshStock = () => cargarStockVan(van.id);
+      const intervalId = window.setInterval(refreshStock, 5 * 60 * 1000);
+      const handleVisibility = () => {
+        if (document.visibilityState === "visible") refreshStock();
+      };
+      document.addEventListener("visibilitychange", handleVisibility);
+      return () => {
+        window.clearInterval(intervalId);
+        document.removeEventListener("visibilitychange", handleVisibility);
+      };
     } else {
       setStockVan([]);
+      setStockLoading(false);
       setDailyActions((prev) => ({ ...prev, loading: false, pendingCloseouts: 0, dueSubscriptions: 0 }));
     }
+    return undefined;
   }, [van?.id]);
 
   useEffect(() => {
@@ -2344,100 +2386,18 @@ export default function Dashboard() {
   }
 
   async function cargarStockVan(van_id) {
+    const cached = loadReorderCache(van_id);
+    if (cached) setStockVan(cached);
+    setStockLoading(true);
     try {
-      const hace90d = dayjs().subtract(90, "day").toISOString();
-      const hace30d = dayjs().subtract(30, "day").toISOString();
-
-      // 1. Obtener IDs de ventas de esta van en los últimos 90 días (paginado)
-      const ventaIds90 = [];
-      const ventaFechas = new Map(); // id → created_at
-      let page = 0;
-      const PAGE = 1000;
-      while (true) {
-        const { data, error } = await supabase
-          .from("ventas")
-          .select("id, created_at")
-          .eq("van_id", van_id)
-          .gte("created_at", hace90d)
-          .range(page * PAGE, (page + 1) * PAGE - 1);
-        if (error || !data?.length) break;
-        for (const v of data) {
-          ventaIds90.push(v.id);
-          ventaFechas.set(v.id, v.created_at);
-        }
-        if (data.length < PAGE) break;
-        page++;
-      }
-
-      if (!ventaIds90.length) { setStockVan([]); return; }
-
-      // 2. Obtener detalle_ventas en batches de 40 IDs (URL segura ~1.5KB)
-      const vendido30dMap      = new Map();
-      const productosConVentas = new Set();
-      const BATCH = 40;
-      for (let i = 0; i < ventaIds90.length; i += BATCH) {
-        const batch = ventaIds90.slice(i, i + BATCH);
-        const { data: detalles } = await supabase
-          .from("detalle_ventas")
-          .select("venta_id, producto_id, cantidad")
-          .in("venta_id", batch);
-        for (const d of detalles || []) {
-          const pid = d.producto_id;
-          productosConVentas.add(pid);
-          if (ventaFechas.get(d.venta_id) >= hace30d) {
-            vendido30dMap.set(pid, (vendido30dMap.get(pid) || 0) + Number(d.cantidad || 0));
-          }
-        }
-      }
-
-      if (!productosConVentas.size) { setStockVan([]); return; }
-
-      // 3. Stock bajo solo para productos que realmente se vendieron
-      const pids = [...productosConVentas];
-      // Puede haber muchos pids; filtramos en batches y cruzamos con stock_van
-      const { data: stockBajo, error: errorStock } = await supabase
-        .from("stock_van")
-        .select("cantidad, producto_id, productos(nombre, codigo, precio, marca, size)")
-        .eq("van_id", van_id)
-        .lt("cantidad", 10)
-        .in("producto_id", pids.slice(0, 500)); // máx 500 productos activos
-
-      if (errorStock) console.error("❌ Error stock:", errorStock);
-      if (!stockBajo?.length) { setStockVan([]); return; }
-
-      const stockFiltrado = stockBajo
-        .map(item => {
-          const v30 = vendido30dMap.get(item.producto_id) || 0;
-          const velocidad = Number((v30 / 30).toFixed(2));
-          const diasRestantes = velocidad > 0 ? Math.floor(item.cantidad / velocidad) : 999;
-          const urgencia = item.cantidad === 0
-            ? "critico"
-            : diasRestantes < 7  ? "critico"
-            : diasRestantes < 14 ? "bajo"
-            : diasRestantes < 30 ? "watch"
-            : "sin_movimiento";
-          return {
-            producto_id:   item.producto_id,
-            nombre:        item.productos?.nombre || item.producto_id,
-            codigo:        item.productos?.codigo || "",
-            precio:        Number(item.productos?.precio || 0),
-            marca:         item.productos?.marca  || "",
-            size:          item.productos?.size   || "",
-            cantidad:      item.cantidad,
-            vendido30d:    v30,
-            velocidad,
-            diasRestantes,
-            ultimaVenta:   null,
-            urgencia,
-          };
-        })
-        .sort((a, b) => a.diasRestantes - b.diasRestantes || b.velocidad - a.velocidad);
-
-      setStockVan(stockFiltrado);
-
+      const recommendations = await loadVanReorderRecommendations(supabase, van_id);
+      setStockVan(recommendations);
+      saveReorderCache(van_id, recommendations);
     } catch (error) {
       console.error("💥 Error cargarStockVan:", error);
-      setStockVan([]);
+      if (!cached) setStockVan([]);
+    } finally {
+      setStockLoading(false);
     }
   }
 
@@ -2615,6 +2575,7 @@ export default function Dashboard() {
   }
 
   const lowPreview = stockVan.slice(0, LOW_STOCK_PREVIEW);
+  const bestSellersAtRisk = stockVan.filter((p) => p.esMasVendido).length;
   const chartData = withMA(ventasSerie, "total", 7);
 
   const calcularMetricas = () => {
@@ -2711,9 +2672,13 @@ export default function Dashboard() {
     },
     {
       key: "stock",
-      label: "Critical stock items",
-      detail: metricas.productosUrgentes ? "Restock before the next route" : "No urgent stock issues",
-      count: metricas.productosUrgentes || 0,
+      label: "Reorder recommendations",
+      detail: stockLoading && stockVan.length === 0
+        ? "Analyzing sales velocity..."
+        : stockVan.length
+        ? `${bestSellersAtRisk} best seller${bestSellersAtRisk === 1 ? "" : "s"} at risk`
+        : "No products need reordering",
+      count: stockLoading && stockVan.length === 0 ? "…" : stockVan.length,
       onClick: () => setShowAllLow(true),
       icon: Package,
       bg: "bg-red-50",
@@ -3448,15 +3413,22 @@ export default function Dashboard() {
           <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-3xl shadow-xl p-6 border-2 border-red-200">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-2xl font-bold text-red-900 mb-0.5">Running Low</h2>
-                <p className="text-sm text-red-600">Active products · Ordered by urgency</p>
+                <h2 className="text-2xl font-bold text-red-900 mb-0.5">Smart Restock</h2>
+                <p className="text-sm text-red-600">Best sellers · Days of inventory · Suggested order</p>
               </div>
               <div className={`text-white p-3 rounded-xl ${stockVan.some(p => p.urgencia === 'critico') ? 'bg-red-500 animate-pulse' : 'bg-orange-400'}`}>
                 <IconAlert />
               </div>
             </div>
 
-            {stockVan.length === 0 ? (
+            {stockLoading && stockVan.length === 0 ? (
+              <div className="space-y-3 py-2" role="status" aria-label="Analyzing inventory and sales velocity">
+                {[0, 1, 2].map((item) => (
+                  <div key={item} className="h-20 rounded-xl bg-white/70 animate-pulse border border-red-100" />
+                ))}
+                <div className="text-center text-xs font-semibold text-red-600">Analyzing 90 days of sales...</div>
+              </div>
+            ) : stockVan.length === 0 ? (
               <div className="text-center py-8">
                 <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
                   <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3464,7 +3436,7 @@ export default function Dashboard() {
                   </svg>
                 </div>
                 <div className="font-semibold text-gray-700">All good!</div>
-                <div className="text-sm text-gray-500">No products running low</div>
+                <div className="text-sm text-gray-500">Best sellers have enough inventory</div>
               </div>
             ) : (
               <>
@@ -3474,32 +3446,27 @@ export default function Dashboard() {
                       ? { border: 'border-red-500',    badge: 'bg-red-500',    bar: 'bg-red-500',    text: 'text-red-600'   }
                       : p.urgencia === 'bajo'
                       ? { border: 'border-orange-400', badge: 'bg-orange-400', bar: 'bg-orange-400', text: 'text-orange-600' }
-                      : p.urgencia === 'sin_movimiento'
-                      ? { border: 'border-gray-300',   badge: 'bg-gray-400',   bar: 'bg-gray-300',   text: 'text-gray-600'  }
                       : { border: 'border-yellow-400', badge: 'bg-yellow-400', bar: 'bg-yellow-400', text: 'text-yellow-600' };
-                    const barWidth = p.urgencia === 'sin_movimiento' ? 30
-                      : p.diasRestantes >= 999 ? 90
-                      : Math.min(100, Math.max(4, (p.diasRestantes / 30) * 100));
+                    const barWidth = Math.min(100, Math.max(4, (p.diasRestantes / 30) * 100));
                     const diasLabel = p.cantidad === 0
                       ? 'OUT OF STOCK'
-                      : p.urgencia === 'sin_movimiento'
-                      ? `${p.cantidad} u.`
-                      : p.diasRestantes >= 999
-                      ? `${p.cantidad} u.`
                       : `~${p.diasRestantes}d left`;
                     const ultimaLabel = p.ultimaVenta
                       ? `Last sale ${dayjs().diff(dayjs(p.ultimaVenta), 'day')}d ago`
-                      : p.urgencia === 'sin_movimiento'
-                      ? 'No recent sales'
                       : null;
                     return (
                       <div key={idx} className={`bg-white rounded-xl p-3.5 border-l-4 ${urgColor.border} hover:shadow-md transition-shadow`}>
                         <div className="flex items-start justify-between gap-2 mb-2">
                           <div className="flex-1 min-w-0">
                             <div className="font-bold text-gray-900 truncate text-sm">{p.nombre}</div>
-                            <div className="flex items-center gap-2 mt-0.5">
+                            <div className="flex flex-wrap items-center gap-2 mt-0.5">
                               {p.codigo && <span className="text-xs text-gray-400 font-mono">{p.codigo}</span>}
                               {ultimaLabel && <span className="text-xs text-gray-400">{ultimaLabel}</span>}
+                              {p.esMasVendido && (
+                                <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full">
+                                  BEST SELLER #{p.rankingVentas}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
@@ -3519,14 +3486,10 @@ export default function Dashboard() {
                             style={{ width: `${barWidth}%` }}
                           />
                         </div>
-                        {p.vendido30d > 0 && (
-                          <div className="text-xs text-gray-400 mt-1">
-                            {p.vendido30d} units sold in 30d · {p.velocidad}/day
-                          </div>
-                        )}
-                        {p.urgencia === 'sin_movimiento' && (
-                          <div className="text-xs text-gray-400 mt-1 italic">No sales in 90 days</div>
-                        )}
+                        <div className="text-xs text-gray-500 mt-1 flex items-center justify-between gap-2">
+                          <span>{p.vendido30d} sold in 30d · {p.velocidad}/day</span>
+                          <span className="font-bold text-blue-700">Order {p.cantidadRecomendada}</span>
+                        </div>
                       </div>
                     );
                   })}

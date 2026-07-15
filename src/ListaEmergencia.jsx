@@ -8,6 +8,7 @@ import {
   normalizeEssentialList,
   updateEssentialQuantity,
 } from "./lib/essentialsList";
+import { loadVanReorderRecommendations } from "./lib/reorderRecommendations";
 import {
   Search, Plus, Minus, Trash2, Share2, Copy, Check, X,
   ShoppingBag, PackageOpen, ClipboardList, Mail,
@@ -33,74 +34,12 @@ function useRecomendaciones(vanId, listaIds) {
     if (!vanId) return;
     setCargando(true);
     try {
-      // 1. Ventas de los últimos 7 días en esta van
-      const desde = new Date();
-      desde.setDate(desde.getDate() - 7);
-      const desdeISO = desde.toISOString().slice(0, 10);
-
-      const { data: ventasData } = await supabase
-        .from("ventas")
-        .select("id")
-        .eq("van_id", vanId)
-        .gte("fecha", desdeISO);
-
-      const ventaIds = (ventasData || []).map(v => v.id);
-      if (!ventaIds.length) { setRecomendaciones([]); setCargando(false); return; }
-
-      // 2. Agregar cantidad vendida por producto (en lotes de 200)
-      const qtyMap = new Map();
-      for (let i = 0; i < ventaIds.length; i += 200) {
-        const lote = ventaIds.slice(i, i + 200);
-        const { data: det } = await supabase
-          .from("detalle_ventas")
-          .select("producto_id, cantidad")
-          .in("venta_id", lote);
-        (det || []).forEach(d => {
-          qtyMap.set(d.producto_id, (qtyMap.get(d.producto_id) || 0) + Number(d.cantidad || 0));
-        });
-      }
-      if (!qtyMap.size) { setRecomendaciones([]); setCargando(false); return; }
-
-      // 3. Top 50 productos más vendidos en esa semana
-      const topIds = [...qtyMap.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 50)
-        .map(([id]) => id);
-
-      // 4. Stock actual en la van para esos productos
-      const { data: stockData } = await supabase
-        .from("stock_van")
-        .select("producto_id, cantidad")
-        .eq("van_id", vanId)
-        .in("producto_id", topIds);
-
-      const stockMap = new Map((stockData || []).map(s => [s.producto_id, Number(s.cantidad || 0)]));
-
-      // 5. Filtrar: solo los que tienen stock bajo (≤ 3) o que no tienen registro en stock_van
-      const candidatos = topIds.filter(id => {
-        const qty = stockMap.has(id) ? stockMap.get(id) : 0;
-        return qty <= 3;
-      });
-
-      if (!candidatos.length) { setRecomendaciones([]); setCargando(false); return; }
-
-      // 6. Datos del producto
-      const { data: prods } = await supabase
-        .from("productos")
-        .select("id, nombre, marca, size, codigo")
-        .in("id", candidatos);
-
-      // 7. Excluir los que ya están en la lista
-      const result = (prods || [])
-        .filter(p => !listaIds.has(p.id))
-        .map(p => ({
-          ...p,
-          vendido7d: qtyMap.get(p.id) || 0,
-          stockActual: stockMap.get(p.id) ?? 0,
-        }))
-        .sort((a, b) => b.vendido7d - a.vendido7d);
-
-      setRecomendaciones(result);
+      const result = await loadVanReorderRecommendations(supabase, vanId);
+      setRecomendaciones(
+        result
+          .filter((product) => !listaIds.has(product.producto_id))
+          .map((product) => ({ ...product, id: product.producto_id }))
+      );
     } catch (error) {
       console.warn("Could not load Essentials suggestions:", error?.message || error);
       setRecomendaciones([]);
@@ -374,8 +313,8 @@ export default function ListaEmergencia() {
         <div className="flex-1 px-4 pt-4 pb-28 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold text-gray-800">Best sellers last 7 days</p>
-              <p className="text-xs text-gray-400 mt-0.5">Out of stock or nearly gone · not yet in your list</p>
+              <p className="text-sm font-semibold text-gray-800">Smart reorder recommendations</p>
+              <p className="text-xs text-gray-400 mt-0.5">90-day sales velocity · best sellers before they run out</p>
             </div>
             <button onClick={cargarRec} className={`p-2 rounded-xl bg-gray-100 text-gray-500 ${cargandoRec ? "animate-spin" : ""}`}>
               <RefreshCw size={16} />
@@ -414,18 +353,28 @@ export default function ListaEmergencia() {
                     <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${prod.stockActual === 0 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
                       {prod.stockActual === 0 ? "OUT OF STOCK" : `${prod.stockActual} left`}
                     </span>
-                    <span className="text-[11px] text-gray-400">{prod.vendido7d} sold last week</span>
-                  </div>
+                  <span className="text-[11px] text-gray-400">{prod.vendido30d} sold in 30d</span>
                 </div>
-                <button
-                  onClick={() => agregarProducto(prod)}
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  {prod.esMasVendido && (
+                    <span className="text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-700 px-1.5 py-0.5">
+                      BEST SELLER #{prod.rankingVentas}
+                    </span>
+                  )}
+                  <span className="text-[10px] font-bold rounded-full bg-blue-100 text-blue-700 px-1.5 py-0.5">
+                    ORDER {prod.cantidadRecomendada}
+                  </span>
+                </div>
+              </div>
+              <button
+                  onClick={() => agregarProducto({ ...prod, cantidad: prod.cantidadRecomendada })}
                   disabled={agregado}
                   className={`flex-shrink-0 rounded-xl px-3 py-2 flex items-center gap-1 text-xs font-semibold ${
                     agregado ? "bg-emerald-100 text-emerald-700" : "bg-blue-500 hover:bg-blue-600 text-white"
                   }`}
                 >
                   {agregado ? <Check size={14} /> : <Plus size={14} />}
-                  {agregado ? "Added" : "Add"}
+                  {agregado ? "Added" : `Add ${prod.cantidadRecomendada}`}
                 </button>
               </div>
             );
