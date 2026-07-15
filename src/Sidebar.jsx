@@ -24,6 +24,7 @@ import {
   CaretRight,
   MapPin,
   Wrench,
+  Warning,
 } from "@phosphor-icons/react";
 
 const ICON_SIZE = 22;
@@ -82,6 +83,7 @@ export default function Sidebar() {
     { key: "clientes",   to: "/clientes",  icon: <Users          {...iconProps} />, gradient: "from-amber-400 to-orange-500",  text: "Customers" },
     { key: "productos",  to: "/productos", icon: <Package        {...iconProps} />, gradient: "from-pink-500 to-rose-600",     text: "Products" },
     { key: "inventario", to: "/inventario",icon: <Stack          {...iconProps} />, gradient: "from-teal-400 to-cyan-600",     text: "Inventory" },
+    { key: "emergencia", to: "/emergencia",icon: <Warning        {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: "Essentials" },
     { key: "cierres",    to: "/cierres",   icon: <ArrowsClockwise {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: "Van Closeout" },
     { key: "cxc",        to: "/cxc",       icon: <CreditCard     {...iconProps} />, gradient: "from-orange-400 to-amber-600",  text: "Accounts Receivable" },
     { key: "reportes",       to: "/reportes",      icon: <ChartBar      {...iconProps} />, gradient: "from-rose-400 to-pink-600",     text: "Reports" },
@@ -90,7 +92,10 @@ export default function Sidebar() {
     { key: "suplidores",    to: "/suplidores",    icon: <UserCircle    {...iconProps} />, gradient: "from-indigo-400 to-blue-600",   text: "Suppliers" },
   ];
 
-  const menuBase = allMenuItems.filter(item => puedeVerModulo(item.key));
+  // Essentials is a core route available to every role (it is already always
+  // visible in the mobile More menu). Keep it visible for users whose older
+  // explicit module allowlist does not yet contain the new key.
+  const menuBase = allMenuItems.filter(item => item.key === "emergencia" || puedeVerModulo(item.key));
 
   function handleLogout() {
     localStorage.clear();
