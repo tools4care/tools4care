@@ -5525,8 +5525,8 @@ function renderStepClient() {
             >
               Pending ({pendingStats.total})
             </button>
-            <details className="relative">
-              <summary className="list-none cursor-pointer bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-3 rounded-xl font-bold shadow-sm text-center">
+            <details className="relative col-span-2 sm:col-span-1">
+              <summary className="block w-full list-none cursor-pointer bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-3 rounded-xl font-bold shadow-sm text-center">
                 More
               </summary>
               <div className="absolute right-0 z-20 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
@@ -5564,48 +5564,65 @@ function renderStepClient() {
         </div>
 
         {recentClients.length > 0 && (
-          <div className="flex items-center gap-2 overflow-x-auto pb-1">
-            <span className="shrink-0 text-xs font-bold text-gray-500">Recent</span>
-            {recentClients.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => handleClientSelect(c)}
-                className="shrink-0 bg-white hover:bg-blue-50 border border-blue-100 rounded-full px-3 py-2 transition-all duration-200 shadow-sm max-w-[190px]"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
-                  <div className="text-left min-w-0">
-                    <div className="font-bold text-xs text-gray-900 truncate">
-                      {c.nombre} {c.apellido || ""}
-                    </div>
-                    <div className="text-[10px] text-gray-500 truncate">
-                      {c.negocio || c.telefono || "Recent customer"}
+          <section data-testid="recent-clients" className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="text-xs font-black uppercase tracking-wide text-slate-600">Recent customers</span>
+              <span className="text-[11px] text-slate-400">Tap to continue</span>
+            </div>
+            <div className="-mx-1 flex snap-x snap-mandatory gap-2 overflow-x-auto px-1 pb-1">
+              {recentClients.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => handleClientSelect(c)}
+                  className="min-w-[154px] max-w-[190px] shrink-0 snap-start rounded-xl border border-blue-100 bg-white px-3 py-3 text-left shadow-sm transition-all duration-200 hover:border-blue-300 hover:bg-blue-50 active:scale-[0.98]"
+                >
+                  <div className="flex min-w-0 items-start gap-2">
+                    <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500" />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-bold text-gray-900">
+                        {c.nombre} {c.apellido || ""}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] text-gray-500">
+                        {c.negocio || c.telefono || "Recent customer"}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </button>
-            ))}
-          </div>
+                </button>
+              ))}
+            </div>
+          </section>
         )}
       </div>
 
-      <div className="relative">
-<input
-  id="client-search-input"
-  type="text"
-  placeholder={
-    appMode === 'devolucion'
-      ? "🔍 Type #return to exit, or search customer…"
-      : "🔍 Name · Phone · Email · Address · Business..."
-  }
-  className={`w-full border-2 rounded-lg p-4 text-lg outline-none transition-all ${
-    appMode === 'devolucion'
-      ? 'border-orange-500 bg-orange-50 text-orange-900 focus:border-orange-700 focus:ring-2 focus:ring-orange-200'
-      : 'border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200'
-  }`}
-  value={clientSearch}
-  onChange={(e) => {
-    const value = e.target.value;
+      <section data-testid="client-search-section" className="space-y-3 pt-2 sm:pt-4">
+        <div className="flex items-end justify-between gap-3 px-1">
+          <div>
+            <label htmlFor="client-search-input" className="block text-sm font-black text-slate-800">Find a customer</label>
+            <p className="mt-0.5 text-xs text-slate-500">Search by name, phone, email or business.</p>
+          </div>
+          <span className="hidden text-[11px] font-semibold text-blue-600 sm:block">Start typing to filter</span>
+        </div>
+        <div className="relative">
+          <input
+            id="client-search-input"
+            type="text"
+            inputMode="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            aria-label="Find a customer"
+            placeholder={
+              appMode === 'devolucion'
+                ? "Search customer for return…"
+                : "Name, phone, email or business…"
+            }
+            className={`min-h-14 w-full rounded-xl border-2 px-4 py-4 pr-12 text-base font-semibold outline-none transition-all placeholder:font-normal sm:text-lg ${
+              appMode === 'devolucion'
+                ? 'border-orange-500 bg-orange-50 text-orange-900 focus:border-orange-700 focus:ring-4 focus:ring-orange-100'
+                : 'border-slate-300 bg-white text-slate-900 shadow-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100'
+            }`}
+            value={clientSearch}
+            onChange={(e) => {
+              const value = e.target.value;
     
     // Activar modo devolución con #return
     if (value.trim().toLowerCase() === "#return") {
@@ -5624,8 +5641,8 @@ function renderStepClient() {
       return;
     }
 
-    setClientSearch(value);
-  }}
+              setClientSearch(value);
+            }}
           onKeyDown={(e) => {
             // ↓ Move focus down the list
             if (e.key === "ArrowDown") {
@@ -5648,32 +5665,42 @@ function renderStepClient() {
               setFocusedClientIdx(-1);
             }
           }}
-          autoFocus
-        />
-        {clientLoading && (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-            Buscando…
+            autoFocus
+          />
+          {clientLoading ? (
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-gray-500">
+              Searching…
+            </div>
+          ) : clientSearch ? (
+            <button
+              type="button"
+              onClick={() => { setClientSearch(""); setFocusedClientIdx(-1); }}
+              aria-label="Clear customer search"
+              className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-slate-100 text-lg font-bold text-slate-500 hover:bg-slate-200 active:scale-95"
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+
+        {debouncedClientSearch.length > 0 && (
+          <div className="hidden sm:flex items-center justify-between gap-2 text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+            <span className="font-semibold text-blue-700">Searching name, phone, email, address and business</span>
+            <div className="flex items-center gap-2 text-blue-600 shrink-0">
+              <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↑↓</kbd>
+              <span>Navigate</span>
+              <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↵</kbd>
+              <span>Select</span>
+              <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">Esc</kbd>
+              <span>Clear</span>
+            </div>
           </div>
         )}
-      </div>
-
-      {debouncedClientSearch.length > 0 && (
-        <div className="hidden sm:flex items-center justify-between gap-2 text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-          <span className="font-semibold text-blue-700">Searching name, phone, email, address and business</span>
-          <div className="flex items-center gap-2 text-blue-600 shrink-0">
-            <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↑↓</kbd>
-            <span>Navigate</span>
-            <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">↵</kbd>
-            <span>Select</span>
-            <kbd className="bg-white border border-blue-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold">Esc</kbd>
-            <span>Clear</span>
-          </div>
-        </div>
-      )}
+      </section>
 
       <div
         ref={clientListRef}
-        className="max-h-72 lg:max-h-[480px] overflow-auto space-y-1.5 bg-gray-50 rounded-xl p-2 border border-gray-200"
+        className="max-h-[52vh] overflow-auto space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 sm:max-h-96 sm:p-3 lg:max-h-[480px]"
       >
         {/* ── EMPTY STATE: no search typed yet ── */}
         {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
@@ -5713,7 +5740,7 @@ function renderStepClient() {
             <div
               key={c.id}
               data-client-idx={i}
-              className={`bg-white p-3 rounded-xl cursor-pointer border-2 transition-all duration-150 shadow-sm ${
+              className={`cursor-pointer rounded-xl border-2 bg-white p-4 shadow-sm transition-all duration-150 ${
                 isFocused
                   ? "border-blue-500 bg-blue-50 shadow-md ring-2 ring-blue-200"
                   : "border-transparent hover:border-blue-200 hover:bg-blue-50"
@@ -5722,7 +5749,7 @@ function renderStepClient() {
               onMouseEnter={() => setFocusedClientIdx(i)}
             >
               {/* Row 1 — Name + debt badge */}
-              <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="mb-2 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
                   {/* Focus indicator */}
                   {isFocused && (
@@ -5737,28 +5764,28 @@ function renderStepClient() {
                     </span>
                   )}
                 </div>
-                <span className={`border text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap shrink-0 ${balanceClass}`}>
+                <span className={`shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${balanceClass}`}>
                   {hasDebt ? "⚠ Balance" : "✓ Balance"} {fmt(balance)}
                 </span>
               </div>
 
               {/* Row 2 — Contact chips */}
-              <div className="flex flex-wrap gap-1.5 text-xs">
-                <span className="flex items-center gap-1 bg-green-50 border border-green-200 text-green-800 rounded px-2 py-0.5 font-mono font-semibold">
+              <div className="grid grid-cols-1 gap-1.5 text-xs sm:flex sm:flex-wrap">
+                <span className="flex w-full items-center gap-1 rounded-lg border border-green-200 bg-green-50 px-2.5 py-1.5 font-mono font-semibold text-green-800 sm:w-auto">
                   📞 {c.telefono || "—"}
                 </span>
                 {c.email && (
-                  <span className="flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-700 rounded px-2 py-0.5 font-mono truncate max-w-[160px]">
+                  <span className="flex w-full max-w-full items-center gap-1 truncate rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 font-mono text-blue-700 sm:w-auto sm:max-w-[200px]">
                     📧 {c.email}
                   </span>
                 )}
                 {c.negocio && (
-                  <span className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded px-2 py-0.5 sm:hidden">
+                  <span className="flex w-full items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-indigo-700 sm:hidden">
                     🏢 {c.negocio}
                   </span>
                 )}
                 {c.direccion && (
-                  <span className="flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-700 rounded px-2 py-0.5 truncate max-w-[200px]">
+                  <span className="flex w-full max-w-full items-center gap-1 truncate rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-700 sm:w-auto sm:max-w-[260px]">
                     📍 {renderAddress(c.direccion)}
                   </span>
                 )}
@@ -6040,17 +6067,28 @@ function renderStepProducts() {
             }
           }}
         />
-        <button
-          onClick={() => setShowScanner(true)}
-          className={`bg-blue-600 text-white rounded-xl font-bold shadow-md hover:bg-blue-700 hover:shadow-lg active:scale-95 transition-all duration-200 flex items-center gap-2 whitespace-nowrap ${storeMode ? "px-6 py-4 text-base min-w-32 justify-center" : "px-4 py-3"}`}
-        >
-          📷 <span className="hidden sm:inline">{storeMode ? "Camera scan" : "Scan"}</span>
-        </button>
+        {!storeMode && (
+          <button
+            onClick={() => setShowScanner(true)}
+            className="flex items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 py-3 font-bold text-white shadow-md transition-all duration-200 hover:bg-blue-700 hover:shadow-lg active:scale-95"
+          >
+            📷 <span className="hidden sm:inline">Scan</span>
+          </button>
+        )}
       </div>
       {storeMode && (
-        <div className="-mt-2 px-2 text-xs font-semibold text-blue-700 flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          USB barcode scanner ready — scan a code and press Enter to add it
+        <div className="-mt-2 flex flex-wrap items-center justify-between gap-2 px-2 text-xs">
+          <span className="flex items-center gap-2 font-semibold text-blue-700">
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+            USB scanner ready — scan a code and press Enter
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowScanner(true)}
+            className="rounded-lg px-2.5 py-1.5 font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-blue-700"
+          >
+            📷 Use camera instead
+          </button>
         </div>
       )}
 
@@ -6258,17 +6296,50 @@ function renderStepProducts() {
       )}
 
       {/* ── NAVIGATION ───────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row gap-3 pt-4">
-        <button
-          className={`bg-gray-500 text-white px-6 rounded-xl font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1 ${storeMode ? "py-4 text-lg min-h-14" : "py-3"}`}
-          onClick={() => setStep(1)}
-        >← Back</button>
-        <button
-          className={`bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 ${storeMode ? "py-4 text-lg min-h-14" : "py-3"}`}
-          disabled={cartSafe.length === 0}
-          onClick={() => setStep(3)}
-        >Next → Payment</button>
-      </div>
+      {!storeMode && (
+        <div className="flex flex-col gap-3 pt-4 sm:flex-row">
+          <button
+            className="order-2 rounded-xl bg-gray-500 px-6 py-3 font-semibold text-white shadow-md transition-colors hover:bg-gray-600 sm:order-1"
+            onClick={() => setStep(1)}
+          >← Back</button>
+          <button
+            className="order-1 flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-8 py-3 font-semibold text-white shadow-md transition-all duration-200 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50 sm:order-2 sm:flex-none"
+            disabled={cartSafe.length === 0}
+            onClick={() => setStep(3)}
+          >Next → Payment</button>
+        </div>
+      )}
+
+      {storeMode && (
+        <>
+          <div className="h-20 lg:h-16" aria-hidden="true" />
+          <div
+            data-testid="store-product-actions"
+            className="fixed bottom-[86px] left-3 right-16 z-40 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-2xl backdrop-blur sm:left-auto sm:w-[500px] lg:hidden"
+          >
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              aria-label="Back to customer"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-200 text-xl font-black text-slate-700 hover:bg-slate-300 active:scale-95"
+            >
+              ←
+            </button>
+            <div className="min-w-0 flex-1 px-1">
+              <div className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-500">Cart</div>
+              <div className="truncate text-sm font-black text-slate-900">{cartUnits} units · {fmt(saleTotal)}</div>
+            </div>
+            <button
+              type="button"
+              disabled={cartSafe.length === 0}
+              onClick={() => setStep(3)}
+              className="min-h-12 shrink-0 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              Next → Payment
+            </button>
+          </div>
+        </>
+      )}
 
       {/* ── SCANNER MODAL ────────────────────────────── */}
       {showScanner && (
@@ -6891,7 +6962,7 @@ function renderStepPayment() {
         </div>
 
         {/* Mobile floating cart bar */}
-        {cartSafe.length > 0 && step === 2 && (
+        {!storeMode && cartSafe.length > 0 && step === 2 && (
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 p-4 shadow-lg sm:hidden">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600">🛒 {cartSafe.length} items</div>
@@ -6990,6 +7061,23 @@ function renderStepPayment() {
             >
               <span>💵</span>
               <span>Drawer</span>
+            </button>
+          )}
+
+          {/* Store checkout stays visible while products are being selected */}
+          {storeMode && step === 2 && (
+            <button
+              type="button"
+              onClick={() => setStep(3)}
+              disabled={cartSafe.length === 0}
+              className="flex min-h-12 items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-base font-black text-white shadow-lg shadow-blue-900/30 transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-gray-600 disabled:text-gray-300 disabled:shadow-none"
+            >
+              <span>Next → Payment</span>
+              {cartSafe.length > 0 && (
+                <span className="rounded-lg bg-white/15 px-2 py-1 text-xs">
+                  {cartSafe.reduce((sum, item) => sum + Number(item.cantidad || 0), 0)} units · {fmt(saleTotal)}
+                </span>
+              )}
             </button>
           )}
 
