@@ -7,6 +7,7 @@ const Login = lazy(() => import("./Login"));
 const VanSelector = lazy(() => import("./components/VanSelector"));
 const Dashboard = lazy(() => import("./Dashboard"));
 const StoreDashboard = lazy(() => import("./store/StoreDashboard"));
+const CustomerDisplay = lazy(() => import("./store/CustomerDisplay"));
 const Clientes = lazy(() => import("./Clientes"));
 const Productos = lazy(() => import("./Productos"));
 const Inventario = lazy(() => import("./Inventario"));
@@ -178,6 +179,7 @@ export default function App() {
 
           {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />
+          <Route path="/customer-display" element={<PrivateRoute><CustomerDisplay /></PrivateRoute>} />
 
           {/* Selector de VAN (protegido) */}
           <Route

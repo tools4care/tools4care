@@ -17,6 +17,7 @@ import { createSubmitGuard } from "./lib/submitGuard";
 import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useLocationSettings } from "./hooks/useLocationSettings";
+import { buildCustomerDisplaySnapshot, publishCustomerDisplay } from "./lib/customerDisplay";
 import { useProductosHabituales } from "./hooks/useProductosHabituales";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import {
@@ -2966,6 +2967,46 @@ useEffect(() => {
     : quickSaleNeedsFullPayment
       ? `Collect ${fmt(remainingToCollect)}`
       : "Save Sale";
+
+  const customerDisplaySnapshot = useMemo(() => buildCustomerDisplaySnapshot({
+    locationId: van?.id,
+    locationName: van?.nombre || van?.nombre_van || "Physical Store",
+    customerName: selectedClient?.id
+      ? `${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim()
+      : "Walk-in Customer",
+    items: cartSafe,
+    subtotal: saleTotal,
+    taxName,
+    taxRate,
+    taxAmount: taxEnabled ? taxAmount : 0,
+    taxIncluded,
+    total: saleTotalWithTax,
+    previousBalance: balanceBefore,
+    amountDue: totalAPagar,
+    paid,
+    remaining: selectedClient?.id ? balanceAfter : remainingToCollect,
+    change,
+  }), [van?.id, van?.nombre, van?.nombre_van, selectedClient, cartSafe, saleTotal, taxName, taxRate, taxEnabled, taxAmount, taxIncluded, saleTotalWithTax, balanceBefore, totalAPagar, paid, balanceAfter, remainingToCollect, change]);
+
+  useEffect(() => {
+    if (!storeMode || !locationSettings.customer_display_enabled || !van?.id) return;
+    publishCustomerDisplay(customerDisplaySnapshot);
+  }, [storeMode, locationSettings.customer_display_enabled, van?.id, customerDisplaySnapshot]);
+
+  const openCustomerDisplay = useCallback(() => {
+    if (!van?.id) return;
+    publishCustomerDisplay(customerDisplaySnapshot);
+    const displayWindow = window.open(
+      `/customer-display?location=${encodeURIComponent(van.id)}`,
+      "tools4care-customer-display",
+      "popup=yes,width=1200,height=800,resizable=yes,scrollbars=yes",
+    );
+    if (!displayWindow) {
+      toast.warning("Allow pop-ups to open the customer display.");
+      return;
+    }
+    displayWindow.focus();
+  }, [customerDisplaySnapshot, toast, van?.id]);
 
   /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
   useEffect(() => {
@@ -6630,8 +6671,9 @@ function renderStepPayment() {
       </section>
 
       {((storeMode && locationSettings.customer_display_enabled) || (!storeMode && selectedClient?.id)) && (
-        <button
-          onClick={() => setShowBalanceSummary(true)}
+        <div className="space-y-2">
+          <button
+          onClick={storeMode ? openCustomerDisplay : () => setShowBalanceSummary(true)}
           className={`w-full border-2 text-white rounded-2xl flex items-center justify-between gap-3 shadow-lg active:scale-[0.99] transition-all ${
             storeMode
               ? "border-indigo-400 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 px-5 py-5 ring-4 ring-indigo-100"
@@ -6643,12 +6685,22 @@ function renderStepPayment() {
             <span>
               <span className={`block font-black ${storeMode ? "text-lg" : ""}`}>{storeMode ? "Customer Display" : "Show summary to customer"}</span>
               <span className={`block text-xs font-normal ${storeMode ? "text-blue-100" : "text-blue-700"}`}>
-                {storeMode ? "Turn the screen so the customer can review items, total and payment" : "Clear balance and payment view"}
+                {storeMode ? "Open a separate live screen with items, total, payment and change" : "Clear balance and payment view"}
               </span>
             </span>
           </span>
           <span className={`${storeMode ? "text-white text-2xl" : "text-blue-600"} font-bold`}>→</span>
-        </button>
+          </button>
+          {storeMode && (
+            <button
+              type="button"
+              onClick={() => setShowBalanceSummary(true)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"
+            >
+              Review on this screen instead
+            </button>
+          )}
+        </div>
       )}
 
       {/* Only actionable warnings stay visible. */}
@@ -7028,7 +7080,7 @@ function renderStepPayment() {
           {/* Customer-facing checkout — store mode only */}
           {storeMode && locationSettings.customer_display_enabled && step === 3 && cartSafe.length > 0 && (
             <button
-              onClick={() => setShowBalanceSummary(true)}
+              onClick={openCustomerDisplay}
               className="flex items-center gap-2 px-5 py-3 min-h-12 rounded-xl text-sm font-black bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-lg shadow-indigo-900/30"
             >
               <span className="text-lg">👤</span>
