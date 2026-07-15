@@ -3,6 +3,7 @@
 // VanContext MEJORADO: Persiste la selección de van en Supabase
 // para que ambos dispositivos (PC + Phone) compartan la misma van
 // =====================================================================
+/* eslint-disable react-refresh/only-export-components */
 
 import { createContext, useContext, useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
@@ -19,6 +20,7 @@ const VAN_STORAGE_KEY = "tools4care_selected_van";
 
 export default function VanProvider({ children }) {
   const { usuario } = useUsuario();
+  const [validatedLocationKey, setValidatedLocationKey] = useState("");
   const [van, setVanState] = useState(() => {
     // Inicializar desde localStorage
     try {
@@ -40,7 +42,9 @@ export default function VanProvider({ children }) {
       } else {
         localStorage.removeItem(VAN_STORAGE_KEY);
       }
-    } catch {}
+    } catch {
+      // localStorage is optional (for example in restricted private browsing).
+    }
 
     // Guardar en Supabase (para sync entre dispositivos)
     if (usuario?.id && newVan?.id) {
@@ -89,8 +93,51 @@ export default function VanProvider({ children }) {
     syncVanFromCloud();
   }, [usuario?.id]);
 
+  // Invalidate a location saved on this device when an administrator later
+  // restricts the user to a different set of locations. No assignment rows
+  // remains the backward-compatible "all locations" rule.
+  useEffect(() => {
+    let active = true;
+
+    async function validateSelectedLocation() {
+      if (!usuario?.id || usuario?.rol === "admin" || !van?.id) {
+        return;
+      }
+
+      const validationKey = `${usuario.id}:${van.id}`;
+      const { data, error } = await supabase
+        .from("usuarios_vans")
+        .select("van_id, activo")
+        .eq("usuario_id", usuario.id);
+
+      if (!active) return;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        const allowed = data.some((assignment) => assignment.activo !== false && assignment.van_id === van.id);
+        if (!allowed) {
+          setVanState(null);
+          try {
+            localStorage.removeItem(VAN_STORAGE_KEY);
+            localStorage.removeItem("van");
+          } catch {
+            // Storage may be unavailable in private browsing; state is enough.
+          }
+        }
+      }
+      if (error) console.warn("Could not validate location access:", error.message);
+      setValidatedLocationKey(validationKey);
+    }
+
+    validateSelectedLocation();
+    return () => { active = false; };
+  }, [usuario?.id, usuario?.rol, van?.id]);
+
+  const currentLocationKey = usuario?.id && van?.id ? `${usuario.id}:${van.id}` : "";
+  const locationAccessChecking = Boolean(
+    usuario?.id && usuario?.rol !== "admin" && van?.id && validatedLocationKey !== currentLocationKey
+  );
+
   return (
-    <VanContext.Provider value={{ van, setVan }}>
+    <VanContext.Provider value={{ van, setVan, locationAccessChecking }}>
       {children}
     </VanContext.Provider>
   );

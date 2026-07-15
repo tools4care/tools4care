@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { isStoreLocation } from "./lib/locationTypes";
+import { getCloseoutLocationCopy } from "./lib/closeoutLocationCopy";
 import { useUsuario } from "./UsuarioContext";
 import { useNavigate } from "react-router-dom";
 import {
@@ -441,6 +442,7 @@ function easternDayBounds(isoDay) {
 export default function CierreVan() {
   const { van } = useVan();
   const storeWorkspace = isStoreLocation(van);
+  const closeoutCopy = getCloseoutLocationCopy(van);
   const { usuario, setUsuario } = useUsuario();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -924,7 +926,7 @@ useEffect(() => {
 
   const handleCierreVan = async () => {
     if (!van?.id || !usuario?.id) {
-      setMensaje("You must select a VAN and be logged in");
+      setMensaje(`You must select a ${closeoutCopy.typeLabel.toLowerCase()} and be logged in`);
       setTipoMensaje("error");
       return;
     }
@@ -1114,7 +1116,11 @@ useEffect(() => {
     return renderCloseoutPdfReport(doc, autoTable, {
       fechasLabel: fechasSeleccionadas.map((f) => formatUS(f)).join(", "),
       docTitleDate: fechasSeleccionadas[0] || "",
-      vanLabel: van?.nombre || van?.alias || "VAN",
+      vanLabel: closeoutCopy.name,
+      locationTypeLabel: closeoutCopy.typeLabel,
+      reportTitle: closeoutCopy.closeoutTitle,
+      expenseLabel: closeoutCopy.expenseLabel,
+      countedByLabel: closeoutCopy.countedByLabel,
       userLabel: usuario?.nombre || usuario?.email || "Unknown user",
       totales,
       real: { cash: cashReal, card: cardReal, transfer: transferReal, other: otherReal, total: totalReal },
@@ -1151,8 +1157,8 @@ useEffect(() => {
         const doc = new jsPDF({ orientation: "landscape" });
         buildCloseoutPdf(doc, autoTable);
         const pdfBlob = doc.output("blob");
-        const safeVan = String(van?.nombre || van?.nombre_van || "VAN").replace(/[^a-z0-9_-]+/gi, "-");
-        const path = `${van?.id || "van"}/closeout-${safeVan}-${fechasSeleccionadas[0] || "report"}-${Date.now()}.pdf`;
+        const safeLocation = String(closeoutCopy.name).replace(/[^a-z0-9_-]+/gi, "-");
+        const path = `${van?.id || (closeoutCopy.store ? "store" : "van")}/closeout-${safeLocation}-${fechasSeleccionadas[0] || "report"}-${Date.now()}.pdf`;
         const { error: uploadError } = await supabase.storage
           .from("expense-receipts")
           .upload(path, pdfBlob, { contentType: "application/pdf", upsert: true });
@@ -1166,10 +1172,10 @@ useEffect(() => {
       const html = `
         <div style="font-family:Arial,sans-serif;max-width:650px;margin:0 auto;">
           <div style="background:linear-gradient(135deg,#1d4ed8,#4f46e5);padding:24px;border-radius:12px 12px 0 0;">
-            <h1 style="color:white;margin:0;font-size:22px;">Van Closure Report</h1>
+            <h1 style="color:white;margin:0;font-size:22px;">${closeoutCopy.reportTitle}</h1>
             <p style="color:#bfdbfe;margin:6px 0 0;font-size:13px;">
               ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} &nbsp;·&nbsp;
-              VAN: ${van?.nombre || "—"} &nbsp;·&nbsp;
+              ${closeoutCopy.typeLabel}: ${closeoutCopy.name} &nbsp;·&nbsp;
               By: ${usuario?.nombre || "—"}
             </p>
           </div>
@@ -1198,7 +1204,7 @@ useEffect(() => {
             </table>
 
             ${gastosValidos.length > 0 ? `
-            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #fed7aa;padding-bottom:6px;">⛽ Driver Expenses</h2>
+            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #fed7aa;padding-bottom:6px;">⛽ ${closeoutCopy.expenseLabel}</h2>
             <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
               <thead>
                 <tr style="background:#ea580c;color:white;">
@@ -1221,7 +1227,7 @@ useEffect(() => {
                 <span>Gross Cash Expected:</span><span>${fmtCurrency(totales.totalEfectivo)}</span>
               </div>
               <div style="display:flex;justify-content:space-between;margin-bottom:4px;color:#c2410c;font-size:13px;">
-                <span>– Driver Expenses:</span><span>–${fmtCurrency(gastosTotal)}</span>
+                <span>– ${closeoutCopy.expenseLabel}:</span><span>–${fmtCurrency(gastosTotal)}</span>
               </div>
               <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px;border-top:1px solid #fed7aa;padding-top:8px;">
                 <span>= Net Cash to Turn In:</span><span style="color:#16a34a;">${fmtCurrency(totales.efectivoNeto)}</span>
@@ -1257,7 +1263,7 @@ useEffect(() => {
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {
           to: reportEmail.trim(),
-          subject: `Van Closure Report — ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} — ${van?.nombre || "VAN"}`,
+          subject: `${closeoutCopy.reportTitle} — ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} — ${closeoutCopy.name}`,
           html,
         },
       });
@@ -1293,8 +1299,8 @@ useEffect(() => {
       const doc = new jsPDF({ orientation: "landscape" });
       buildCloseoutPdf(doc, autoTable);
       doc.save(
-        `VanClosure_${fechasSeleccionadas[0]}_${
-          van?.nombre || "VAN"
+        `${closeoutCopy.filenamePrefix}_${fechasSeleccionadas[0]}_${
+          closeoutCopy.name
         }.pdf`
       );
       setMensaje("PDF report generated successfully");

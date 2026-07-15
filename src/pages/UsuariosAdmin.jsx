@@ -1,12 +1,12 @@
 // src/pages/UsuariosAdmin.jsx
 // Admin-only: manage users (add / change role / activate-deactivate / delete)
-import { useState, useEffect, useCallback } from "react";
+import { createElement, useState, useEffect, useCallback } from "react";
 import { supabase }                        from "../supabaseClient";
 import { supabaseAdmin, isAdminConfigured } from "../supabaseAdmin";
 import { useUsuario }                      from "../UsuarioContext";
 import {
   Shield, Star, User, Check, X, RefreshCw, AlertCircle,
-  ChevronDown, Copy, UserPlus, Trash2, Eye, EyeOff, Key, Settings,
+  ChevronDown, Copy, UserPlus, Trash2, Eye, EyeOff, Key, Settings, MapPin,
 } from "lucide-react";
 
 /* ─── Role config ─── */
@@ -451,11 +451,38 @@ function PermisosModal({ usuario: u, onClose, onGuardado, onTriggerError }) {
   const [descuentoMax,   setDescuentoMax]   = useState(u.descuento_max != null ? String(u.descuento_max) : "");
   const [useRoleDefault, setUseRoleDefault] = useState(u.modulos == null);
   const [selectedMods,   setSelectedMods]   = useState(u.modulos != null ? u.modulos : roleDefaultModulos());
+  const [locations, setLocations] = useState([]);
+  const [selectedLocationIds, setSelectedLocationIds] = useState([]);
+  const [loadingLocations, setLoadingLocations] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
 
+  useEffect(() => {
+    let active = true;
+    async function loadLocationAccess() {
+      const [locationResult, assignmentResult] = await Promise.all([
+        supabaseAdmin.from("v_vans_app").select("id, nombre, placa, tipo, activo").eq("activo", true).order("nombre"),
+        supabaseAdmin.from("usuarios_vans").select("van_id, activo").eq("usuario_id", u.id),
+      ]);
+      if (!active) return;
+      if (locationResult.error || assignmentResult.error) {
+        setError("Could not load location access.");
+      } else {
+        setLocations(locationResult.data || []);
+        setSelectedLocationIds((assignmentResult.data || []).filter((row) => row.activo !== false).map((row) => row.van_id));
+      }
+      setLoadingLocations(false);
+    }
+    loadLocationAccess();
+    return () => { active = false; };
+  }, [u.id]);
+
   function toggleMod(key) {
     setSelectedMods(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
+
+  function toggleLocation(id) {
+    setSelectedLocationIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
   async function handleSave() {
@@ -474,6 +501,26 @@ function PermisosModal({ usuario: u, onClose, onGuardado, onTriggerError }) {
       }
       setSaving(false);
       return;
+    }
+
+    const { error: deleteAssignmentsError } = await supabaseAdmin
+      .from("usuarios_vans")
+      .delete()
+      .eq("usuario_id", u.id);
+    if (deleteAssignmentsError) {
+      setError("User settings were saved, but location access could not be updated: " + deleteAssignmentsError.message);
+      setSaving(false);
+      return;
+    }
+    if (!isAdmin && selectedLocationIds.length > 0) {
+      const { error: insertAssignmentsError } = await supabaseAdmin
+        .from("usuarios_vans")
+        .insert(selectedLocationIds.map((van_id) => ({ usuario_id: u.id, van_id, activo: true })));
+      if (insertAssignmentsError) {
+        setError("User settings were saved, but location access could not be updated: " + insertAssignmentsError.message);
+        setSaving(false);
+        return;
+      }
     }
     onGuardado({ ...u, descuento_max, modulos });
   }
@@ -556,6 +603,48 @@ function PermisosModal({ usuario: u, onClose, onGuardado, onTriggerError }) {
                 </label>
               ))}
             </div>
+          </div>
+
+          {/* Locations */}
+          <div>
+            <div className="mb-2 flex items-center gap-2">
+              <MapPin size={14} className="text-indigo-600" />
+              <p className="text-xs font-semibold text-slate-600">Location access</p>
+            </div>
+            {isAdmin ? (
+              <p className="rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-700">
+                Administrators always have access to every location.
+              </p>
+            ) : loadingLocations ? (
+              <div className="flex items-center gap-2 text-xs text-slate-400"><RefreshCw size={12} className="animate-spin" /> Loading locations…</div>
+            ) : (
+              <>
+                <p className="mb-3 text-[11px] leading-4 text-slate-500">
+                  No selection means all locations. Select one or more to restrict this user.
+                </p>
+                <div className="space-y-1.5">
+                  {locations.map((location) => (
+                    <label
+                      key={location.id}
+                      className={`flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2 text-xs transition-all ${
+                        selectedLocationIds.includes(location.id)
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          : "border-slate-200 bg-slate-50 text-slate-600"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedLocationIds.includes(location.id)}
+                        onChange={() => toggleLocation(location.id)}
+                        className="rounded"
+                      />
+                      <span className="font-semibold">{location.nombre || "Location"}</span>
+                      <span className="ml-auto text-[10px] uppercase text-slate-400">{location.tipo || location.placa || "van"}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           {error && (
@@ -991,10 +1080,10 @@ export default function UsuariosAdmin() {
       <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 mb-5">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Role permissions</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {ROLES.map(({ value, label, Icon, badge, desc }) => (
+          {ROLES.map(({ value, label, Icon: RoleIcon, badge, desc }) => (
             <div key={value} className="flex items-start gap-2">
               <span className={`inline-flex items-center gap-1 border rounded-full px-2.5 py-0.5 text-xs font-bold shrink-0 ${badge}`}>
-                <Icon size={10} /> {label}
+                {createElement(RoleIcon, { size: 10 })} {label}
               </span>
               <span className="text-slate-500 text-xs leading-snug">{desc}</span>
             </div>

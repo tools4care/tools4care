@@ -2,9 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVan } from "../hooks/VanContext";
+import { useUsuario } from "../UsuarioContext";
 import { supabase } from "../supabaseClient";
 import { AlertCircle, ArrowRight, CheckCircle2, Monitor, RefreshCw, Search, Store, Truck, Wifi } from "lucide-react";
 import { getLocationLabel, getLocationType, LOCATION_TYPES } from "../lib/locationTypes";
+import { hasLocationRestriction, restrictLocationsForUser } from "../lib/locationAccess";
 
 const VANS_CACHE_KEY = "tools4care_vans_cache_v1";
 const TOOLS4CARE_LOGO = "/icons/icon-192.png";
@@ -19,12 +21,14 @@ function getVanPlate(van) {
 
 export default function VanSelector({ onSelect }) {
   const { van: selectedVan, setVan } = useVan();
+  const { usuario } = useUsuario();
   const navigate = useNavigate();
   const [vans, setVans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
   const [savingId, setSavingId] = useState("");
+  const [restricted, setRestricted] = useState(false);
   const searchRef = useRef(null);
 
   async function loadVans({ silent = false } = {}) {
@@ -50,9 +54,26 @@ export default function VanSelector({ onSelect }) {
       }
 
       if (error) throw error;
-      setVans(data || []);
+
+      let assignments = [];
+      if (usuario?.id && usuario?.rol !== "admin") {
+        const assignmentResult = await supabase
+          .from("usuarios_vans")
+          .select("van_id, activo")
+          .eq("usuario_id", usuario.id);
+        if (assignmentResult.error) {
+          console.warn("Could not load location assignments:", assignmentResult.error.message);
+        } else {
+          assignments = assignmentResult.data || [];
+        }
+      }
+
+      const visibleLocations = restrictLocationsForUser(data || [], assignments, usuario?.rol);
+      setRestricted(hasLocationRestriction(assignments, usuario?.rol));
+      setVans(visibleLocations);
       try {
-        localStorage.setItem(VANS_CACHE_KEY, JSON.stringify({ data: data || [], savedAt: Date.now() }));
+        const cacheKey = `${VANS_CACHE_KEY}:${usuario?.id || "anonymous"}`;
+        localStorage.setItem(cacheKey, JSON.stringify({ data: visibleLocations, savedAt: Date.now() }));
       } catch (storageError) {
         console.warn("Could not cache vans:", storageError?.message || storageError);
       }
@@ -64,8 +85,12 @@ export default function VanSelector({ onSelect }) {
   }
 
   useEffect(() => {
+    setVans([]);
+    setRestricted(false);
+    setLoading(true);
     try {
-      const cached = JSON.parse(localStorage.getItem(VANS_CACHE_KEY) || "null");
+      const cacheKey = `${VANS_CACHE_KEY}:${usuario?.id || "anonymous"}`;
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
       if (Array.isArray(cached?.data) && cached.data.length > 0) {
         setVans(cached.data);
         setLoading(false);
@@ -76,7 +101,7 @@ export default function VanSelector({ onSelect }) {
 
     loadVans({ silent: true });
     requestAnimationFrame(() => searchRef.current?.focus());
-  }, []);
+  }, [usuario?.id, usuario?.rol]);
 
   const filteredVans = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -218,8 +243,10 @@ export default function VanSelector({ onSelect }) {
               </div>
             ) : filteredVans.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
-                <p className="font-bold text-[#0b1728]">No vans available</p>
-                <p className="mt-1 text-sm text-slate-500">Try clearing the search or refreshing the list.</p>
+                <p className="font-bold text-[#0b1728]">{restricted ? "No locations assigned" : "No locations available"}</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {restricted ? "Ask an administrator to update your location access." : "Try clearing the search or refreshing the list."}
+                </p>
               </div>
             ) : (
               <div className="grid max-h-[54vh] gap-3 overflow-y-auto pr-1">

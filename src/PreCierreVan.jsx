@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { isStoreLocation } from "./lib/locationTypes";
+import { getCloseoutLocationCopy } from "./lib/closeoutLocationCopy";
 import { useUsuario } from "./UsuarioContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { loadPdfLibs } from "./utils/lazyPdf";
@@ -335,6 +336,7 @@ const getPaymentMethodLabel = (method) => {
 
 // Preview modal: shows closure details for a date range (read-only)
 function CierrePreviewModal({ van, usuario, previewData, onClose }) {
+  const closeoutCopy = getCloseoutLocationCopy(van);
   const {
     ventas = [], pagos = [], fechas = [], resumen = {}, gastos = [], observaciones = "",
     cxc = { deudaNueva: 0, pagosDeuda: 0, reducciones: 0, cambioNeto: 0 },
@@ -450,9 +452,9 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       const html = `
         <div style="font-family:Arial,sans-serif;max-width:650px;margin:0 auto;">
           <div style="background:linear-gradient(135deg,#1d4ed8,#4f46e5);padding:24px;border-radius:12px 12px 0 0;">
-            <h1 style="color:white;margin:0;font-size:22px;">Closure Report</h1>
+            <h1 style="color:white;margin:0;font-size:22px;">${closeoutCopy.reportTitle}</h1>
             <p style="color:#bfdbfe;margin:6px 0 0;font-size:13px;">
-              ${dateRange} &nbsp;·&nbsp; VAN: ${van?.nombre_van || van?.nombre || "—"} &nbsp;·&nbsp; By: ${usuario?.nombre || usuario?.email || "—"}
+              ${dateRange} &nbsp;·&nbsp; ${closeoutCopy.typeLabel}: ${closeoutCopy.name} &nbsp;·&nbsp; By: ${usuario?.nombre || usuario?.email || "—"}
             </p>
           </div>
 
@@ -507,7 +509,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
             </table>
 
             ${gastosValidos.length > 0 ? `
-            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #fed7aa;padding-bottom:6px;">⛽ Driver Expenses</h2>
+            <h2 style="font-size:15px;color:#374151;margin:16px 0 10px;border-bottom:2px solid #fed7aa;padding-bottom:6px;">⛽ ${closeoutCopy.expenseLabel}</h2>
             <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
               <thead>
                 <tr style="background:#ea580c;color:white;">
@@ -542,7 +544,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {
           to: emailInput.trim(),
-          subject: `Closure Report — ${dateRange} — VAN ${van?.nombre_van || van?.nombre || "—"}`,
+          subject: `${closeoutCopy.reportTitle} — ${dateRange} — ${closeoutCopy.name}`,
           html,
         },
       });
@@ -642,7 +644,11 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     renderCloseoutPdfReport(doc, autoTable, {
       fechasLabel: fechas.length ? `${formatUS(fechas[0])} - ${formatUS(fechas[fechas.length - 1])}` : "—",
       docTitleDate: fechas[0] || "",
-      vanLabel: van?.nombre || van?.nombre_van || van?.alias || "VAN",
+      vanLabel: closeoutCopy.name,
+      locationTypeLabel: closeoutCopy.typeLabel,
+      reportTitle: closeoutCopy.closeoutTitle,
+      expenseLabel: closeoutCopy.expenseLabel,
+      countedByLabel: closeoutCopy.countedByLabel,
       userLabel: usuario?.nombre || usuario?.email || "Unknown user",
       totales: { totalVentas, totalCaja, totalEfectivo, totalTarjeta, totalTransferencia, totalOtros, totalCajaNeto, efectivoNeto, gastosTotal },
       real,
@@ -655,7 +661,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       observaciones,
     });
 
-    doc.save(`VanClosure_${fechas[0] || "report"}_${van?.nombre || van?.nombre_van || "VAN"}.pdf`);
+    doc.save(`${closeoutCopy.filenamePrefix}_${fechas[0] || "report"}_${closeoutCopy.name}.pdf`);
   };
 
   if (!previewData) return null;
@@ -734,7 +740,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
           {/* Meta */}
           <div className="meta mb-4">
             <p className="text-sm text-gray-600">
-              <strong>VAN:</strong> {van?.nombre_van || van?.nombre || "—"} &nbsp;·&nbsp;
+              <strong>{closeoutCopy.typeLabel}:</strong> {closeoutCopy.name} &nbsp;·&nbsp;
               <strong>User:</strong> {usuario?.nombre || usuario?.email || "—"} &nbsp;·&nbsp;
               <strong>Generated:</strong> {new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}
             </p>
@@ -953,14 +959,14 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
             </>
           )}
 
-          {/* Driver Expenses (Gastos del Conductor) — editable */}
+          {/* Location expenses — editable */}
           {(() => {
             const gastosTotal = localGastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
             return (
               <>
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-base font-bold text-gray-700 flex items-center gap-2">
-                    <span>⛽</span> Driver Expenses {localGastos.length > 0 && `(${localGastos.length})`}
+                    <span>⛽</span> {closeoutCopy.expenseLabel} {localGastos.length > 0 && `(${localGastos.length})`}
                   </h2>
                   <button
                     onClick={() => setShowAddGasto((v) => !v)}
@@ -1396,6 +1402,7 @@ function HistorialCierres({ van, usuario }) {
 export default function PreCierreVan() {
   const { van } = useVan();
   const storeWorkspace = isStoreLocation(van);
+  const closeoutCopy = getCloseoutLocationCopy(van);
   const { usuario } = useUsuario();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -1619,7 +1626,7 @@ export default function PreCierreVan() {
       doc.setFillColor(240, 240, 240);
       doc.rect(14, 35, 182, 20, "F");
       doc.setFontSize(10);
-      doc.text(`VAN: ${van?.nombre || van?.alias || 'No name'}`, 14, 45);
+      doc.text(`${closeoutCopy.typeLabel}: ${closeoutCopy.name}`, 14, 45);
       doc.text(`User: ${usuario?.nombre || 'No name'}`, 14, 52);
       
       // Summary
@@ -1677,7 +1684,7 @@ export default function PreCierreVan() {
       doc.text(`Generated on ${new Date().toLocaleString()}`, 14, footerY);
       doc.text(`Tools4Care Financial System`, 14, footerY + 6);
       
-      doc.save(`PreClosure_${van?.nombre || 'VAN'}_${new Date().toISOString().slice(0, 10)}.pdf`);
+      doc.save(`${closeoutCopy.precloseFilenamePrefix}_${closeoutCopy.name}_${new Date().toISOString().slice(0, 10)}.pdf`);
       setMensaje("PDF report generated successfully");
       setTipoMensaje("success");
     } catch (error) {
@@ -1685,7 +1692,7 @@ export default function PreCierreVan() {
       setMensaje("Error generating PDF: " + error.message);
       setTipoMensaje("error");
     }
-  }, [selected, rows, invoices, sum, totalExpected, van, usuario]);
+  }, [selected, rows, invoices, sum, totalExpected, closeoutCopy, usuario]);
 
   // Datos para gráficos
   const datosMetodosPago = useMemo(() => {

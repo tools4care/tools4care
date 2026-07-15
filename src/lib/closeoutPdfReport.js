@@ -19,6 +19,10 @@ export const fmtCurrency = (n) => {
  *   fechasLabel: string,
  *   docTitleDate: string,
  *   vanLabel: string,
+ *   locationTypeLabel?: string,
+ *   reportTitle?: string,
+ *   expenseLabel?: string,
+ *   countedByLabel?: string,
  *   userLabel: string,
  *   totales: { totalVentas:number, totalCaja:number, totalEfectivo:number, totalTarjeta:number, totalTransferencia:number, totalOtros:number, totalCajaNeto:number, efectivoNeto:number, gastosTotal:number },
  *   real: { cash:?number, card:?number, transfer:?number, other:?number, total:?number } | null,
@@ -37,6 +41,10 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
     totales, real, variance, cxc, salesCount,
     gastos, topCustomers, largeTransactions, observaciones,
   } = input;
+  const locationTypeLabel = input.locationTypeLabel || "VAN";
+  const reportTitle = input.reportTitle || "Van Closeout";
+  const expenseLabel = input.expenseLabel || "Driver expenses";
+  const countedByLabel = input.countedByLabel || "driver/admin";
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -65,7 +73,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
     recommendations.push(`Variance of ${fmtCurrency(variance)} requires review against receipts and counted money.`);
   }
   if (totales.gastosTotal > 0) {
-    recommendations.push(`Confirm ${fmtCurrency(totales.gastosTotal)} in driver expenses and receipt photos before final filing.`);
+    recommendations.push(`Confirm ${fmtCurrency(totales.gastosTotal)} in ${expenseLabel.toLowerCase()} and receipt photos before final filing.`);
   }
   if (cxc.cambioNeto > 0) {
     recommendations.push(`A/R increased by ${fmtCurrency(cxc.cambioNeto)}. Follow up on customers with new balance.`);
@@ -131,8 +139,8 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   };
 
   doc.setProperties({
-    title: `Tools4Care Van Closeout ${docTitleDate || ""}`,
-    subject: "Daily van closeout report",
+    title: `Tools4Care ${reportTitle} ${docTitleDate || ""}`,
+    subject: `Daily ${reportTitle.toLowerCase()} report`,
     author: "Tools4Care",
   });
 
@@ -180,7 +188,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   doc.setFontSize(9);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(203, 213, 225);
-  doc.text(`${fechasLabel}  |  VAN ${vanLabel}  |  ${userLabel}`, margin, 22);
+  doc.text(`${fechasLabel}  |  ${locationTypeLabel} ${vanLabel}  |  ${userLabel}`, margin, 22);
   doc.setFillColor(...statusColor);
   doc.roundedRect(pageWidth - 62, 10, 48, 16, 4, 4, "F");
   doc.setTextColor(255, 255, 255);
@@ -222,7 +230,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
     ["New A/R", fmtCurrency(cxc.deudaNueva), cxc.deudaNueva > 0 ? [217, 119, 6] : [5, 150, 105]],
     ["A/R collected", fmtCurrency(cxc.pagosDeuda), [5, 150, 105]],
     ["Net A/R change", `${cxc.cambioNeto >= 0 ? "+" : ""}${fmtCurrency(cxc.cambioNeto)}`, cxc.cambioNeto > 0 ? [217, 119, 6] : [5, 150, 105]],
-    ["Driver expenses", fmtCurrency(totales.gastosTotal), totales.gastosTotal > 0 ? [234, 88, 12] : [5, 150, 105]],
+    [expenseLabel, fmtCurrency(totales.gastosTotal), totales.gastosTotal > 0 ? [234, 88, 12] : [5, 150, 105]],
   ];
   signalRows.forEach((row, index) => {
     const rowY = dashY + 20 + index * 11;
@@ -288,7 +296,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   doc.text("Tools4Care Daily Closeout", margin, 14);
   doc.setFontSize(9);
   doc.setFont("helvetica", "normal");
-  doc.text(`${fechasLabel} | VAN ${vanLabel} | ${userLabel}`, margin, 23);
+  doc.text(`${fechasLabel} | ${locationTypeLabel} ${vanLabel} | ${userLabel}`, margin, 23);
   doc.text(`Report status: ${status}`, margin, 31);
 
   doc.setFillColor(...statusColor);
@@ -302,7 +310,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   const cardGap = 4;
   const cardW = (contentWidth - cardGap * 3) / 4;
   metricCard(margin, y, cardW, "System collected", fmtCurrency(totales.totalCaja), "Gross money in system", [37, 99, 235]);
-  metricCard(margin + (cardW + cardGap), y, cardW, "Real counted", closed ? fmtCurrency(totalReal) : "—", closed ? "Entered by driver/admin" : "Not recorded for this report", [5, 150, 105]);
+  metricCard(margin + (cardW + cardGap), y, cardW, "Real counted", closed ? fmtCurrency(totalReal) : "—", closed ? `Entered by ${countedByLabel}` : "Not recorded for this report", [5, 150, 105]);
   metricCard(margin + (cardW + cardGap) * 2, y, cardW, "Variance", variance == null ? "—" : fmtCurrency(variance), status, statusColor);
   metricCard(margin + (cardW + cardGap) * 3, y, cardW, "Net A/R", `${cxc.cambioNeto >= 0 ? "+" : ""}${fmtCurrency(cxc.cambioNeto)}`, "Debt movement today", cxc.cambioNeto > 0 ? [217, 119, 6] : [5, 150, 105]);
 
@@ -315,8 +323,8 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
     body: [
       ["Sales volume", fmtCurrency(totales.totalVentas), `${salesCount} sale records - avg ${fmtCurrency(avgSale)}`],
       ["Money collected", fmtCurrency(totales.totalCaja), `${collectionRate.toFixed(1)}% of sales collected today`],
-      ["Net cash to turn in", fmtCurrency(totales.efectivoNeto), `Cash after ${fmtCurrency(totales.gastosTotal)} driver expenses`],
-      ["Driver expenses", fmtCurrency(totales.gastosTotal), `${expenseRate.toFixed(1)}% of collected money`],
+      ["Net cash to turn in", fmtCurrency(totales.efectivoNeto), `Cash after ${fmtCurrency(totales.gastosTotal)} ${expenseLabel.toLowerCase()}`],
+      [expenseLabel, fmtCurrency(totales.gastosTotal), `${expenseRate.toFixed(1)}% of collected money`],
       ["A/R created", fmtCurrency(cxc.deudaNueva), "New customer debt generated by unpaid sales"],
       ["A/R collected", fmtCurrency(cxc.pagosDeuda), "Payments applied to previous debt"],
     ],
@@ -367,7 +375,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
   if (gastosValidos.length > 0) {
     y = doc.lastAutoTable.finalY + 8;
-    y = sectionHeader("Driver Expenses", y, [234, 88, 12]);
+    y = sectionHeader(expenseLabel, y, [234, 88, 12]);
     autoTable(doc, {
       ...moneyTableStyles,
       startY: y,

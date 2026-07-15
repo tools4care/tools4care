@@ -4093,10 +4093,9 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
           toast.info(`Sale saved offline — ${fmt(saleTotalWithTax)} for ${selectedClient?.nombre || 'Quick Sale'}. Will sync automatically when connection is restored.`, 6000);
 
           if (currentPendingId) {
-  const updated = removePendingFromLSById(currentPendingId);
-  setPendingSales(updated); // 🆕 ACTUALIZAR ESTADO
-  window.pendingSaleId = null; // 🆕 LIMPIAR ID GLOBAL
-}
+            removePendingFromLSById(currentPendingId);
+            window.pendingSaleId = null;
+          }
           clearSale();
           return;
         } catch (offlineError) {
@@ -4451,8 +4450,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
 
       // ✅ Limpiar venta pendiente de localStorage (legacy)
       if (currentPendingId) {
-        const updated = removePendingFromLSById(currentPendingId);
-        setPendingSales(updated);
+        removePendingFromLSById(currentPendingId);
         window.pendingSaleId = null;
       }
 
