@@ -73,9 +73,18 @@ export async function sincronizarVentasPendientes() {
           });
           if (txError) throw txError;
 
+          const syncedSaleId = txRows?.[0]?.venta_id;
+          if (venta.store_cash_session_id && syncedSaleId) {
+            const { error: registerError } = await supabase.rpc('attach_store_sale_to_session', {
+              p_sale_id: syncedSaleId,
+              p_session_id: venta.store_cash_session_id,
+            });
+            if (registerError) throw registerError;
+          }
+
           await marcarVentaSincronizada(venta._offline_id);
           sincronizadas++;
-          resultados.push({ id: venta._offline_id, success: true, ventaId: txRows?.[0]?.venta_id, atomic: true });
+          resultados.push({ id: venta._offline_id, success: true, ventaId: syncedSaleId, atomic: true });
           continue;
         }
 
@@ -86,6 +95,7 @@ export async function sincronizarVentasPendientes() {
             cliente_id: venta.cliente_id,
             van_id: venta.van_id,
             usuario_id: venta.usuario_id,
+            store_cash_session_id: venta.store_cash_session_id || null,
             // Totales — usar total_venta como columna principal
             total_venta: venta.total_venta ?? venta.total ?? 0,
             total: venta.total ?? venta.total_venta ?? 0,

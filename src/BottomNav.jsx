@@ -24,6 +24,7 @@ import {
   Wrench,
   Shield,
   Storefront,
+  CurrencyDollar,
 } from "@phosphor-icons/react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -42,6 +43,7 @@ const items = [
 
 /* ── More menu grid ────────────────────────────────── */
 const MORE_ITEMS = [
+  { path: "/store/register", key: "register", label: "Cash Register", icon: CurrencyDollar, gradient: "from-emerald-500 to-teal-700", storeOnly: true },
   { path: "/emergencia",    key: "emergencia", label: "Essentials",    icon: Warning,       gradient: "from-cyan-400 to-blue-600" },
   { path: "/cxc",        key: "cxc",        label: "Accounts",     icon: CreditCard,    gradient: "from-sky-400 to-blue-600"    },
   { path: "/inventario", key: "inventario", label: "Inventory",    icon: ClipboardText, gradient: "from-indigo-400 to-blue-600" },
@@ -123,10 +125,11 @@ export default function BottomNav() {
   };
 
   const userInitial = (usuario?.email || usuario?.nombre || "?")[0].toUpperCase();
-  const storeMoreKeys = new Set(["emergencia", "cxc", "inventario", "facturas", "cierres", "suplidores", "reportes"]);
+  const storeMoreKeys = new Set(["register", "emergencia", "cxc", "inventario", "facturas", "cierres", "suplidores", "reportes"]);
   const moreItemsBase = MORE_ITEMS
+    .filter(({ storeOnly }) => !storeOnly || storeMode)
     .filter(({ key }) => !storeMode || !key || storeMoreKeys.has(key))
-    .filter(({ key }) => !key || key === "emergencia" || puedeVerModulo(key))
+    .filter(({ key }) => !key || key === "emergencia" || key === "register" || puedeVerModulo(key))
     .filter(({ path }) => path !== "/van" || puedeCambiarVan)
     .map((item) => item.path === "/cierres" && storeMode ? { ...item, label: "Store Closeout" } : item);
   const moreItems = usuario?.rol === "admin" ? [...moreItemsBase, ADMIN_MORE_ITEM] : moreItemsBase;

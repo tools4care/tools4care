@@ -18,6 +18,10 @@ import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useLocationSettings } from "./hooks/useLocationSettings";
 import { buildCustomerDisplaySnapshot, publishCustomerDisplay } from "./lib/customerDisplay";
+import {
+  getStoredStoreCashSessionId,
+  resolveOpenStoreCashSession,
+} from "./lib/storeRegister";
 import { useProductosHabituales } from "./hooks/useProductosHabituales";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import {
@@ -3944,12 +3948,28 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
 }
 
     const currentPendingId = window.pendingSaleId;
+    let storeCashSession = null;
 
     try {
       if (!usuario?.id) throw new Error("User not synced, please re-login.");
       if (!van?.id) throw new Error("Select a VAN first.");
 	      if (!selectedClient) throw new Error("Select a client or choose Quick sale.");
 	      if (cartSafe.length === 0) throw new Error("Add at least one product.");
+
+      if (storeMode) {
+        if (isOffline) {
+          const storedSessionId = getStoredStoreCashSessionId(van.id);
+          if (!storedSessionId) {
+            throw new Error("Open the Cash Register before completing a Physical Store sale.");
+          }
+          storeCashSession = { id: storedSessionId };
+        } else {
+          storeCashSession = await resolveOpenStoreCashSession(supabase, van.id, usuario.id);
+          if (!storeCashSession?.id) {
+            throw new Error("Open the Cash Register on this computer before completing the sale.");
+          }
+        }
+      }
 
       const stockIssuesInCart = cartSafe
         .map((item) => {
@@ -4018,6 +4038,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
             cliente_id: selectedClient?.id ?? null,
             van_id: van.id,
             usuario_id: usuario.id,
+            store_cash_session_id: storeCashSession?.id || null,
             // Totales (todos los campos que usa Supabase)
             total_venta: Number(saleTotalWithTax.toFixed(2)),
             total: Number(saleTotalWithTax.toFixed(2)),
@@ -4303,6 +4324,17 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       const ventaId = transactionResult?.[0]?.venta_id;
       if (!ventaId) throw new Error("The transactional sale did not return a sale ID.");
       setClientStoreCredit(Math.max(0, Number(transactionResult?.[0]?.credito_favor_restante || 0)));
+
+      if (storeMode && storeCashSession?.id) {
+        const registerLink = await supabase.rpc("attach_store_sale_to_session", {
+          p_sale_id: ventaId,
+          p_session_id: storeCashSession.id,
+        });
+        if (registerLink.error) {
+          console.error("Sale saved but could not be linked to the store register:", registerLink.error);
+          toast.warning("Sale saved, but its cash-register link needs review.", 7000);
+        }
+      }
 
       // Audit: discretionary (manual) line-item discounts
       const manualDiscountLines = cartSafe

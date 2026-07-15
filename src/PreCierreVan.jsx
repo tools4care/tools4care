@@ -1416,6 +1416,8 @@ export default function PreCierreVan() {
   const [mensaje, setMensaje] = useState("");
   const [tipoMensaje, setTipoMensaje] = useState("");
   const [cargando, setCargando] = useState(false);
+  const [openStoreRegisters, setOpenStoreRegisters] = useState([]);
+  const [registerStatusLoading, setRegisterStatusLoading] = useState(false);
   
   // Fechas
   const todayISO = useMemo(localTodayISO, []);
@@ -1446,6 +1448,34 @@ export default function PreCierreVan() {
       console.error("❌ Error loading selected dates", e);
     }
   }, [van?.id]);
+
+  useEffect(() => {
+    if (!storeWorkspace || !van?.id) {
+      setOpenStoreRegisters([]);
+      return undefined;
+    }
+    let active = true;
+    const loadOpenRegisters = async () => {
+      setRegisterStatusLoading(true);
+      const result = await supabase
+        .from("store_cash_sessions")
+        .select("id,cashier_id,device_id,opened_at")
+        .eq("location_id", van.id)
+        .eq("status", "open")
+        .order("opened_at", { ascending: true });
+      if (active) {
+        if (!result.error) setOpenStoreRegisters(result.data || []);
+        else console.warn("Could not check open store registers:", result.error.message);
+        setRegisterStatusLoading(false);
+      }
+    };
+    loadOpenRegisters();
+    const channel = supabase
+      .channel(`store-closeout-registers-${van.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "store_cash_sessions", filter: `location_id=eq.${van.id}` }, loadOpenRegisters)
+      .subscribe();
+    return () => { active = false; supabase.removeChannel(channel); };
+  }, [storeWorkspace, van?.id]);
 
   // Cargar conteo de facturas
   useEffect(() => {
@@ -1575,12 +1605,14 @@ export default function PreCierreVan() {
   }, [selected, rows, invoices]);
 
   const totalExpected = sum.cash + sum.card + sum.transfer + sum.mix + sum.other;
-  const canProcess = selected.length > 0 && totalExpected > 0;
+  const canProcess = selected.length > 0 && totalExpected > 0 && (!storeWorkspace || openStoreRegisters.length === 0);
 
   // Procesar cierre
   const onProcess = useCallback(() => {
     if (!canProcess) {
-      setMensaje("Please select at least one date to process");
+      setMensaje(storeWorkspace && openStoreRegisters.length > 0
+        ? "Close every cash register before starting the general Store Closeout."
+        : "Please select at least one date to process");
       setTipoMensaje("warning");
       return;
     }
@@ -1596,7 +1628,7 @@ export default function PreCierreVan() {
       setMensaje("Error saving selected dates");
       setTipoMensaje("error");
     }
-  }, [selected, canProcess, navigate]);
+  }, [selected, canProcess, navigate, openStoreRegisters.length, storeWorkspace]);
 
   // Generar PDF
   const handleGenerarPDF = useCallback(async () => {
@@ -1817,6 +1849,27 @@ export default function PreCierreVan() {
                tipoMensaje === "success" ? <CheckCircle size={20} /> :
                <FileText size={20} />}
               {mensaje}
+            </div>
+          </div>
+        )}
+
+        {storeWorkspace && (
+          <div className={`mb-6 rounded-2xl border p-4 shadow-sm ${openStoreRegisters.length > 0 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                {openStoreRegisters.length > 0 ? <AlertTriangle className="mt-0.5 shrink-0 text-amber-700" size={22} /> : <CheckCircle className="mt-0.5 shrink-0 text-emerald-700" size={22} />}
+                <div>
+                  <div className={`font-black ${openStoreRegisters.length > 0 ? "text-amber-900" : "text-emerald-900"}`}>
+                    {registerStatusLoading ? "Checking cash registers…" : openStoreRegisters.length > 0 ? `${openStoreRegisters.length} cash register shift${openStoreRegisters.length === 1 ? " is" : "s are"} still open` : "All cash registers are closed"}
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-slate-600">
+                    {openStoreRegisters.length > 0 ? "Each cashier must count and close their computer before the general store closeout." : "The general Store Closeout can safely consolidate the location."}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => navigate("/store/register")} className={`min-h-11 rounded-xl px-4 py-2 text-sm font-black text-white ${openStoreRegisters.length > 0 ? "bg-amber-700" : "bg-emerald-700"}`}>
+                Open Cash Register
+              </button>
             </div>
           </div>
         )}

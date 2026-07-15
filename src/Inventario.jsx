@@ -8,6 +8,7 @@ import { guardarInventarioVan, obtenerInventarioVan } from "./utils/offlineDB";
 import { usePermisos } from "./hooks/usePermisos";
 import { logAudit } from "./lib/auditLog";
 import { getLocationType, isStoreLocation, LOCATION_TYPES } from "./lib/locationTypes";
+import { useSearchParams } from "react-router-dom";
 import {
   barcodeVariants,
   filterProductRowsLocal,
@@ -29,6 +30,7 @@ function stockBadge(qty) {
 }
 
 export default function Inventory() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { van } = useVan();
   const { usuario } = useUsuario();
   const { isOnline } = useOffline();
@@ -63,10 +65,6 @@ export default function Inventory() {
   const searchSeqRef = useRef(0);
   const offset = page * PAGE_SIZE;
 
-  function isMissingRpc(error) {
-    return error?.code === "42883" || error?.code === "PGRST202" || /function .* does not exist/i.test(error?.message || "");
-  }
-
   // ── Guardar conteo físico (SET, no incremento) ───────────
   async function handleSetQty(producto_id, rawValue) {
     const newQty = Math.max(0, parseInt(rawValue, 10));
@@ -76,36 +74,16 @@ export default function Inventory() {
     setEditingQty(null);
 
     try {
-      const { error: rpcError } = await supabase.rpc("establecer_stock", {
+      const { error: rpcError } = await supabase.rpc("set_location_stock", {
         p_producto_id: producto_id,
         p_cantidad: newQty,
         p_ubicacion: selected.tipo === "van" ? "van" : "almacen",
         p_van_id: selected.tipo === "van" ? selected.id : null,
         p_motivo: "Physical count from inventory screen",
-        p_usuario_id: usuario?.id || null,
       });
 
-      if (rpcError) {
-        if (!isMissingRpc(rpcError)) throw rpcError;
-
-        if (selected.tipo === "van" && selected.id) {
-          const { data: existing } = await supabase
-            .from("stock_van").select("id").eq("van_id", selected.id).eq("producto_id", producto_id).maybeSingle();
-          if (existing) {
-            await supabase.from("stock_van").update({ cantidad: newQty }).eq("id", existing.id);
-          } else {
-            await supabase.from("stock_van").insert({ van_id: selected.id, producto_id, cantidad: newQty });
-          }
-        } else {
-          const { data: existing } = await supabase
-            .from("stock_almacen").select("id").eq("producto_id", producto_id).maybeSingle();
-          if (existing) {
-            await supabase.from("stock_almacen").update({ cantidad: newQty }).eq("id", existing.id);
-          } else {
-            await supabase.from("stock_almacen").insert({ producto_id, cantidad: newQty });
-          }
-        }
-      }
+      // The RPC updates stock and writes its audit row in one transaction.
+      if (rpcError) throw rpcError;
 
       logAudit({
         usuario, van,
@@ -185,6 +163,14 @@ export default function Inventory() {
       }
     })();
   }, [storeWorkspace, van?.id]);
+
+  useEffect(() => {
+    if (searchParams.get("transfer") !== "1" || !isOnline || locations.length < 2) return;
+    setModalTransferOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("transfer");
+    setSearchParams(next, { replace: true });
+  }, [isOnline, locations.length, searchParams, setSearchParams]);
 
   // ── Reset on location/refresh change ─────────────────────
   useEffect(() => {

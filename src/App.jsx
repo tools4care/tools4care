@@ -7,6 +7,7 @@ const Login = lazy(() => import("./Login"));
 const VanSelector = lazy(() => import("./components/VanSelector"));
 const Dashboard = lazy(() => import("./Dashboard"));
 const StoreDashboard = lazy(() => import("./store/StoreDashboard"));
+const StoreRegister = lazy(() => import("./store/StoreRegister"));
 const CustomerDisplay = lazy(() => import("./store/CustomerDisplay"));
 const Clientes = lazy(() => import("./Clientes"));
 const Productos = lazy(() => import("./Productos"));
@@ -103,6 +104,11 @@ function PrivateRouteWithVan({ children }) {
 function WorkspaceDashboard() {
   const { van } = useVan();
   return isStoreLocation(van) ? <StoreDashboard /> : <Dashboard />;
+}
+
+function StoreOnlyRoute({ children }) {
+  const { van } = useVan();
+  return isStoreLocation(van) ? children : <Navigate to="/" replace />;
 }
 
 // Redirects non-admins away from admin-only routes
@@ -226,6 +232,7 @@ export default function App() {
             <Route path="productos" element={<Productos />} />
             <Route path="inventario" element={<Inventario />} />
             <Route path="ventas" element={<Ventas />} />
+            <Route path="store/register" element={<StoreOnlyRoute><StoreRegister /></StoreOnlyRoute>} />
             <Route path="cierres" element={<PreCierreVan />} />
             <Route path="cierres/van" element={<CierreVan />} />
             <Route path="facturas" element={<Facturas />} />

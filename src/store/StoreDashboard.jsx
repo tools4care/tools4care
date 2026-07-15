@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
+  ArrowLeftRight,
   BadgeDollarSign,
   Boxes,
+  ClipboardCheck,
   CircleDollarSign,
   PackageSearch,
   ReceiptText,
@@ -11,11 +13,15 @@ import {
   RotateCcw,
   ShoppingCart,
   Store,
+  TrendingUp,
   Users,
+  WalletCards,
 } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { useVan } from "../hooks/VanContext";
 import { useLocationSettings } from "../hooks/useLocationSettings";
+import { usePermisos } from "../hooks/usePermisos";
+import { loadVanReorderRecommendations } from "../lib/reorderRecommendations";
 
 const money = (value) => Number(value || 0).toLocaleString("en-US", {
   style: "currency",
@@ -67,8 +73,13 @@ function Stat({ icon, label, value, detail, tone }) {
 export default function StoreDashboard() {
   const { van } = useVan();
   const { settings } = useLocationSettings();
+  const { isAdmin, isSupervisor } = usePermisos();
   const [sales, setSales] = useState([]);
   const [stock, setStock] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
+  const [inventoryMovements, setInventoryMovements] = useState([]);
+  const [inventoryConfirmation, setInventoryConfirmation] = useState(null);
+  const [confirmingInventory, setConfirmingInventory] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -104,9 +115,49 @@ export default function StoreDashboard() {
     setSales(salesResult.data || []);
     setStock(stockResult.data || []);
     setLoading(false);
+
+    // Secondary intelligence loads after the operational dashboard is usable.
+    // A slow 90-day demand query must never delay New Sale or current stock.
+    const [movementsResult, confirmationResult, recommendationResult] = await Promise.all([
+      supabase.rpc("get_store_inventory_activity", { p_location_id: van.id, p_limit: 12 }),
+      supabase
+        .from("store_inventory_confirmations")
+        .select("*")
+        .eq("location_id", van.id)
+        .order("confirmed_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      loadVanReorderRecommendations(supabase, van.id)
+        .then((data) => ({ data, error: null }))
+        .catch((optionalError) => ({ data: [], error: optionalError })),
+    ]);
+    if (!movementsResult.error) setInventoryMovements(Array.isArray(movementsResult.data) ? movementsResult.data : []);
+    if (!confirmationResult.error) setInventoryConfirmation(confirmationResult.data || null);
+    if (!recommendationResult.error) setRecommendations(recommendationResult.data || []);
+    if (movementsResult.error || confirmationResult.error || recommendationResult.error) {
+      console.warn("Store dashboard secondary data could not be refreshed:", movementsResult.error || confirmationResult.error || recommendationResult.error);
+    }
   }, [van?.id]);
 
   useEffect(() => { load(); }, [load]);
+
+  const confirmInitialInventory = async () => {
+    if (!window.confirm("Confirm the current Physical Store quantities as the verified starting inventory?")) return;
+    setConfirmingInventory(true);
+    setError("");
+    try {
+      const result = await supabase.rpc("confirm_store_inventory", {
+        p_location_id: van.id,
+        p_notes: "Physical Store starting inventory verified from Store Dashboard",
+      });
+      if (result.error) throw result.error;
+      await load();
+    } catch (confirmError) {
+      setError(confirmError?.message || "Could not confirm the store inventory.");
+    } finally {
+      setConfirmingInventory(false);
+    }
+  };
 
   useEffect(() => {
     if (!van?.id) return undefined;
@@ -160,8 +211,9 @@ export default function StoreDashboard() {
 
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Store actions">
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" aria-label="Store actions">
           <ActionCard to="/ventas?new=1" icon={<ShoppingCart size={29} strokeWidth={2.2} />} title="New Sale" description="Start a counter or walk-in sale" tone="green" />
+          <ActionCard to="/store/register" icon={<WalletCards size={29} strokeWidth={2.2} />} title="Cash Register" description="Open, count or close this drawer" tone="slate" />
           <ActionCard to="/ventas?mode=return" icon={<RotateCcw size={29} strokeWidth={2.2} />} title="Process Return" description="Find an invoice and refund safely" tone="amber" />
           <ActionCard to="/clientes" icon={<Users size={29} strokeWidth={2.2} />} title="Find Customer" description="Search, review or create a customer" tone="blue" />
           <ActionCard to="/cierres" icon={<ReceiptText size={29} strokeWidth={2.2} />} title="Close Store" description="Count payments and close the day" tone="slate" />
@@ -169,7 +221,7 @@ export default function StoreDashboard() {
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Stat icon={<CircleDollarSign size={23} />} label="Net Sales Today" value={money(summary.net)} detail={`${summary.completed.length} completed sales`} tone="bg-emerald-100 text-emerald-700" />
-          <Stat icon={<BadgeDollarSign size={23} />} label="Cash Expected" value={money(summary.cash)} detail="Before drawer count" tone="bg-amber-100 text-amber-700" />
+          <Stat icon={<BadgeDollarSign size={23} />} label="Cash Sales Today" value={money(summary.cash)} detail="Register count is kept per shift" tone="bg-amber-100 text-amber-700" />
           <Stat icon={<RotateCcw size={23} />} label="Returns Today" value={money(summary.refunds)} detail={`${summary.returns.length} return transactions`} tone="bg-rose-100 text-rose-700" />
           <Stat icon={<PackageSearch size={23} />} label="Low Stock" value={summary.lowStock.length} detail={stock.length === 0 ? "No inventory assigned" : `${summary.outOfStock.length} out of stock`} tone="bg-blue-100 text-blue-700" />
         </section>
@@ -211,19 +263,19 @@ export default function StoreDashboard() {
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-lg font-black text-slate-900">Store Inventory</h2>
-                <p className="text-sm text-slate-500">Stock assigned only to this location</p>
+                <h2 className="text-lg font-black text-slate-900">Smart Store Reorder</h2>
+                <p className="text-sm text-slate-500">Best sellers at risk in this location</p>
               </div>
               <Boxes className="text-blue-600" size={24} />
             </div>
             <div className="divide-y divide-slate-100">
-              {summary.lowStock.slice(0, 7).map((row) => {
-                const quantity = Number(row.cantidad ?? row.qty ?? 0);
+              {(recommendations.length ? recommendations : summary.lowStock).slice(0, 7).map((row) => {
+                const quantity = Number(row.stockActual ?? row.cantidad ?? row.qty ?? 0);
                 return (
-                  <div key={row.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                  <div key={row.producto_id || row.id} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-bold text-slate-800">{row.productos?.nombre || "Product"}</div>
-                      <div className="text-xs text-slate-400">{row.productos?.codigo || "No code"}</div>
+                      <div className="truncate text-sm font-bold text-slate-800">{row.nombre || row.productos?.nombre || "Product"}</div>
+                      <div className="text-xs text-slate-400">{row.esMasVendido ? `Best seller #${row.rankingVentas} · ` : ""}{row.cantidadRecomendada ? `Order ${row.cantidadRecomendada}` : (row.productos?.codigo || "No code")}</div>
                     </div>
                     <span className={`rounded-full px-2.5 py-1 text-xs font-black ${quantity <= 0 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
                       {quantity} left
@@ -232,13 +284,31 @@ export default function StoreDashboard() {
                 );
               })}
               {!loading && stock.length === 0 && <div className="p-8 text-center text-sm font-semibold text-amber-700">No inventory has been assigned to this store yet.</div>}
-              {!loading && stock.length > 0 && summary.lowStock.length === 0 && <div className="p-8 text-center text-sm font-semibold text-emerald-600">Inventory levels look good.</div>}
+              {!loading && stock.length > 0 && recommendations.length === 0 && summary.lowStock.length === 0 && <div className="p-8 text-center text-sm font-semibold text-emerald-600">Inventory levels look good.</div>}
             </div>
-            <Link to="/inventario" className="flex items-center justify-center gap-2 border-t border-slate-100 px-5 py-4 text-sm font-black text-blue-700 hover:bg-blue-50">
-              Open Store Inventory <ArrowRight size={16} />
-            </Link>
+            <div className="grid grid-cols-2 border-t border-slate-100">
+              <Link to="/inventario" className="flex items-center justify-center gap-2 border-r border-slate-100 px-3 py-4 text-sm font-black text-blue-700 hover:bg-blue-50">Inventory <Boxes size={16} /></Link>
+              <Link to="/inventario?transfer=1" className="flex items-center justify-center gap-2 px-3 py-4 text-sm font-black text-emerald-700 hover:bg-emerald-50">Transfer <ArrowLeftRight size={16} /></Link>
+            </div>
           </section>
         </div>
+
+        <section className="grid gap-6 xl:grid-cols-[0.68fr_1.32fr]">
+          <div className={`rounded-3xl border p-5 shadow-sm ${inventoryConfirmation ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
+            <div className="flex items-start gap-3"><span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${inventoryConfirmation ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}><ClipboardCheck size={23} /></span><div><h2 className="text-lg font-black text-slate-950">Initial Store Inventory</h2><p className="mt-1 text-sm font-semibold text-slate-600">{inventoryConfirmation ? `Confirmed ${new Date(inventoryConfirmation.confirmed_at).toLocaleDateString("en-US")} · ${inventoryConfirmation.item_count} products · ${inventoryConfirmation.unit_count} units` : stock.length ? `${stock.length} products loaded; supervisor confirmation is pending.` : "Transfer or count products into this Physical Store first."}</p></div></div>
+            {!inventoryConfirmation && (isAdmin || isSupervisor) && stock.length > 0 && <button onClick={confirmInitialInventory} disabled={confirmingInventory} className="mt-5 min-h-12 w-full rounded-xl bg-amber-600 px-4 py-3 font-black text-white disabled:opacity-50">{confirmingInventory ? "Confirming…" : "Confirm Starting Inventory"}</button>}
+            {!inventoryConfirmation && stock.length === 0 && <Link to="/inventario?transfer=1" className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-black text-white">Transfer from Warehouse <ArrowRight size={17} /></Link>}
+          </div>
+
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4"><TrendingUp className="text-blue-600" /><div><h2 className="text-lg font-black text-slate-950">Inventory Activity</h2><p className="text-sm text-slate-500">Who transferred, received or adjusted store merchandise</p></div></div>
+            <div className="divide-y divide-slate-100">
+              {inventoryMovements.length === 0 ? <div className="p-7 text-center text-sm font-semibold text-slate-400">No store inventory movements recorded yet.</div> : inventoryMovements.slice(0, 8).map((movement) => (
+                <div key={movement.id} className="flex items-center gap-3 px-5 py-3"><span className={`h-2.5 w-2.5 rounded-full ${Number(movement.cantidad) >= 0 ? "bg-emerald-500" : "bg-rose-500"}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-slate-800">{movement.product_name || "Product"} · {String(movement.tipo || "movement").replaceAll("_", " ")}</div><div className="text-xs text-slate-400">{new Date(movement.fecha).toLocaleString("en-US")} · {movement.user_name || "System"}{movement.motivo ? ` · ${movement.motivo}` : ""}</div></div><div className={`font-black tabular-nums ${Number(movement.cantidad) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(movement.cantidad) >= 0 ? "+" : ""}{Number(movement.cantidad || 0)}</div></div>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

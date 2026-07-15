@@ -27,6 +27,7 @@ import {
   Warning,
   CaretDown,
   Gear,
+  CurrencyDollar,
 } from "@phosphor-icons/react";
 
 const ICON_SIZE = 22;
@@ -83,6 +84,7 @@ export default function Sidebar() {
   const allMenuItems = [
     { key: "dashboard",  to: "/",          icon: <Gauge          {...iconProps} />, gradient: "from-blue-500 to-indigo-600",   text: storeMode ? "Store Dashboard" : "Dashboard" },
     { key: "ventas",     to: "/ventas",    icon: <ShoppingCart   {...iconProps} />, gradient: "from-emerald-400 to-green-600", text: "Sales" },
+    ...(storeMode ? [{ key: "register", to: "/store/register", icon: <CurrencyDollar {...iconProps} />, gradient: "from-emerald-500 to-teal-700", text: "Cash Register" }] : []),
     ...(storeMode ? [{ key: "returns", to: "/ventas?mode=return", icon: <ArrowsClockwise {...iconProps} />, gradient: "from-amber-400 to-orange-600", text: "Returns" }] : []),
     { key: "facturas",   to: "/facturas",  icon: <FileText       {...iconProps} />, gradient: "from-purple-500 to-violet-600", text: "Invoices" },
     { key: "clientes",   to: "/clientes",  icon: <Users          {...iconProps} />, gradient: "from-amber-400 to-orange-500",  text: "Customers" },
@@ -102,7 +104,7 @@ export default function Sidebar() {
   // visible in the mobile More menu). Keep it visible for users whose older
   // explicit module allowlist does not yet contain the new key.
   const serviceKeys = new Set(["suscripciones", "alquileres"]);
-  const storeKeys = new Set(["dashboard", "ventas", "returns", "productos", "clientes", "inventario", "facturas", "cxc", "emergencia", "reportes", "cierres", "suplidores", "tax"]);
+  const storeKeys = new Set(["dashboard", "ventas", "register", "returns", "productos", "clientes", "inventario", "facturas", "cxc", "emergencia", "reportes", "cierres", "suplidores", "tax"]);
   const visibleItems = allMenuItems.filter(item =>
     (!storeMode || storeKeys.has(item.key)) && (item.key === "emergencia" || item.key === "returns" || item.key === "tax" || puedeVerModulo(item.key))
   );
@@ -112,7 +114,7 @@ export default function Sidebar() {
   // A counter workstation starts with the actions used throughout a sale.
   // Van mode keeps the route-oriented order users already know.
   const storeOrder = [
-    "dashboard", "ventas", "returns", "productos", "clientes", "inventario", "facturas", "cxc",
+    "dashboard", "ventas", "register", "returns", "productos", "clientes", "inventario", "facturas", "cxc",
     "emergencia", "reportes", "cierres", "suplidores", "tax",
   ];
   const menuBase = storeMode

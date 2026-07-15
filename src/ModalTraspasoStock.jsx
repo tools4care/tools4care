@@ -164,10 +164,6 @@ export default function ModalTraspasoStock({
   }
 
   /* ── Transferir stock ── */
-  function isMissingRpc(error) {
-    return error?.code === "42883" || error?.code === "PGRST202" || /function .* does not exist/i.test(error?.message || "");
-  }
-
   async function transferirStock(e) {
     e.preventDefault(); setMensaje("");
 
@@ -183,7 +179,7 @@ export default function ModalTraspasoStock({
 
     try {
       setSaving(true);
-      const { error: rpcError } = await supabase.rpc("transferir_stock", {
+      const { error: rpcError } = await supabase.rpc("transfer_location_stock", {
         p_producto_id: seleccion.producto_id,
         p_cantidad: qty,
         p_origen_tipo: origen.tipo === "warehouse" ? "almacen" : origen.tipo,
@@ -191,13 +187,11 @@ export default function ModalTraspasoStock({
         p_destino_tipo: destino.tipo === "warehouse" ? "almacen" : destino.tipo,
         p_destino_van_id: destino.tipo === "van" ? destino.id : null,
         p_motivo: `Transfer ${origen.nombre || origen.tipo} -> ${destino.nombre || destino.tipo}`,
-        p_usuario_id: usuario?.id || null,
       });
 
-      if (rpcError) {
-        if (!isMissingRpc(rpcError)) throw rpcError;
-        await transferirStockManual(qty);
-      }
+      // Transfers must remain atomic. Never fall back to separate deduct/add
+      // writes because a network interruption could duplicate or lose stock.
+      if (rpcError) throw rpcError;
       logAudit({
         usuario,
         van,
@@ -225,42 +219,6 @@ export default function ModalTraspasoStock({
       setMensaje("err:" + (err?.message || "Unknown error"));
     } finally {
       setSaving(false);
-    }
-  }
-
-  /* ── Transferencia manual (deduct → add) ── */
-  async function transferirStockManual(qty) {
-    // 1. Descontar de origen
-    const tablaOrigen = origen.tipo === "warehouse" ? "stock_almacen" : "stock_van";
-    const nuevaCantidadOrigen = seleccion.cantidad - qty;
-
-    if (nuevaCantidadOrigen <= 0) {
-      const { error: delError } = await supabase.from(tablaOrigen).delete().eq("id", seleccion.id);
-      if (delError) throw delError;
-    } else {
-      const { error: updError } = await supabase.from(tablaOrigen)
-        .update({ cantidad: nuevaCantidadOrigen }).eq("id", seleccion.id);
-      if (updError) throw updError;
-    }
-
-    // 2. Sumar en destino
-    const tablaDestino = destino.tipo === "warehouse" ? "stock_almacen" : "stock_van";
-    let queryDestino = supabase.from(tablaDestino).select("id, cantidad")
-      .eq("producto_id", seleccion.producto_id);
-    if (destino.tipo === "van" && destino.id) queryDestino = queryDestino.eq("van_id", destino.id);
-
-    const { data: existeDestino, error: selectError } = await queryDestino.maybeSingle();
-    if (selectError) throw selectError;
-
-    if (existeDestino) {
-      const { error: updError } = await supabase.from(tablaDestino)
-        .update({ cantidad: Number(existeDestino.cantidad) + qty }).eq("id", existeDestino.id);
-      if (updError) throw updError;
-    } else {
-      const insertData = { producto_id: seleccion.producto_id, cantidad: qty };
-      if (destino.tipo === "van" && destino.id) insertData.van_id = destino.id;
-      const { error: insError } = await supabase.from(tablaDestino).insert([insertData]);
-      if (insError) throw insError;
     }
   }
 
