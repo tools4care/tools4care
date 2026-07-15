@@ -8,7 +8,6 @@ import { initSentry, SentryErrorBoundary } from "./sentry";
 import { UsuarioProvider } from "./UsuarioContext";
 import VanProvider from "./hooks/VanContext";
 import { ToastProvider } from "./hooks/useToast";
-import { ThemeProvider } from "./hooks/useTheme.jsx";
 
 import "./index.css";
 
@@ -116,17 +115,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route
           path="/*"
           element={
-            <ThemeProvider>
-              <ToastProvider>
-                <UsuarioProvider>
-                  <VanProvider>
-                    <Suspense fallback={<POSFallback />}>
-                      <App />
-                    </Suspense>
-                  </VanProvider>
-                </UsuarioProvider>
-              </ToastProvider>
-            </ThemeProvider>
+            <ToastProvider>
+              <UsuarioProvider>
+                <VanProvider>
+                  <Suspense fallback={<POSFallback />}>
+                    <App />
+                  </Suspense>
+                </VanProvider>
+              </UsuarioProvider>
+            </ToastProvider>
           }
         />
         </Routes>

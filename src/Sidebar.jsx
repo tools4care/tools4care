@@ -1,9 +1,9 @@
+import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { usePermisos } from "./hooks/usePermisos";
 import { useStoreMode } from "./hooks/useStoreMode";
-import { useTheme } from "./hooks/useTheme.jsx";
 // ICONS Phosphor (duotone)
 import {
   Gauge,
@@ -25,6 +25,7 @@ import {
   MapPin,
   Wrench,
   Warning,
+  CaretDown,
 } from "@phosphor-icons/react";
 
 const ICON_SIZE = 22;
@@ -72,7 +73,9 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { isAdmin, isSupervisor, puedeVerModulo, puedeCambiarVan } = usePermisos();
   const { storeMode, toggle: toggleStoreMode } = useStoreMode();
-  const { theme, toggleTheme } = useTheme();
+  const [servicesOpen, setServicesOpen] = useState(
+    () => location.pathname.startsWith("/suscripciones") || location.pathname.startsWith("/alquileres")
+  );
 
   // ── Main menu filtered by per-user module permissions ──
   const iconProps = { size: ICON_SIZE, weight: "duotone", className: "text-white" };
@@ -84,7 +87,7 @@ export default function Sidebar() {
     { key: "productos",  to: "/productos", icon: <Package        {...iconProps} />, gradient: "from-pink-500 to-rose-600",     text: "Products" },
     { key: "inventario", to: "/inventario",icon: <Stack          {...iconProps} />, gradient: "from-teal-400 to-cyan-600",     text: "Inventory" },
     { key: "emergencia", to: "/emergencia",icon: <Warning        {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: "Essentials" },
-    { key: "cierres",    to: "/cierres",   icon: <ArrowsClockwise {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: "Van Closeout" },
+    { key: "cierres",    to: "/cierres",   icon: <ArrowsClockwise {...iconProps} />, gradient: "from-cyan-400 to-blue-600",     text: storeMode ? "Daily Closeout" : "Van Closeout" },
     { key: "cxc",        to: "/cxc",       icon: <CreditCard     {...iconProps} />, gradient: "from-orange-400 to-amber-600",  text: "Accounts Receivable" },
     { key: "reportes",       to: "/reportes",      icon: <ChartBar      {...iconProps} />, gradient: "from-rose-400 to-pink-600",     text: "Reports" },
     { key: "suscripciones", to: "/suscripciones", icon: <CalendarCheck {...iconProps} />, gradient: "from-violet-500 to-purple-600", text: "Subscriptions" },
@@ -95,7 +98,22 @@ export default function Sidebar() {
   // Essentials is a core route available to every role (it is already always
   // visible in the mobile More menu). Keep it visible for users whose older
   // explicit module allowlist does not yet contain the new key.
-  const menuBase = allMenuItems.filter(item => item.key === "emergencia" || puedeVerModulo(item.key));
+  const serviceKeys = new Set(["suscripciones", "alquileres"]);
+  const visibleItems = allMenuItems.filter(item => item.key === "emergencia" || puedeVerModulo(item.key));
+  const services = visibleItems.filter(item => serviceKeys.has(item.key));
+  const primaryItems = visibleItems.filter(item => !serviceKeys.has(item.key));
+
+  // A counter workstation starts with the actions used throughout a sale.
+  // Van mode keeps the route-oriented order users already know.
+  const storeOrder = [
+    "ventas", "productos", "clientes", "inventario", "facturas", "cxc",
+    "emergencia", "dashboard", "reportes", "cierres", "suplidores",
+  ];
+  const menuBase = storeMode
+    ? [...primaryItems].sort((a, b) => storeOrder.indexOf(a.key) - storeOrder.indexOf(b.key))
+    : primaryItems;
+  const servicesActive = services.some(({ to }) => location.pathname === to || location.pathname.startsWith(`${to}/`));
+  const servicesExpanded = servicesOpen || servicesActive;
 
   function handleLogout() {
     localStorage.clear();
@@ -133,11 +151,53 @@ export default function Sidebar() {
         </div>
 
         {/* ── Main nav ── */}
-        <div className="px-2 mb-1.5 text-[10px] text-slate-500 font-bold uppercase tracking-[0.18em]">Workspace</div>
+        <div className="px-2 mb-1.5 flex items-center justify-between gap-2">
+          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.18em]">Workspace</span>
+          {storeMode && (
+            <span className="rounded-full bg-blue-400/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-200">
+              Store counter
+            </span>
+          )}
+        </div>
         <nav className="flex flex-col gap-0.5 overflow-y-auto pr-1 pb-3 sidebar-scroll">
           {menuBase.map(({ to, icon, text, gradient }) => (
             <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
           ))}
+
+          {services.length > 0 && (
+            <div className="mt-0.5">
+              <button
+                type="button"
+                onClick={() => setServicesOpen((open) => !open)}
+                aria-expanded={servicesExpanded}
+                className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-xl font-medium transition-colors duration-150 ${
+                  servicesActive
+                    ? "bg-white/10 text-white ring-1 ring-white/10"
+                    : "hover:bg-white/[0.06] text-slate-300 hover:text-white"
+                }`}
+              >
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-slate-500 to-slate-700">
+                  <Wrench size={ICON_SIZE} weight="duotone" className="text-white" />
+                </div>
+                <span className="text-sm font-semibold">Services</span>
+                <span className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-400">
+                  {services.length}
+                  <CaretDown
+                    size={14}
+                    weight="bold"
+                    className={`transition-transform ${servicesExpanded ? "rotate-180" : ""}`}
+                  />
+                </span>
+              </button>
+              {servicesExpanded && (
+                <div className="ml-5 mt-1 pl-3 border-l border-white/10 flex flex-col gap-0.5">
+                  {services.map(({ to, icon, text, gradient }) => (
+                    <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Admin-only section ── */}
           {isAdmin && (
@@ -203,24 +263,6 @@ export default function Sidebar() {
           </span>
           <span className={`w-9 h-5 rounded-full flex items-center transition-all px-0.5 ${storeMode ? "bg-blue-500" : "bg-gray-600"}`}>
             <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${storeMode ? "translate-x-4" : "translate-x-0"}`} />
-          </span>
-        </button>
-
-        {/* Dark mode toggle */}
-        <button
-          onClick={toggleTheme}
-          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-colors text-xs font-semibold border ${
-            theme === "dark"
-              ? "bg-indigo-900/60 border-indigo-600 text-indigo-200"
-              : "bg-gray-800/60 border-gray-600 text-gray-400"
-          }`}
-        >
-          <span className="flex items-center gap-2">
-            <span>{theme === "dark" ? "🌙" : "☀️"}</span>
-            <span>{theme === "dark" ? "Dark mode" : "Light mode"}</span>
-          </span>
-          <span className={`w-9 h-5 rounded-full flex items-center transition-all px-0.5 ${theme === "dark" ? "bg-indigo-500" : "bg-gray-600"}`}>
-            <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${theme === "dark" ? "translate-x-4" : "translate-x-0"}`} />
           </span>
         </button>
 

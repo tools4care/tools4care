@@ -1942,7 +1942,7 @@ if (appMode === 'devolucion') {
     // Paso 1: Obtener ventas del cliente (SOLO tipo 'venta', no devoluciones)
     const { data: ventasData, error: ventasError } = await supabase
       .from('ventas')
-      .select('id, created_at, total, estado_pago')
+      .select('id, created_at, total, total_venta, total_pagado, estado_pago')
       .eq('cliente_id', id)
       .eq('van_id', van.id)
       .eq('tipo', 'venta')  // 🔴 FIX: Solo ventas originales
@@ -2483,7 +2483,7 @@ useEffect(() => {
 
       let q = supabase
         .from("ventas")
-        .select("id, created_at, total, total_venta, estado_pago, cliente_id")
+        .select("id, created_at, total, total_venta, total_pagado, estado_pago, cliente_id")
         .eq("van_id", van.id)
         .eq("tipo", "venta")
         .is("cliente_id", null)        // walk-in sales (no client)
@@ -4578,7 +4578,8 @@ function renderClientInvoiceList() {
         )}
         {filtered.map((sale) => {
           const totalDevuelto = sale.total_devuelto || 0;
-          const fullReturned = totalDevuelto >= sale.total;
+          const originalTotal = Number(sale.total ?? sale.total_venta ?? 0);
+          const fullReturned = totalDevuelto >= originalTotal;
           const allItemsReturned = sale.detalle_ventas?.every(
             d => (d.cantidad_disponible ?? d.cantidad) <= 0
           );
@@ -4620,7 +4621,7 @@ function renderClientInvoiceList() {
                 </div>
               </div>
               <div className="text-right flex-shrink-0 ml-2">
-                <div className="font-bold text-gray-900">{fmt(sale.total)}</div>
+                <div className="font-bold text-gray-900">{fmt(originalTotal)}</div>
                 {totalDevuelto > 0 && (
                   <div className="text-xs text-orange-600">returned: {fmt(totalDevuelto)}</div>
                 )}
@@ -4647,19 +4648,45 @@ function renderReturnDetails() {
     return sum + (Number(qty) * Number(item?.precio_unitario || 0));
   }, 0);
 
+  const totalPreviouslyReturned = Number(selectedInvoice.total_devuelto || 0);
+  const originalPaid = Number(selectedInvoice.total_pagado || 0);
+  const returnReasonOptions = ["Damaged", "Wrong item", "Customer changed mind", "Duplicate purchase"];
+
   return (
-    <div className="bg-white border-2 border-orange-200 rounded-xl p-4 shadow-sm mb-4">
+    <div className={`bg-white border-2 border-orange-200 rounded-xl shadow-sm mb-4 ${storeMode ? "p-5 sm:p-6" : "p-4"}`}>
       <div className="flex justify-between items-center mb-4 border-b pb-2">
-        <h3 className="font-bold text-orange-900">
-          🔄 Devolución: Factura #{selectedInvoice.id.slice(0, 8)}...
-        </h3>
+        <div>
+          <h3 className="font-bold text-orange-900">
+            🔄 Return · Receipt #{selectedInvoice.id.slice(0, 8)}
+          </h3>
+          <div className="text-xs text-gray-500 mt-1">
+            Sold {new Date(selectedInvoice.created_at).toLocaleString()} · Original total {fmt(selectedInvoice.total ?? selectedInvoice.total_venta)}
+          </div>
+        </div>
         <button 
           onClick={() => { setSelectedInvoice(null); setReturnQuantities({}); }}
-          className="text-xs text-gray-500 underline"
+          className={`text-gray-600 border border-gray-200 hover:bg-gray-50 rounded-lg font-semibold ${storeMode ? "px-4 py-3 text-sm" : "px-2 py-1 text-xs"}`}
         >
-          Cambiar factura
+          Change receipt
         </button>
       </div>
+
+      {storeMode && (
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="text-[10px] uppercase font-bold text-slate-500">Paid originally</div>
+            <div className="text-base font-black text-slate-900 mt-1">{fmt(originalPaid)}</div>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div className="text-[10px] uppercase font-bold text-amber-700">Returned before</div>
+            <div className="text-base font-black text-amber-800 mt-1">{fmt(totalPreviouslyReturned)}</div>
+          </div>
+          <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+            <div className="text-[10px] uppercase font-bold text-orange-700">This return</div>
+            <div className="text-base font-black text-orange-800 mt-1">{fmt(totalReturn)}</div>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-2 mb-4">
         <p className="text-sm text-gray-600 font-semibold">Selecciona productos a devolver:</p>
@@ -4683,7 +4710,7 @@ function renderReturnDetails() {
           }
 
           return (
-            <div key={item.id} className="flex items-center justify-between border p-2 rounded bg-gray-50">
+            <div key={item.id} className={`flex items-center justify-between border rounded-xl bg-gray-50 gap-3 ${storeMode ? "p-4" : "p-2"}`}>
               <div className="flex-1">
                 <span className="font-semibold text-sm">{item.productos.nombre}</span>
                 <div className="text-xs text-gray-500">
@@ -4699,16 +4726,16 @@ function renderReturnDetails() {
               </div>
               <div className="flex items-center gap-2">
                 <button 
-                  className="w-7 h-7 rounded bg-red-200 text-red-700 font-bold hover:bg-red-300 flex items-center justify-center"
+                  className={`${storeMode ? "w-12 h-12 text-2xl" : "w-7 h-7"} rounded-xl bg-red-100 border border-red-200 text-red-700 font-bold hover:bg-red-200 flex items-center justify-center active:scale-95`}
                   onClick={() => {
                     if (currentReturn > 0) {
                       setReturnQuantities(prev => ({...prev, [item.id]: currentReturn - 1}));
                     }
                   }}
                 >−</button>
-                <span className="w-8 text-center font-bold">{currentReturn}</span>
+                <span className={`${storeMode ? "w-10 text-xl" : "w-8"} text-center font-bold`}>{currentReturn}</span>
                 <button 
-                  className="w-7 h-7 rounded bg-green-200 text-green-700 font-bold hover:bg-green-300 flex items-center justify-center"
+                  className={`${storeMode ? "w-12 h-12 text-2xl" : "w-7 h-7"} rounded-xl bg-green-100 border border-green-200 text-green-700 font-bold hover:bg-green-200 flex items-center justify-center active:scale-95`}
                   onClick={() => {
                     if (currentReturn < maxQty) {
                       setReturnQuantities(prev => ({...prev, [item.id]: currentReturn + 1}));
@@ -4728,11 +4755,29 @@ function renderReturnDetails() {
         </label>
         <input
           type="text"
-          className="w-full border p-2 rounded text-sm"
+          className={`w-full border-2 border-gray-200 rounded-xl text-sm focus:border-orange-400 outline-none ${storeMode ? "p-4 text-base" : "p-2"}`}
           placeholder="Ej. Producto dañado, No le gustó, Error en pedido..."
           value={returnReason}
           onChange={(e) => setReturnReason(e.target.value)}
         />
+        {storeMode && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {returnReasonOptions.map((reason) => (
+              <button
+                key={reason}
+                type="button"
+                onClick={() => setReturnReason(reason)}
+                className={`min-h-11 px-4 py-2 rounded-xl border text-sm font-semibold transition-colors ${
+                  returnReason === reason
+                    ? "border-orange-500 bg-orange-100 text-orange-900"
+                    : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                {reason}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Return type selector */}
@@ -4743,7 +4788,7 @@ function renderReturnDetails() {
             {/* Money Refund */}
             <button
               onClick={() => setReturnType("cash")}
-              className={`flex flex-col items-center gap-1.5 py-3 px-3 rounded-xl border-2 transition-all ${
+              className={`flex flex-col items-center gap-1.5 px-3 rounded-xl border-2 transition-all ${storeMode ? "py-5 min-h-32" : "py-3"} ${
                 returnType === "cash"
                   ? "border-green-500 bg-green-50 shadow-md"
                   : "border-gray-200 bg-white hover:border-gray-300"
@@ -4759,7 +4804,7 @@ function renderReturnDetails() {
             <button
               onClick={() => selectedClient?.id ? setReturnType("credit") : null}
               disabled={!selectedClient?.id}
-              className={`flex flex-col items-center gap-1.5 py-3 px-3 rounded-xl border-2 transition-all ${
+              className={`flex flex-col items-center gap-1.5 px-3 rounded-xl border-2 transition-all ${storeMode ? "py-5 min-h-32" : "py-3"} ${
                 !selectedClient?.id
                   ? "border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed"
                   : returnType === "credit"
@@ -4781,7 +4826,7 @@ function renderReturnDetails() {
               <select
                 value={refundMethod}
                 onChange={(e) => setRefundMethod(e.target.value)}
-                className="w-full border-2 border-orange-200 rounded-xl p-2.5 bg-white text-sm font-semibold"
+                className={`w-full border-2 border-orange-200 rounded-xl bg-white font-semibold ${storeMode ? "p-4 text-base" : "p-2.5 text-sm"}`}
               >
                 <option value="efectivo">Cash</option>
                 <option value="tarjeta">Card</option>
@@ -5395,6 +5440,66 @@ function renderStepClient() {
             )}
           </div>
 
+          {storeMode && appMode === "venta" && (
+            <section className="rounded-2xl border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-3 sm:p-4 shadow-sm" aria-label="Store counter actions">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <div className="font-black text-blue-950">🏪 Store counter</div>
+                  <div className="text-xs text-blue-700">Fast access for scanner, returns, receipt printer and cash drawer</div>
+                </div>
+                <span className="hidden sm:inline-flex rounded-full bg-blue-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-white">Store mode</span>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    startQuickSale();
+                    setTimeout(() => productSearchRef.current?.focus(), 120);
+                  }}
+                  className="min-h-20 rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 text-left shadow-sm active:scale-[0.98] transition-all"
+                >
+                  <span className="block text-2xl">▥</span>
+                  <span className="block font-black mt-1">Scan products</span>
+                  <span className="block text-[10px] text-blue-100">USB scanner ready</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAppMode("devolucion");
+                    setWalkinDevolucion(false);
+                    setSelectedInvoice(null);
+                    setReturnQuantities({});
+                    setClientSearch("");
+                  }}
+                  className="min-h-20 rounded-xl bg-orange-500 hover:bg-orange-600 text-white px-4 py-3 text-left shadow-sm active:scale-[0.98] transition-all"
+                >
+                  <span className="block text-2xl">↩</span>
+                  <span className="block font-black mt-1">Return / Refund</span>
+                  <span className="block text-[10px] text-orange-100">Find receipt or customer</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!lastReceiptRef.current}
+                  onClick={() => lastReceiptRef.current && printThermalReceipt(lastReceiptRef.current)}
+                  className="min-h-20 rounded-xl bg-slate-900 hover:bg-black disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-4 py-3 text-left shadow-sm active:scale-[0.98] transition-all"
+                >
+                  <span className="block text-2xl">🖨️</span>
+                  <span className="block font-black mt-1">Reprint receipt</span>
+                  <span className="block text-[10px] text-slate-300">{lastReceiptRef.current ? "Last completed sale" : "No recent receipt"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCashDrawer()}
+                  className="min-h-20 rounded-xl bg-amber-500 hover:bg-amber-600 text-white px-4 py-3 text-left shadow-sm active:scale-[0.98] transition-all"
+                >
+                  <span className="block text-2xl">💵</span>
+                  <span className="block font-black mt-1">Open drawer</span>
+                  <span className="block text-[10px] text-amber-100">Connected receipt printer</span>
+                </button>
+              </div>
+            </section>
+          )}
+
           <div className="grid grid-cols-2 sm:grid-cols-[1.2fr_auto_auto_auto] gap-2">
             <button
               onClick={startQuickSale}
@@ -5778,7 +5883,7 @@ function renderStepProducts() {
               const hasStockLimit = Number.isFinite(stockAvailable) && stockAvailable > 0;
               const isAtStockLimit = hasStockLimit && Number(p.cantidad || 0) >= stockAvailable;
               return (
-                <div key={p.producto_id} className="flex items-center gap-3 px-4 py-3">
+                <div key={p.producto_id} className={`flex items-center gap-3 px-4 ${storeMode ? "py-4" : "py-3"}`}>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-gray-900 truncate text-sm">{p.nombre}</div>
                     <div className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
@@ -5841,12 +5946,12 @@ function renderStepProducts() {
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
-                      className="bg-red-500 text-white w-9 h-9 rounded-xl font-bold text-lg hover:bg-red-600 active:scale-95 transition-all shadow"
+                      className={`bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 active:scale-95 transition-all shadow ${storeMode ? "w-12 h-12 text-2xl" : "w-9 h-9 text-lg"}`}
                       onClick={() => handleEditQuantity(p.producto_id, Math.max(1, p.cantidad - 1))}
                     >−</button>
-                    <span className="w-8 text-center font-bold text-lg tabular-nums">{p.cantidad}</span>
+                    <span className={`${storeMode ? "w-10 text-xl" : "w-8 text-lg"} text-center font-bold tabular-nums`}>{p.cantidad}</span>
                     <button
-                      className={`w-9 h-9 rounded-xl font-bold text-lg active:scale-95 transition-all shadow ${
+                      className={`${storeMode ? "w-12 h-12 text-2xl" : "w-9 h-9 text-lg"} rounded-xl font-bold active:scale-95 transition-all shadow ${
                         isAtStockLimit
                           ? "bg-amber-500 text-white hover:bg-amber-600"
                           : "bg-emerald-500 text-white hover:bg-emerald-600"
@@ -5912,13 +6017,13 @@ function renderStepProducts() {
       )}
 
       {/* ── SEARCH BAR ───────────────────────────────── */}
-      <div className="flex gap-2">
+      <div className={`flex gap-2 ${storeMode ? "rounded-2xl border-2 border-blue-200 bg-blue-50 p-2" : ""}`}>
         <input
           id="product-search-input"
           ref={productSearchRef}
           type="text"
           placeholder="🔍 Search by name, code or brand…   ↓ navigate · ↵ add first · Esc clear"
-          className="flex-1 border-2 border-gray-300 rounded-xl p-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all text-sm"
+          className={`flex-1 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all ${storeMode ? "p-4 text-base font-semibold bg-white" : "p-3 text-sm"}`}
           value={productSearch}
           onChange={(e) => setProductSearch(e.target.value)}
           onKeyDown={(e) => {
@@ -5937,11 +6042,17 @@ function renderStepProducts() {
         />
         <button
           onClick={() => setShowScanner(true)}
-          className="bg-blue-600 text-white px-4 py-3 rounded-xl font-semibold shadow-md hover:bg-blue-700 hover:shadow-lg active:scale-95 transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
+          className={`bg-blue-600 text-white rounded-xl font-bold shadow-md hover:bg-blue-700 hover:shadow-lg active:scale-95 transition-all duration-200 flex items-center gap-2 whitespace-nowrap ${storeMode ? "px-6 py-4 text-base min-w-32 justify-center" : "px-4 py-3"}`}
         >
-          📷 <span className="hidden sm:inline">Scan</span>
+          📷 <span className="hidden sm:inline">{storeMode ? "Camera scan" : "Scan"}</span>
         </button>
       </div>
+      {storeMode && (
+        <div className="-mt-2 px-2 text-xs font-semibold text-blue-700 flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          USB barcode scanner ready — scan a code and press Enter to add it
+        </div>
+      )}
 
       {/* ── NOT FOUND ALERT ──────────────────────────── */}
       {noProductFound && (
@@ -6062,7 +6173,7 @@ function renderStepProducts() {
                     <button
                       disabled={stock === 0}
                       onClick={() => handleAddProduct(p)}
-                      className={`px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-95 ${
+                      className={`${storeMode ? "px-6 py-3 min-h-12 text-base" : "px-4 py-2 text-sm"} rounded-xl font-bold shadow-sm transition-all active:scale-95 ${
                         stock === 0
                           ? "bg-gray-200 text-gray-400 cursor-not-allowed"
                           : "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
@@ -6073,7 +6184,7 @@ function renderStepProducts() {
                   ) : (
                     <div className="flex items-center gap-1.5">
                       <button
-                        className="bg-red-500 text-white w-9 h-9 rounded-xl font-bold text-lg hover:bg-red-600 active:scale-95 transition-all shadow"
+                        className={`bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 active:scale-95 transition-all shadow ${storeMode ? "w-12 h-12 text-2xl" : "w-9 h-9 text-lg"}`}
                         onClick={() => handleEditQuantity(p.producto_id, Math.max(1, inCart.cantidad - 1))}
                       >−</button>
                       <input
@@ -6084,10 +6195,10 @@ function renderStepProducts() {
                         onChange={(e) =>
                           handleEditQuantity(p.producto_id, Number(e.target.value))
                         }
-                        className="w-12 h-9 border-2 border-gray-200 rounded-lg text-center font-bold text-sm focus:border-blue-500 outline-none"
+                        className={`${storeMode ? "w-16 h-12 text-lg" : "w-12 h-9 text-sm"} border-2 border-gray-200 rounded-lg text-center font-bold focus:border-blue-500 outline-none`}
                       />
                       <button
-                        className="bg-emerald-500 text-white w-9 h-9 rounded-xl font-bold text-lg hover:bg-emerald-600 active:scale-95 transition-all shadow"
+                        className={`bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 active:scale-95 transition-all shadow ${storeMode ? "w-12 h-12 text-2xl" : "w-9 h-9 text-lg"}`}
                         onClick={() => handleEditQuantity(p.producto_id, Math.min(stock, inCart.cantidad + 1))}
                       >+</button>
                     </div>
@@ -6149,11 +6260,11 @@ function renderStepProducts() {
       {/* ── NAVIGATION ───────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 pt-4">
         <button
-          className="bg-gray-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1"
+          className={`bg-gray-500 text-white px-6 rounded-xl font-semibold hover:bg-gray-600 transition-colors shadow-md order-2 sm:order-1 ${storeMode ? "py-4 text-lg min-h-14" : "py-3"}`}
           onClick={() => setStep(1)}
         >← Back</button>
         <button
-          className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2"
+          className={`bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200 flex-1 sm:flex-none order-1 sm:order-2 ${storeMode ? "py-4 text-lg min-h-14" : "py-3"}`}
           disabled={cartSafe.length === 0}
           onClick={() => setStep(3)}
         >Next → Payment</button>
@@ -6453,19 +6564,25 @@ function renderStepPayment() {
         )}
       </section>
 
-      {selectedClient?.id && (
+      {(storeMode || selectedClient?.id) && (
         <button
           onClick={() => setShowBalanceSummary(true)}
-          className="w-full border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-900 rounded-xl px-4 py-3 flex items-center justify-between gap-3 shadow-sm transition-colors"
+          className={`w-full border-2 text-white rounded-2xl flex items-center justify-between gap-3 shadow-lg active:scale-[0.99] transition-all ${
+            storeMode
+              ? "border-indigo-400 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 px-5 py-5 ring-4 ring-indigo-100"
+              : "border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-900 px-4 py-3"
+          }`}
         >
           <span className="flex items-center gap-3 text-left">
-            <span className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center text-lg">👤</span>
+            <span className={`${storeMode ? "w-14 h-14 text-2xl bg-white/20" : "w-9 h-9 text-lg bg-blue-600"} rounded-xl text-white flex items-center justify-center`}>👤</span>
             <span>
-              <span className="block font-bold">Show summary to customer</span>
-              <span className="block text-xs text-blue-700 font-normal">Clear balance and payment view</span>
+              <span className={`block font-black ${storeMode ? "text-lg" : ""}`}>{storeMode ? "Customer Display" : "Show summary to customer"}</span>
+              <span className={`block text-xs font-normal ${storeMode ? "text-blue-100" : "text-blue-700"}`}>
+                {storeMode ? "Turn the screen so the customer can review items, total and payment" : "Clear balance and payment view"}
+              </span>
             </span>
           </span>
-          <span className="text-blue-600 font-bold">→</span>
+          <span className={`${storeMode ? "text-white text-2xl" : "text-blue-600"} font-bold`}>→</span>
         </button>
       )}
 
@@ -6600,19 +6717,29 @@ function renderStepPayment() {
           <div className="flex items-center justify-between px-5 py-4 bg-black/30 flex-shrink-0">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-              <span className="text-slate-300 text-sm font-semibold">Showing to client</span>
+              <span className="text-slate-300 text-sm font-semibold">Customer display · review before checkout</span>
             </div>
-            <button
-              onClick={() => setShowBalanceSummary(false)}
-              className="bg-red-600 hover:bg-red-700 text-white text-sm font-bold px-4 py-1.5 rounded-lg transition-colors"
-            >✖ Close</button>
+            <div className="flex items-center gap-2">
+              {storeMode && (
+                <button
+                  onClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}
+                  className="hidden sm:inline-flex bg-white/10 hover:bg-white/20 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                >⛶ Full screen</button>
+              )}
+              <button
+                onClick={() => setShowBalanceSummary(false)}
+                className="bg-red-600 hover:bg-red-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+              >✖ Close</button>
+            </div>
           </div>
 
           {/* Client name + date */}
           <div className="text-center pt-8 pb-4 flex-shrink-0">
             <div className="text-slate-400 text-xs uppercase tracking-[0.25em] font-bold mb-2">Account Summary</div>
             <div className="text-4xl font-black text-white tracking-tight">
-              {`${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim() || "Client"}
+              {selectedClient?.id
+                ? `${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim()
+                : "Your Purchase"}
             </div>
             <div className="text-slate-400 text-sm mt-2">
               {new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
@@ -6621,6 +6748,33 @@ function renderStepPayment() {
 
           {/* Content rows */}
           <div className="flex-1 overflow-y-auto px-5 py-2 space-y-3">
+            {cartSafe.length > 0 && (
+              <div className="bg-white/10 backdrop-blur rounded-2xl overflow-hidden">
+                <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
+                  <div className="text-slate-300 text-xs uppercase font-bold tracking-wide">Items</div>
+                  <div className="text-slate-400 text-xs">{cartSafe.reduce((sum, item) => sum + Number(item.cantidad || 0), 0)} units</div>
+                </div>
+                <div className="divide-y divide-white/10">
+                  {cartSafe.map((item) => (
+                    <div key={item.producto_id} className="px-5 py-3 flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-white font-bold truncate">{item.nombre}</div>
+                        <div className="text-slate-400 text-xs">{item.cantidad} × {fmt(item.precio_unitario)}</div>
+                      </div>
+                      <div className="text-white text-lg font-black shrink-0">{fmt(item.cantidad * item.precio_unitario)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {taxEnabled && taxAmount > 0 && (
+              <div className="bg-white/5 border border-white/10 rounded-2xl px-5 py-3 flex items-center justify-between">
+                <div className="text-slate-300 text-sm font-bold">Tax ({taxRate}%)</div>
+                <div className="text-xl font-black text-white">{fmt(taxAmount)}</div>
+              </div>
+            )}
+
             {/* Prior balance */}
             {balanceBefore > 0 && (
               <div className="bg-white/10 backdrop-blur rounded-2xl px-5 py-4 flex items-center justify-between">
@@ -6638,7 +6792,7 @@ function renderStepPayment() {
                 <div className="text-slate-300 text-xs uppercase font-bold tracking-wide">Today's Purchase</div>
                 <div className="text-slate-400 text-xs mt-0.5">{cartSafe.length} item{cartSafe.length !== 1 ? "s" : ""}</div>
               </div>
-              <div className="text-3xl font-black text-blue-300">+ {fmt(saleTotal)}</div>
+              <div className="text-3xl font-black text-blue-300">+ {fmt(saleTotalWithTax)}</div>
             </div>
 
             {/* Total subtotal (prior + sale) */}
@@ -6646,7 +6800,7 @@ function renderStepPayment() {
               <div className="border-t border-white/20 pt-1">
                 <div className="bg-white/5 border border-white/20 rounded-2xl px-5 py-3 flex items-center justify-between">
                   <div className="text-slate-300 text-sm font-bold uppercase tracking-wide">= Total</div>
-                  <div className="text-2xl font-black text-white">{fmt(balanceBefore + saleTotal)}</div>
+                  <div className="text-2xl font-black text-white">{fmt(balanceBefore + saleTotalWithTax)}</div>
                 </div>
               </div>
             )}
@@ -6663,17 +6817,17 @@ function renderStepPayment() {
             )}
 
             {/* Divider + New balance */}
-            <div className={`rounded-2xl px-5 py-6 text-center border-2 ${balanceAfter > 0 ? "bg-amber-500/20 border-amber-400/50" : "bg-emerald-500/20 border-emerald-400/50"}`}>
-              <div className={`text-xs uppercase font-bold tracking-widest mb-2 ${balanceAfter > 0 ? "text-amber-300" : "text-emerald-300"}`}>
-                New Balance
+            <div className={`rounded-2xl px-5 py-6 text-center border-2 ${(selectedClient?.id ? balanceAfter : remainingToCollect) > 0 ? "bg-amber-500/20 border-amber-400/50" : "bg-emerald-500/20 border-emerald-400/50"}`}>
+              <div className={`text-xs uppercase font-bold tracking-widest mb-2 ${(selectedClient?.id ? balanceAfter : remainingToCollect) > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+                {selectedClient?.id ? "New Balance" : "Remaining Due"}
               </div>
-              <div className={`text-6xl font-black ${balanceAfter > 0 ? "text-amber-300" : "text-emerald-400"}`}>
-                {fmt(balanceAfter)}
+              <div className={`text-6xl font-black ${(selectedClient?.id ? balanceAfter : remainingToCollect) > 0 ? "text-amber-300" : "text-emerald-400"}`}>
+                {fmt(selectedClient?.id ? balanceAfter : remainingToCollect)}
               </div>
-              {balanceAfter === 0 ? (
-                <div className="text-emerald-400 font-bold text-lg mt-3">🎉 Account fully paid!</div>
+              {(selectedClient?.id ? balanceAfter : remainingToCollect) === 0 ? (
+                <div className="text-emerald-400 font-bold text-lg mt-3">✓ Payment complete</div>
               ) : (
-                <div className="text-slate-400 text-sm mt-2">Remaining on account</div>
+                <div className="text-slate-400 text-sm mt-2">{selectedClient?.id ? "Remaining on account" : "Amount still to collect"}</div>
               )}
             </div>
 
@@ -6806,11 +6960,22 @@ function renderStepPayment() {
 
           <div className="flex-1" />
 
+          {/* Customer-facing checkout — store mode only */}
+          {storeMode && step === 3 && cartSafe.length > 0 && (
+            <button
+              onClick={() => setShowBalanceSummary(true)}
+              className="flex items-center gap-2 px-5 py-3 min-h-12 rounded-xl text-sm font-black bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-lg shadow-indigo-900/30"
+            >
+              <span className="text-lg">👤</span>
+              <span>Customer Display</span>
+            </button>
+          )}
+
           {/* Print last receipt — store mode only */}
           {storeMode && lastReceiptRef.current && (
             <button
               onClick={() => printThermalReceipt(lastReceiptRef.current)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all"
+              className="flex items-center gap-2 px-4 py-3 min-h-12 rounded-xl text-sm font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all"
             >
               <span>🖨️</span>
               <span>Print</span>
@@ -6821,7 +6986,7 @@ function renderStepPayment() {
           {storeMode && (
             <button
               onClick={() => openCashDrawer()}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-all"
+              className="flex items-center gap-2 px-4 py-3 min-h-12 rounded-xl text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-all"
             >
               <span>💵</span>
               <span>Drawer</span>
@@ -6833,7 +6998,7 @@ function renderStepPayment() {
             <button
               onClick={saveSale}
               disabled={saleSaveDisabled}
-              className="flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold bg-green-600 hover:bg-green-500 text-white transition-all disabled:opacity-50 shadow-lg shadow-green-700/40"
+              className={`flex items-center gap-2 px-6 rounded-xl font-bold bg-green-600 hover:bg-green-500 text-white transition-all disabled:opacity-50 shadow-lg shadow-green-700/40 ${storeMode ? "py-3 min-h-12 text-base" : "py-2 text-sm"}`}
             >
               <span>{saving ? "⏳" : "💾"}</span>
               <span>{saleSaveLabel}</span>

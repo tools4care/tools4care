@@ -28,6 +28,7 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { supabase } from "./supabaseClient";
 import { useStoreMode } from "./hooks/useStoreMode";
+import { usePermisos } from "./hooks/usePermisos";
 
 /* ── Tab definitions ───────────────────────────────── */
 const items = [
@@ -40,16 +41,19 @@ const items = [
 
 /* ── More menu grid ────────────────────────────────── */
 const MORE_ITEMS = [
-  { path: "/cxc",        label: "Accounts",     icon: CreditCard,    gradient: "from-sky-400 to-blue-600"    },
-  { path: "/inventario", label: "Inventory",    icon: ClipboardText, gradient: "from-indigo-400 to-blue-600" },
-  { path: "/facturas",   label: "Invoicing",    icon: FileText,      gradient: "from-purple-500 to-violet-600" },
-  { path: "/cierres",    label: "Van Closeout", icon: Truck,         gradient: "from-emerald-400 to-green-600" },
-  { path: "/suplidores", label: "Suppliers",    icon: UserCircle,    gradient: "from-blue-400 to-indigo-600" },
-  { path: "/reportes",       label: "Reports",       icon: ChartBar,      gradient: "from-rose-400 to-pink-600" },
-  { path: "/suscripciones", label: "Subscriptions", icon: CalendarCheck, gradient: "from-violet-500 to-purple-600" },
-  { path: "/alquileres",    label: "Rentals",       icon: Wrench,        gradient: "from-emerald-500 to-teal-600" },
+  { path: "/emergencia",    key: "emergencia", label: "Essentials",    icon: Warning,       gradient: "from-cyan-400 to-blue-600" },
+  { path: "/cxc",        key: "cxc",        label: "Accounts",     icon: CreditCard,    gradient: "from-sky-400 to-blue-600"    },
+  { path: "/inventario", key: "inventario", label: "Inventory",    icon: ClipboardText, gradient: "from-indigo-400 to-blue-600" },
+  { path: "/facturas",   key: "facturas",   label: "Invoicing",    icon: FileText,      gradient: "from-purple-500 to-violet-600" },
+  { path: "/cierres",    key: "cierres",    label: "Van Closeout", icon: Truck,         gradient: "from-emerald-400 to-green-600" },
+  { path: "/suplidores", key: "suplidores", label: "Suppliers",    icon: UserCircle,    gradient: "from-blue-400 to-indigo-600" },
+  { path: "/reportes",   key: "reportes",   label: "Reports",       icon: ChartBar,      gradient: "from-rose-400 to-pink-600" },
   { path: "/van",            label: "Change VAN",    icon: Compass,       gradient: "from-amber-400 to-orange-600" },
-  { path: "/emergencia",    label: "Essentials",    icon: Warning,       gradient: "from-cyan-400 to-blue-600" },
+];
+
+const SERVICE_ITEMS = [
+  { path: "/suscripciones", key: "suscripciones", label: "Subscriptions", description: "Recurring customer orders", icon: CalendarCheck, gradient: "from-violet-500 to-purple-600" },
+  { path: "/alquileres", key: "alquileres", label: "Equipment Rentals", description: "Rental contracts and returns", icon: Wrench, gradient: "from-emerald-500 to-teal-600" },
 ];
 
 const ADMIN_MORE_ITEM = {
@@ -72,9 +76,11 @@ function preloadSales() {
 export default function BottomNav() {
   const [showMore, setShowMore]       = useState(false);
   const [showSaleSheet, setShowSaleSheet] = useState(false);
+  const [showServices, setShowServices] = useState(false);
   const { usuario, setUsuario }       = useUsuario();
   const { van }                       = useVan();
   const { storeMode, toggle: toggleStoreMode } = useStoreMode();
+  const { puedeVerModulo, puedeCambiarVan } = usePermisos();
   const navigate                      = useNavigate();
   const location                      = useLocation();
 
@@ -116,7 +122,12 @@ export default function BottomNav() {
   };
 
   const userInitial = (usuario?.email || usuario?.nombre || "?")[0].toUpperCase();
-  const moreItems = usuario?.rol === "admin" ? [...MORE_ITEMS, ADMIN_MORE_ITEM] : MORE_ITEMS;
+  const moreItemsBase = MORE_ITEMS
+    .filter(({ key }) => !key || key === "emergencia" || puedeVerModulo(key))
+    .filter(({ path }) => path !== "/van" || puedeCambiarVan)
+    .map((item) => item.path === "/cierres" && storeMode ? { ...item, label: "Store Closeout" } : item);
+  const moreItems = usuario?.rol === "admin" ? [...moreItemsBase, ADMIN_MORE_ITEM] : moreItemsBase;
+  const serviceItems = SERVICE_ITEMS.filter(({ key }) => puedeVerModulo(key));
 
   return (
     <>
@@ -321,6 +332,50 @@ export default function BottomNav() {
                 })}
               </div>
 
+              {serviceItems.length > 0 && (
+                <div className="mb-3 rounded-2xl bg-white ring-1 ring-gray-100 shadow-sm overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowServices((open) => !open)}
+                    aria-expanded={showServices}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-slate-50"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center">
+                      <Wrench size={20} weight="duotone" className="text-white" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-bold text-slate-800">Services</div>
+                      <div className="text-[10px] text-slate-400">Subscriptions and rentals · optional tools</div>
+                    </div>
+                    <CaretDown size={16} weight="bold" className={`text-slate-400 transition-transform ${showServices ? "rotate-180" : ""}`} />
+                  </button>
+                  {showServices && (
+                    <div className="border-t border-slate-100 p-2 space-y-1.5">
+                      {serviceItems.map(({ path, label, description, icon, gradient }) => {
+                        const Icon = icon;
+                        return (
+                          <button
+                            key={path}
+                            type="button"
+                            onClick={() => handleNav(path)}
+                            className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-slate-50 active:bg-slate-100"
+                          >
+                            <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center`}>
+                              <Icon size={18} weight="duotone" className="text-white" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-700">{label}</div>
+                              <div className="text-[10px] text-slate-400">{description}</div>
+                            </div>
+                            <ArrowRight size={14} weight="bold" className="ml-auto text-slate-300" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Divider */}
               <div className="h-px bg-gray-100 mx-1 mb-3" />
 
@@ -342,7 +397,7 @@ export default function BottomNav() {
                       {storeMode ? "Physical Store Mode" : "Van / Route Mode"}
                     </div>
                     <div className="text-[10px] text-gray-400">
-                      {storeMode ? "Print & drawer enabled" : "Tap to enable store features"}
+                      {storeMode ? "Scanner, receipt printer & counter tools" : "Tap to enable store counter tools"}
                     </div>
                   </div>
                 </div>

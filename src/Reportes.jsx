@@ -11,6 +11,7 @@ import {
 import { loadPdfLibs } from "./utils/lazyPdf";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import { daysSince, classifyArRisk, buildCollectionMessage, phoneLink } from "./lib/arRisk";
+import { paginateRows, REPORT_PAGE_SIZES } from "./lib/pagination";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
@@ -140,6 +141,51 @@ function ChartPanel({ title, subtitle, children, className = "" }) {
         {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
       </div>
       {children}
+    </div>
+  );
+}
+
+function TablePagination({ pagination, onPageChange, onPageSizeChange }) {
+  return (
+    <div className="flex flex-col gap-3 border-t border-gray-200 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+        <span>
+          Showing <strong className="text-gray-800">{pagination.from}–{pagination.to}</strong> of{" "}
+          <strong className="text-gray-800">{pagination.total}</strong>
+        </span>
+        <label className="flex items-center gap-2">
+          <span>Rows per page</span>
+          <select
+            value={pagination.pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+            className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm font-semibold text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            aria-label="Rows per page"
+          >
+            {REPORT_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="flex items-center justify-between gap-2 sm:justify-end">
+        <span className="mr-1 text-sm font-semibold text-gray-700">
+          Page {pagination.page} of {pagination.totalPages}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(pagination.page - 1)}
+          disabled={!pagination.hasPrevious}
+          className="min-h-10 rounded-lg border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          onClick={() => onPageChange(pagination.page + 1)}
+          disabled={!pagination.hasNext}
+          className="min-h-10 rounded-lg border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
@@ -2069,11 +2115,15 @@ function ProductosReport({ van, usuario }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const [searched, setSearched] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
+  useEffect(() => { setPage(1); }, [data]);
 
   const search = async () => {
     if (!van?.id) return;
+    setPage(1);
     setLoading(true); setError(null);
     try {
       const { start, end } = dateRangeBounds(from, to);
@@ -2148,6 +2198,7 @@ function ProductosReport({ van, usuario }) {
       },
     ];
   }, [data]);
+  const pagination = useMemo(() => paginateRows(data, page, pageSize), [data, page, pageSize]);
 
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -2168,7 +2219,14 @@ function ProductosReport({ van, usuario }) {
 
   return (
     <div>
-      <DateFilterBar from={from} to={to} onFrom={setFrom} onTo={setTo} onSearch={search} loading={loading} />
+      <DateFilterBar
+        from={from}
+        to={to}
+        onFrom={(value) => { setFrom(value); setPage(1); }}
+        onTo={(value) => { setTo(value); setPage(1); }}
+        onSearch={search}
+        loading={loading}
+      />
       <ErrorBox msg={error} />
       {searched && (<>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
@@ -2211,27 +2269,34 @@ function ProductosReport({ van, usuario }) {
             <Download size={14}/> Export PDF
           </button>
         </div>
-        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
-          <table className="min-w-full text-sm divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>{["#","Product","Units Sold","Revenue","Avg Price"].map(h=>(
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {data.length===0 ? (
-                <tr><td colSpan={5} className="text-center py-10 text-gray-400">No product data for this period</td></tr>
-              ) : data.map((p,i)=>(
-                <tr key={p.id} className="hover:bg-purple-50">
-                  <td className="px-4 py-2 font-bold text-gray-400">{i+1}</td>
-                  <td className="px-4 py-2 font-semibold text-gray-900">{p.nombre||"—"}</td>
-                  <td className="px-4 py-2 text-center font-bold text-purple-700">{p.totalQty}</td>
-                  <td className="px-4 py-2 font-semibold text-green-700">{fmtCurrency(p.totalRevenue)}</td>
-                  <td className="px-4 py-2 text-gray-600">{p.totalQty>0?fmtCurrency(p.totalRevenue/p.totalQty):"—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="overflow-hidden bg-white border border-gray-200 rounded-xl">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>{["#","Product","Units Sold","Revenue","Avg Price"].map(h=>(
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pagination.total===0 ? (
+                  <tr><td colSpan={5} className="text-center py-10 text-gray-400">No product data for this period</td></tr>
+                ) : pagination.rows.map((p,i)=>(
+                  <tr key={p.id} className="hover:bg-purple-50">
+                    <td className="px-4 py-2 font-bold text-gray-400">{pagination.from+i}</td>
+                    <td className="px-4 py-2 font-semibold text-gray-900">{p.nombre||"—"}</td>
+                    <td className="px-4 py-2 text-center font-bold text-purple-700">{p.totalQty}</td>
+                    <td className="px-4 py-2 font-semibold text-green-700">{fmtCurrency(p.totalRevenue)}</td>
+                    <td className="px-4 py-2 text-gray-600">{p.totalQty>0?fmtCurrency(p.totalRevenue/p.totalQty):"—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <TablePagination
+            pagination={pagination}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          />
         </div>
       </>)}
     </div>
@@ -2248,9 +2313,14 @@ function GananciasReport({ van, usuario }) {
   const [error, setError]     = useState(null);
   const [searched, setSearched] = useState(false);
   const [noCostField, setNoCostField] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  useEffect(() => { setPage(1); }, [data]);
 
   const search = async () => {
     if (!van?.id) return;
+    setPage(1);
     setLoading(true); setError(null); setNoCostField(false);
     try {
       const { start, end } = dateRangeBounds(from, to);
@@ -2316,6 +2386,7 @@ function GananciasReport({ van, usuario }) {
     profit: p.totalRevenue-p.totalCost,
     revenue:p.totalRevenue,
   }));
+  const pagination = useMemo(() => paginateRows(data, page, pageSize), [data, page, pageSize]);
 
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -2342,7 +2413,14 @@ function GananciasReport({ van, usuario }) {
 
   return (
     <div>
-      <DateFilterBar from={from} to={to} onFrom={setFrom} onTo={setTo} onSearch={search} loading={loading} />
+      <DateFilterBar
+        from={from}
+        to={to}
+        onFrom={(value) => { setFrom(value); setPage(1); }}
+        onTo={(value) => { setTo(value); setPage(1); }}
+        onSearch={search}
+        loading={loading}
+      />
       {noCostField && (
         <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-lg p-3 mb-4 text-sm flex items-center gap-2">
           <AlertTriangle size={16}/>
@@ -2379,35 +2457,42 @@ function GananciasReport({ van, usuario }) {
             <Download size={14}/> Export PDF
           </button>
         </div>
-        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
-          <table className="min-w-full text-sm divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>{["#","Product","Units","Revenue","Cost","Profit","Margin"].map(h=>(
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {data.length===0 ? (
-                <tr><td colSpan={7} className="text-center py-10 text-gray-400">No product data for this period</td></tr>
-              ) : data.map((p,i)=>{
-                const profit = p.totalRevenue - p.totalCost;
-                const margin = p.totalRevenue>0 ? ((profit/p.totalRevenue)*100).toFixed(1) : null;
-                return (<tr key={p.id} className="hover:bg-emerald-50">
-                  <td className="px-4 py-2 font-bold text-gray-400">{i+1}</td>
-                  <td className="px-4 py-2 font-semibold text-gray-900">{p.nombre||"—"}</td>
-                  <td className="px-4 py-2 text-center">{p.totalQty}</td>
-                  <td className="px-4 py-2 font-semibold text-blue-700">{fmtCurrency(p.totalRevenue)}</td>
-                  <td className="px-4 py-2 text-red-600">{p.totalCost>0?fmtCurrency(p.totalCost):<span className="text-gray-400 text-xs">No cost</span>}</td>
-                  <td className="px-4 py-2 font-bold text-emerald-700">{p.totalCost>0?fmtCurrency(profit):<span className="text-gray-400 text-xs">—</span>}</td>
-                  <td className="px-4 py-2">
-                    {margin!=null && p.totalCost>0
-                      ? <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${Number(margin)>20?"bg-green-100 text-green-800":"bg-amber-100 text-amber-800"}`}>{margin}%</span>
-                      : <span className="text-gray-400 text-xs">—</span>}
-                  </td>
-                </tr>);
-              })}
-            </tbody>
-          </table>
+        <div className="overflow-hidden bg-white border border-gray-200 rounded-xl">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>{["#","Product","Units","Revenue","Cost","Profit","Margin"].map(h=>(
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pagination.total===0 ? (
+                  <tr><td colSpan={7} className="text-center py-10 text-gray-400">No product data for this period</td></tr>
+                ) : pagination.rows.map((p,i)=>{
+                  const profit = p.totalRevenue - p.totalCost;
+                  const margin = p.totalRevenue>0 ? ((profit/p.totalRevenue)*100).toFixed(1) : null;
+                  return (<tr key={p.id} className="hover:bg-emerald-50">
+                    <td className="px-4 py-2 font-bold text-gray-400">{pagination.from+i}</td>
+                    <td className="px-4 py-2 font-semibold text-gray-900">{p.nombre||"—"}</td>
+                    <td className="px-4 py-2 text-center">{p.totalQty}</td>
+                    <td className="px-4 py-2 font-semibold text-blue-700">{fmtCurrency(p.totalRevenue)}</td>
+                    <td className="px-4 py-2 text-red-600">{p.totalCost>0?fmtCurrency(p.totalCost):<span className="text-gray-400 text-xs">No cost</span>}</td>
+                    <td className="px-4 py-2 font-bold text-emerald-700">{p.totalCost>0?fmtCurrency(profit):<span className="text-gray-400 text-xs">—</span>}</td>
+                    <td className="px-4 py-2">
+                      {margin!=null && p.totalCost>0
+                        ? <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${Number(margin)>20?"bg-green-100 text-green-800":"bg-amber-100 text-amber-800"}`}>{margin}%</span>
+                        : <span className="text-gray-400 text-xs">—</span>}
+                    </td>
+                  </tr>);
+                })}
+              </tbody>
+            </table>
+          </div>
+          <TablePagination
+            pagination={pagination}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          />
         </div>
       </>)}
     </div>
