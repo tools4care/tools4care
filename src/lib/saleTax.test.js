@@ -9,6 +9,13 @@ describe("getSaleTaxParts", () => {
     })).toEqual({ subtotal: 100, tax: 8.25, grand: 108.25 });
   });
 
+  it("reads the payment JSON stored in the ventas.pago column", () => {
+    expect(getSaleTaxParts({
+      total: 108.25,
+      pago: { subtotal: 100, tax_amount: 8.25 },
+    })).toEqual({ subtotal: 100, tax: 8.25, grand: 108.25 });
+  });
+
   it("does not apply today's tax settings to old tax-free sales", () => {
     expect(getSaleTaxParts({ total: 100 }, { enabled: true, rate: 8.25, includeInPrice: false }))
       .toEqual({ subtotal: 100, tax: 0, grand: 100 });

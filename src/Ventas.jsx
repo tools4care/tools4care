@@ -18,6 +18,7 @@ import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useLocationSettings } from "./hooks/useLocationSettings";
 import { buildCustomerDisplaySnapshot, publishCustomerDisplay } from "./lib/customerDisplay";
+import { getMoneyAppliedToSale, getReturnLineUnit, getReturnQuote } from "./lib/returnPricing";
 import {
   getStoredStoreCashSessionId,
   resolveOpenStoreCashSession,
@@ -1952,7 +1953,7 @@ if (appMode === 'devolucion') {
     // Paso 1: Obtener ventas del cliente (SOLO tipo 'venta', no devoluciones)
     const { data: ventasData, error: ventasError } = await supabase
       .from('ventas')
-      .select('id, created_at, total, total_venta, total_pagado, estado_pago')
+      .select('id, created_at, total, total_venta, total_pagado, estado_pago, pago')
       .eq('cliente_id', id)
       .eq('van_id', van.id)
       .eq('tipo', 'venta')  // 🔴 FIX: Solo ventas originales
@@ -1971,7 +1972,7 @@ if (appMode === 'devolucion') {
     // Paso 2: Obtener detalles de las ventas
     const { data: detallesData, error: detallesError } = await supabase
       .from('detalle_ventas')
-      .select('id, venta_id, cantidad, precio_unitario, producto_id')
+      .select('id, venta_id, cantidad, precio_unitario, descuento, subtotal, producto_id')
       .in('venta_id', ventaIds);
 
     if (detallesError) throw detallesError;
@@ -2006,10 +2007,11 @@ if (appMode === 'devolucion') {
 
     // 🆕 Paso 5: Obtener total ya devuelto por cada venta
     let devolucionesPorVenta = new Map();
+    let reembolsosPorVenta = new Map();
     try {
       const { data: devVentasData } = await supabase
         .from('ventas')
-        .select('venta_origen_id, total')
+        .select('venta_origen_id, total, estado_pago')
         .eq('tipo', 'devolucion')
         .in('venta_origen_id', ventaIds);
 
@@ -2017,6 +2019,10 @@ if (appMode === 'devolucion') {
         for (const row of devVentasData) {
           const prev = devolucionesPorVenta.get(row.venta_origen_id) || 0;
           devolucionesPorVenta.set(row.venta_origen_id, prev + Number(row.total));
+          if (row.estado_pago === "reembolsado") {
+            const previousRefund = reembolsosPorVenta.get(row.venta_origen_id) || 0;
+            reembolsosPorVenta.set(row.venta_origen_id, previousRefund + Number(row.total));
+          }
         }
       }
     } catch {
@@ -2035,6 +2041,8 @@ if (appMode === 'devolucion') {
             cantidad_devuelta: cantidadDevuelta,
             cantidad_disponible: d.cantidad - cantidadDevuelta,
             precio_unitario: d.precio_unitario,
+            descuento: d.descuento,
+            subtotal: d.subtotal,
             producto_id: d.producto_id,
             productos: {
               id: d.producto_id,
@@ -2044,11 +2052,13 @@ if (appMode === 'devolucion') {
         });
 
       const totalDevuelto = devolucionesPorVenta.get(venta.id) || 0;
+      const totalReembolsado = reembolsosPorVenta.get(venta.id) || 0;
 
       return {
         ...venta,
         detalle_ventas: detalles,
         total_devuelto: totalDevuelto,
+        total_reembolsado: totalReembolsado,
         tiene_devoluciones: totalDevuelto > 0,
       };
     });
@@ -2493,7 +2503,7 @@ useEffect(() => {
 
       let q = supabase
         .from("ventas")
-        .select("id, created_at, total, total_venta, total_pagado, estado_pago, cliente_id")
+        .select("id, created_at, total, total_venta, total_pagado, estado_pago, cliente_id, pago")
         .eq("van_id", van.id)
         .eq("tipo", "venta")
         .is("cliente_id", null)        // walk-in sales (no client)
@@ -2531,7 +2541,7 @@ useEffect(() => {
       // Load details + products
       const { data: detallesData } = await supabase
         .from("detalle_ventas")
-        .select("id, venta_id, cantidad, precio_unitario, producto_id")
+        .select("id, venta_id, cantidad, precio_unitario, descuento, subtotal, producto_id")
         .in("venta_id", ventaIds);
 
       const productoIds = [...new Set((detallesData || []).map(d => d.producto_id).filter(Boolean))];
@@ -2553,12 +2563,16 @@ useEffect(() => {
       } catch { /* tabla no existe aún */ }
 
       let devolucionesPorVenta = new Map();
+      let reembolsosPorVenta = new Map();
       try {
         const { data: devVentasData } = await supabase
-          .from("ventas").select("venta_origen_id, total")
+          .from("ventas").select("venta_origen_id, total, estado_pago")
           .eq("tipo", "devolucion").in("venta_origen_id", ventaIds);
         (devVentasData || []).forEach(r => {
           devolucionesPorVenta.set(r.venta_origen_id, (devolucionesPorVenta.get(r.venta_origen_id) || 0) + Number(r.total));
+          if (r.estado_pago === "reembolsado") {
+            reembolsosPorVenta.set(r.venta_origen_id, (reembolsosPorVenta.get(r.venta_origen_id) || 0) + Number(r.total));
+          }
         });
       } catch { /* ignorar */ }
 
@@ -2571,13 +2585,17 @@ useEffect(() => {
             cantidad_devuelta: devolucionesMap.get(d.id) || 0,
             cantidad_disponible: d.cantidad - (devolucionesMap.get(d.id) || 0),
             precio_unitario: d.precio_unitario,
+            descuento: d.descuento,
+            subtotal: d.subtotal,
             producto_id: d.producto_id,
             productos: { id: d.producto_id, nombre: productosMap.get(d.producto_id)?.nombre || "Deleted product" },
           }));
+        const totalReembolsado = reembolsosPorVenta.get(venta.id) || 0;
         return {
           ...venta,
           detalle_ventas: detalles,
           total_devuelto: devolucionesPorVenta.get(venta.id) || 0,
+          total_reembolsado: totalReembolsado,
           tiene_devoluciones: (devolucionesPorVenta.get(venta.id) || 0) > 0,
           _isWalkin: true,
         };
@@ -3686,8 +3704,6 @@ async function handleProcessReturn() {
   try {
     // 1. Construir lista de items a devolver
     const itemsToReturn = [];
-    let totalRefund = 0;
-
     for (const item of selectedInvoice.detalle_ventas) {
       const qty = Number(returnQuantities[item.id] || 0);
       if (qty <= 0) continue;
@@ -3706,9 +3722,9 @@ async function handleProcessReturn() {
         producto_id: item.productos?.id || item.producto_id,
         cantidad: qty,
         precio_unitario: item.precio_unitario,
+        precio_cobrado: getReturnLineUnit(item),
         nombre: item.productos?.nombre || 'Producto',
       });
-      totalRefund += qty * item.precio_unitario;
     }
 
     if (itemsToReturn.length === 0) {
@@ -3717,13 +3733,18 @@ async function handleProcessReturn() {
       return;
     }
 
+    const returnQuote = getReturnQuote(selectedInvoice, returnQuantities);
+    const totalRefund = returnQuote.total;
+
     // Confirmación con desglose
     const itemsSummary = itemsToReturn
-      .map(it => `• ${it.nombre} x${it.cantidad} = ${fmt(it.cantidad * it.precio_unitario)}`)
+      .map(it => `• ${it.nombre} x${it.cantidad} = ${fmt(it.cantidad * it.precio_cobrado)}`)
       .join('\n');
 
     const isCredit = returnType === "credit" && selectedClient?.id;
-    const paidOnOriginal = Number(selectedInvoice.total_pagado || 0);
+    const paidOnOriginal = getMoneyAppliedToSale(selectedInvoice);
+    const moneyAlreadyRefunded = Math.max(0, Number(selectedInvoice.total_reembolsado || 0));
+    const moneyStillRefundable = Math.max(0, Number((paidOnOriginal - moneyAlreadyRefunded).toFixed(2)));
     let debtReduction = 0;
     let storeCreditCreated = 0;
     if (isCredit) {
@@ -3732,9 +3753,9 @@ async function handleProcessReturn() {
       debtReduction = Math.min(currentDebt, totalRefund);
       storeCreditCreated = Math.max(0, Number((totalRefund - debtReduction).toFixed(2)));
     }
-    if (!isCredit && totalRefund > paidOnOriginal + 0.005) {
+    if (!isCredit && totalRefund > moneyStillRefundable + 0.005) {
       throw new Error(
-        `This invoice only has ${fmt(paidOnOriginal)} paid. ` +
+        `This invoice only has ${fmt(moneyStillRefundable)} still refundable as money. ` +
         `Use "Reduce A/R" because no money should leave the business for the unpaid portion.`
       );
     }
@@ -3749,6 +3770,7 @@ async function handleProcessReturn() {
     const confirmed = await confirmDialog(
       `🔄 Confirm Return\n\n` +
       `${itemsSummary}\n\n` +
+      (returnQuote.tax > 0 ? `Tax refund: ${fmt(returnQuote.tax)}\n` : "") +
       `Total: ${fmt(totalRefund)}\n` +
       refundLabel
     );
@@ -4080,6 +4102,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
               tax_rate: taxEnabled ? taxRate : 0,
               tax_amount: taxEnabled ? taxAmount : 0,
               subtotal: Number(saleTotal.toFixed(2)),
+              tax_included: Boolean(taxEnabled && taxIncluded),
             },
             notas: [notes, saleOverrideRef.current, "[OFFLINE]"].filter(Boolean).join(" ").trim(),
             // Items con campos de descuento compatibles con detalle_ventas
@@ -4326,7 +4349,13 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
           p_total_pagado: totalSettledForSaleNow,
           p_estado_pago: estadoPago,
           p_metodo_pago: metodoPrincipal,
-          p_pago: { ...pagoJson, tax_rate: taxEnabled ? taxRate : 0, tax_amount: taxEnabled ? taxAmount : 0, subtotal: Number(saleTotal.toFixed(2)) },
+          p_pago: {
+            ...pagoJson,
+            tax_rate: taxEnabled ? taxRate : 0,
+            tax_amount: taxEnabled ? taxAmount : 0,
+            subtotal: Number(saleTotal.toFixed(2)),
+            tax_included: Boolean(taxEnabled && taxIncluded),
+          },
           p_pago_efectivo: pagoEfectivo,
           p_pago_tarjeta: pagoTarjeta,
           p_pago_transferencia: pagoTransf,
@@ -4734,13 +4763,12 @@ function renderClientInvoiceList() {
 function renderReturnDetails() {
   if (appMode !== 'devolucion' || !selectedInvoice) return null;
 
-  const totalReturn = Object.entries(returnQuantities).reduce((sum, [itemId, qty]) => {
-    const item = selectedInvoice.detalle_ventas.find(d => d.id === itemId);
-    return sum + (Number(qty) * Number(item?.precio_unitario || 0));
-  }, 0);
+  const returnQuote = getReturnQuote(selectedInvoice, returnQuantities);
+  const totalReturn = returnQuote.total;
 
   const totalPreviouslyReturned = Number(selectedInvoice.total_devuelto || 0);
-  const originalPaid = Number(selectedInvoice.total_pagado || 0);
+  const originalPaid = getMoneyAppliedToSale(selectedInvoice);
+  const refundableMoney = Math.max(0, originalPaid - Number(selectedInvoice.total_reembolsado || 0));
   const returnReasonOptions = ["Damaged", "Wrong item", "Customer changed mind", "Duplicate purchase"];
 
   return (
@@ -4765,8 +4793,8 @@ function renderReturnDetails() {
       {storeMode && (
         <div className="grid grid-cols-3 gap-2 mb-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="text-[10px] uppercase font-bold text-slate-500">Paid originally</div>
-            <div className="text-base font-black text-slate-900 mt-1">{fmt(originalPaid)}</div>
+            <div className="text-[10px] uppercase font-bold text-slate-500">Money refundable</div>
+            <div className="text-base font-black text-slate-900 mt-1">{fmt(refundableMoney)}</div>
           </div>
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
             <div className="text-[10px] uppercase font-bold text-amber-700">Returned before</div>
@@ -4805,7 +4833,7 @@ function renderReturnDetails() {
               <div className="flex-1">
                 <span className="font-semibold text-sm">{item.productos.nombre}</span>
                 <div className="text-xs text-gray-500">
-                  {fmt(item.precio_unitario)} ea. · 
+                  {fmt(getReturnLineUnit(item))} ea. ·
                   Bought: {item.cantidad}
                   {alreadyReturned > 0 && (
                     <span className="text-orange-600 ml-1">
@@ -4938,6 +4966,11 @@ function renderReturnDetails() {
           <div className={`text-3xl font-black ${returnType === "credit" ? "text-blue-700" : "text-orange-700"}`}>
             {fmt(totalReturn)}
           </div>
+          {returnQuote.tax > 0 && (
+            <div className="mt-1 text-xs font-semibold text-gray-600">
+              Includes {fmt(returnQuote.tax)} tax refund{returnQuote.taxIncluded ? " already included in item prices" : ""}
+            </div>
+          )}
           <div className="text-xs text-gray-600 mt-1">
             {returnType === "credit"
               ? `📉 ${fmt(totalReturn)} reduces ${selectedClient?.nombre || "customer"}'s debt. No cash leaves the business.`

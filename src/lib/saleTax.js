@@ -1,5 +1,5 @@
 export function getSaleTaxParts(sale, fallbackConfig = {}) {
-  let payment = sale?.pago_json || {};
+  let payment = sale?.pago ?? sale?.pago_json ?? {};
   if (typeof payment === "string") {
     try { payment = JSON.parse(payment); } catch { payment = {}; }
   }

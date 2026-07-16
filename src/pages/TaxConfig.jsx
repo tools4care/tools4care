@@ -92,7 +92,7 @@ export default function TaxConfig() {
       const { start, end } = getPeriodRange(p);
       let q = supabase
         .from("ventas")
-        .select("id,fecha,total,total_venta,pago_json,pago_efectivo,pago_tarjeta,pago_transferencia,pago_otro,estado_pago")
+        .select("id,fecha,total,total_venta,pago,pago_efectivo,pago_tarjeta,pago_transferencia,pago_otro,estado_pago")
         .eq("van_id", van.id)
         .or("tipo.eq.venta,tipo.is.null")
         .order("fecha", { ascending: false })
