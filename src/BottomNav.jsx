@@ -81,7 +81,7 @@ export default function BottomNav() {
   const [showSaleSheet, setShowSaleSheet] = useState(false);
   const [showServices, setShowServices] = useState(false);
   const { usuario, setUsuario }       = useUsuario();
-  const { van }                       = useVan();
+  const { van, setVan }               = useVan();
   const { storeMode, isExplicitStore, setStoreMode } = useStoreMode();
   const { puedeVerModulo, puedeCambiarVan } = usePermisos();
   const navigate                      = useNavigate();
@@ -103,6 +103,7 @@ export default function BottomNav() {
   /* ── Logout ───────────────────────────────────────── */
   const handleLogout = async () => {
     setShowMore(false);
+    setVan(null);
     await supabase.auth.signOut();
     setUsuario(null);
     navigate("/login");

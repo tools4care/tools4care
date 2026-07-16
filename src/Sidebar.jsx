@@ -4,6 +4,7 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { usePermisos } from "./hooks/usePermisos";
 import { useStoreMode } from "./hooks/useStoreMode";
+import { supabase } from "./supabaseClient";
 // ICONS Phosphor (duotone)
 import {
   Gauge,
@@ -123,9 +124,13 @@ export default function Sidebar() {
   const servicesActive = services.some(({ to }) => location.pathname === to || location.pathname.startsWith(`${to}/`));
   const servicesExpanded = servicesOpen || servicesActive;
 
-  function handleLogout() {
-    localStorage.clear();
-    window.location.href = "/login";
+  async function handleLogout() {
+    setVan(null);
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      window.location.href = "/login";
+    }
   }
 
   return (
@@ -240,8 +245,6 @@ export default function Sidebar() {
           <button
             onClick={() => {
               setVan(null);
-              localStorage.removeItem("van");
-              localStorage.removeItem("tools4care_selected_van");
               navigate("/van", { replace: true });
             }}
             className="w-full bg-amber-400/10 hover:bg-amber-400/20 text-amber-200 border border-amber-300/20 py-2 px-3 rounded-xl font-semibold text-xs transition-colors"

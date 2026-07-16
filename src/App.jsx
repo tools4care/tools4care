@@ -8,6 +8,7 @@ const VanSelector = lazy(() => import("./components/VanSelector"));
 const Dashboard = lazy(() => import("./Dashboard"));
 const StoreDashboard = lazy(() => import("./store/StoreDashboard"));
 const StoreRegister = lazy(() => import("./store/StoreRegister"));
+const StoreShiftGate = lazy(() => import("./store/StoreShiftGate"));
 const CustomerDisplay = lazy(() => import("./store/CustomerDisplay"));
 const Clientes = lazy(() => import("./Clientes"));
 const Productos = lazy(() => import("./Productos"));
@@ -141,6 +142,7 @@ function LayoutInterior() {
         onSyncNow={sincronizarAhora}
       />
       <SyncToast />
+      <Suspense fallback={null}><StoreShiftGate /></Suspense>
       <Suspense fallback={null}><GlobalSearch /></Suspense>
       <div className="hidden lg:block">
         <Sidebar />

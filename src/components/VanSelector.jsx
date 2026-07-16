@@ -1,5 +1,5 @@
 // src/components/VanSelector.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVan } from "../hooks/VanContext";
 import { useUsuario } from "../UsuarioContext";
@@ -31,7 +31,7 @@ export default function VanSelector({ onSelect }) {
   const [restricted, setRestricted] = useState(false);
   const searchRef = useRef(null);
 
-  async function loadVans({ silent = false } = {}) {
+  const loadVans = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     setErr("");
     try {
@@ -82,7 +82,7 @@ export default function VanSelector({ onSelect }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [usuario?.id, usuario?.rol]);
 
   useEffect(() => {
     setVans([]);
@@ -101,7 +101,7 @@ export default function VanSelector({ onSelect }) {
 
     loadVans({ silent: true });
     requestAnimationFrame(() => searchRef.current?.focus());
-  }, [usuario?.id, usuario?.rol]);
+  }, [loadVans, usuario?.id]);
 
   const filteredVans = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -116,17 +116,7 @@ export default function VanSelector({ onSelect }) {
     setSavingId(v.id);
     // Keep compatibility with existing modules that read nombre_van.
     const compatible = { ...v, nombre_van: getVanName(v) };
-    const syncResult = setVan(compatible);
-    if (syncResult && typeof syncResult.catch === "function") {
-      syncResult.catch((syncError) => {
-        console.warn("Could not sync selected van:", syncError?.message || syncError);
-      });
-    }
-    try {
-      localStorage.setItem("van", JSON.stringify(compatible));
-    } catch (storageError) {
-      console.warn("Could not save selected van:", storageError?.message || storageError);
-    }
+    setVan(compatible);
 
     if (onSelect) {
       onSelect(compatible);
@@ -161,7 +151,7 @@ export default function VanSelector({ onSelect }) {
                   Choose where you are working.
                 </h2>
                 <p className="mt-4 max-w-sm text-sm leading-6 text-slate-300">
-                  Your selection is saved on this device and synced to your session when connection is available.
+                  Choose explicitly at the start of each browser session. Refreshing this tab keeps your current workspace.
                 </p>
 
                 <div className="mt-8 grid grid-cols-2 gap-3">

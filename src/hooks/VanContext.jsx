@@ -1,13 +1,18 @@
 // src/hooks/VanContext.jsx
 // =====================================================================
-// VanContext MEJORADO: Persiste la selección de van en Supabase
-// para que ambos dispositivos (PC + Phone) compartan la misma van
+// Workspace location is explicitly confirmed per user and browser session.
+// It is intentionally not synchronized between devices.
 // =====================================================================
 /* eslint-disable react-refresh/only-export-components */
 
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import { useUsuario } from "../UsuarioContext";
+import {
+  clearConfirmedLocation,
+  loadConfirmedLocation,
+  persistConfirmedLocation,
+} from "../lib/locationSession";
 
 const VanContext = createContext();
 
@@ -15,83 +20,51 @@ export function useVan() {
   return useContext(VanContext);
 }
 
-// Key para localStorage (backup local)
-const VAN_STORAGE_KEY = "tools4care_selected_van";
-
 export default function VanProvider({ children }) {
   const { usuario } = useUsuario();
   const [validatedLocationKey, setValidatedLocationKey] = useState("");
-  const [van, setVanState] = useState(() => {
-    // Inicializar desde localStorage
-    try {
-      const saved = localStorage.getItem(VAN_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
+  const [locationSessionCheckedFor, setLocationSessionCheckedFor] = useState("");
+  const [van, setVanState] = useState(null);
+  const previousUserIdRef = useRef(null);
+
+  // A location is operational state, not an account preference. Restore it
+  // only when this same user confirmed it in the current browser session.
+  useEffect(() => {
+    const previousUserId = previousUserIdRef.current;
+    if (!usuario?.id) {
+      if (previousUserId) {
+        try { clearConfirmedLocation(previousUserId); } catch { /* optional storage */ }
+      }
+      previousUserIdRef.current = null;
+      setVanState(null);
+      setLocationSessionCheckedFor("");
+      return;
     }
-  });
 
-  // Wrapper de setVan que también guarda en localStorage y en Supabase
-  const setVan = async (newVan) => {
+    if (previousUserId && previousUserId !== usuario.id) {
+      try { clearConfirmedLocation(previousUserId); } catch { /* optional storage */ }
+    }
+    previousUserIdRef.current = usuario.id;
+    let confirmed = null;
+    try { confirmed = loadConfirmedLocation(usuario.id); } catch { /* optional storage */ }
+    setVanState(confirmed);
+    setLocationSessionCheckedFor(usuario.id);
+  }, [usuario?.id]);
+
+  // Keep the confirmed location on this device/session. Do not restore or
+  // synchronize it across devices: each workstation must choose explicitly.
+  const setVan = (newVan) => {
     setVanState(newVan);
-
-    // Guardar en localStorage (siempre funciona, incluso offline)
     try {
       if (newVan) {
-        localStorage.setItem(VAN_STORAGE_KEY, JSON.stringify(newVan));
+        persistConfirmedLocation(usuario?.id, newVan);
       } else {
-        localStorage.removeItem(VAN_STORAGE_KEY);
+        clearConfirmedLocation(usuario?.id);
       }
     } catch {
-      // localStorage is optional (for example in restricted private browsing).
-    }
-
-    // Guardar en Supabase (para sync entre dispositivos)
-    if (usuario?.id && newVan?.id) {
-      try {
-        await supabase
-          .from("usuario_sesion")
-          .upsert(
-            {
-              usuario_id: usuario.id,
-              van_id: newVan.id,
-              van_data: newVan,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "usuario_id" }
-          );
-      } catch (err) {
-        // Si la tabla no existe, no pasa nada
-        console.warn("Could not sync van selection:", err?.message);
-      }
+      // Storage is optional (for example in restricted private browsing).
     }
   };
-
-  // Al iniciar, intentar cargar la van desde Supabase
-  // (por si el otro dispositivo ya seleccionó una)
-  useEffect(() => {
-    async function syncVanFromCloud() {
-      if (!usuario?.id || van?.id) return; // Ya tiene van, no sobrescribir
-
-      try {
-        const { data } = await supabase
-          .from("usuario_sesion")
-          .select("van_id, van_data")
-          .eq("usuario_id", usuario.id)
-          .maybeSingle();
-
-        if (data?.van_data && data.van_data.id) {
-          console.log("🔄 Van loaded from cloud session:", data.van_data.nombre);
-          setVanState(data.van_data);
-          localStorage.setItem(VAN_STORAGE_KEY, JSON.stringify(data.van_data));
-        }
-      } catch {
-        // Si la tabla no existe, usar localStorage
-      }
-    }
-
-    syncVanFromCloud();
-  }, [usuario?.id]);
 
   // Invalidate a location saved on this device when an administrator later
   // restricts the user to a different set of locations. No assignment rows
@@ -116,8 +89,7 @@ export default function VanProvider({ children }) {
         if (!allowed) {
           setVanState(null);
           try {
-            localStorage.removeItem(VAN_STORAGE_KEY);
-            localStorage.removeItem("van");
+            clearConfirmedLocation(usuario.id);
           } catch {
             // Storage may be unavailable in private browsing; state is enough.
           }
@@ -133,7 +105,10 @@ export default function VanProvider({ children }) {
 
   const currentLocationKey = usuario?.id && van?.id ? `${usuario.id}:${van.id}` : "";
   const locationAccessChecking = Boolean(
-    usuario?.id && usuario?.rol !== "admin" && van?.id && validatedLocationKey !== currentLocationKey
+    usuario?.id && (
+      locationSessionCheckedFor !== usuario.id
+      || (usuario?.rol !== "admin" && van?.id && validatedLocationKey !== currentLocationKey)
+    )
   );
 
   return (
