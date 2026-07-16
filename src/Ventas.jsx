@@ -3757,6 +3757,14 @@ async function handleProcessReturn() {
       return;
     }
 
+    let returnCashSession = null;
+    if (storeMode) {
+      returnCashSession = await resolveOpenStoreCashSession(supabase, van.id, usuario.id);
+      if (!returnCashSession?.id) {
+        throw new Error("Open the Cash Register on this computer before processing a store return.");
+      }
+    }
+
     const returnTransactionId = makeUUID();
     const { data: returnResult, error: returnError } = await supabase.rpc(
       "procesar_devolucion_transaccional",
@@ -3780,6 +3788,17 @@ async function handleProcessReturn() {
     const result = returnResult?.[0];
     if (!result?.venta_devolucion_id) {
       throw new Error("The transactional return did not return a return ID.");
+    }
+
+    if (returnCashSession?.id) {
+      const registerLink = await supabase.rpc("attach_store_sale_to_session", {
+        p_sale_id: result.venta_devolucion_id,
+        p_session_id: returnCashSession.id,
+      });
+      if (registerLink.error) {
+        console.error("Return saved but could not be linked to the store register:", registerLink.error);
+        toast.warning("Return saved, but its cash-register link needs review.", 7000);
+      }
     }
 
     const finalTotal = Number(result.total_devolucion || totalRefund);

@@ -8,6 +8,12 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import QRCode from "qrcode";
 import { loadPdfLibs } from "./utils/lazyPdf";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useStoreMode } from "./hooks/useStoreMode";
+import { useUsuario } from "./UsuarioContext";
+import {
+  getStoredStoreCashSessionId,
+  resolveOpenStoreCashSession,
+} from "./lib/storeRegister";
 import { clientDigits, filterClientsLocal, isPhoneLikeSearch, phoneSearchVariants } from "./utils/clientSearch";
 import Avatar from "./components/ui/Avatar";
 import {
@@ -2419,6 +2425,8 @@ function ClienteStatsModal({
 /* -------------------- MODAL: ABONO CON QR STRIPE -------------------- */
 function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { van } = useVan();
+  const { usuario } = useUsuario();
+  const { storeMode } = useStoreMode();
   const { toast } = useToast();
 
   // Snapshot de saldo al abrir (evita saltos)
@@ -2815,6 +2823,21 @@ let restante = pago;
         ? `Check - ${checkReference.trim()}`
         : metodo;
 
+      const paymentTransactionId = makeUUID();
+      let storeCashSession = null;
+      if (storeMode) {
+        if (!usuario?.id) throw new Error("A signed-in cashier is required.");
+        if (navigator.onLine) {
+          storeCashSession = await resolveOpenStoreCashSession(supabase, van.id, usuario.id);
+        } else {
+          const storedSessionId = getStoredStoreCashSessionId(van.id);
+          storeCashSession = storedSessionId ? { id: storedSessionId } : null;
+        }
+        if (!storeCashSession?.id) {
+          throw new Error("Open the Cash Register on this computer before collecting a store payment.");
+        }
+      }
+
       // ── MODO OFFLINE: guardar en cola local ───────────────────
       if (!navigator.onLine) {
         await guardarPagoOffline({
@@ -2823,6 +2846,8 @@ let restante = pago;
           monto: pagoAplicado,
           metodo_pago: metodoPagoFinal,
           fecha_pago: new Date().toISOString(),
+          transaction_id: paymentTransactionId,
+          store_cash_session_id: storeCashSession?.id || null,
           _cliente_nombre: cliente?.nombre || "",
         });
         const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
@@ -2834,38 +2859,53 @@ let restante = pago;
       }
 
       let rpcOk = false;
-      try {
-        const { error } = await supabase.rpc("cxc_registrar_pago", {
-          p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_idem: makeUUID(),
+      if (storeMode) {
+        const storePayment = await supabase.rpc("record_store_ar_payment", {
+          p_cliente_id: cliente.id,
+          p_location_id: van.id,
+          p_session_id: storeCashSession.id,
+          p_amount: pagoAplicado,
+          p_method: metodoPagoFinal,
+          p_reference: metodo === "Check" ? checkReference.trim() : null,
+          p_transaction_id: paymentTransactionId,
+          p_paid_at: new Date().toISOString(),
         });
-        if (!error) rpcOk = true;
-      } catch (err) {
-        const msg = String(err?.message || "");
-        if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
-          const handleSecondCall = async () => {
-            try {
-              const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
-                p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_fecha: new Date().toISOString(),
-              });
-              if (!e2) {
+        if (storePayment.error) throw storePayment.error;
+        rpcOk = true;
+      } else {
+        try {
+          const { error } = await supabase.rpc("cxc_registrar_pago", {
+            p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_idem: makeUUID(),
+          });
+          if (!error) rpcOk = true;
+        } catch (err) {
+          const msg = String(err?.message || "");
+          if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
+            const handleSecondCall = async () => {
+              try {
+                const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
+                  p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_fecha: new Date().toISOString(),
+                });
+                if (!e2) {
+                  rpcOk = true;
+                } else if (e2.code && e2.code !== "42883") {
+                  throw e2;
+                }
+              } catch (e2) {
+                if (e2.code && e2.code !== "42883") {
+                  throw e2;
+                }
                 rpcOk = true;
-              } else if (e2.code && e2.code !== "42883") {
-                throw e2;
               }
-            } catch (e2) {
-              if (e2.code && e2.code !== "42883") {
-                throw e2;
-              }
-              rpcOk = true;
-            }
-          };
-          await handleSecondCall();
-        } else if (err?.code && err.code !== "42883") { 
-          throw err; 
+            };
+            await handleSecondCall();
+          } else if (err?.code && err.code !== "42883") {
+            throw err;
+          }
         }
       }
 
-      if (!rpcOk) {
+      if (!rpcOk && !storeMode) {
         const { error: insErr } = await supabase.from("pagos").insert([{
           cliente_id: cliente.id, van_id: van.id, monto: pagoAplicado, metodo_pago: metodoPagoFinal,
           referencia: metodo === "Check" ? checkReference.trim() : null, fecha_pago: new Date().toISOString(),

@@ -9,6 +9,7 @@ import { usePermisos } from "./hooks/usePermisos";
 import { logAudit } from "./lib/auditLog";
 import { getLocationType, isStoreLocation, LOCATION_TYPES } from "./lib/locationTypes";
 import { useSearchParams } from "react-router-dom";
+import InventoryTransferReceipts from "./components/InventoryTransferReceipts";
 import {
   barcodeVariants,
   filterProductRowsLocal,
@@ -465,6 +466,11 @@ export default function Inventory() {
           )}
         </div>
       </div>
+
+      <InventoryTransferReceipts
+        locationId={selected.tipo === "van" ? selected.id : null}
+        onReceived={() => { setPage(0); setRefresh((value) => value + 1); }}
+      />
 
       {/* ── Alerts ───────────────────────────────────────────── */}
       <div className="max-w-4xl mx-auto px-4 mt-4 space-y-3">

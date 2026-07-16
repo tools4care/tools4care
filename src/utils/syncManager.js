@@ -271,6 +271,24 @@ export async function sincronizarPagosPendientes() {
 
     for (const pago of pagosPendientes) {
       try {
+        if (pago.store_cash_session_id) {
+          const { error: storePaymentError } = await supabase.rpc('record_store_ar_payment', {
+            p_cliente_id: pago.cliente_id,
+            p_location_id: pago.van_id,
+            p_session_id: pago.store_cash_session_id,
+            p_amount: pago.monto,
+            p_method: pago.metodo_pago,
+            p_reference: pago.referencia || null,
+            p_transaction_id: pago.transaction_id,
+            p_paid_at: pago.fecha_pago,
+          });
+          if (storePaymentError) throw storePaymentError;
+          await marcarPagoSincronizado(pago._offline_id);
+          sincronizados++;
+          console.log(`✅ Pago de tienda offline ${pago._offline_id} sincronizado con su turno de caja.`);
+          continue;
+        }
+
         // Intentar via RPC cxc_registrar_pago primero
         const { error: rpcError } = await supabase.rpc('cxc_registrar_pago', {
           p_cliente_id: pago.cliente_id,

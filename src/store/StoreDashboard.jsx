@@ -22,6 +22,7 @@ import { useVan } from "../hooks/VanContext";
 import { useLocationSettings } from "../hooks/useLocationSettings";
 import { usePermisos } from "../hooks/usePermisos";
 import { loadVanReorderRecommendations } from "../lib/reorderRecommendations";
+import { cashRefundAmount } from "../lib/paymentMethod";
 
 const money = (value) => Number(value || 0).toLocaleString("en-US", {
   style: "currency",
@@ -95,7 +96,7 @@ export default function StoreDashboard() {
     const [salesResult, stockResult] = await Promise.all([
       supabase
         .from("ventas")
-        .select("id,fecha,total,total_venta,total_pagado,pago_efectivo,pago_tarjeta,pago_transferencia,pago_otro,cambio,tipo,cliente_id,cliente_nombre,numero_factura")
+        .select("id,fecha,total,total_venta,total_pagado,pago_efectivo,pago_tarjeta,pago_transferencia,pago_otro,cambio,tipo,metodo_pago,cliente_id,cliente_nombre,numero_factura")
         .eq("van_id", van.id)
         .gte("fecha", start.toISOString())
         .lte("fecha", end.toISOString())
@@ -176,7 +177,7 @@ export default function StoreDashboard() {
     const gross = completed.reduce((sum, sale) => sum + Number(sale.total_venta ?? sale.total ?? 0), 0);
     const refunds = returns.reduce((sum, sale) => sum + Math.abs(Number(sale.total_venta ?? sale.total ?? 0)), 0);
     const cash = completed.reduce((sum, sale) => sum + Number(sale.pago_efectivo || 0), 0)
-      - returns.reduce((sum, sale) => sum + Math.abs(Number(sale.pago_efectivo || 0)), 0);
+      - returns.reduce((sum, sale) => sum + cashRefundAmount(sale), 0);
     const customers = new Set(completed.map((sale) => sale.cliente_id).filter(Boolean)).size;
     const lowStock = stock.filter((row) => Number(row.cantidad ?? row.qty ?? 0) <= 3);
     const outOfStock = lowStock.filter((row) => Number(row.cantidad ?? row.qty ?? 0) <= 0);

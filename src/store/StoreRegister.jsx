@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
+  Ban,
   Banknote,
   CircleAlert,
   History,
@@ -76,6 +77,8 @@ export default function StoreRegister() {
   const [closingNotes, setClosingNotes] = useState("");
   const [reopenId, setReopenId] = useState(null);
   const [reopenReason, setReopenReason] = useState("");
+  const [voidMovementId, setVoidMovementId] = useState(null);
+  const [voidReason, setVoidReason] = useState("");
 
   const activeSession = sessions.find((row) =>
     row.status === "open" && row.device_id === deviceId && row.cashier_id === usuario?.id
@@ -220,6 +223,20 @@ export default function StoreRegister() {
     });
   }
 
+  function voidMovement(event) {
+    event.preventDefault();
+    run(async () => {
+      if (!voidMovementId || voidReason.trim().length < 3) throw new Error("Enter a clear void reason.");
+      const result = await supabase.rpc("void_store_cash_movement", {
+        p_movement_id: voidMovementId,
+        p_reason: voidReason.trim(),
+      });
+      if (result.error) throw result.error;
+      setVoidMovementId(null);
+      setVoidReason("");
+    });
+  }
+
   const liveVariance = countedCash === "" || !summary
     ? null
     : Number(countedCash) - Number(summary.expected_cash || 0);
@@ -295,13 +312,15 @@ export default function StoreRegister() {
               </div>
             </section>
 
-            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Expected Cash" value={money(summary?.expected_cash)} detail="Live drawer target" tone="green" />
               <Metric label="Opening Float" value={money(summary?.opening_float)} />
               <Metric label="Cash Sales" value={money(summary?.cash_sales)} detail={`${summary?.sales_count || 0} transactions`} tone="blue" />
+              <Metric label="A/R Cash Collected" value={money(summary?.ar_cash_collections)} detail={`${money(summary?.ar_total_collections)} by all methods`} tone="blue" />
               <Metric label="Deposits" value={money(summary?.manual_deposits)} tone="green" />
               <Metric label="Withdrawals" value={money(summary?.withdrawals)} tone="amber" />
               <Metric label="Expenses" value={money(summary?.expenses)} tone="red" />
+              <Metric label="Cash Refunds" value={money(summary?.cash_returns)} tone="red" />
             </section>
 
             <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
@@ -325,14 +344,14 @@ export default function StoreRegister() {
                 </form>
                 <div className="mt-6 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200">
                   {movements.length === 0 ? <div className="p-5 text-center text-sm font-semibold text-slate-400">No manual movements in this shift.</div> : movements.slice(0, 10).map((row) => (
-                    <div key={row.id} className={`flex items-center gap-3 px-4 py-3 ${row.voided_at ? "opacity-45 line-through" : ""}`}><span className={`h-2.5 w-2.5 rounded-full ${row.movement_type === "deposit" ? "bg-emerald-500" : row.movement_type === "expense" ? "bg-rose-500" : "bg-amber-500"}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold capitalize text-slate-800">{row.movement_type} · {row.reason}</div><div className="text-xs text-slate-400">{dateTime(row.created_at)}</div></div><div className="font-black tabular-nums text-slate-900">{row.movement_type === "deposit" ? "+" : "−"}{money(row.amount)}</div></div>
+                    <div key={row.id} className={`flex items-center gap-3 px-4 py-3 ${row.voided_at ? "opacity-45 line-through" : ""}`}><span className={`h-2.5 w-2.5 rounded-full ${row.movement_type === "deposit" ? "bg-emerald-500" : row.movement_type === "expense" ? "bg-rose-500" : "bg-amber-500"}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold capitalize text-slate-800">{row.movement_type} · {row.reason}</div><div className="text-xs text-slate-400">{dateTime(row.created_at)}{row.voided_at ? ` · voided: ${row.void_reason}` : ""}</div></div><div className="font-black tabular-nums text-slate-900">{row.movement_type === "deposit" ? "+" : "−"}{money(row.amount)}</div>{privileged && !row.voided_at && <button type="button" onClick={() => { setVoidMovementId(row.id); setVoidReason(""); }} className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-700" title="Void movement"><Ban size={16} /></button>}</div>
                   ))}
                 </div>
               </div>
 
               <form onSubmit={closeRegister} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
                 <div className="flex items-center gap-3"><LockKeyhole className="text-slate-700" /><div><h2 className="text-xl font-black text-slate-950">Close this register</h2><p className="text-sm text-slate-500">Count the physical cash without changing the expected amount.</p></div></div>
-                <div className="mt-5 rounded-2xl bg-slate-950 p-5 text-white"><div className="text-xs font-black uppercase tracking-widest text-slate-400">System expected</div><div className="mt-1 text-4xl font-black tabular-nums">{money(summary?.expected_cash)}</div><div className="mt-2 text-xs text-slate-400">Opening + cash sales − cash returns + deposits − withdrawals − expenses</div></div>
+                <div className="mt-5 rounded-2xl bg-slate-950 p-5 text-white"><div className="text-xs font-black uppercase tracking-widest text-slate-400">System expected</div><div className="mt-1 text-4xl font-black tabular-nums">{money(summary?.expected_cash)}</div><div className="mt-2 text-xs text-slate-400">Opening + cash sales + A/R cash − cash returns + deposits − withdrawals − expenses</div></div>
                 <label className="mt-5 block text-sm font-bold text-slate-700">Cash counted
                   <input type="number" min="0" step="0.01" value={countedCash} onChange={(e) => setCountedCash(e.target.value)} className="mt-2 w-full rounded-xl border-2 border-slate-200 px-4 py-4 text-2xl font-black outline-none focus:border-blue-500" placeholder="$0.00" required />
                 </label>
@@ -361,6 +380,7 @@ export default function StoreRegister() {
         </section>
 
         {reopenId && <form onSubmit={reopenSession} className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"><h2 className="text-xl font-black text-slate-950">Controlled Reopening</h2><p className="mt-2 text-sm text-slate-500">The previous close snapshot stays in history. Enter why this session must reopen.</p><textarea autoFocus value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} rows={4} className="mt-4 w-full rounded-xl border-2 border-amber-200 px-4 py-3 outline-none focus:border-amber-500" placeholder="Required supervisor reason…" required /><div className="mt-4 flex gap-3"><button type="button" onClick={() => setReopenId(null)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-black text-slate-600">Cancel</button><button disabled={saving} className="flex-1 rounded-xl bg-amber-600 px-4 py-3 font-black text-white disabled:opacity-50">Reopen Shift</button></div></div></form>}
+        {voidMovementId && <form onSubmit={voidMovement} className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"><h2 className="text-xl font-black text-slate-950">Void Cash Movement</h2><p className="mt-2 text-sm text-slate-500">The original movement remains visible. The supervisor, time and reason are added to the audit trail.</p><textarea autoFocus value={voidReason} onChange={(e) => setVoidReason(e.target.value)} rows={3} className="mt-4 w-full rounded-xl border-2 border-rose-200 px-4 py-3 outline-none focus:border-rose-500" placeholder="Required void reason…" required /><div className="mt-4 flex gap-3"><button type="button" onClick={() => setVoidMovementId(null)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-black text-slate-600">Cancel</button><button disabled={saving} className="flex-1 rounded-xl bg-rose-600 px-4 py-3 font-black text-white disabled:opacity-50">Void Movement</button></div></div></form>}
       </div>
     </div>
   );
