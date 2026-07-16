@@ -114,7 +114,26 @@ export default function StoreDashboard() {
     if (salesResult.error || stockResult.error) {
       setError(salesResult.error?.message || stockResult.error?.message || "Could not load the store dashboard.");
     }
-    setSales(salesResult.data || []);
+    const loadedSales = salesResult.data || [];
+    const customerIds = [...new Set(loadedSales.map((sale) => sale.cliente_id).filter(Boolean))];
+    let customerNames = new Map();
+    if (customerIds.length > 0) {
+      const { data: customers, error: customersError } = await supabase
+        .from("clientes")
+        .select("id,nombre,negocio")
+        .in("id", customerIds);
+      if (customersError) {
+        console.warn("Store dashboard customer names could not be resolved:", customersError);
+      } else {
+        customerNames = new Map((customers || []).map((customer) => {
+          return [customer.id, customer.nombre?.trim() || customer.negocio || "Customer"];
+        }));
+      }
+    }
+    setSales(loadedSales.map((sale) => ({
+      ...sale,
+      customer_display_name: sale.cliente_nombre || customerNames.get(sale.cliente_id) || null,
+    })));
     setStock(stockResult.data || []);
     setLoading(false);
 
@@ -258,7 +277,7 @@ export default function StoreDashboard() {
                       {isReturn ? <RotateCcw size={19} /> : <ShoppingCart size={19} />}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-bold text-slate-900">{sale.cliente_nombre || "Walk-in Customer"}</div>
+                      <div className="truncate font-bold text-slate-900">{sale.customer_display_name || (sale.cliente_id ? "Customer" : "Walk-in Customer")}</div>
                       <div className="text-xs text-slate-500">{new Date(sale.fecha).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} · {sale.numero_factura || sale.id.slice(0, 8)}</div>
                     </div>
                     <div className={`text-right font-black ${isReturn ? "text-rose-700" : "text-slate-900"}`}>
@@ -313,9 +332,21 @@ export default function StoreDashboard() {
           <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4"><TrendingUp className="text-blue-600" /><div><h2 className="text-lg font-black text-slate-950">Inventory Activity</h2><p className="text-sm text-slate-500">Who transferred, received or adjusted store merchandise</p></div></div>
             <div className="divide-y divide-slate-100">
-              {inventoryMovements.length === 0 ? <div className="p-7 text-center text-sm font-semibold text-slate-400">No store inventory movements recorded yet.</div> : inventoryMovements.slice(0, 8).map((movement) => (
-                <div key={movement.id} className="flex items-center gap-3 px-5 py-3"><span className={`h-2.5 w-2.5 rounded-full ${Number(movement.cantidad) >= 0 ? "bg-emerald-500" : "bg-rose-500"}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-slate-800">{movement.product_name || "Product"} · {String(movement.tipo || "movement").replaceAll("_", " ")}</div><div className="text-xs text-slate-400">{new Date(movement.fecha).toLocaleString("en-US")} · {movement.user_name || "System"}{movement.motivo ? ` · ${movement.motivo}` : ""}</div></div><div className={`font-black tabular-nums ${Number(movement.cantidad) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(movement.cantidad) >= 0 ? "+" : ""}{Number(movement.cantidad || 0)}</div></div>
-              ))}
+              {inventoryMovements.length === 0 ? <div className="p-7 text-center text-sm font-semibold text-slate-400">No store inventory movements recorded yet.</div> : inventoryMovements.slice(0, 8).map((movement) => {
+                const movementLabels = {
+                  AJUSTE_POSITIVO: "Positive adjustment",
+                  AJUSTE_NEGATIVO: "Negative adjustment",
+                  TRANSFERENCIA_ENTRADA: "Transfer in",
+                  TRANSFERENCIA_SALIDA: "Transfer out",
+                  VENTA: "Sale",
+                  DEVOLUCION: "Return",
+                };
+                const movementLabel = movementLabels[String(movement.tipo || "").toUpperCase()]
+                  || String(movement.tipo || "Movement").replaceAll("_", " ").toLowerCase().replace(/^./, (char) => char.toUpperCase());
+                return (
+                  <div key={movement.id} className="flex items-center gap-3 px-5 py-3"><span className={`h-2.5 w-2.5 rounded-full ${Number(movement.cantidad) >= 0 ? "bg-emerald-500" : "bg-rose-500"}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-slate-800">{movement.product_name || "Product"} · {movementLabel}</div><div className="text-xs text-slate-400">{new Date(movement.fecha).toLocaleString("en-US")} · {movement.user_name || "System"}{movement.motivo ? ` · ${movement.motivo}` : ""}</div></div><div className={`font-black tabular-nums ${Number(movement.cantidad) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(movement.cantidad) >= 0 ? "+" : ""}{Number(movement.cantidad || 0)}</div></div>
+                );
+              })}
             </div>
           </div>
         </section>

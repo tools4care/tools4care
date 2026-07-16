@@ -1953,7 +1953,7 @@ if (appMode === 'devolucion') {
     // Paso 1: Obtener ventas del cliente (SOLO tipo 'venta', no devoluciones)
     const { data: ventasData, error: ventasError } = await supabase
       .from('ventas')
-      .select('id, created_at, total, total_venta, total_pagado, estado_pago, pago')
+      .select('id, created_at, total, total_venta, total_pagado, estado_pago, pago, numero_factura')
       .eq('cliente_id', id)
       .eq('van_id', van.id)
       .eq('tipo', 'venta')  // 🔴 FIX: Solo ventas originales
@@ -2494,7 +2494,7 @@ useEffect(() => {
     }
   }, [step, van?.id, topProducts.length, allProducts.length, productsLoaded, productSearch, allProductsLoading]);
 
-  /* ---------- Walk-in return: load recent sales without a client ---------- */
+  /* ---------- Return receipt finder: search every sale at this location ---------- */
   async function loadWalkinSales(searchTerm = "") {
     if (!van?.id) return;
     setWalkinLoading(true);
@@ -2503,15 +2503,14 @@ useEffect(() => {
 
       let q = supabase
         .from("ventas")
-        .select("id, created_at, total, total_venta, total_pagado, estado_pago, cliente_id, pago")
+        .select("id, created_at, total, total_venta, total_pagado, estado_pago, cliente_id, cliente_nombre, pago, numero_factura")
         .eq("van_id", van.id)
         .eq("tipo", "venta")
-        .is("cliente_id", null)        // walk-in sales (no client)
         .order("created_at", { ascending: false });
 
       // Date search: if term looks like a date (contains / or - with digits), filter server-side
       // Accepts: "05/25", "05-25", "2026-05-25", "25/5", "may 25", etc.
-      const dateRe = /(\d{1,4})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/;
+      const dateRe = /^(\d{1,4})[/-](\d{1,2})(?:[/-](\d{2,4}))?$/;
       if (dateRe.test(term)) {
         // Try to extract a year-month-day to narrow the server query
         const parts = term.match(dateRe);
@@ -2522,13 +2521,30 @@ useEffect(() => {
         q = q.gte("created_at", `${dateStr.length === 7 ? dateStr + "-01" : dateStr}T00:00:00`)
              .lte("created_at", `${dateStr.length === 7 ? dateStr + "-31" : dateStr}T23:59:59`);
         q = q.limit(100);
+      } else if (term.length >= 2) {
+        // Invoice numbers are searched server-side so old receipts are still found.
+        const safeTerm = term.replace(/[%,()]/g, "").trim();
+        q = q.ilike("numero_factura", `%${safeTerm}%`).limit(100);
       } else {
-        // No date search → load last 60 and do client-side ID filter
         q = q.limit(60);
       }
 
-      const { data: ventasData, error } = await q;
+      let { data: ventasData, error } = await q;
       if (error) throw error;
+
+      // A receipt-ID or product search may not match numero_factura. In that case,
+      // inspect a wider recent window and apply the existing local matching below.
+      if (term.length >= 3 && !dateRe.test(term) && (!ventasData || ventasData.length === 0)) {
+        const fallback = await supabase
+          .from("ventas")
+          .select("id, created_at, total, total_venta, total_pagado, estado_pago, cliente_id, cliente_nombre, pago, numero_factura")
+          .eq("van_id", van.id)
+          .eq("tipo", "venta")
+          .order("created_at", { ascending: false })
+          .limit(500);
+        if (fallback.error) throw fallback.error;
+        ventasData = fallback.data || [];
+      }
 
       if (!ventasData || ventasData.length === 0) {
         setClientSalesHistory([]);
@@ -2537,6 +2553,12 @@ useEffect(() => {
       }
 
       const ventaIds = ventasData.map(v => v.id);
+
+      const customerIds = [...new Set(ventasData.map((venta) => venta.cliente_id).filter(Boolean))];
+      const { data: customerRows } = customerIds.length > 0
+        ? await supabase.from("clientes").select("*").in("id", customerIds)
+        : { data: [] };
+      const customersById = new Map((customerRows || []).map((customer) => [customer.id, customer]));
 
       // Load details + products
       const { data: detallesData } = await supabase
@@ -2597,7 +2619,8 @@ useEffect(() => {
           total_devuelto: devolucionesPorVenta.get(venta.id) || 0,
           total_reembolsado: totalReembolsado,
           tiene_devoluciones: (devolucionesPorVenta.get(venta.id) || 0) > 0,
-          _isWalkin: true,
+          _client: customersById.get(venta.cliente_id) || null,
+          _isWalkin: !venta.cliente_id,
         };
       });
 
@@ -2606,6 +2629,9 @@ useEffect(() => {
         const tl = term.toLowerCase();
         result = result.filter(v => {
           if (v.id.toLowerCase().includes(tl)) return true;
+          if ((v.numero_factura || "").toLowerCase().includes(tl)) return true;
+          if ((v.cliente_nombre || "").toLowerCase().includes(tl)) return true;
+          if (`${v._client?.nombre || ""} ${v._client?.negocio || ""}`.toLowerCase().includes(tl)) return true;
           // Date strings like "05/25/2026" or "2026-05-25"
           const dateLocale = new Date(v.created_at).toLocaleDateString("en-US");
           const dateISO    = new Date(v.created_at).toISOString().slice(0, 10);
@@ -2619,7 +2645,7 @@ useEffect(() => {
 
       setClientSalesHistory(result);
     } catch (err) {
-      console.error("Walk-in return load error:", err);
+      console.error("Return receipt search error:", err);
       setClientSalesHistory([]);
     } finally {
       setWalkinLoading(false);
@@ -4651,8 +4677,9 @@ function renderClientInvoiceList() {
   // Client-side filter by invoice # or date
   const tl = invoiceSearch.trim().toLowerCase();
   const filtered = tl.length >= 2
-    ? clientSalesHistory.filter(s => {
+      ? clientSalesHistory.filter(s => {
         if (s.id.toLowerCase().includes(tl)) return true;
+        if ((s.numero_factura || "").toLowerCase().includes(tl)) return true;
         const dateLocale = new Date(s.created_at).toLocaleDateString("en-US");
         const dateISO    = new Date(s.created_at).toISOString().slice(0, 10);
         if (dateLocale.includes(tl) || dateISO.includes(tl)) return true;
@@ -4725,7 +4752,7 @@ function renderClientInvoiceList() {
             >
               <div className="min-w-0">
                 <div className="font-mono text-xs font-bold text-gray-700 flex items-center gap-1 flex-wrap">
-                  #{sale.id.slice(0, 8)}…
+                  {sale.numero_factura || `#${sale.id.slice(0, 8)}…`}
                   {sale.tiene_devoluciones && (
                     <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">partial return</span>
                   )}
@@ -5448,7 +5475,7 @@ function renderStepClient() {
   return (
     <div className="space-y-4">
 
-      {/* ── Walk-in Return mode panel ────────────────── */}
+      {/* ── Return receipt finder ────────────────── */}
       {appMode === 'devolucion' && (
         <div className="bg-orange-50 border-2 border-orange-300 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
@@ -5456,7 +5483,7 @@ function renderStepClient() {
               <span className="text-2xl">🔄</span>
               <div>
                 <div className="font-bold text-orange-900 text-sm">Return Mode Active</div>
-                <div className="text-orange-700 text-xs">Search a customer below, or tap Walk-in for a sale without client</div>
+                <div className="text-orange-700 text-xs">Find any sale by invoice number, receipt ID, date, product or customer</div>
               </div>
             </div>
             <button
@@ -5465,7 +5492,7 @@ function renderStepClient() {
             >✕ Exit Return Mode</button>
           </div>
 
-          {/* Walk-in option */}
+          {/* Receipt search option */}
           {!walkinDevolucion ? (
             <button
               onClick={() => { setWalkinDevolucion(true); loadWalkinSales(""); }}
@@ -5475,8 +5502,8 @@ function renderStepClient() {
                 <span className="text-xl">🧾</span>
               </div>
               <div className="text-left">
-                <div className="font-bold text-gray-900 text-sm">Walk-in Return (No Client)</div>
-                <div className="text-gray-500 text-xs">Return a sale that was made without a customer account</div>
+                <div className="font-bold text-gray-900 text-sm">Find Receipt for Return</div>
+                <div className="text-gray-500 text-xs">Search both customer and walk-in sales</div>
               </div>
             </button>
           ) : (
@@ -5486,7 +5513,7 @@ function renderStepClient() {
                   type="text"
                   value={walkinSearch}
                   onChange={(e) => { setWalkinSearch(e.target.value); loadWalkinSales(e.target.value); }}
-                  placeholder="🔍 Invoice #, date (05/25), or product name…"
+                  placeholder="🔍 Invoice #, receipt ID, date, product or customer…"
                   className="flex-1 border-2 border-orange-300 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none"
                   autoFocus
                 />
@@ -5495,9 +5522,9 @@ function renderStepClient() {
                   className="text-xs text-orange-600 underline px-2"
                 >Cancel</button>
               </div>
-              {walkinLoading && <div className="text-xs text-orange-600 text-center py-2">Loading walk-in sales…</div>}
+              {walkinLoading && <div className="text-xs text-orange-600 text-center py-2">Searching receipts…</div>}
               {!walkinLoading && clientSalesHistory.length === 0 && (
-                <div className="text-xs text-gray-500 text-center py-2">No walk-in sales found</div>
+                <div className="text-xs text-gray-500 text-center py-2">No matching receipts found</div>
               )}
               {!walkinLoading && clientSalesHistory.length > 0 && (
                 <div className="space-y-2 max-h-52 overflow-y-auto">
@@ -5506,7 +5533,11 @@ function renderStepClient() {
                     return (
                       <button
                         key={sale.id}
-                        onClick={() => { if (!alreadyReturned) setSelectedInvoice(sale); }}
+                        onClick={() => {
+                          if (alreadyReturned) return;
+                          setSelectedClient(sale._client || null);
+                          setSelectedInvoice(sale);
+                        }}
                         disabled={alreadyReturned}
                         className={`w-full text-left bg-white border rounded-xl px-3 py-2 text-sm transition-all flex justify-between items-center ${
                           alreadyReturned ? "opacity-40 cursor-not-allowed border-gray-200"
@@ -5515,7 +5546,8 @@ function renderStepClient() {
                         }`}
                       >
                         <div>
-                          <div className="font-mono font-bold text-gray-700 text-xs">#{sale.id.slice(0,8)}…</div>
+                          <div className="font-mono font-bold text-gray-700 text-xs">{sale.numero_factura || `#${sale.id.slice(0,8)}…`}</div>
+                          <div className="text-[10px] font-semibold text-blue-700">{sale._client ? `${sale._client.nombre || ""} ${sale._client.apellido || ""}`.trim() || sale._client.negocio || "Customer" : "Walk-in Customer"}</div>
                           <div className="text-[10px] text-gray-500">{new Date(sale.created_at).toLocaleString()}</div>
                           <div className="text-[10px] text-gray-600 mt-0.5">
                             {(sale.detalle_ventas || []).map(d => d.productos?.nombre).filter(Boolean).join(", ") || "—"}

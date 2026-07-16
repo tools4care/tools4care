@@ -584,7 +584,7 @@ async function askChannel({ hasPhone, hasEmail, confirmFn }) {
   const ok = await confirmFn("Send receipt via SMS?", { confirmLabel: "Send SMS", cancelLabel: "Skip" });
   return ok ? "sms" : null;
 }
-function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, prevBalance, newBalance, pointOfSaleName }) {
+function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, prevBalance, newBalance, pointOfSaleName, payments = [] }) {
   const lines = [];
   lines.push(`${COMPANY_NAME} — Payment Receipt`);
   lines.push(`Date: ${dateStr}`);
@@ -592,6 +592,9 @@ function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, pr
   if (clientName) lines.push(`Customer: ${clientName} (Credit #${creditNumber || "—"})`);
   lines.push("");
   lines.push(`Payment received: ${fmtCurrency(amount)}`);
+  if (payments.length > 1) {
+    payments.forEach((payment) => lines.push(`  ${payment.method}: ${fmtCurrency(payment.amount)}`));
+  }
   lines.push(`Previous balance: ${fmtCurrency(prevBalance)}`);
   lines.push(`*** New balance: ${fmtCurrency(newBalance)} ***`);
   lines.push("");
@@ -2451,6 +2454,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
 
   // 🔒 Candado anti doble submit
   const submitLockRef = useRef(false);
+  const paymentBatchRef = useRef(null);
 
   function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
@@ -2458,6 +2462,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [metodo, setMetodo] = useState("Cash");
   const [subMetodo, setSubMetodo] = useState(null);
   const [checkReference, setCheckReference] = useState("");
+  const [extraPayments, setExtraPayments] = useState([]);
   const [guardando, setGuardando] = useState(false);
   const [paymentDone, setPaymentDone] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
@@ -2557,8 +2562,12 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
     return () => { alive = false; };
   }, [cliente.id, setResumen]);
 
+  const totalPaymentAmount = useMemo(() => round2(
+    Number(monto || 0) + extraPayments.reduce((sum, part) => sum + Number(part.amount || 0), 0)
+  ), [monto, extraPayments]);
+
 const coberturaCuotas = useMemo(() => {
-    const pago = Math.round((Number(monto) || 0) * 100) / 100;
+    const pago = totalPaymentAmount;
 
     // Siempre calcular el total pendiente real
     const totalPendiente = cuotasPendientes.reduce(
@@ -2591,7 +2600,7 @@ let restante = pago;
     }
 
     return { cuotas: resultado, sobrante: Math.max(0, restante), totalPendiente: Math.round(totalPendiente * 100) / 100 };
-  }, [monto, cuotasPendientes]);
+  }, [totalPaymentAmount, cuotasPendientes]);
 
   const comprasPorMes = {};
   let totalLifetime = 0;
@@ -2605,7 +2614,7 @@ let restante = pago;
   const saldoActual = Number(saldoBase ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const limite = Number(resumen?.cxc?.limite ?? 0);
-  const montoNum = Number(monto || 0);
+  const montoNum = totalPaymentAmount;
 
   // Cálculo robusto en centavos
   const prevCents = Math.max(0, Math.round(saldoActual * 100));
@@ -2808,22 +2817,46 @@ let restante = pago;
       const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
       const saldoActualUI = round2(Number(saldoBase ?? resumen?.balance ?? cliente?.balance ?? 0));
-      const montoIngresado = round2(Number(monto || 0));
+      const buildMethodLabel = (method, transferMethod, reference) => method === "Transfer" && transferMethod
+        ? `Transfer - ${TRANSFER_SUBS.find((option) => option.key === transferMethod)?.label || transferMethod}`
+        : method === "Check"
+        ? `Check - ${String(reference || "").trim()}`
+        : method;
+      const rawPaymentParts = [
+        {
+          amount: round2(Number(monto || 0)),
+          method: buildMethodLabel(metodo, subMetodo, checkReference),
+          reference: metodo === "Check" ? checkReference.trim() : null,
+          baseMethod: metodo,
+        },
+        ...extraPayments.map((part) => ({
+          amount: round2(Number(part.amount || 0)),
+          method: buildMethodLabel(part.method, part.subMethod, part.reference),
+          reference: part.method === "Check" ? String(part.reference || "").trim() : null,
+          baseMethod: part.method,
+        })),
+      ];
+      if (rawPaymentParts.some((part) => !part.amount || part.amount <= 0)) {
+        throw new Error("Every payment source must have an amount greater than 0.");
+      }
+      if (rawPaymentParts.some((part) => part.baseMethod === "Check" && !part.reference)) {
+        throw new Error("Enter the check number or reference for every check payment.");
+      }
+      const montoIngresado = round2(rawPaymentParts.reduce((sum, part) => sum + part.amount, 0));
       if (!montoIngresado || montoIngresado <= 0) throw new Error("Invalid amount. Must be greater than 0.");
       if (saldoActualUI <= 0) { setMensaje(`This client has no pending balance. You must return ${montoIngresado.toFixed(2)} to the client.`); return; }
+      if (rawPaymentParts.length > 1 && montoIngresado > saldoActualUI + 0.005) {
+        throw new Error("A split payment cannot exceed the customer balance. Adjust the sources to the exact amount being paid.");
+      }
 
       const pagoAplicado = round2(Math.min(montoIngresado, saldoActualUI));
       const cambioDevuelto = round2(montoIngresado - pagoAplicado);
-      if (metodo === "Check" && !checkReference.trim()) {
-        throw new Error("Enter the check number or reference.");
-      }
-      const metodoPagoFinal = metodo === "Transfer" && subMetodo
-        ? `Transfer - ${TRANSFER_SUBS.find(s => s.key === subMetodo)?.label || subMetodo}`
-        : metodo === "Check"
-        ? `Check - ${checkReference.trim()}`
-        : metodo;
+      const appliedPaymentParts = rawPaymentParts.length === 1
+        ? [{ ...rawPaymentParts[0], amount: pagoAplicado }]
+        : rawPaymentParts;
 
-      const paymentTransactionId = makeUUID();
+      const paymentBatchId = paymentBatchRef.current || makeUUID();
+      paymentBatchRef.current = paymentBatchId;
       let storeCashSession = null;
       if (storeMode) {
         if (!usuario?.id) throw new Error("A signed-in cashier is required.");
@@ -2840,78 +2873,46 @@ let restante = pago;
 
       // ── MODO OFFLINE: guardar en cola local ───────────────────
       if (!navigator.onLine) {
-        await guardarPagoOffline({
-          cliente_id: cliente.id,
-          van_id: van.id,
-          monto: pagoAplicado,
-          metodo_pago: metodoPagoFinal,
-          fecha_pago: new Date().toISOString(),
-          transaction_id: paymentTransactionId,
-          store_cash_session_id: storeCashSession?.id || null,
-          _cliente_nombre: cliente?.nombre || "",
-        });
+        const paidAt = new Date().toISOString();
+        for (const part of appliedPaymentParts) {
+          await guardarPagoOffline({
+            cliente_id: cliente.id,
+            van_id: van.id,
+            monto: part.amount,
+            metodo_pago: part.method,
+            referencia: part.reference,
+            fecha_pago: paidAt,
+            transaction_id: makeUUID(),
+            payment_batch_id: paymentBatchId,
+            store_cash_session_id: storeCashSession?.id || null,
+            _cliente_nombre: cliente?.nombre || "",
+          });
+        }
         const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
         setSaldoBase(saldoDespues);
         setMonto("");
+        setExtraPayments([]);
+        paymentBatchRef.current = null;
         setMensaje(`💾 Payment of $${pagoAplicado.toFixed(2)} saved locally — will sync when connected.`);
         setTimeout(() => { if (typeof onClose === "function") onClose(); }, 2000);
         return;
       }
 
-      let rpcOk = false;
-      if (storeMode) {
-        const storePayment = await supabase.rpc("record_store_ar_payment", {
-          p_cliente_id: cliente.id,
-          p_location_id: van.id,
-          p_session_id: storeCashSession.id,
-          p_amount: pagoAplicado,
-          p_method: metodoPagoFinal,
-          p_reference: metodo === "Check" ? checkReference.trim() : null,
-          p_transaction_id: paymentTransactionId,
-          p_paid_at: new Date().toISOString(),
-        });
-        if (storePayment.error) throw storePayment.error;
-        rpcOk = true;
-      } else {
-        try {
-          const { error } = await supabase.rpc("cxc_registrar_pago", {
-            p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_idem: makeUUID(),
-          });
-          if (!error) rpcOk = true;
-        } catch (err) {
-          const msg = String(err?.message || "");
-          if (msg.toLowerCase().includes("best candidate") || msg.toLowerCase().includes("could not choose")) {
-            const handleSecondCall = async () => {
-              try {
-                const { error: e2 } = await supabase.rpc("cxc_registrar_pago", {
-                  p_cliente_id: cliente.id, p_monto: pagoAplicado, p_metodo: metodoPagoFinal, p_van_id: van.id, p_fecha: new Date().toISOString(),
-                });
-                if (!e2) {
-                  rpcOk = true;
-                } else if (e2.code && e2.code !== "42883") {
-                  throw e2;
-                }
-              } catch (e2) {
-                if (e2.code && e2.code !== "42883") {
-                  throw e2;
-                }
-                rpcOk = true;
-              }
-            };
-            await handleSecondCall();
-          } else if (err?.code && err.code !== "42883") {
-            throw err;
-          }
-        }
-      }
-
-      if (!rpcOk && !storeMode) {
-        const { error: insErr } = await supabase.from("pagos").insert([{
-          cliente_id: cliente.id, van_id: van.id, monto: pagoAplicado, metodo_pago: metodoPagoFinal,
-          referencia: metodo === "Check" ? checkReference.trim() : null, fecha_pago: new Date().toISOString(),
-        }]);
-        if (insErr) throw insErr;
-      }
+      const paidAt = new Date().toISOString();
+      const splitPayment = await supabase.rpc("record_split_ar_payment", {
+        p_cliente_id: cliente.id,
+        p_location_id: van.id,
+        p_session_id: storeCashSession?.id || null,
+        p_parts: appliedPaymentParts.map((part) => ({
+          amount: part.amount,
+          method: part.method,
+          reference: part.reference,
+          transaction_id: makeUUID(),
+        })),
+        p_transaction_id: paymentBatchId,
+        p_paid_at: paidAt,
+      });
+      if (splitPayment.error) throw splitPayment.error;
 
       const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
       setSaldoBase(saldoDespues);
@@ -2920,6 +2921,7 @@ let restante = pago;
       // limpiar input
       setMonto("");
       setCheckReference("");
+      setExtraPayments([]);
       setApplyCardFee(false);
 
       // refrescar CxC/tabla + cuotas
@@ -2938,9 +2940,11 @@ let restante = pago;
         prevBalance: saldoActualUI,
         newBalance: saldoDespues,
         cambioDevuelto,
+        payments: appliedPaymentParts.map((part) => ({ method: part.method, amount: part.amount })),
       };
       setReceiptData(payload);
       setPaymentDone(true);
+      paymentBatchRef.current = null;
 
     } catch (err) {
       setMensaje("❌ Error saving payment: " + (err?.message || "unknown"));
@@ -2981,7 +2985,7 @@ let restante = pago;
 
               <div className="space-y-4 mb-4">
                 <div>
-                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Amount</label>
+                  <label className="font-bold text-gray-800 mb-2 block text-lg">First Payment Source</label>
                   <input
                     className="w-full px-4 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 text-2xl font-bold"
                     placeholder="0.00"
@@ -3013,9 +3017,9 @@ let restante = pago;
                   )}
                 </div>
 
-                {/* Payment Method — movido aquí, arriba de los acuerdos */}
+                {/* Payment sources */}
                 <div>
-                  <label className="font-bold text-gray-800 mb-2 block text-lg">Payment Method</label>
+                  <label className="font-bold text-gray-800 mb-2 block text-lg">First Payment Method</label>
                   <div className="flex gap-2">
                     <select
                       className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white font-medium"
@@ -3088,6 +3092,69 @@ let restante = pago;
                       )}
                     </div>
                   )}
+
+                  {extraPayments.length > 0 && (
+                    <div className="mt-4 space-y-3 border-t-2 border-emerald-100 pt-4">
+                      {extraPayments.map((part, index) => (
+                        <div key={part.id} className="rounded-2xl border-2 border-emerald-200 bg-emerald-50/60 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <span className="text-sm font-black text-emerald-900">Payment source {index + 2}</span>
+                            <button
+                              type="button"
+                              onClick={() => setExtraPayments((current) => current.filter((item) => item.id !== part.id))}
+                              className="rounded-lg px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50"
+                            >Remove</button>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-[1fr_0.8fr]">
+                            <select
+                              value={part.method}
+                              onChange={(event) => setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, method: event.target.value, reference: "" } : item))}
+                              className="min-h-12 rounded-xl border-2 border-emerald-200 bg-white px-3 font-semibold outline-none focus:border-emerald-500"
+                            >
+                              <option value="Cash">💵 Cash</option>
+                              <option value="Card">💳 Card</option>
+                              <option value="Transfer">🏦 Transfer</option>
+                              <option value="Check">🧾 Check</option>
+                            </select>
+                            <input
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              value={part.amount}
+                              onChange={(event) => setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, amount: event.target.value } : item))}
+                              placeholder="$0.00"
+                              className="min-h-12 rounded-xl border-2 border-emerald-200 bg-white px-3 text-right text-lg font-black outline-none focus:border-emerald-500"
+                              required
+                            />
+                          </div>
+                          {part.method === "Check" && (
+                            <input
+                              value={part.reference || ""}
+                              onChange={(event) => setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, reference: event.target.value } : item))}
+                              placeholder="Check number / bank reference"
+                              className="mt-2 min-h-11 w-full rounded-xl border-2 border-amber-200 bg-white px-3 outline-none focus:border-amber-500"
+                              required
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <button
+                      type="button"
+                      disabled={extraPayments.length >= 3}
+                      onClick={() => setExtraPayments((current) => [...current, { id: makeUUID(), method: "Card", amount: "", reference: "" }])}
+                      className="min-h-11 rounded-xl border-2 border-emerald-500 bg-white px-4 font-black text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >+ Split payment</button>
+                    {extraPayments.length > 0 && (
+                      <div className="rounded-xl bg-slate-900 px-4 py-2 text-right text-white">
+                        <div className="text-[10px] font-bold uppercase tracking-wide text-slate-300">Combined payment</div>
+                        <div className="text-2xl font-black">{fmtSafe(totalPaymentAmount)}</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
               
@@ -3110,7 +3177,7 @@ let restante = pago;
     <div className="space-y-2">
       {cuotasPendientes.map((cuota, i) => {
         // Buscar cobertura solo si hay monto ingresado
-        const cobertura = Number(monto) > 0
+        const cobertura = totalPaymentAmount > 0
           ? coberturaCuotas.cuotas.find(c => c.id === cuota.id)
           : null;
 
@@ -3187,14 +3254,14 @@ let restante = pago;
     </div>
 
     {/* Hint cuando no hay monto ingresado */}
-    {Number(monto) === 0 && (
+    {totalPaymentAmount === 0 && (
       <div className="mt-3 text-center text-xs text-indigo-500 font-semibold py-2 border-t border-indigo-100">
         💡 Enter an amount above to see payment coverage
       </div>
     )}
 
     {/* Resumen + sugerencia */}
-    {Number(monto) > 0 && (
+    {totalPaymentAmount > 0 && (
       <div className={`mt-3 p-3 rounded-lg border-2 ${
         coberturaCuotas.cuotas.every(c => c.status === "pagada")
           ? "bg-green-100 border-green-400 text-green-900"
@@ -3207,7 +3274,7 @@ let restante = pago;
             const pagadas = coberturaCuotas.cuotas.filter(c => c.status === "pagada").length;
             const parciales = coberturaCuotas.cuotas.filter(c => c.status === "parcial").length;
             const total = cuotasPendientes.length;
-            const montoNum = Number(monto) || 0;
+            const montoNum = totalPaymentAmount;
 
             if (montoNum >= coberturaCuotas.totalPendiente) {
               return `🎉 Covers ALL ${total} installments! Agreement fully paid.`;
@@ -3235,12 +3302,12 @@ let restante = pago;
           if (!siguiente) return null;
 
           const faltante = parcial ? parcial.quedaPendiente : siguiente.pendiente;
-          const sugerido = Math.round(((Number(monto) || 0) + faltante) * 100) / 100;
+          const sugerido = Math.round((totalPaymentAmount + faltante) * 100) / 100;
 
           return (
             <button
               type="button"
-              onClick={() => setMonto(String(sugerido))}
+              onClick={() => setMonto(String(Math.round((Number(monto || 0) + faltante) * 100) / 100))}
               className="mt-2 text-xs underline font-semibold hover:opacity-80"
             >
               💡 Add ${faltante.toFixed(2)} to complete next → ${sugerido.toFixed(2)}
@@ -3361,6 +3428,19 @@ let restante = pago;
               {receiptData.cambioDevuelto > 0 && (
                 <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-3 text-center">
                   <span className="font-bold text-orange-700">⚠️ Return ${receiptData.cambioDevuelto.toFixed(2)} to customer</span>
+                </div>
+              )}
+              {receiptData.payments?.length > 1 && (
+                <div className="rounded-xl border-2 border-blue-100 bg-blue-50 p-3">
+                  <div className="mb-2 text-xs font-black uppercase tracking-wide text-blue-800">Payment breakdown</div>
+                  <div className="space-y-1">
+                    {receiptData.payments.map((payment, index) => (
+                      <div key={`${payment.method}-${index}`} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="font-semibold text-slate-700">{payment.method}</span>
+                        <span className="font-black text-slate-950">{fmtSafe(payment.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
               <p className="text-center text-sm text-gray-500 font-semibold pt-1">Send receipt to client?</p>
