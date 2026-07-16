@@ -3,6 +3,7 @@
 
 from datetime import date
 from pathlib import Path
+from shutil import copyfile
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -25,6 +26,7 @@ from reportlab.platypus import (
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output" / "pdf" / "TOOLS4CARE_Physical_Store_Employee_Guide.pdf"
+PUBLIC_OUTPUT = ROOT / "public" / "docs" / "TOOLS4CARE_Physical_Store_Employee_Guide.pdf"
 LOGO = ROOT / "public" / "icons" / "icon-512.png"
 
 PAGE_W, PAGE_H = letter
@@ -617,6 +619,8 @@ def main():
     frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="main")
     doc.addPageTemplates([PageTemplate(id="guide", frames=[frame], onPage=page_chrome)])
     doc.build(build_story())
+    PUBLIC_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    copyfile(OUTPUT, PUBLIC_OUTPUT)
     print(OUTPUT)
 
 

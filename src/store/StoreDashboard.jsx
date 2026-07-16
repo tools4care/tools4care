@@ -4,6 +4,7 @@ import {
   ArrowRight,
   ArrowLeftRight,
   BadgeDollarSign,
+  BookOpen,
   Boxes,
   ClipboardCheck,
   CircleDollarSign,
@@ -200,6 +201,14 @@ export default function StoreDashboard() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <a
+                href="/docs/TOOLS4CARE_Physical_Store_Employee_Guide.pdf"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold ring-1 ring-white/20 hover:bg-white/15"
+              >
+                <BookOpen size={17} /> Employee Guide
+              </a>
               <Link to="/tax" className="rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold ring-1 ring-white/20 hover:bg-white/15">
                 Tax: {settings.tax_enabled ? `${settings.tax_rate}% on` : "off"}
               </Link>
