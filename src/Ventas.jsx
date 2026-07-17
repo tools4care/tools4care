@@ -5614,7 +5614,7 @@ function renderStepClient() {
       {/* ── Walk-in return details: show product selector after invoice is picked ── */}
       {walkinDevolucion && renderReturnDetails()}
 
-      <div className={`space-y-3 ${clientSearchFocused || clientSearch.trim() ? "hidden sm:block" : ""}`}>
+      <div className="hidden space-y-3 sm:block">
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -5962,12 +5962,92 @@ function renderStepClient() {
               <span className="shrink-0 text-xs font-bold text-blue-600">Continue →</span>
             </button>
           )}
+          <details
+            data-testid="mobile-more-sales-tools"
+            className="group col-span-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+          >
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-bold text-slate-700">
+              <span>More sales tools</span>
+              <span className="text-blue-600 transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
+            </summary>
+            <div className="border-t border-slate-100 bg-slate-50/80 p-3">
+              <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <span>
+                  <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">Today</span>
+                  <span className="block text-xs font-bold text-slate-700">
+                    {todayStats.sales} {todayStats.sales === 1 ? "sale" : "sales"} · {todayStats.clients} {todayStats.clients === 1 ? "client" : "clients"}
+                  </span>
+                </span>
+                <span className="text-sm font-black text-amber-700">{fmt(todayStats.total)}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate("/clientes/nuevo", { replace: false })}
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-left transition-all active:scale-[0.98]"
+                >
+                  <span className="block text-xs font-black text-emerald-800">+ New customer</span>
+                  <span className="mt-0.5 block text-[10px] text-emerald-600">Create customer account</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate("/facturas")}
+                  className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-2.5 text-left transition-all active:scale-[0.98]"
+                >
+                  <span className="block text-xs font-black text-purple-800">Invoices</span>
+                  <span className="mt-0.5 block text-[10px] text-purple-600">Sales history</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate("/clientes")}
+                  className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-left transition-all active:scale-[0.98]"
+                >
+                  <span className="block text-xs font-black text-blue-800">Customers</span>
+                  <span className="mt-0.5 block text-[10px] text-blue-600">Search and manage</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => prepareOfflineData({ silent: false })}
+                  disabled={offlineReady.loading || globalSyncing}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left transition-all active:scale-[0.98] disabled:opacity-60"
+                >
+                  <span className="block text-xs font-black text-slate-800">Offline data</span>
+                  <span className="mt-0.5 block text-[10px] text-slate-500">
+                    {offlineReady.loading ? "Preparing…" : offlineCacheReady ? "Ready to sell" : "Prepare device"}
+                  </span>
+                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMigrationMode((value) => !value);
+                      toast.info(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
+                    }}
+                    className={`col-span-2 rounded-lg border px-3 py-2.5 text-left transition-all active:scale-[0.99] ${
+                      migrationMode
+                        ? "border-purple-600 bg-purple-600 text-white"
+                        : "border-purple-200 bg-white text-purple-800"
+                    }`}
+                  >
+                    <span className="block text-xs font-black">Opening balance adjustments</span>
+                    <span className={`mt-0.5 block text-[10px] ${migrationMode ? "text-purple-100" : "text-purple-600"}`}>
+                      {migrationMode ? "Adjustment mode is active" : "Admin tool · hidden during normal sales"}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </details>
         </section>
       )}
 
       <div
         ref={clientListRef}
         className={`overflow-auto overscroll-contain space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 sm:max-h-96 sm:p-3 lg:max-h-[480px] ${
+          clientsSafe.length === 0 && debouncedClientSearch.length < 2
+            ? "hidden sm:block"
+            : ""
+        } ${
           clientSearchFocused || clientSearch.trim()
             ? "max-h-[calc(100dvh-12rem)]"
             : "max-h-[48dvh]"
@@ -6078,7 +6158,7 @@ function renderStepClient() {
       </div>
 
       {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
-        <div className={`${clientSearchFocused ? "hidden sm:grid" : "grid"} grid-cols-2 gap-2 lg:grid-cols-4`}>
+        <div className="hidden grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
           <button
             type="button"
             onClick={startQuickSale}
