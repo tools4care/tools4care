@@ -5912,6 +5912,59 @@ function renderStepClient() {
         )}
       </section>
 
+      {appMode === "venta" && !clientSearch.trim() && (
+        <section
+          data-testid="mobile-sales-quick-actions"
+          aria-label="Quick sale actions"
+          className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,0.8fr)] gap-2 sm:hidden"
+        >
+          <button
+            type="button"
+            onClick={startQuickSale}
+            className="flex min-h-16 items-center gap-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 text-left text-white shadow-md transition-all active:scale-[0.98]"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-xl" aria-hidden="true">
+              ⚡
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-black leading-tight">Walk-in Sale</span>
+              <span className="mt-0.5 block text-[11px] font-medium text-blue-100">No customer account</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              refreshPendingSales({ silent: true });
+              setModalPendingSales(true);
+            }}
+            className="flex min-h-16 flex-col justify-center rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-left shadow-sm transition-all active:scale-[0.98]"
+          >
+            <span className="text-[11px] font-bold uppercase tracking-wide text-amber-700">Pending</span>
+            <span className="mt-0.5 text-sm font-black text-amber-950">
+              {pendingStats.total} {pendingStats.total === 1 ? "sale" : "sales"}
+            </span>
+          </button>
+          {recentClients[0] && (
+            <button
+              type="button"
+              onClick={() => handleClientSelect(recentClients[0])}
+              className="col-span-2 flex min-h-11 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition-all active:scale-[0.99]"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500" aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">Recent customer</span>
+                  <span className="block truncate text-sm font-bold text-slate-800">
+                    {recentClients[0].nombre} {recentClients[0].apellido || ""}
+                  </span>
+                </span>
+              </span>
+              <span className="shrink-0 text-xs font-bold text-blue-600">Continue →</span>
+            </button>
+          )}
+        </section>
+      )}
+
       <div
         ref={clientListRef}
         className={`overflow-auto overscroll-contain space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 sm:max-h-96 sm:p-3 lg:max-h-[480px] ${
@@ -5923,7 +5976,10 @@ function renderStepClient() {
         {/* ── EMPTY STATE: no search typed yet ── */}
         {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
           <div className="px-4 py-3 text-center sm:py-8">
-            <p className="text-sm font-semibold text-gray-500">Start typing a name, phone or business.</p>
+            <p className="text-sm font-semibold text-gray-500">
+              <span className="sm:hidden">Search above or start a walk-in sale.</span>
+              <span className="hidden sm:inline">Start typing a name, phone or business.</span>
+            </p>
             <p className="hidden sm:block text-xs text-gray-400 mt-2">
               Keyboard: arrows to move, Enter to select, Esc to clear.
             </p>
