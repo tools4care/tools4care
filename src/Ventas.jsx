@@ -1189,7 +1189,10 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [clientLoading, setClientLoading] = useState(false);
   const [clients, setClients] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
+  const [clientSearchFocused, setClientSearchFocused] = useState(false);
   const [focusedClientIdx, setFocusedClientIdx] = useState(-1);  // keyboard nav – client list
+  const clientSearchInputRef = useRef(null);
+  const clientSearchSectionRef = useRef(null);
   const clientListRef = useRef(null);                            // scroll target – client list
   const clientSearchSeqRef = useRef(0);
   const [focusedProductIdx, setFocusedProductIdx] = useState(-1); // keyboard nav – product list
@@ -3110,6 +3113,32 @@ useEffect(() => {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [step, saleSaveDisabled, showPOSActions]); // eslint-disable-line
+
+  useEffect(() => {
+    if (step !== 1 || selectedClient || appMode !== "venta") return undefined;
+    if (!window.matchMedia("(max-width: 767px)").matches) return undefined;
+
+    let attempts = 0;
+    const focusSearch = () => {
+      attempts += 1;
+      if (document.querySelector('[aria-modal="true"]')) {
+        if (attempts >= 15) window.clearInterval(timer);
+        return;
+      }
+      const input = clientSearchInputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      setClientSearchFocused(true);
+      window.requestAnimationFrame(() => {
+        clientSearchSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      });
+      window.clearInterval(timer);
+    };
+
+    const timer = window.setInterval(focusSearch, 200);
+    focusSearch();
+    return () => window.clearInterval(timer);
+  }, [appMode, selectedClient, step]);
 
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
@@ -5577,7 +5606,7 @@ function renderStepClient() {
       {/* ── Walk-in return details: show product selector after invoice is picked ── */}
       {walkinDevolucion && renderReturnDetails()}
 
-      <div className="space-y-3">
+      <div className={`space-y-3 ${clientSearchFocused || clientSearch.trim() ? "hidden sm:block" : ""}`}>
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -5749,7 +5778,11 @@ function renderStepClient() {
         )}
       </div>
 
-      <section data-testid="client-search-section" className="space-y-3 pt-2 sm:pt-4">
+      <section
+        ref={clientSearchSectionRef}
+        data-testid="client-search-section"
+        className="sticky top-0 z-20 -mx-1 space-y-2 scroll-mt-2 bg-white px-1 pb-2 pt-1 sm:static sm:mx-0 sm:space-y-3 sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-4"
+      >
         <div className="flex items-end justify-between gap-3 px-1">
           <div>
             <label htmlFor="client-search-input" className="block text-sm font-black text-slate-800">Find a customer</label>
@@ -5759,6 +5792,7 @@ function renderStepClient() {
         </div>
         <div className="relative">
           <input
+            ref={clientSearchInputRef}
             id="client-search-input"
             type="text"
             inputMode="search"
@@ -5776,6 +5810,15 @@ function renderStepClient() {
                 : 'border-slate-300 bg-white text-slate-900 shadow-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100'
             }`}
             value={clientSearch}
+            onFocus={() => {
+              setClientSearchFocused(true);
+              window.requestAnimationFrame(() => {
+                clientSearchSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+              });
+            }}
+            onBlur={() => {
+              window.setTimeout(() => setClientSearchFocused(false), 160);
+            }}
             onChange={(e) => {
               const value = e.target.value;
     
@@ -5820,7 +5863,6 @@ function renderStepClient() {
               setFocusedClientIdx(-1);
             }
           }}
-            autoFocus
           />
           {clientLoading ? (
             <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-gray-500">
@@ -5855,12 +5897,16 @@ function renderStepClient() {
 
       <div
         ref={clientListRef}
-        className="max-h-[52vh] overflow-auto space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 sm:max-h-96 sm:p-3 lg:max-h-[480px]"
+        className={`overflow-auto overscroll-contain space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 sm:max-h-96 sm:p-3 lg:max-h-[480px] ${
+          clientSearchFocused || clientSearch.trim()
+            ? "max-h-[calc(100dvh-12rem)]"
+            : "max-h-[48dvh]"
+        }`}
       >
         {/* ── EMPTY STATE: no search typed yet ── */}
         {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
-          <div className="py-8 px-4 text-center">
-            <p className="text-sm font-semibold text-gray-500">Type a phone number, name or business to search.</p>
+          <div className="px-4 py-3 text-center sm:py-8">
+            <p className="text-sm font-semibold text-gray-500">Start typing a name, phone or business.</p>
             <p className="hidden sm:block text-xs text-gray-400 mt-2">
               Keyboard: arrows to move, Enter to select, Esc to clear.
             </p>
@@ -5895,7 +5941,7 @@ function renderStepClient() {
             <div
               key={c.id}
               data-client-idx={i}
-              className={`cursor-pointer rounded-xl border-2 bg-white p-4 shadow-sm transition-all duration-150 ${
+              className={`cursor-pointer rounded-xl border-2 bg-white p-3 shadow-sm transition-all duration-150 sm:p-4 ${
                 isFocused
                   ? "border-blue-500 bg-blue-50 shadow-md ring-2 ring-blue-200"
                   : "border-transparent hover:border-blue-200 hover:bg-blue-50"
@@ -5930,7 +5976,7 @@ function renderStepClient() {
                   📞 {c.telefono || "—"}
                 </span>
                 {c.email && (
-                  <span className="flex w-full max-w-full items-center gap-1 truncate rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 font-mono text-blue-700 sm:w-auto sm:max-w-[200px]">
+                  <span className="hidden w-full max-w-full items-center gap-1 truncate rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 font-mono text-blue-700 sm:flex sm:w-auto sm:max-w-[200px]">
                     📧 {c.email}
                   </span>
                 )}
@@ -5940,14 +5986,14 @@ function renderStepClient() {
                   </span>
                 )}
                 {c.direccion && (
-                  <span className="flex w-full max-w-full items-center gap-1 truncate rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-700 sm:w-auto sm:max-w-[260px]">
+                  <span className="hidden w-full max-w-full items-center gap-1 truncate rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-700 sm:flex sm:w-auto sm:max-w-[260px]">
                     📍 {renderAddress(c.direccion)}
                   </span>
                 )}
               </div>
 
               {/* Row 3 — Balance / credit line */}
-              <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-100 text-[10px] text-gray-500">
+              <div className="mt-1.5 hidden items-center justify-between border-t border-gray-100 pt-1.5 text-[10px] text-gray-500 sm:flex">
                 <span className={hasDebt ? "text-red-600 font-semibold" : "text-emerald-600 font-semibold"}>
                   {hasDebt ? `Balance due: ${fmt(balance)}` : "No balance due"}
                 </span>
@@ -5959,7 +6005,7 @@ function renderStepClient() {
       </div>
 
       {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className={`${clientSearchFocused ? "hidden sm:grid" : "grid"} grid-cols-2 gap-2 lg:grid-cols-4`}>
           <button
             type="button"
             onClick={startQuickSale}

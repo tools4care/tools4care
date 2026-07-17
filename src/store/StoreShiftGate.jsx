@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowRight, Banknote, LockOpen, MapPin, RefreshCw, Store } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Banknote,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LockOpen,
+  MapPin,
+  MonitorUp,
+  RefreshCw,
+  Store,
+} from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { useVan } from "../hooks/VanContext";
 import { useUsuario } from "../UsuarioContext";
@@ -28,6 +40,9 @@ export default function StoreShiftGate() {
   const [registerName, setRegisterName] = useState(() => getStoreRegisterName());
   const [openingFloat, setOpeningFloat] = useState("0.00");
   const [openingNotes, setOpeningNotes] = useState("");
+  const [resumeMode, setResumeMode] = useState(false);
+  const [resumePassword, setResumePassword] = useState("");
+  const [showResumePassword, setShowResumePassword] = useState(false);
 
   const shouldGuard = isStoreLocation(van) && (
     location.pathname === "/"
@@ -77,6 +92,10 @@ export default function StoreShiftGate() {
       ) || null;
       setActiveSession(null);
       setBlockingSession(blocking);
+      if (!blocking) {
+        setResumeMode(false);
+        setResumePassword("");
+      }
     } catch (shiftError) {
       setActiveSession(null);
       setBlockingSession(null);
@@ -138,6 +157,52 @@ export default function StoreShiftGate() {
     }
   }
 
+  async function resumeShift(event) {
+    event.preventDefault();
+    if (!navigator.onLine) {
+      setError("Internet is required to securely resume a shift.");
+      return;
+    }
+    if (!usuario?.email || !resumePassword) {
+      setError("Enter your password to resume this shift.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      const authResult = await supabase.auth.signInWithPassword({
+        email: usuario.email,
+        password: resumePassword,
+      });
+      if (authResult.error || authResult.data?.user?.id !== usuario.id) {
+        throw new Error("Password could not be verified.");
+      }
+
+      setStoreRegisterName(registerName);
+      const result = await supabase.rpc("resume_store_cash_session", {
+        p_session_id: blockingSession.id,
+        p_new_device_id: deviceId,
+        p_register_name: registerName.trim() || "Main Register",
+      });
+      if (result.error) throw result.error;
+
+      setStoredStoreCashSessionId(van.id, result.data?.id || blockingSession.id);
+      setActiveSession(result.data || { ...blockingSession, device_id: deviceId });
+      setBlockingSession(null);
+      setResumeMode(false);
+      setResumePassword("");
+    } catch (resumeError) {
+      const message = resumeError?.message || "";
+      const authenticationFailed = /invalid login|password|credentials/i.test(message);
+      setError(authenticationFailed
+        ? "Password could not be verified. Try again."
+        : message || "The shift could not be resumed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (!shouldGuard || activeSession) return null;
 
   const anotherCashierOnThisComputer = blockingSession?.device_id === deviceId
@@ -153,8 +218,14 @@ export default function StoreShiftGate() {
             <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/20"><Store size={29} /></span>
             <div>
               <div className="text-xs font-black uppercase tracking-[0.18em] text-blue-200">Physical Store · Start of shift</div>
-              <h2 id="open-register-title" className="mt-1 text-2xl font-black sm:text-3xl">Open the cash register first</h2>
-              <p className="mt-2 text-sm text-blue-100">Each cashier and computer needs an auditable shift before sales or customer payments.</p>
+              <h2 id="open-register-title" className="mt-1 text-2xl font-black sm:text-3xl">
+                {thisCashierOnAnotherComputer ? "Resume your open shift" : "Open the cash register first"}
+              </h2>
+              <p className="mt-2 text-sm text-blue-100">
+                {thisCashierOnAnotherComputer
+                  ? "Continue the same shift on this computer without closing or starting over."
+                  : "Each cashier and computer needs an auditable shift before sales or customer payments."}
+              </p>
             </div>
           </div>
         </header>
@@ -186,14 +257,94 @@ export default function StoreShiftGate() {
                     {anotherCashierOnThisComputer
                       ? "Another cashier already has an open shift on this computer. Close that shift before signing in here."
                       : thisCashierOnAnotherComputer
-                      ? "Your cashier account already has an open shift on another computer. Review or close it before opening this register."
+                      ? "Your cashier account already has an open shift on another computer. Resume it here, or review it before closing."
                       : "This register already has an open shift that must be reviewed."}
                   </p>
                 </div>
               </div>
-              <button type="button" onClick={() => navigate("/store/register")} className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-4 text-lg font-black text-white">
-                {thisCashierOnAnotherComputer ? "Recover or Close Previous Shift" : "Review Cash Register"} <ArrowRight size={21} />
-              </button>
+              {thisCashierOnAnotherComputer ? (
+                resumeMode ? (
+                  <form onSubmit={resumeShift} className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                    <div className="flex items-start gap-3">
+                      <MonitorUp className="mt-0.5 shrink-0 text-blue-700" size={22} />
+                      <div>
+                        <div className="font-black text-blue-950">Move this shift to this computer</div>
+                        <p className="mt-1 text-xs font-semibold text-blue-800">
+                          All totals and transactions stay in the same shift. The previous computer will lose access.
+                        </p>
+                      </div>
+                    </div>
+                    <label className="mt-4 block text-sm font-black text-slate-700">
+                      Confirm your password
+                      <div className="relative mt-2">
+                        <KeyRound className="absolute left-3.5 top-3.5 text-blue-600" size={19} />
+                        <input
+                          type={showResumePassword ? "text" : "password"}
+                          value={resumePassword}
+                          onChange={(event) => setResumePassword(event.target.value)}
+                          autoComplete="current-password"
+                          autoFocus
+                          className="min-h-12 w-full rounded-xl border-2 border-blue-200 bg-white pl-11 pr-12 font-semibold outline-none focus:border-blue-500"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowResumePassword((visible) => !visible)}
+                          aria-label={showResumePassword ? "Hide password" : "Show password"}
+                          className="absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                        >
+                          {showResumePassword ? <EyeOff size={19} /> : <Eye size={19} />}
+                        </button>
+                      </div>
+                    </label>
+                    <button
+                      disabled={saving}
+                      className="mt-4 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-700 px-5 py-4 text-lg font-black text-white shadow-lg shadow-blue-200 disabled:opacity-50"
+                    >
+                      {saving
+                        ? <><RefreshCw className="animate-spin" size={21} />Resuming…</>
+                        : <><MonitorUp size={22} />Resume Shift Here</>}
+                    </button>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setResumeMode(false); setResumePassword(""); setError(""); }}
+                        className="min-h-11 rounded-xl border-2 border-slate-200 bg-white px-3 font-bold text-slate-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate("/store/register")}
+                        className="min-h-11 rounded-xl border-2 border-slate-300 bg-white px-3 font-bold text-slate-800"
+                      >
+                        Review & Close
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="mt-5 grid gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setResumeMode(true); setError(""); }}
+                      className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-700 px-5 py-4 text-lg font-black text-white shadow-lg shadow-blue-200"
+                    >
+                      <MonitorUp size={22} />Resume Shift on This Computer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate("/store/register")}
+                      className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border-2 border-slate-200 bg-white px-5 py-3 font-black text-slate-700"
+                    >
+                      Review or Close Previous Shift <ArrowRight size={19} />
+                    </button>
+                  </div>
+                )
+              ) : (
+                <button type="button" onClick={() => navigate("/store/register")} className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-4 text-lg font-black text-white">
+                  Review Cash Register <ArrowRight size={21} />
+                </button>
+              )}
             </div>
           ) : (
             <form onSubmit={openShift}>
