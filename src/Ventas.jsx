@@ -5857,6 +5857,11 @@ function renderStepClient() {
     }
 
               setClientSearch(value);
+              if (!value.trim()) {
+                setDebouncedClientSearch("");
+                setClients([]);
+                setFocusedClientIdx(-1);
+              }
             }}
           onKeyDown={(e) => {
             // ↓ Move focus down the list
@@ -5877,6 +5882,8 @@ function renderStepClient() {
             // Esc → clear search and reset focus
             } else if (e.key === "Escape") {
               setClientSearch("");
+              setDebouncedClientSearch("");
+              setClients([]);
               setFocusedClientIdx(-1);
             }
           }}
@@ -5888,7 +5895,12 @@ function renderStepClient() {
           ) : clientSearch ? (
             <button
               type="button"
-              onClick={() => { setClientSearch(""); setFocusedClientIdx(-1); }}
+              onClick={() => {
+                setClientSearch("");
+                setDebouncedClientSearch("");
+                setClients([]);
+                setFocusedClientIdx(-1);
+              }}
               aria-label="Clear customer search"
               className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-slate-100 text-lg font-bold text-slate-500 hover:bg-slate-200 active:scale-95"
             >
