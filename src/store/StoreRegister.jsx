@@ -22,6 +22,7 @@ import { usePermisos } from "../hooks/usePermisos";
 import {
   getStoreDeviceId,
   getStoreRegisterName,
+  selectManagedStoreCashSession,
   setStoreRegisterName,
   setStoredStoreCashSessionId,
 } from "../lib/storeRegister";
@@ -79,11 +80,19 @@ export default function StoreRegister() {
   const [reopenReason, setReopenReason] = useState("");
   const [voidMovementId, setVoidMovementId] = useState(null);
   const [voidReason, setVoidReason] = useState("");
+  const [reviewSessionId, setReviewSessionId] = useState(null);
 
   const activeSession = sessions.find((row) =>
     row.status === "open" && row.device_id === deviceId && row.cashier_id === usuario?.id
   ) || null;
   const deviceSession = sessions.find((row) => row.status === "open" && row.device_id === deviceId) || null;
+  const managedSession = selectManagedStoreCashSession(sessions, {
+    deviceId,
+    cashierId: usuario?.id,
+    reviewSessionId,
+    privileged,
+  });
+  const recoveryMode = Boolean(managedSession && managedSession.id !== activeSession?.id);
 
   const load = useCallback(async () => {
     if (!van?.id || !usuario?.id) return;
@@ -101,12 +110,19 @@ export default function StoreRegister() {
       setRegisters(Object.fromEntries(rows.map((row) => [row.register_id, { id: row.register_id, name: row.register_name, device_id: row.device_id }])));
 
       const current = rows.find((row) => row.status === "open" && row.device_id === deviceId && row.cashier_id === usuario.id);
-      if (current) {
-        setStoredStoreCashSessionId(van.id, current.id);
+      const selected = selectManagedStoreCashSession(rows, {
+        deviceId,
+        cashierId: usuario.id,
+        reviewSessionId,
+        privileged,
+      });
+
+      setStoredStoreCashSessionId(van.id, current?.id || null);
+      if (selected) {
         const [summaryResult, movementResult, eventResult] = await Promise.all([
-          supabase.rpc("get_store_cash_session_summary", { p_session_id: current.id }),
-          supabase.from("store_cash_movements").select("*").eq("session_id", current.id).order("created_at", { ascending: false }),
-          supabase.from("store_cash_session_events").select("*").eq("session_id", current.id).order("created_at", { ascending: false }).limit(20),
+          supabase.rpc("get_store_cash_session_summary", { p_session_id: selected.id }),
+          supabase.from("store_cash_movements").select("*").eq("session_id", selected.id).order("created_at", { ascending: false }),
+          supabase.from("store_cash_session_events").select("*").eq("session_id", selected.id).order("created_at", { ascending: false }).limit(20),
         ]);
         if (summaryResult.error) throw summaryResult.error;
         if (movementResult.error) throw movementResult.error;
@@ -115,7 +131,6 @@ export default function StoreRegister() {
         setMovements(movementResult.data || []);
         setEvents(eventResult.data || []);
       } else {
-        setStoredStoreCashSessionId(van.id, null);
         setSummary(null);
         setMovements([]);
         setEvents([]);
@@ -125,7 +140,7 @@ export default function StoreRegister() {
     } finally {
       setLoading(false);
     }
-  }, [deviceId, usuario?.id, van?.id]);
+  }, [deviceId, privileged, reviewSessionId, usuario?.id, van?.id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -195,10 +210,13 @@ export default function StoreRegister() {
     event.preventDefault();
     run(async () => {
       const amount = Number(countedCash);
-      if (!activeSession) throw new Error("There is no open session on this register.");
+      if (!managedSession) throw new Error("There is no open session to close.");
       if (!Number.isFinite(amount) || amount < 0) throw new Error("Enter the cash counted in the drawer.");
+      if (recoveryMode && managedSession.cashier_id !== usuario?.id && closingNotes.trim().length < 5) {
+        throw new Error("Enter a supervisor recovery reason before closing this shift.");
+      }
       const result = await supabase.rpc("close_store_cash_session", {
-        p_session_id: activeSession.id,
+        p_session_id: managedSession.id,
         p_counted_cash: amount,
         p_notes: closingNotes.trim() || null,
       });
@@ -206,6 +224,7 @@ export default function StoreRegister() {
       setStoredStoreCashSessionId(van.id, null);
       setCountedCash("");
       setClosingNotes("");
+      setReviewSessionId(null);
     });
   }
 
@@ -265,7 +284,7 @@ export default function StoreRegister() {
 
         {error && <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800"><CircleAlert size={19} className="mt-0.5 shrink-0" />{error}</div>}
 
-        {!activeSession ? (
+        {!managedSession ? (
           <section className="grid gap-6 xl:grid-cols-[1fr_0.8fr]">
             <form onSubmit={openRegister} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
               <div className="flex items-center gap-3">
@@ -305,12 +324,32 @@ export default function StoreRegister() {
           </section>
         ) : (
           <>
-            <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm sm:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-center gap-3"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white"><Store size={24} /></span><div><div className="text-xs font-black uppercase tracking-widest text-emerald-700">Open Shift</div><h2 className="text-xl font-black text-emerald-950">{registers[activeSession.register_id]?.name || registerName}</h2><p className="text-sm font-semibold text-emerald-700">{usuario?.nombre || usuario?.email} · opened {dateTime(activeSession.opened_at)}</p></div></div>
-                <Link to="/ventas?new=1" className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-6 py-3 text-lg font-black text-white shadow-lg shadow-blue-200">Start Sale <ArrowRight size={21} /></Link>
-              </div>
-            </section>
+            {recoveryMode ? (
+              <section className="rounded-3xl border-2 border-amber-300 bg-amber-50 p-5 shadow-sm sm:p-6">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500 text-white"><CircleAlert size={25} /></span>
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-widest text-amber-700">Shift recovery</div>
+                    <h2 className="mt-1 text-xl font-black text-amber-950">Close the previous open shift</h2>
+                    <p className="mt-1 text-sm font-semibold text-amber-800">
+                      {managedSession.cashier_id === usuario?.id
+                        ? "This is your unfinished shift from another computer or browser session. Count the physical drawer and close it below before starting a new shift."
+                        : "A supervisor is reviewing an unfinished shift from another cashier. Count the physical drawer and close it below with an audit note."}
+                    </p>
+                    <div className="mt-3 text-xs font-bold text-amber-700">
+                      {registers[managedSession.register_id]?.name || "Store Register"} · {managedSession.cashier_name || `Cashier ${managedSession.cashier_id.slice(0, 8)}`} · opened {dateTime(managedSession.opened_at)}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ) : (
+              <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm sm:p-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex items-center gap-3"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white"><Store size={24} /></span><div><div className="text-xs font-black uppercase tracking-widest text-emerald-700">Open Shift</div><h2 className="text-xl font-black text-emerald-950">{registers[activeSession.register_id]?.name || registerName}</h2><p className="text-sm font-semibold text-emerald-700">{usuario?.nombre || usuario?.email} · opened {dateTime(activeSession.opened_at)}</p></div></div>
+                  <Link to="/ventas?new=1" className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-6 py-3 text-lg font-black text-white shadow-lg shadow-blue-200">Start Sale <ArrowRight size={21} /></Link>
+                </div>
+              </section>
+            )}
 
             <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Expected Cash" value={money(summary?.expected_cash)} detail="Live drawer target" tone="green" />
@@ -326,7 +365,7 @@ export default function StoreRegister() {
             <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
               <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
                 <div className="flex items-center gap-3"><Banknote className="text-blue-600" /><div><h2 className="text-xl font-black text-slate-950">Cash movement</h2><p className="text-sm text-slate-500">Every adjustment keeps its cashier, time and reason.</p></div></div>
-                <form onSubmit={addMovement} className="mt-5">
+                {!recoveryMode && <form onSubmit={addMovement} className="mt-5">
                   <div className="grid grid-cols-3 gap-2">
                     {[
                       ["deposit", "Deposit", <PlusCircle key="deposit-icon" size={19} />],
@@ -341,7 +380,8 @@ export default function StoreRegister() {
                     <input value={movementReason} onChange={(e) => setMovementReason(e.target.value)} placeholder="Required reason" className="rounded-xl border-2 border-slate-200 px-4 py-3 font-semibold outline-none focus:border-blue-500" required />
                   </div>
                   <button disabled={saving} className="mt-3 min-h-12 w-full rounded-xl bg-slate-900 px-5 py-3 font-black text-white disabled:opacity-50">Record {movementType}</button>
-                </form>
+                </form>}
+                {recoveryMode && <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">Cash adjustments are disabled during recovery. Review the recorded movements, count the drawer and close the shift.</div>}
                 <div className="mt-6 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200">
                   {movements.length === 0 ? <div className="p-5 text-center text-sm font-semibold text-slate-400">No manual movements in this shift.</div> : movements.slice(0, 10).map((row) => (
                     <div key={row.id} className={`flex items-center gap-3 px-4 py-3 ${row.voided_at ? "opacity-45 line-through" : ""}`}><span className={`h-2.5 w-2.5 rounded-full ${row.movement_type === "deposit" ? "bg-emerald-500" : row.movement_type === "expense" ? "bg-rose-500" : "bg-amber-500"}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold capitalize text-slate-800">{row.movement_type} · {row.reason}</div><div className="text-xs text-slate-400">{dateTime(row.created_at)}{row.voided_at ? ` · voided: ${row.void_reason}` : ""}</div></div><div className="font-black tabular-nums text-slate-900">{row.movement_type === "deposit" ? "+" : "−"}{money(row.amount)}</div>{privileged && !row.voided_at && <button type="button" onClick={() => { setVoidMovementId(row.id); setVoidReason(""); }} className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-700" title="Void movement"><Ban size={16} /></button>}</div>
@@ -350,14 +390,14 @@ export default function StoreRegister() {
               </div>
 
               <form onSubmit={closeRegister} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-                <div className="flex items-center gap-3"><LockKeyhole className="text-slate-700" /><div><h2 className="text-xl font-black text-slate-950">Close this register</h2><p className="text-sm text-slate-500">Count the physical cash without changing the expected amount.</p></div></div>
+                <div className="flex items-center gap-3"><LockKeyhole className="text-slate-700" /><div><h2 className="text-xl font-black text-slate-950">{recoveryMode ? "Recover & close this shift" : "Close this register"}</h2><p className="text-sm text-slate-500">Count the physical cash without changing the expected amount.</p></div></div>
                 <div className="mt-5 rounded-2xl bg-slate-950 p-5 text-white"><div className="text-xs font-black uppercase tracking-widest text-slate-400">System expected</div><div className="mt-1 text-4xl font-black tabular-nums">{money(summary?.expected_cash)}</div><div className="mt-2 text-xs text-slate-400">Opening + cash sales + A/R cash − cash returns + deposits − withdrawals − expenses</div></div>
                 <label className="mt-5 block text-sm font-bold text-slate-700">Cash counted
                   <input type="number" min="0" step="0.01" value={countedCash} onChange={(e) => setCountedCash(e.target.value)} className="mt-2 w-full rounded-xl border-2 border-slate-200 px-4 py-4 text-2xl font-black outline-none focus:border-blue-500" placeholder="$0.00" required />
                 </label>
                 {liveVariance !== null && Number.isFinite(liveVariance) && <div className={`mt-3 rounded-xl border p-3 text-center font-black ${Math.abs(liveVariance) < 0.005 ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>Difference: {money(liveVariance)}</div>}
-                <textarea value={closingNotes} onChange={(e) => setClosingNotes(e.target.value)} rows={2} className="mt-3 w-full rounded-xl border-2 border-slate-200 px-4 py-3 outline-none focus:border-blue-500" placeholder="Closing notes (optional)" />
-                <button disabled={saving} className="mt-4 min-h-14 w-full rounded-2xl bg-rose-600 px-5 py-4 text-lg font-black text-white shadow-lg shadow-rose-200 disabled:opacity-50">Count & Close Register</button>
+                <textarea value={closingNotes} onChange={(e) => setClosingNotes(e.target.value)} rows={2} className="mt-3 w-full rounded-xl border-2 border-slate-200 px-4 py-3 outline-none focus:border-blue-500" placeholder={recoveryMode && managedSession.cashier_id !== usuario?.id ? "Supervisor recovery reason (required)" : "Closing notes (optional)"} />
+                <button disabled={saving} className="mt-4 min-h-14 w-full rounded-2xl bg-rose-600 px-5 py-4 text-lg font-black text-white shadow-lg shadow-rose-200 disabled:opacity-50">{recoveryMode ? "Count & Close Previous Shift" : "Count & Close Register"}</button>
               </form>
             </section>
 
@@ -372,7 +412,7 @@ export default function StoreRegister() {
               <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-5 py-3">Register / Cashier</th><th className="px-5 py-3">Opened</th><th className="px-5 py-3">Closed</th><th className="px-5 py-3 text-right">Expected</th><th className="px-5 py-3 text-right">Counted</th><th className="px-5 py-3 text-right">Difference</th><th className="px-5 py-3">Status</th><th className="px-5 py-3" /></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {sessions.length === 0 ? <tr><td colSpan={8} className="p-8 text-center font-semibold text-slate-400">No register shifts recorded yet.</td></tr> : sessions.map((row) => (
-                  <tr key={row.id} className="text-slate-700"><td className="px-5 py-3"><div className="font-black text-slate-900">{registers[row.register_id]?.name || "Store Register"}</div><div className="text-xs text-slate-400">{row.cashier_name || `Cashier ${row.cashier_id.slice(0, 8)}`}</div></td><td className="whitespace-nowrap px-5 py-3">{dateTime(row.opened_at)}</td><td className="whitespace-nowrap px-5 py-3">{dateTime(row.closed_at)}</td><td className="px-5 py-3 text-right font-bold tabular-nums">{row.expected_cash == null ? "—" : money(row.expected_cash)}</td><td className="px-5 py-3 text-right font-bold tabular-nums">{row.counted_cash == null ? "—" : money(row.counted_cash)}</td><td className={`px-5 py-3 text-right font-black tabular-nums ${Math.abs(Number(row.variance || 0)) > 0.004 ? "text-rose-700" : "text-emerald-700"}`}>{row.variance == null ? "—" : money(row.variance)}</td><td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${row.status === "open" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span>{row.reopened_at && <div className="mt-1 text-[10px] font-bold text-amber-600">Reopened</div>}</td><td className="px-5 py-3">{privileged && row.status === "closed" && <button onClick={() => { setReopenId(row.id); setReopenReason(""); }} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Reopen</button>}</td></tr>
+                  <tr key={row.id} className="text-slate-700"><td className="px-5 py-3"><div className="font-black text-slate-900">{registers[row.register_id]?.name || "Store Register"}</div><div className="text-xs text-slate-400">{row.cashier_name || `Cashier ${row.cashier_id.slice(0, 8)}`}</div></td><td className="whitespace-nowrap px-5 py-3">{dateTime(row.opened_at)}</td><td className="whitespace-nowrap px-5 py-3">{dateTime(row.closed_at)}</td><td className="px-5 py-3 text-right font-bold tabular-nums">{row.expected_cash == null ? "—" : money(row.expected_cash)}</td><td className="px-5 py-3 text-right font-bold tabular-nums">{row.counted_cash == null ? "—" : money(row.counted_cash)}</td><td className={`px-5 py-3 text-right font-black tabular-nums ${Math.abs(Number(row.variance || 0)) > 0.004 ? "text-rose-700" : "text-emerald-700"}`}>{row.variance == null ? "—" : money(row.variance)}</td><td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${row.status === "open" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span>{row.reopened_at && <div className="mt-1 text-[10px] font-bold text-amber-600">Reopened</div>}</td><td className="px-5 py-3">{row.status === "open" && row.id !== managedSession?.id && (row.cashier_id === usuario?.id || privileged) && <button onClick={() => setReviewSessionId(row.id)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800">Review & Close</button>}{privileged && row.status === "closed" && <button onClick={() => { setReopenId(row.id); setReopenReason(""); }} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Reopen</button>}</td></tr>
                 ))}
               </tbody>
             </table>

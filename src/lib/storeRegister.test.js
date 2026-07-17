@@ -5,6 +5,7 @@ import {
   getStoredStoreCashSessionId,
   setStoreRegisterName,
   setStoredStoreCashSessionId,
+  selectManagedStoreCashSession,
 } from "./storeRegister";
 
 beforeEach(() => {
@@ -15,6 +16,47 @@ beforeEach(() => {
     removeItem: (key) => values.delete(key),
     clear: () => values.clear(),
   };
+});
+
+describe("physical store shift recovery", () => {
+  const sessions = [
+    { id: "own-remote", status: "open", cashier_id: "cashier-a", device_id: "computer-a" },
+    { id: "other-local", status: "open", cashier_id: "cashier-b", device_id: "computer-b" },
+    { id: "closed", status: "closed", cashier_id: "cashier-a", device_id: "computer-b" },
+  ];
+
+  it("recovers the cashier's unfinished shift from another computer", () => {
+    expect(selectManagedStoreCashSession(sessions, {
+      deviceId: "computer-b",
+      cashierId: "cashier-a",
+    })?.id).toBe("own-remote");
+  });
+
+  it("does not expose another cashier's shift to a regular user", () => {
+    expect(selectManagedStoreCashSession([sessions[1]], {
+      deviceId: "computer-b",
+      cashierId: "cashier-a",
+    })).toBeNull();
+  });
+
+  it("lets a supervisor explicitly review another cashier's shift", () => {
+    expect(selectManagedStoreCashSession(sessions, {
+      deviceId: "computer-c",
+      cashierId: "supervisor",
+      reviewSessionId: "own-remote",
+      privileged: true,
+    })?.id).toBe("own-remote");
+  });
+
+  it("prioritizes the current register over a reviewed remote shift", () => {
+    const current = { id: "current", status: "open", cashier_id: "cashier-a", device_id: "computer-b" };
+    expect(selectManagedStoreCashSession([...sessions, current], {
+      deviceId: "computer-b",
+      cashierId: "cashier-a",
+      reviewSessionId: "other-local",
+      privileged: true,
+    })?.id).toBe("current");
+  });
 });
 
 describe("physical store register identity", () => {

@@ -49,6 +49,29 @@ export function setStoredStoreCashSessionId(locationId, sessionId) {
   } catch { /* optional */ }
 }
 
+export function selectManagedStoreCashSession(
+  sessions,
+  { deviceId, cashierId, reviewSessionId = null, privileged = false } = {},
+) {
+  const rows = Array.isArray(sessions) ? sessions : [];
+  const openRows = rows.filter((row) => row?.status === "open");
+  const current = openRows.find((row) =>
+    row.device_id === deviceId && row.cashier_id === cashierId
+  ) || null;
+  const reviewed = openRows.find((row) =>
+    row.id === reviewSessionId
+    && (row.cashier_id === cashierId || privileged)
+  ) || null;
+  const ownRemote = openRows.find((row) =>
+    row.cashier_id === cashierId && row.device_id !== deviceId
+  ) || null;
+  const privilegedDevice = privileged
+    ? openRows.find((row) => row.device_id === deviceId) || null
+    : null;
+
+  return current || reviewed || ownRemote || privilegedDevice;
+}
+
 export async function resolveOpenStoreCashSession(supabase, locationId, cashierId) {
   if (!locationId || !cashierId) return null;
   const deviceId = getStoreDeviceId();

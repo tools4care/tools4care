@@ -192,7 +192,7 @@ export default function StoreShiftGate() {
                 </div>
               </div>
               <button type="button" onClick={() => navigate("/store/register")} className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-4 text-lg font-black text-white">
-                Review Cash Register <ArrowRight size={21} />
+                {thisCashierOnAnotherComputer ? "Recover or Close Previous Shift" : "Review Cash Register"} <ArrowRight size={21} />
               </button>
             </div>
           ) : (
