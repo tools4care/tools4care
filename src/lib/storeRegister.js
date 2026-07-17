@@ -1,6 +1,7 @@
 const DEVICE_KEY = "t4c_store_register_device_id";
 const NAME_KEY = "t4c_store_register_name";
 const SESSION_PREFIX = "t4c_store_cash_session_";
+const SESSION_DEVICE_PREFIX = "t4c_store_cash_session_device_";
 let memoryDeviceId = null;
 
 function makeId() {
@@ -40,12 +41,29 @@ export function getStoredStoreCashSessionId(locationId) {
   try { return localStorage.getItem(`${SESSION_PREFIX}${locationId}`); } catch { return null; }
 }
 
-export function setStoredStoreCashSessionId(locationId, sessionId) {
+export function getStoredStoreCashSessionIdForDevice(locationId, deviceId) {
+  if (!locationId || !deviceId) return null;
+  try {
+    const sessionId = localStorage.getItem(`${SESSION_PREFIX}${locationId}`);
+    const boundDeviceId = localStorage.getItem(`${SESSION_DEVICE_PREFIX}${locationId}`);
+    return sessionId && boundDeviceId === deviceId ? sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredStoreCashSessionId(locationId, sessionId, deviceId = null) {
   if (!locationId) return;
   try {
     const key = `${SESSION_PREFIX}${locationId}`;
-    if (sessionId) localStorage.setItem(key, sessionId);
-    else localStorage.removeItem(key);
+    const deviceKey = `${SESSION_DEVICE_PREFIX}${locationId}`;
+    if (sessionId) {
+      localStorage.setItem(key, sessionId);
+      if (deviceId) localStorage.setItem(deviceKey, deviceId);
+    } else {
+      localStorage.removeItem(key);
+      localStorage.removeItem(deviceKey);
+    }
   } catch { /* optional */ }
 }
 
@@ -104,6 +122,6 @@ export async function resolveOpenStoreCashSession(supabase, locationId, cashierI
     data = fallback.data;
   }
 
-  setStoredStoreCashSessionId(locationId, data?.id || null);
+  setStoredStoreCashSessionId(locationId, data?.id || null, data ? deviceId : null);
   return data || null;
 }

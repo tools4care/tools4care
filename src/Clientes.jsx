@@ -11,7 +11,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useUsuario } from "./UsuarioContext";
 import {
-  getStoredStoreCashSessionId,
+  getStoredStoreCashSessionIdForDevice,
+  getStoreDeviceId,
   resolveOpenStoreCashSession,
 } from "./lib/storeRegister";
 import { clientDigits, filterClientsLocal, isPhoneLikeSearch, phoneSearchVariants } from "./utils/clientSearch";
@@ -2863,7 +2864,7 @@ let restante = pago;
         if (navigator.onLine) {
           storeCashSession = await resolveOpenStoreCashSession(supabase, van.id, usuario.id);
         } else {
-          const storedSessionId = getStoredStoreCashSessionId(van.id);
+          const storedSessionId = getStoredStoreCashSessionIdForDevice(van.id, getStoreDeviceId());
           storeCashSession = storedSessionId ? { id: storedSessionId } : null;
         }
         if (!storeCashSession?.id) {

@@ -162,7 +162,7 @@ export default function StoreRegister() {
         privileged,
       });
 
-      setStoredStoreCashSessionId(van.id, current?.id || null);
+      setStoredStoreCashSessionId(van.id, current?.id || null, current ? deviceId : null);
       if (selected) {
         const [summaryResult, movementResult, eventResult] = await Promise.all([
           supabase.rpc("get_store_cash_closeout_preview", { p_session_id: selected.id }),
@@ -239,7 +239,7 @@ export default function StoreRegister() {
         p_notes: openingNotes.trim() || null,
       });
       if (result.error) throw result.error;
-      setStoredStoreCashSessionId(van.id, result.data?.id);
+      setStoredStoreCashSessionId(van.id, result.data?.id, deviceId);
       setOpeningNotes("");
     });
   }

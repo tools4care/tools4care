@@ -3,6 +3,7 @@ import {
   getStoreDeviceId,
   getStoreRegisterName,
   getStoredStoreCashSessionId,
+  getStoredStoreCashSessionIdForDevice,
   setStoreRegisterName,
   setStoredStoreCashSessionId,
   selectManagedStoreCashSession,
@@ -73,11 +74,20 @@ describe("physical store register identity", () => {
   });
 
   it("isolates the active session by store location", () => {
-    setStoredStoreCashSessionId("store-a", "session-a");
-    setStoredStoreCashSessionId("store-b", "session-b");
+    setStoredStoreCashSessionId("store-a", "session-a", "device-a");
+    setStoredStoreCashSessionId("store-b", "session-b", "device-b");
     expect(getStoredStoreCashSessionId("store-a")).toBe("session-a");
     expect(getStoredStoreCashSessionId("store-b")).toBe("session-b");
+    expect(getStoredStoreCashSessionIdForDevice("store-a", "device-a")).toBe("session-a");
+    expect(getStoredStoreCashSessionIdForDevice("store-a", "device-b")).toBeNull();
     setStoredStoreCashSessionId("store-a", null);
     expect(getStoredStoreCashSessionId("store-a")).toBeNull();
+    expect(getStoredStoreCashSessionIdForDevice("store-a", "device-a")).toBeNull();
+  });
+
+  it("does not trust a legacy session id without a verified computer binding", () => {
+    setStoredStoreCashSessionId("store-a", "legacy-session");
+    expect(getStoredStoreCashSessionId("store-a")).toBe("legacy-session");
+    expect(getStoredStoreCashSessionIdForDevice("store-a", "device-a")).toBeNull();
   });
 });

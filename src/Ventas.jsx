@@ -20,7 +20,8 @@ import { useLocationSettings } from "./hooks/useLocationSettings";
 import { buildCustomerDisplaySnapshot, publishCustomerDisplay } from "./lib/customerDisplay";
 import { getMoneyAppliedToSale, getReturnLineUnit, getReturnQuote } from "./lib/returnPricing";
 import {
-  getStoredStoreCashSessionId,
+  getStoredStoreCashSessionIdForDevice,
+  getStoreDeviceId,
   resolveOpenStoreCashSession,
 } from "./lib/storeRegister";
 import { useProductosHabituales } from "./hooks/useProductosHabituales";
@@ -4060,7 +4061,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
 
       if (storeMode) {
         if (isOffline) {
-          const storedSessionId = getStoredStoreCashSessionId(van.id);
+          const storedSessionId = getStoredStoreCashSessionIdForDevice(van.id, getStoreDeviceId());
           if (!storedSessionId) {
             throw new Error("Open the Cash Register before completing a Physical Store sale.");
           }

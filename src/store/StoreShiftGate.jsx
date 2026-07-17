@@ -19,6 +19,7 @@ import { useUsuario } from "../UsuarioContext";
 import { isStoreLocation } from "../lib/locationTypes";
 import {
   getStoredStoreCashSessionId,
+  getStoredStoreCashSessionIdForDevice,
   getStoreDeviceId,
   getStoreRegisterName,
   resolveOpenStoreCashSession,
@@ -62,7 +63,7 @@ export default function StoreShiftGate() {
     setError("");
     try {
       if (!navigator.onLine) {
-        const storedId = getStoredStoreCashSessionId(van.id);
+        const storedId = getStoredStoreCashSessionIdForDevice(van.id, deviceId);
         if (storedId) {
           setActiveSession({ id: storedId, offline: true });
           setBlockingSession(null);
@@ -145,7 +146,7 @@ export default function StoreShiftGate() {
         p_notes: openingNotes.trim() || null,
       });
       if (result.error) throw result.error;
-      setStoredStoreCashSessionId(van.id, result.data?.id);
+      setStoredStoreCashSessionId(van.id, result.data?.id, deviceId);
       setActiveSession(result.data || { id: getStoredStoreCashSessionId(van.id) });
       setBlockingSession(null);
       setOpeningNotes("");
@@ -187,7 +188,7 @@ export default function StoreShiftGate() {
       });
       if (result.error) throw result.error;
 
-      setStoredStoreCashSessionId(van.id, result.data?.id || blockingSession.id);
+      setStoredStoreCashSessionId(van.id, result.data?.id || blockingSession.id, deviceId);
       setActiveSession(result.data || { ...blockingSession, device_id: deviceId });
       setBlockingSession(null);
       setResumeMode(false);
@@ -270,7 +271,7 @@ export default function StoreShiftGate() {
                       <div>
                         <div className="font-black text-blue-950">Move this shift to this computer</div>
                         <p className="mt-1 text-xs font-semibold text-blue-800">
-                          All totals and transactions stay in the same shift. The previous computer will lose access.
+                          All totals and transactions stay in the same shift. The previous computer will lose access when it reconnects.
                         </p>
                       </div>
                     </div>
