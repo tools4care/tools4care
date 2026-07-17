@@ -1428,6 +1428,7 @@ const [reglasCredito, setReglasCredito] = useState(null);
 const [showAgreementModal, setShowAgreementModal] = useState(false);
 const [agreementPlan, setAgreementPlan] = useState(null);
 const [showBalanceSummary, setShowBalanceSummary] = useState(false);
+const [showCustomerSummaryItems, setShowCustomerSummaryItems] = useState(false);
 const [agreementException, setAgreementException] = useState(false);
 const [agreementExceptionNote, setAgreementExceptionNote] = useState("");
 const [agreementSystemReady, setAgreementSystemReady] = useState(false);
@@ -3055,6 +3056,11 @@ useEffect(() => {
     }
     displayWindow.focus();
   }, [customerDisplaySnapshot, toast, van?.id]);
+
+  const openBalanceSummary = useCallback(() => {
+    setShowCustomerSummaryItems(false);
+    setShowBalanceSummary(true);
+  }, []);
 
   /* ---------- ⌨️ Keyboard shortcuts (cross-platform safe) ---------- */
   useEffect(() => {
@@ -6787,17 +6793,17 @@ function renderStepPayment() {
       {((storeMode && locationSettings.customer_display_enabled) || (!storeMode && selectedClient?.id)) && (
         <div className="space-y-2">
           <button
-          onClick={storeMode ? openCustomerDisplay : () => setShowBalanceSummary(true)}
-          className={`w-full border-2 text-white rounded-2xl flex items-center justify-between gap-3 shadow-lg active:scale-[0.99] transition-all ${
+          onClick={storeMode ? openCustomerDisplay : openBalanceSummary}
+          className={`w-full border-2 rounded-2xl flex items-center justify-between gap-3 shadow-lg active:scale-[0.99] transition-all ${
             storeMode
-              ? "border-indigo-400 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 px-5 py-5 ring-4 ring-indigo-100"
-              : "border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-900 px-4 py-3"
+              ? "border-indigo-400 bg-gradient-to-r from-indigo-600 to-blue-600 px-5 py-5 text-white ring-4 ring-indigo-100 hover:from-indigo-700 hover:to-blue-700"
+              : "border-blue-300 bg-gradient-to-r from-white to-blue-50 px-4 py-3 text-blue-950 shadow-blue-100 hover:from-blue-50 hover:to-indigo-100"
           }`}
         >
           <span className="flex items-center gap-3 text-left">
             <span className={`${storeMode ? "w-14 h-14 text-2xl bg-white/20" : "w-9 h-9 text-lg bg-blue-600"} rounded-xl text-white flex items-center justify-center`}>👤</span>
             <span>
-              <span className={`block font-black ${storeMode ? "text-lg" : ""}`}>{storeMode ? "Customer Display" : "Show summary to customer"}</span>
+              <span className={`block font-black ${storeMode ? "text-lg text-white" : "text-blue-950"}`}>{storeMode ? "Customer Display" : "Show summary to customer"}</span>
               <span className={`block text-xs font-normal ${storeMode ? "text-blue-100" : "text-blue-700"}`}>
                 {storeMode ? "Open a separate live screen with items, total, payment and change" : "Clear balance and payment view"}
               </span>
@@ -6808,7 +6814,7 @@ function renderStepPayment() {
           {storeMode && (
             <button
               type="button"
-              onClick={() => setShowBalanceSummary(true)}
+              onClick={openBalanceSummary}
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"
             >
               Review on this screen instead
@@ -6975,11 +6981,23 @@ function renderStepPayment() {
             <div className="text-slate-400 text-sm mt-2">
               {new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
             </div>
+            {cartSafe.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowCustomerSummaryItems((visible) => !visible)}
+                className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-bold text-slate-200 transition-colors hover:bg-white/15"
+                aria-expanded={showCustomerSummaryItems}
+              >
+                <span>{showCustomerSummaryItems ? "▴" : "▾"}</span>
+                <span>{showCustomerSummaryItems ? "Hide items" : `Show items (${cartSafe.reduce((sum, item) => sum + Number(item.cantidad || 0), 0)})`}</span>
+                <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-400">Optional</span>
+              </button>
+            )}
           </div>
 
           {/* Content rows */}
           <div className="flex-1 overflow-y-auto px-5 py-2 space-y-3">
-            {cartSafe.length > 0 && (
+            {showCustomerSummaryItems && cartSafe.length > 0 && (
               <div className="bg-white/10 backdrop-blur rounded-2xl overflow-hidden">
                 <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
                   <div className="text-slate-300 text-xs uppercase font-bold tracking-wide">Items</div>
