@@ -1194,6 +1194,7 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [focusedClientIdx, setFocusedClientIdx] = useState(-1);  // keyboard nav – client list
   const clientSearchInputRef = useRef(null);
   const clientSearchSectionRef = useRef(null);
+  const clientSearchBlurTimerRef = useRef(null);
   const clientListRef = useRef(null);                            // scroll target – client list
   const clientSearchSeqRef = useRef(0);
   const [focusedProductIdx, setFocusedProductIdx] = useState(-1); // keyboard nav – product list
@@ -3140,6 +3141,12 @@ useEffect(() => {
     focusSearch();
     return () => window.clearInterval(timer);
   }, [appMode, selectedClient, step]);
+
+  useEffect(() => () => {
+    if (clientSearchBlurTimerRef.current) {
+      window.clearTimeout(clientSearchBlurTimerRef.current);
+    }
+  }, []);
 
 
   /* ---------- 🔧 AUTO-FILL del monto de pago (MEJORADO) ---------- */
@@ -5812,13 +5819,22 @@ function renderStepClient() {
             }`}
             value={clientSearch}
             onFocus={() => {
+              if (clientSearchBlurTimerRef.current) {
+                window.clearTimeout(clientSearchBlurTimerRef.current);
+                clientSearchBlurTimerRef.current = null;
+              }
               setClientSearchFocused(true);
               window.requestAnimationFrame(() => {
                 clientSearchSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
               });
             }}
             onBlur={() => {
-              window.setTimeout(() => setClientSearchFocused(false), 160);
+              clientSearchBlurTimerRef.current = window.setTimeout(() => {
+                if (document.activeElement !== clientSearchInputRef.current) {
+                  setClientSearchFocused(false);
+                }
+                clientSearchBlurTimerRef.current = null;
+              }, 160);
             }}
             onChange={(e) => {
               const value = e.target.value;
