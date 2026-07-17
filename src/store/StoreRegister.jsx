@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
   Ban,
   Banknote,
   CircleAlert,
+  Download,
+  Eye,
   History,
   LockKeyhole,
   LockOpen,
   MinusCircle,
   PlusCircle,
+  Printer,
   ReceiptText,
   RefreshCw,
   Store,
@@ -19,6 +22,8 @@ import { supabase } from "../supabaseClient";
 import { useVan } from "../hooks/VanContext";
 import { useUsuario } from "../UsuarioContext";
 import { usePermisos } from "../hooks/usePermisos";
+import { useSyncGlobal } from "../hooks/SyncContext";
+import { useLocationSettings } from "../hooks/useLocationSettings";
 import {
   getStoreDeviceId,
   getStoreRegisterName,
@@ -26,6 +31,12 @@ import {
   setStoreRegisterName,
   setStoredStoreCashSessionId,
 } from "../lib/storeRegister";
+import {
+  closeoutHasVariance,
+  closeoutPaymentRows,
+  downloadStoreCloseoutPdf,
+  printStoreCloseoutThermal,
+} from "../lib/storeCloseoutReport";
 
 const money = (value) => Number(value || 0).toLocaleString("en-US", {
   style: "currency",
@@ -54,10 +65,30 @@ function Metric({ label, value, detail, tone = "slate" }) {
   );
 }
 
+function ReconciliationField({ label, system, value, onChange, help, min }) {
+  const numeric = value === "" ? null : Number(value);
+  const difference = numeric == null || !Number.isFinite(numeric) ? null : numeric - Number(system || 0);
+  const balanced = difference != null && Math.abs(difference) < 0.005;
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div><div className="font-black text-slate-900">{label}</div><div className="text-xs font-semibold text-slate-500">{help}</div></div>
+        <div className="text-right"><div className="text-[10px] font-black uppercase tracking-wider text-slate-400">System</div><div className="font-black text-slate-800">{money(system)}</div></div>
+      </div>
+      <input type="number" min={min} step="0.01" value={value} onChange={(event) => onChange(event.target.value)} className="mt-3 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-lg font-black outline-none focus:border-blue-500" placeholder="Verified total" required />
+      {difference != null && Number.isFinite(difference) && (
+        <div className={`mt-2 text-right text-xs font-black ${balanced ? "text-emerald-700" : "text-rose-700"}`}>Difference {money(difference)}</div>
+      )}
+    </div>
+  );
+}
+
 export default function StoreRegister() {
   const { van } = useVan();
   const { usuario } = useUsuario();
   const { isAdmin, isSupervisor } = usePermisos();
+  const { syncing, ventasPendientes, sincronizarAhora } = useSyncGlobal();
+  const { settings: locationSettings } = useLocationSettings();
   const privileged = isAdmin || isSupervisor;
   const deviceId = useMemo(() => getStoreDeviceId(), []);
   const [registerName, setRegisterNameState] = useState(() => getStoreRegisterName());
@@ -81,6 +112,13 @@ export default function StoreRegister() {
   const [voidMovementId, setVoidMovementId] = useState(null);
   const [voidReason, setVoidReason] = useState("");
   const [reviewSessionId, setReviewSessionId] = useState(null);
+  const [declaredCard, setDeclaredCard] = useState("");
+  const [declaredTransfer, setDeclaredTransfer] = useState("");
+  const [declaredOther, setDeclaredOther] = useState("");
+  const [cardBatchReference, setCardBatchReference] = useState("");
+  const [closedReport, setClosedReport] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const reconciliationSessionRef = useRef(null);
 
   const activeSession = sessions.find((row) =>
     row.status === "open" && row.device_id === deviceId && row.cashier_id === usuario?.id
@@ -93,6 +131,13 @@ export default function StoreRegister() {
     privileged,
   });
   const recoveryMode = Boolean(managedSession && managedSession.id !== activeSession?.id);
+  const systemPayments = summary?.system_payments || {};
+  const liveMethodVariances = {
+    cash: countedCash === "" ? 0 : Number(countedCash) - Number(summary?.expected_cash || 0),
+    card: declaredCard === "" ? 0 : Number(declaredCard) - Number(systemPayments.card || 0),
+    transfer: declaredTransfer === "" ? 0 : Number(declaredTransfer) - Number(systemPayments.transfer || 0),
+    other: declaredOther === "" ? 0 : Number(declaredOther) - Number(systemPayments.other || 0),
+  };
 
   const load = useCallback(async () => {
     if (!van?.id || !usuario?.id) return;
@@ -120,7 +165,7 @@ export default function StoreRegister() {
       setStoredStoreCashSessionId(van.id, current?.id || null);
       if (selected) {
         const [summaryResult, movementResult, eventResult] = await Promise.all([
-          supabase.rpc("get_store_cash_session_summary", { p_session_id: selected.id }),
+          supabase.rpc("get_store_cash_closeout_preview", { p_session_id: selected.id }),
           supabase.from("store_cash_movements").select("*").eq("session_id", selected.id).order("created_at", { ascending: false }),
           supabase.from("store_cash_session_events").select("*").eq("session_id", selected.id).order("created_at", { ascending: false }).limit(20),
         ]);
@@ -143,6 +188,18 @@ export default function StoreRegister() {
   }, [deviceId, privileged, reviewSessionId, usuario?.id, van?.id]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!managedSession?.id || summary?.session_id !== managedSession.id) return;
+    if (reconciliationSessionRef.current === managedSession.id) return;
+    reconciliationSessionRef.current = managedSession.id;
+    setCountedCash("");
+    setDeclaredCard(Math.abs(Number(summary?.system_payments?.card || 0)) < 0.005 ? "0.00" : "");
+    setDeclaredTransfer(Number(summary?.system_payments?.transfer || 0).toFixed(2));
+    setDeclaredOther(Number(summary?.system_payments?.other || 0).toFixed(2));
+    setCardBatchReference("");
+    setClosingNotes("");
+  }, [managedSession?.id, summary]);
 
   useEffect(() => {
     if (!van?.id) return undefined;
@@ -209,23 +266,113 @@ export default function StoreRegister() {
   function closeRegister(event) {
     event.preventDefault();
     run(async () => {
+      if (!navigator.onLine) throw new Error("Reconnect and synchronize before closing this shift.");
+      if (syncing) throw new Error("Wait for synchronization to finish before closing this shift.");
+      if (ventasPendientes > 0) throw new Error(`Synchronize ${ventasPendientes} pending offline transaction${ventasPendientes === 1 ? "" : "s"} before closing.`);
       const amount = Number(countedCash);
+      const cardAmount = Number(declaredCard);
+      const transferAmount = Number(declaredTransfer);
+      const otherAmount = Number(declaredOther);
       if (!managedSession) throw new Error("There is no open session to close.");
       if (!Number.isFinite(amount) || amount < 0) throw new Error("Enter the cash counted in the drawer.");
+      if (!Number.isFinite(cardAmount)) throw new Error("Enter the card terminal batch total.");
+      if (!Number.isFinite(transferAmount)) throw new Error("Review the transfer total.");
+      if (!Number.isFinite(otherAmount)) throw new Error("Review the check / other total.");
       if (recoveryMode && managedSession.cashier_id !== usuario?.id && closingNotes.trim().length < 5) {
         throw new Error("Enter a supervisor recovery reason before closing this shift.");
       }
-      const result = await supabase.rpc("close_store_cash_session", {
+      const variances = {
+        cash: amount - Number(summary?.expected_cash || 0),
+        card: cardAmount - Number(systemPayments.card || 0),
+        transfer: transferAmount - Number(systemPayments.transfer || 0),
+        other: otherAmount - Number(systemPayments.other || 0),
+      };
+      if (closeoutHasVariance(variances) && closingNotes.trim().length < 5) {
+        throw new Error("Explain the closeout difference in the closing notes.");
+      }
+      const result = await supabase.rpc("close_store_cash_session_v2", {
         p_session_id: managedSession.id,
-        p_counted_cash: amount,
+        p_reconciliation: {
+          cash_counted: amount,
+          card_declared: cardAmount,
+          transfer_declared: transferAmount,
+          other_declared: otherAmount,
+          card_batch_reference: cardBatchReference.trim() || null,
+        },
         p_notes: closingNotes.trim() || null,
       });
       if (result.error) throw result.error;
+      let report = result.data;
+      setClosedReport(report);
+      if (locationSettings.receipt_printing_enabled && report?.id) {
+        const printStarted = printStoreCloseoutThermal(report);
+        if (printStarted) {
+          const printResult = await supabase.rpc("mark_store_cash_closeout_printed", { p_report_id: report.id });
+          if (!printResult.error && printResult.data) {
+            report = printResult.data;
+            setClosedReport(report);
+          }
+        }
+      }
       setStoredStoreCashSessionId(van.id, null);
       setCountedCash("");
+      setDeclaredCard("");
+      setDeclaredTransfer("");
+      setDeclaredOther("");
+      setCardBatchReference("");
       setClosingNotes("");
       setReviewSessionId(null);
+      reconciliationSessionRef.current = null;
     });
+  }
+
+  async function loadCloseoutReport(session) {
+    if (!session?.id || !session?.closeout_report_id) return;
+    setReportLoading(true);
+    setError("");
+    try {
+      const result = await supabase.rpc("get_store_cash_closeout_report", {
+        p_session_id: session.id,
+        p_close_version: session.close_version || null,
+      });
+      if (result.error) throw result.error;
+      setClosedReport(result.data || null);
+    } catch (reportError) {
+      setError(reportError?.message || "Could not load the closeout report.");
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
+  async function printCloseoutReport(report = closedReport) {
+    if (!report?.id) return;
+    setReportLoading(true);
+    setError("");
+    try {
+      const printStarted = printStoreCloseoutThermal(report, { reprint: Number(report.print_count || 0) > 0 });
+      if (!printStarted) throw new Error("The print preview could not be opened.");
+      const result = await supabase.rpc("mark_store_cash_closeout_printed", { p_report_id: report.id });
+      if (result.error) throw result.error;
+      setClosedReport(result.data || report);
+      await load();
+    } catch (printError) {
+      setError(printError?.message || "Could not print the closeout report.");
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
+  async function downloadCloseoutReport(report = closedReport) {
+    if (!report?.id) return;
+    setReportLoading(true);
+    setError("");
+    try {
+      await downloadStoreCloseoutPdf(report);
+    } catch (downloadError) {
+      setError(downloadError?.message || "Could not generate the closeout PDF.");
+    } finally {
+      setReportLoading(false);
+    }
   }
 
   function reopenSession(event) {
@@ -353,13 +500,13 @@ export default function StoreRegister() {
 
             <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Expected Cash" value={money(summary?.expected_cash)} detail="Live drawer target" tone="green" />
-              <Metric label="Opening Float" value={money(summary?.opening_float)} />
-              <Metric label="Cash Sales" value={money(summary?.cash_sales)} detail={`${summary?.sales_count || 0} transactions`} tone="blue" />
-              <Metric label="A/R Cash Collected" value={money(summary?.ar_cash_collections)} detail={`${money(summary?.ar_total_collections)} by all methods`} tone="blue" />
-              <Metric label="Deposits" value={money(summary?.manual_deposits)} tone="green" />
-              <Metric label="Withdrawals" value={money(summary?.withdrawals)} tone="amber" />
-              <Metric label="Expenses" value={money(summary?.expenses)} tone="red" />
-              <Metric label="Cash Refunds" value={money(summary?.cash_returns)} tone="red" />
+              <Metric label="Card Activity" value={money(systemPayments.card)} detail={`${money(summary?.payment_breakdown?.card?.refunds)} refunded`} tone="blue" />
+              <Metric label="Transfers" value={money(systemPayments.transfer)} detail="Net accepted this shift" tone="blue" />
+              <Metric label="Check / Other" value={money(systemPayments.other)} detail="Net accepted this shift" />
+              <Metric label="Net Sales" value={money(summary?.net_sales)} detail={`${summary?.completed_sales_count || 0} sales · ${summary?.return_count || 0} returns`} tone="green" />
+              <Metric label="Tax Collected" value={money(summary?.tax_net)} detail={`${money(summary?.tax_refunds)} refunded`} tone="amber" />
+              <Metric label="Discounts" value={money(summary?.discounts)} tone="amber" />
+              <Metric label="A/R Collected" value={money(summary?.ar_total_collections)} detail="All payment methods" tone="blue" />
             </section>
 
             <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
@@ -390,14 +537,42 @@ export default function StoreRegister() {
               </div>
 
               <form onSubmit={closeRegister} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-                <div className="flex items-center gap-3"><LockKeyhole className="text-slate-700" /><div><h2 className="text-xl font-black text-slate-950">{recoveryMode ? "Recover & close this shift" : "Close this register"}</h2><p className="text-sm text-slate-500">Count the physical cash without changing the expected amount.</p></div></div>
-                <div className="mt-5 rounded-2xl bg-slate-950 p-5 text-white"><div className="text-xs font-black uppercase tracking-widest text-slate-400">System expected</div><div className="mt-1 text-4xl font-black tabular-nums">{money(summary?.expected_cash)}</div><div className="mt-2 text-xs text-slate-400">Opening + cash sales + A/R cash − cash returns + deposits − withdrawals − expenses</div></div>
+                <div className="flex items-center gap-3"><LockKeyhole className="text-slate-700" /><div><h2 className="text-xl font-black text-slate-950">{recoveryMode ? "Recover & close this shift" : "Close & reconcile this shift"}</h2><p className="text-sm text-slate-500">Verify the drawer and every payment source before creating the final report.</p></div></div>
+
+                {(!navigator.onLine || ventasPendientes > 0 || syncing) && (
+                  <div className="mt-5 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-900">
+                    <div>{!navigator.onLine ? "Reconnect before closing. The report must include every transaction." : syncing ? "Synchronization is running. Wait until it finishes." : `${ventasPendientes} offline transaction${ventasPendientes === 1 ? " is" : "s are"} waiting to synchronize.`}</div>
+                    {navigator.onLine && ventasPendientes > 0 && !syncing && <button type="button" onClick={sincronizarAhora} className="mt-3 rounded-xl bg-amber-600 px-4 py-2 font-black text-white">Synchronize now</button>}
+                  </div>
+                )}
+
+                <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                  <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Gross sales</div><div className="font-black text-slate-900">{money(summary?.gross_sales)}</div></div>
+                  <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Refunds</div><div className="font-black text-rose-700">−{money(summary?.refund_total)}</div></div>
+                  <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Net sales</div><div className="font-black text-emerald-700">{money(summary?.net_sales)}</div></div>
+                  <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Transactions</div><div className="font-black text-slate-900">{summary?.completed_sales_count || 0} sales · {summary?.return_count || 0} returns</div></div>
+                </div>
+
+                <div className="mt-5 rounded-2xl bg-slate-950 p-5 text-white"><div className="text-xs font-black uppercase tracking-widest text-slate-400">Expected cash drawer</div><div className="mt-1 text-4xl font-black tabular-nums">{money(summary?.expected_cash)}</div><div className="mt-2 text-xs text-slate-400">Opening + cash received − refunds + deposits − withdrawals − expenses</div></div>
                 <label className="mt-5 block text-sm font-bold text-slate-700">Cash counted
                   <input type="number" min="0" step="0.01" value={countedCash} onChange={(e) => setCountedCash(e.target.value)} className="mt-2 w-full rounded-xl border-2 border-slate-200 px-4 py-4 text-2xl font-black outline-none focus:border-blue-500" placeholder="$0.00" required />
                 </label>
                 {liveVariance !== null && Number.isFinite(liveVariance) && <div className={`mt-3 rounded-xl border p-3 text-center font-black ${Math.abs(liveVariance) < 0.005 ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>Difference: {money(liveVariance)}</div>}
-                <textarea value={closingNotes} onChange={(e) => setClosingNotes(e.target.value)} rows={2} className="mt-3 w-full rounded-xl border-2 border-slate-200 px-4 py-3 outline-none focus:border-blue-500" placeholder={recoveryMode && managedSession.cashier_id !== usuario?.id ? "Supervisor recovery reason (required)" : "Closing notes (optional)"} />
-                <button disabled={saving} className="mt-4 min-h-14 w-full rounded-2xl bg-rose-600 px-5 py-4 text-lg font-black text-white shadow-lg shadow-rose-200 disabled:opacity-50">{recoveryMode ? "Count & Close Previous Shift" : "Count & Close Register"}</button>
+
+                <div className="mt-6 border-t border-slate-200 pt-5">
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Payment reconciliation</div>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">Compare Card with the terminal batch. Confirm transfer and other sources against their records.</p>
+                  <div className="mt-4 space-y-3">
+                    <ReconciliationField label="Card terminal batch" system={systemPayments.card} value={declaredCard} onChange={setDeclaredCard} help="Enter the gross batch total shown by the card terminal." />
+                    {Math.abs(Number(systemPayments.card || 0)) > 0.005 && <input value={cardBatchReference} onChange={(e) => setCardBatchReference(e.target.value)} className="w-full rounded-xl border-2 border-slate-200 px-4 py-3 font-semibold outline-none focus:border-blue-500" placeholder="Card batch reference (recommended)" />}
+                    <ReconciliationField label="Transfers" system={systemPayments.transfer} value={declaredTransfer} onChange={setDeclaredTransfer} help="Verify Zelle, Venmo, Cash App and other transfers." />
+                    <ReconciliationField label="Check / Other" system={systemPayments.other} value={declaredOther} onChange={setDeclaredOther} help="Verify checks and remaining payment methods." />
+                  </div>
+                </div>
+
+                <textarea value={closingNotes} onChange={(e) => setClosingNotes(e.target.value)} rows={3} className="mt-4 w-full rounded-xl border-2 border-slate-200 px-4 py-3 outline-none focus:border-blue-500" placeholder={recoveryMode && managedSession.cashier_id !== usuario?.id ? "Supervisor recovery reason (required)" : closeoutHasVariance(liveMethodVariances) ? "Explain the difference (required)" : "Closing notes (optional)"} />
+                <button disabled={saving || syncing || !navigator.onLine || ventasPendientes > 0} className="mt-4 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-rose-600 px-5 py-4 text-lg font-black text-white shadow-lg shadow-rose-200 disabled:opacity-50"><Printer size={21} />{recoveryMode ? "Close Previous Shift & Print" : "Close Shift & Print Report"}</button>
+                <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">The report is saved before printing and remains available for reprint.</p>
               </form>
             </section>
 
@@ -412,12 +587,54 @@ export default function StoreRegister() {
               <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-5 py-3">Register / Cashier</th><th className="px-5 py-3">Opened</th><th className="px-5 py-3">Closed</th><th className="px-5 py-3 text-right">Expected</th><th className="px-5 py-3 text-right">Counted</th><th className="px-5 py-3 text-right">Difference</th><th className="px-5 py-3">Status</th><th className="px-5 py-3" /></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {sessions.length === 0 ? <tr><td colSpan={8} className="p-8 text-center font-semibold text-slate-400">No register shifts recorded yet.</td></tr> : sessions.map((row) => (
-                  <tr key={row.id} className="text-slate-700"><td className="px-5 py-3"><div className="font-black text-slate-900">{registers[row.register_id]?.name || "Store Register"}</div><div className="text-xs text-slate-400">{row.cashier_name || `Cashier ${row.cashier_id.slice(0, 8)}`}</div></td><td className="whitespace-nowrap px-5 py-3">{dateTime(row.opened_at)}</td><td className="whitespace-nowrap px-5 py-3">{dateTime(row.closed_at)}</td><td className="px-5 py-3 text-right font-bold tabular-nums">{row.expected_cash == null ? "—" : money(row.expected_cash)}</td><td className="px-5 py-3 text-right font-bold tabular-nums">{row.counted_cash == null ? "—" : money(row.counted_cash)}</td><td className={`px-5 py-3 text-right font-black tabular-nums ${Math.abs(Number(row.variance || 0)) > 0.004 ? "text-rose-700" : "text-emerald-700"}`}>{row.variance == null ? "—" : money(row.variance)}</td><td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${row.status === "open" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span>{row.reopened_at && <div className="mt-1 text-[10px] font-bold text-amber-600">Reopened</div>}</td><td className="px-5 py-3">{row.status === "open" && row.id !== managedSession?.id && (row.cashier_id === usuario?.id || privileged) && <button onClick={() => setReviewSessionId(row.id)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800">Review & Close</button>}{privileged && row.status === "closed" && <button onClick={() => { setReopenId(row.id); setReopenReason(""); }} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Reopen</button>}</td></tr>
+                  <tr key={row.id} className="text-slate-700">
+                    <td className="px-5 py-3"><div className="font-black text-slate-900">{registers[row.register_id]?.name || "Store Register"}</div><div className="text-xs text-slate-400">{row.cashier_name || `Cashier ${row.cashier_id.slice(0, 8)}`}</div>{row.closeout_report_number && <div className="mt-1 text-[10px] font-bold text-blue-600">{row.closeout_report_number}</div>}</td>
+                    <td className="whitespace-nowrap px-5 py-3">{dateTime(row.opened_at)}</td>
+                    <td className="whitespace-nowrap px-5 py-3">{dateTime(row.closed_at)}</td>
+                    <td className="px-5 py-3 text-right font-bold tabular-nums">{row.expected_cash == null ? "—" : money(row.expected_cash)}</td>
+                    <td className="px-5 py-3 text-right font-bold tabular-nums">{row.counted_cash == null ? "—" : money(row.counted_cash)}</td>
+                    <td className={`px-5 py-3 text-right font-black tabular-nums ${Math.abs(Number(row.variance || 0)) > 0.004 ? "text-rose-700" : "text-emerald-700"}`}>{row.variance == null ? "—" : money(row.variance)}</td>
+                    <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${row.status === "open" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span>{row.closeout_report_status === "adjusted" && <div className="mt-1 text-[10px] font-black text-rose-600">Adjusted after close</div>}{row.closeout_print_status === "pending" && row.closeout_report_id && <div className="mt-1 text-[10px] font-bold text-amber-600">Print / reprint pending</div>}{row.reopened_at && <div className="mt-1 text-[10px] font-bold text-amber-600">Reopened</div>}</td>
+                    <td className="px-5 py-3"><div className="flex flex-wrap gap-2">{row.status === "open" && row.id !== managedSession?.id && (row.cashier_id === usuario?.id || privileged) && <button onClick={() => setReviewSessionId(row.id)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800">Review & Close</button>}{row.closeout_report_id && <button type="button" onClick={() => loadCloseoutReport(row)} disabled={reportLoading} className="flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800 disabled:opacity-50"><Eye size={14} />View / Print</button>}{privileged && row.status === "closed" && <button onClick={() => { setReopenId(row.id); setReopenReason(""); }} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Reopen</button>}</div></td>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </section>
+
+        {closedReport && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-6">
+            <div className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
+              <div className="bg-gradient-to-r from-slate-950 to-blue-900 p-6 text-white sm:p-7">
+                <div className="flex items-start justify-between gap-4">
+                  <div><div className="text-xs font-black uppercase tracking-[0.18em] text-blue-200">Physical Store · Shift Closeout</div><h2 className="mt-1 text-2xl font-black">{closedReport.report_number}</h2><p className="mt-1 text-sm text-blue-100">{closedReport.register_name} · {closedReport.cashier_name}</p></div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${closedReport.status === "adjusted" ? "bg-rose-500 text-white" : closedReport.status === "reopened" ? "bg-amber-400 text-slate-950" : "bg-emerald-400 text-emerald-950"}`}>{closedReport.status}</span>
+                </div>
+              </div>
+              <div className="space-y-5 p-5 sm:p-7">
+                {closedReport.status === "adjusted" && <div className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 text-sm font-black text-rose-800">A late offline transaction changed this report after closing. Review the new totals{closedReport.print_status === "pending" ? " and print an updated copy" : " — the updated copy is recorded as printed"}.</div>}
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Metric label="Net Sales" value={money(closedReport.system_summary?.net_sales)} detail={`${closedReport.system_summary?.completed_sales_count || 0} completed sales`} tone="green" />
+                  <Metric label="Refunds" value={money(closedReport.system_summary?.refund_total)} detail={`${closedReport.system_summary?.return_count || 0} returns`} tone="red" />
+                  <Metric label="Tax Collected" value={money(closedReport.system_summary?.tax_net)} tone="amber" />
+                </div>
+                <div className="overflow-hidden rounded-2xl border border-slate-200">
+                  <div className="grid grid-cols-[1fr_0.8fr_0.8fr_0.7fr] bg-slate-100 px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500"><span>Method</span><span className="text-right">System</span><span className="text-right">Verified</span><span className="text-right">Difference</span></div>
+                  {closeoutPaymentRows(closedReport).map((row) => <div key={row.key} className="grid grid-cols-[1fr_0.8fr_0.8fr_0.7fr] border-t border-slate-100 px-4 py-3 text-sm"><span className="font-black text-slate-800">{row.label}</span><span className="text-right font-bold tabular-nums">{money(row.system)}</span><span className="text-right font-bold tabular-nums">{money(row.declared)}</span><span className={`text-right font-black tabular-nums ${Math.abs(row.variance) > 0.009 ? "text-rose-700" : "text-emerald-700"}`}>{money(row.variance)}</span></div>)}
+                </div>
+                <div className="grid gap-3 rounded-2xl bg-slate-50 p-4 text-sm sm:grid-cols-2"><div><span className="text-xs font-black uppercase text-slate-400">Opened</span><div className="font-bold text-slate-800">{dateTime(closedReport.opened_at)}</div></div><div><span className="text-xs font-black uppercase text-slate-400">Closed</span><div className="font-bold text-slate-800">{dateTime(closedReport.closed_at)}</div></div><div><span className="text-xs font-black uppercase text-slate-400">Closed by</span><div className="font-bold text-slate-800">{closedReport.closed_by_name}</div></div><div><span className="text-xs font-black uppercase text-slate-400">Card batch</span><div className="font-bold text-slate-800">{closedReport.card_batch_reference || "Not entered"}</div></div></div>
+                {closedReport.notes && <div className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-700"><span className="font-black">Closing notes:</span> {closedReport.notes}</div>}
+                <div className="text-center text-xs font-semibold text-slate-400">Print status: {closedReport.print_status} · {closedReport.print_count || 0} recorded print request{Number(closedReport.print_count || 0) === 1 ? "" : "s"}</div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <button type="button" onClick={() => printCloseoutReport(closedReport)} disabled={reportLoading} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 font-black text-white disabled:opacity-50"><Printer size={18} />{Number(closedReport.print_count || 0) > 0 ? "Reprint Thermal" : "Print Thermal"}</button>
+                  <button type="button" onClick={() => downloadCloseoutReport(closedReport)} disabled={reportLoading} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-black text-white disabled:opacity-50"><Download size={18} />Download PDF</button>
+                  <button type="button" onClick={() => setClosedReport(null)} className="min-h-12 rounded-xl border-2 border-slate-200 px-4 py-3 font-black text-slate-600">Close</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {reopenId && <form onSubmit={reopenSession} className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"><h2 className="text-xl font-black text-slate-950">Controlled Reopening</h2><p className="mt-2 text-sm text-slate-500">The previous close snapshot stays in history. Enter why this session must reopen.</p><textarea autoFocus value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} rows={4} className="mt-4 w-full rounded-xl border-2 border-amber-200 px-4 py-3 outline-none focus:border-amber-500" placeholder="Required supervisor reason…" required /><div className="mt-4 flex gap-3"><button type="button" onClick={() => setReopenId(null)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-black text-slate-600">Cancel</button><button disabled={saving} className="flex-1 rounded-xl bg-amber-600 px-4 py-3 font-black text-white disabled:opacity-50">Reopen Shift</button></div></div></form>}
         {voidMovementId && <form onSubmit={voidMovement} className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"><h2 className="text-xl font-black text-slate-950">Void Cash Movement</h2><p className="mt-2 text-sm text-slate-500">The original movement remains visible. The supervisor, time and reason are added to the audit trail.</p><textarea autoFocus value={voidReason} onChange={(e) => setVoidReason(e.target.value)} rows={3} className="mt-4 w-full rounded-xl border-2 border-rose-200 px-4 py-3 outline-none focus:border-rose-500" placeholder="Required void reason…" required /><div className="mt-4 flex gap-3"><button type="button" onClick={() => setVoidMovementId(null)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-black text-slate-600">Cancel</button><button disabled={saving} className="flex-1 rounded-xl bg-rose-600 px-4 py-3 font-black text-white disabled:opacity-50">Void Movement</button></div></div></form>}

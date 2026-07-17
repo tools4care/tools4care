@@ -1417,6 +1417,7 @@ export default function PreCierreVan() {
   const [tipoMensaje, setTipoMensaje] = useState("");
   const [cargando, setCargando] = useState(false);
   const [openStoreRegisters, setOpenStoreRegisters] = useState([]);
+  const [pendingStoreReports, setPendingStoreReports] = useState([]);
   const [registerStatusLoading, setRegisterStatusLoading] = useState(false);
   
   // Fechas
@@ -1452,20 +1453,31 @@ export default function PreCierreVan() {
   useEffect(() => {
     if (!storeWorkspace || !van?.id) {
       setOpenStoreRegisters([]);
+      setPendingStoreReports([]);
       return undefined;
     }
     let active = true;
     const loadOpenRegisters = async () => {
       setRegisterStatusLoading(true);
-      const result = await supabase
-        .from("store_cash_sessions")
-        .select("id,cashier_id,device_id,opened_at")
-        .eq("location_id", van.id)
-        .eq("status", "open")
-        .order("opened_at", { ascending: true });
+      const [result, reportResult] = await Promise.all([
+        supabase
+          .from("store_cash_sessions")
+          .select("id,cashier_id,device_id,opened_at")
+          .eq("location_id", van.id)
+          .eq("status", "open")
+          .order("opened_at", { ascending: true }),
+        supabase
+          .from("store_cash_closeout_reports")
+          .select("id,report_number,status,print_status,closed_at")
+          .eq("location_id", van.id)
+          .eq("print_status", "pending")
+          .order("closed_at", { ascending: false }),
+      ]);
       if (active) {
         if (!result.error) setOpenStoreRegisters(result.data || []);
         else console.warn("Could not check open store registers:", result.error.message);
+        if (!reportResult.error) setPendingStoreReports(reportResult.data || []);
+        else console.warn("Could not check pending store reports:", reportResult.error.message);
         setRegisterStatusLoading(false);
       }
     };
@@ -1473,6 +1485,7 @@ export default function PreCierreVan() {
     const channel = supabase
       .channel(`store-closeout-registers-${van.id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "store_cash_sessions", filter: `location_id=eq.${van.id}` }, loadOpenRegisters)
+      .on("postgres_changes", { event: "*", schema: "public", table: "store_cash_closeout_reports", filter: `location_id=eq.${van.id}` }, loadOpenRegisters)
       .subscribe();
     return () => { active = false; supabase.removeChannel(channel); };
   }, [storeWorkspace, van?.id]);
@@ -1854,20 +1867,20 @@ export default function PreCierreVan() {
         )}
 
         {storeWorkspace && (
-          <div className={`mb-6 rounded-2xl border p-4 shadow-sm ${openStoreRegisters.length > 0 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+          <div className={`mb-6 rounded-2xl border p-4 shadow-sm ${openStoreRegisters.length > 0 || pendingStoreReports.length > 0 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
-                {openStoreRegisters.length > 0 ? <AlertTriangle className="mt-0.5 shrink-0 text-amber-700" size={22} /> : <CheckCircle className="mt-0.5 shrink-0 text-emerald-700" size={22} />}
+                {openStoreRegisters.length > 0 || pendingStoreReports.length > 0 ? <AlertTriangle className="mt-0.5 shrink-0 text-amber-700" size={22} /> : <CheckCircle className="mt-0.5 shrink-0 text-emerald-700" size={22} />}
                 <div>
-                  <div className={`font-black ${openStoreRegisters.length > 0 ? "text-amber-900" : "text-emerald-900"}`}>
-                    {registerStatusLoading ? "Checking cash registers…" : openStoreRegisters.length > 0 ? `${openStoreRegisters.length} cash register shift${openStoreRegisters.length === 1 ? " is" : "s are"} still open` : "All cash registers are closed"}
+                  <div className={`font-black ${openStoreRegisters.length > 0 || pendingStoreReports.length > 0 ? "text-amber-900" : "text-emerald-900"}`}>
+                    {registerStatusLoading ? "Checking cash registers…" : openStoreRegisters.length > 0 ? `${openStoreRegisters.length} cash register shift${openStoreRegisters.length === 1 ? " is" : "s are"} still open` : pendingStoreReports.length > 0 ? `${pendingStoreReports.length} shift report${pendingStoreReports.length === 1 ? " needs" : "s need"} printing or reprinting` : "All cash registers are closed and documented"}
                   </div>
                   <div className="mt-1 text-sm font-semibold text-slate-600">
-                    {openStoreRegisters.length > 0 ? "Each cashier must count and close their computer before the general store closeout." : "The general Store Closeout can safely consolidate the location."}
+                    {openStoreRegisters.length > 0 ? "Each cashier must count and close their computer before the general store closeout." : pendingStoreReports.length > 0 ? "The store may continue closing, but these shift reports should be printed and filed with their drawers." : "The general Store Closeout can safely consolidate the location."}
                   </div>
                 </div>
               </div>
-              <button onClick={() => navigate("/store/register")} className={`min-h-11 rounded-xl px-4 py-2 text-sm font-black text-white ${openStoreRegisters.length > 0 ? "bg-amber-700" : "bg-emerald-700"}`}>
+              <button onClick={() => navigate("/store/register")} className={`min-h-11 rounded-xl px-4 py-2 text-sm font-black text-white ${openStoreRegisters.length > 0 || pendingStoreReports.length > 0 ? "bg-amber-700" : "bg-emerald-700"}`}>
                 Open Cash Register
               </button>
             </div>
