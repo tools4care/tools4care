@@ -5614,7 +5614,7 @@ function renderStepClient() {
       {/* ── Walk-in return details: show product selector after invoice is picked ── */}
       {walkinDevolucion && renderReturnDetails()}
 
-      <div className="hidden space-y-3 sm:block">
+      <div className="hidden space-y-3">
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -5928,12 +5928,12 @@ function renderStepClient() {
         <section
           data-testid="mobile-sales-quick-actions"
           aria-label="Quick sale actions"
-          className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,0.8fr)] gap-2 sm:hidden"
+          className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,0.8fr)] gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(180px,0.7fr)] sm:gap-3"
         >
           <button
             type="button"
             onClick={startQuickSale}
-            className="flex min-h-16 items-center gap-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 text-left text-white shadow-md transition-all active:scale-[0.98]"
+            className="flex min-h-16 items-center gap-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 text-left text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98] sm:min-h-20 sm:px-5"
           >
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-xl" aria-hidden="true">
               ⚡
@@ -5949,7 +5949,7 @@ function renderStepClient() {
               refreshPendingSales({ silent: true });
               setModalPendingSales(true);
             }}
-            className="flex min-h-16 flex-col justify-center rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-left shadow-sm transition-all active:scale-[0.98]"
+            className="flex min-h-16 flex-col justify-center rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-left shadow-sm transition-all hover:bg-amber-100 active:scale-[0.98] sm:min-h-20 sm:px-4"
           >
             <span className="text-[11px] font-bold uppercase tracking-wide text-amber-700">Pending</span>
             <span className="mt-0.5 text-sm font-black text-amber-950">
@@ -5983,6 +5983,55 @@ function renderStepClient() {
               <span className="text-blue-600 transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
             </summary>
             <div className="border-t border-slate-100 bg-slate-50/80 p-3">
+              {storeMode && (
+                <div className="mb-3">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Store counter</div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        startQuickSale();
+                        window.setTimeout(() => productSearchRef.current?.focus(), 120);
+                      }}
+                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-left transition-all hover:bg-blue-100 active:scale-[0.98]"
+                    >
+                      <span className="block text-xs font-black text-blue-800">Scan products</span>
+                      <span className="mt-0.5 block text-[10px] text-blue-600">USB scanner ready</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAppMode("devolucion");
+                        setWalkinDevolucion(false);
+                        setSelectedInvoice(null);
+                        setReturnQuantities({});
+                        setClientSearch("");
+                      }}
+                      className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2.5 text-left transition-all hover:bg-orange-100 active:scale-[0.98]"
+                    >
+                      <span className="block text-xs font-black text-orange-800">Process return</span>
+                      <span className="mt-0.5 block text-[10px] text-orange-600">Find receipt or customer</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => lastReceiptRef.current && printThermalReceipt(lastReceiptRef.current)}
+                      disabled={!lastReceiptRef.current}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left transition-all hover:bg-slate-100 active:scale-[0.98] disabled:opacity-50"
+                    >
+                      <span className="block text-xs font-black text-slate-800">Reprint receipt</span>
+                      <span className="mt-0.5 block text-[10px] text-slate-500">Last completed sale</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openCashDrawer()}
+                      className="rounded-lg border border-amber-200 bg-white px-3 py-2.5 text-left transition-all hover:bg-amber-50 active:scale-[0.98]"
+                    >
+                      <span className="block text-xs font-black text-amber-800">Open drawer</span>
+                      <span className="mt-0.5 block text-[10px] text-amber-600">Receipt printer</span>
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                 <span>
                   <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">Today</span>
@@ -5992,7 +6041,7 @@ function renderStepClient() {
                 </span>
                 <span className="text-sm font-black text-amber-700">{fmt(todayStats.total)}</span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <button
                   type="button"
                   onClick={() => navigate("/clientes/nuevo", { replace: false })}
@@ -6035,7 +6084,7 @@ function renderStepClient() {
                       setMigrationMode((value) => !value);
                       toast.info(`Migration mode ${!migrationMode ? "ON" : "OFF"}`);
                     }}
-                    className={`col-span-2 rounded-lg border px-3 py-2.5 text-left transition-all active:scale-[0.99] ${
+                    className={`col-span-2 rounded-lg border px-3 py-2.5 text-left transition-all active:scale-[0.99] sm:col-span-4 ${
                       migrationMode
                         ? "border-purple-600 bg-purple-600 text-white"
                         : "border-purple-200 bg-white text-purple-800"
@@ -6057,7 +6106,7 @@ function renderStepClient() {
         ref={clientListRef}
         className={`overflow-auto overscroll-contain space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 sm:max-h-96 sm:p-3 lg:max-h-[480px] ${
           clientsSafe.length === 0 && debouncedClientSearch.length < 2
-            ? "hidden sm:block"
+            ? "hidden"
             : ""
         } ${
           clientSearchFocused || clientSearch.trim()
@@ -6170,7 +6219,7 @@ function renderStepClient() {
       </div>
 
       {clientsSafe.length === 0 && debouncedClientSearch.length < 2 && (
-        <div className="hidden grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
+        <div className="hidden grid-cols-2 gap-2 lg:grid-cols-4">
           <button
             type="button"
             onClick={startQuickSale}
