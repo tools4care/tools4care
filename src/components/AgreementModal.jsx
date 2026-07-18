@@ -24,7 +24,8 @@ export default function AgreementModal({
   const [isException, setIsException] = useState(false);
   const [exceptionNote, setExceptionNote] = useState("");
 
-  const tieneAcuerdosPrevios = acuerdosPrevios.length > 0 && deudaPrevia > 0;
+  const tieneSaldoAnterior = deudaPrevia > 0;
+  const tieneAcuerdosPrevios = acuerdosPrevios.length > 0 && tieneSaldoAnterior;
   // El plan se genera sobre el TOTAL a consolidar (deuda de acuerdos previos
   // + el crédito de esta venta) porque eso es lo que crearAcuerdo() va a
   // crear realmente — mostrar solo el monto de la venta aquí desalinearía
@@ -100,13 +101,16 @@ export default function AgreementModal({
         </div>
 
         {/* Consolidation notice */}
-        {tieneAcuerdosPrevios && (
+        {tieneSaldoAnterior && (
           <div className="mx-4 mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
             <div className="font-semibold text-blue-800 text-sm mb-1">
-              🔄 This will replace {acuerdosPrevios.length > 1 ? "their active agreements" : "their active agreement"}
+              🔄 Previous balance will be included
             </div>
             <div className="text-xs text-blue-700">
-              {acuerdosPrevios.length === 1 ? "1 agreement" : `${acuerdosPrevios.length} agreements`} with ${deudaPrevia.toFixed(2)} still owed will be combined with this sale into ONE new plan of ${montoTotal.toFixed(2)}. The old plan will be marked as renegotiated, not deleted.
+              Previous balance ${deudaPrevia.toFixed(2)} + new credit ${Number(montoCredito || 0).toFixed(2)} = ONE payment plan of ${montoTotal.toFixed(2)}.
+              {tieneAcuerdosPrevios
+                ? ` ${acuerdosPrevios.length === 1 ? "The active agreement" : "The active agreements"} will be marked as renegotiated, not deleted.`
+                : ""}
             </div>
           </div>
         )}
@@ -126,7 +130,7 @@ export default function AgreementModal({
         {/* Cuotas Selector */}
         <div className="p-4">
           <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Number of Installments{tieneAcuerdosPrevios ? " (total consolidated plan)" : ""}:
+            Number of Installments{tieneSaldoAnterior ? " (total consolidated plan)" : ""}:
           </label>
           <div className="grid grid-cols-4 gap-2">
             {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (

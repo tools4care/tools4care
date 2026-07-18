@@ -4020,11 +4020,15 @@ async function handleDeletePendingSale(id) {
 // 2. El sistema está disponible
 // 3. No se ha respondido ya
 const esCreditoSignificativo = amountToCreditCheck > 0.01;
+const ventaPermiteAcuerdo = saleTotalWithTax > 100;
 
-	if (selectedClient?.id && esCreditoSignificativo && agreementSystemReady && !resolvedAgreementData) {
+	if (selectedClient?.id && ventaPermiteAcuerdo && esCreditoSignificativo && agreementSystemReady && !resolvedAgreementData) {
   const acuerdosPrevios = await getAcuerdosActivos(selectedClient.id);
-  const deudaPrevia = Number(
+  const deudaEnAcuerdos = Number(
     acuerdosPrevios.reduce((s, a) => s + Number(a.monto_pendiente || 0), 0).toFixed(2)
+  );
+  const deudaPrevia = Number(
+    Math.max(deudaEnAcuerdos, balanceAfter - amountToCreditCheck, 0).toFixed(2)
   );
   setPendingAgreementData({
     montoCredito: Number(amountToCreditCheck.toFixed(2)),
@@ -4593,7 +4597,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       };
 // 🆕 CREAR ACUERDO DE PAGO si hay crédito
       let createdAgreementPlan = null;
-     if (pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady && !resolvedAgreementData?.skipped) {
+     if (saleTotalWithTax > 100 && pendingFromThisSale > 0 && selectedClient?.id && agreementSystemReady && !resolvedAgreementData?.skipped) {
         try {
           // Usar el plan que el vendedor seleccionó en el modal
           const cuotasSeleccionadas = resolvedAgreementData?.plan?.num_cuotas || null;
@@ -4604,6 +4608,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
             vanId: van.id,
             usuarioId: usuario.id,
             montoCredito: Number(pendingFromThisSale.toFixed(2)),
+            saldoAnterior: Number(Math.max(0, balancePost - pendingFromThisSale).toFixed(2)),
             numCuotas: cuotasSeleccionadas,
             excepcionVendedor: resolvedAgreementData?.isException || false,
             excepcionNota: resolvedAgreementData?.exceptionNote || null,
@@ -4619,11 +4624,13 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       }
 
 // ========== 🆕 PEGAR AQUÍ — SMS CON CALENDARIO ==========
-      const agreementPlanForSMS = createdAgreementPlan || agreementPlan || (
-        pendingFromThisSale > 0
+      const agreementPlanForSMS = saleTotalWithTax > 100
+        ? createdAgreementPlan || agreementPlan || (
+        pendingFromThisSale > 0 && !resolvedAgreementData?.skipped
           ? generarPlanPago(pendingFromThisSale, { numCuotas: resolvedAgreementData?.numCuotas })
           : null
-      );
+      )
+        : null;
 
       if (agreementPlanForSMS && agreementPlanForSMS.cuotas?.length > 0) {
         const scheduleLines = agreementPlanForSMS.cuotas
@@ -6855,12 +6862,15 @@ function renderStepPayment() {
     Math.abs(Number(pendingAgreementData.montoCredito || 0) - Number(amountToCredit || 0)) <= 0.01;
 
   const configureNewPaymentAgreement = async () => {
-    if (!selectedClient?.id || amountToCredit <= 0.01) return;
+    if (!selectedClient?.id || saleTotalWithTax <= 100 || amountToCredit <= 0.01) return;
     const previousAgreements = await getAcuerdosActivos(selectedClient.id);
-    const previousDebt = Number(
+    const debtInAgreements = Number(
       previousAgreements
         .reduce((sum, agreement) => sum + Number(agreement.monto_pendiente || 0), 0)
         .toFixed(2)
+    );
+    const previousDebt = Number(
+      Math.max(debtInAgreements, balanceAfter - amountToCredit, 0).toFixed(2)
     );
     setPendingAgreementData({
       montoCredito: Number(amountToCredit.toFixed(2)),
@@ -7151,7 +7161,7 @@ function renderStepPayment() {
         )}
       </section>
 
-      {selectedClient?.id && amountToCredit > 0.01 && agreementSystemReady && (
+      {selectedClient?.id && saleTotalWithTax > 100 && amountToCredit > 0.01 && agreementSystemReady && (
         <section className={`rounded-2xl border-2 p-4 ${
           configuredAgreementIsCurrent
             ? "border-emerald-300 bg-emerald-50"
@@ -7166,7 +7176,7 @@ function renderStepPayment() {
               </div>
               <div className="mt-1 text-lg font-black text-slate-950">
                 {configuredAgreementIsCurrent && !pendingAgreementData?.skipped
-                  ? `${pendingAgreementData?.numCuotas || pendingAgreementData?.plan?.num_cuotas || 1} installments for ${fmt(amountToCredit)}`
+                  ? `${pendingAgreementData?.numCuotas || pendingAgreementData?.plan?.num_cuotas || 1} installments for ${fmt(pendingAgreementData?.plan?.monto_total || (amountToCredit + Number(pendingAgreementData?.deudaPrevia || 0)))}`
                   : configuredAgreementIsCurrent && pendingAgreementData?.skipped
                     ? "No payment agreement selected"
                     : `Set installments for ${fmt(amountToCredit)}`}

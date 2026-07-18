@@ -224,6 +224,7 @@ async function _diasDeudaFallback(clienteId) {
  * @param {string} [params.vanId]
  * @param {string} [params.usuarioId]
  * @param {number} params.montoCredito - Lo que quedó sin pagar de la venta
+ * @param {number} [params.saldoAnterior] - Saldo anterior que seguirá pendiente
  * @param {number} [params.numCuotas] - Número de cuotas (auto si no se da)
  * @param {boolean} [params.excepcionVendedor] - Si fue aprobada con excepción
  * @param {string} [params.excepcionNota] - Nota de la excepción
@@ -235,6 +236,7 @@ export async function crearAcuerdo({
   vanId = null,
   usuarioId = null,
   montoCredito,
+  saldoAnterior = 0,
   numCuotas = null,
   excepcionVendedor = false,
   excepcionNota = null,
@@ -246,8 +248,14 @@ export async function crearAcuerdo({
   try {
     // 0) Detectar acuerdos previos sin saldar para consolidarlos en este
     const previos = await getAcuerdosActivos(clienteId);
-    const deudaPrevia = Number(
+    const deudaEnAcuerdos = Number(
       previos.reduce((s, a) => s + Number(a.monto_pendiente || 0), 0).toFixed(2)
+    );
+    // El saldo CxC puede incluir deuda que todavía no pertenece a ningún
+    // acuerdo. Usamos el mayor de ambos valores para incluir todo el saldo
+    // anterior una sola vez, sin duplicar las cuotas ya existentes.
+    const deudaPrevia = Number(
+      Math.max(deudaEnAcuerdos, Number(saldoAnterior || 0)).toFixed(2)
     );
     const montoTotal = Number((deudaPrevia + Number(montoCredito || 0)).toFixed(2));
 
@@ -327,7 +335,7 @@ export async function crearAcuerdo({
         plan, // incluir plan para SMS
       },
       deudaPrevia,
-      consolidado: previos.length > 0,
+      consolidado: deudaPrevia > 0,
       acuerdosPrevios: previos.map((a) => a.id),
     };
   } catch (err) {
