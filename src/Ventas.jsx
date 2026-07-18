@@ -1112,7 +1112,11 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
       try {
         const activosDetalle = await getAcuerdosActivos(clienteId);
         const cuotasReales = activosDetalle
-          .flatMap((a) => a.cuotas_acuerdo || [])
+          .flatMap((a) => (a.cuotas_acuerdo || []).map((c) => ({
+            ...c,
+            acuerdo_id: c.acuerdo_id || a.id,
+            acuerdo_estado: a.estado,
+          })))
           .filter((c) => Number(c.monto || 0) - Number(c.monto_pagado || 0) > 0.001)
           .sort((a, b) => new Date(a.fecha_vencimiento) - new Date(b.fecha_vencimiento));
         setAcuerdosCuotasReales(cuotasReales);
@@ -1429,6 +1433,8 @@ useEffect(() => {
   // ---- ACUERDOS DE PAGO
 const [acuerdosResumen, setAcuerdosResumen] = useState(null);
 const [acuerdosCuotasReales, setAcuerdosCuotasReales] = useState(null);
+const [agreementAllocationMode, setAgreementAllocationMode] = useState("automatic");
+const [selectedAgreementInstallmentIds, setSelectedAgreementInstallmentIds] = useState([]);
 const [reglasCredito, setReglasCredito] = useState(null);
 const [showAgreementModal, setShowAgreementModal] = useState(false);
 const [agreementPlan, setAgreementPlan] = useState(null);
@@ -1438,6 +1444,11 @@ const [agreementException, setAgreementException] = useState(false);
 const [agreementExceptionNote, setAgreementExceptionNote] = useState("");
 const [agreementSystemReady, setAgreementSystemReady] = useState(false);
 const [pendingAgreementData, setPendingAgreementData] = useState(null);
+
+useEffect(() => {
+  setAgreementAllocationMode("automatic");
+  setSelectedAgreementInstallmentIds([]);
+}, [selectedClient?.id]);
 
   // ---- CHANNEL SELECTION MODAL (receipt send)
   const [channelModal, setChannelModal] = useState(null); // { hasPhone, hasEmail, resolve }
@@ -3389,6 +3400,8 @@ function clearSale() {
   // Limpiar acuerdos
   setAcuerdosResumen(null);
   setAcuerdosCuotasReales(null);
+  setAgreementAllocationMode("automatic");
+  setSelectedAgreementInstallmentIds([]);
   setReglasCredito(null);
   setAgreementPlan(null);
   setAgreementException(false);
@@ -4265,6 +4278,23 @@ const totalSettledForSaleNow = Number((creditForSaleNow + paidForSaleNow).toFixe
 const totalAPagarNow     = Math.max(0, oldDebtNow + saleTotalWithTax - storeCreditApplied);
 const changeNow          = Math.max(0, paid - totalAPagarNow);
 
+if (agreementAllocationMode === "selected" && payOldDebtNow > 0.005) {
+  const selectedCapacity = (acuerdosCuotasReales || [])
+    .filter((cuota) => selectedAgreementInstallmentIds.includes(cuota.id))
+    .reduce(
+      (sum, cuota) => sum + Math.max(0, Number(cuota.monto || 0) - Number(cuota.monto_pagado || 0)),
+      0
+    );
+  if (selectedAgreementInstallmentIds.length === 0 || selectedCapacity + 0.005 < payOldDebtNow) {
+    setPaymentError(
+      `Select enough installments to cover ${fmt(payOldDebtNow)} applied to the previous balance.`
+    );
+    setSaving(false);
+    submitGuardRef.current.release();
+    return;
+  }
+}
+
 // ✅ Validar pago mínimo antes de guardar
 const pagoMinimoReq = calcularPagoMinimo(oldDebtNow);
 if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
@@ -4389,6 +4419,9 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
   credito_favor_aplicado: Number(storeCreditApplied.toFixed(2)),
   credito_favor_aplicado_venta: Number(creditForSaleNow.toFixed(2)),
   credito_favor_aplicado_deuda: Number(creditToOldDebtNow.toFixed(2)),
+  acuerdo_aplicacion: agreementAllocationMode,
+  acuerdo_cuotas_seleccionadas:
+    agreementAllocationMode === "selected" ? selectedAgreementInstallmentIds : [],
   cambio: Number(changeNow.toFixed(2)),
   ajuste_por_venta: Number(pendingFromThisSale.toFixed(2)),
   transaction_id: transactionId, // 🆕 UUID para deduplicación
@@ -4487,13 +4520,36 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
           const sbKey = import.meta?.env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o';
           const session = supabase.auth.session ? supabase.auth.session() : (await supabase.auth.getSession())?.data?.session;
           const authHeader = session?.access_token ? `Bearer ${session.access_token}` : `Bearer ${sbKey}`;
-          await fetch(`${sbUrl}/rest/v1/rpc/aplicar_pago_a_cuotas`, {
+          const useSelectedInstallments =
+            agreementAllocationMode === "selected" &&
+            selectedAgreementInstallmentIds.length > 0;
+          const endpoint = useSelectedInstallments
+            ? "aplicar_pago_a_cuotas_seleccionadas"
+            : "aplicar_pago_a_cuotas";
+          const response = await fetch(`${sbUrl}/rest/v1/rpc/${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'apikey': sbKey, 'Authorization': authHeader },
-            body: JSON.stringify({ p_cliente_id: selectedClient.id, p_monto: montoParaCxC }),
+            body: JSON.stringify({
+              p_cliente_id: selectedClient.id,
+              p_monto: montoParaCxC,
+              ...(useSelectedInstallments
+                ? { p_cuota_ids: selectedAgreementInstallmentIds }
+                : {}),
+            }),
           });
+          const agreementResult = await response.json().catch(() => null);
+          if (!response.ok || agreementResult?.ok === false) {
+            throw new Error(
+              agreementResult?.error ||
+              `Could not apply payment to installments (${response.status})`
+            );
+          }
         } catch (e) {
           console.warn('⚠️ Error cuotas desde venta:', e.message);
+          toast.warning(
+            "Sale saved, but the payment-agreement allocation needs review: " + e.message,
+            8000
+          );
         }
       }
 
@@ -6772,6 +6828,21 @@ function renderStepProducts() {
 /* ======================== Step 3: Payment ======================== */
 function renderStepPayment() {
   const isSaleToAR = payments.length === 1 && !!payments[0]?.toAR;
+  const pendingAgreementInstallments = (acuerdosCuotasReales || []).filter(
+    (cuota) =>
+      cuota.acuerdo_estado !== "roto" &&
+      Math.max(0, Number(cuota.monto || 0) - Number(cuota.monto_pagado || 0)) > 0.005
+  );
+  const selectedAgreementCapacity = pendingAgreementInstallments
+    .filter((cuota) => selectedAgreementInstallmentIds.includes(cuota.id))
+    .reduce(
+      (sum, cuota) => sum + Math.max(0, Number(cuota.monto || 0) - Number(cuota.monto_pagado || 0)),
+      0
+    );
+  const selectedAgreementCoverageShort =
+    agreementAllocationMode === "selected" &&
+    paidToOldDebt > 0.005 &&
+    selectedAgreementCapacity + 0.005 < paidToOldDebt;
 
   const sendSaleToAR = () => {
     setPayments([{ forma: "efectivo", monto: 0, toAR: true }]);
@@ -7167,7 +7238,111 @@ function renderStepPayment() {
             <span>Payment plan and installments</span>
             <span className="text-gray-400 group-open:rotate-180 transition-transform">⌄</span>
           </summary>
-          <div className="border-t border-gray-100 p-3">
+          <div className="border-t border-gray-100 p-3 space-y-3">
+            {pendingAgreementInstallments.length > 0 && (
+              <section className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3" aria-label="Installment allocation">
+                <div className="font-bold text-indigo-950">Apply previous-balance payment</div>
+                <p className="mt-0.5 text-xs text-indigo-700">
+                  Choose how the {fmt(paidToOldDebt)} applied to old debt should cover the agreement.
+                </p>
+
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAgreementAllocationMode("automatic");
+                      setPaymentError("");
+                    }}
+                    className={`rounded-xl border px-3 py-2.5 text-left ${
+                      agreementAllocationMode === "automatic"
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-indigo-200 bg-white text-indigo-900 hover:border-indigo-400"
+                    }`}
+                  >
+                    <span className="block text-sm font-black">Automatic</span>
+                    <span className={`block text-xs ${agreementAllocationMode === "automatic" ? "text-indigo-100" : "text-indigo-600"}`}>
+                      Oldest installment first
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAgreementAllocationMode("selected");
+                      setPaymentError("");
+                    }}
+                    className={`rounded-xl border px-3 py-2.5 text-left ${
+                      agreementAllocationMode === "selected"
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-indigo-200 bg-white text-indigo-900 hover:border-indigo-400"
+                    }`}
+                  >
+                    <span className="block text-sm font-black">Choose installments</span>
+                    <span className={`block text-xs ${agreementAllocationMode === "selected" ? "text-indigo-100" : "text-indigo-600"}`}>
+                      Cashier controls the allocation
+                    </span>
+                  </button>
+                </div>
+
+                {agreementAllocationMode === "selected" && (
+                  <div className="mt-3 space-y-2">
+                    {pendingAgreementInstallments.map((cuota) => {
+                      const pending = Math.max(
+                        0,
+                        Number(cuota.monto || 0) - Number(cuota.monto_pagado || 0)
+                      );
+                      const checked = selectedAgreementInstallmentIds.includes(cuota.id);
+                      return (
+                        <label
+                          key={cuota.id}
+                          className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 ${
+                            checked
+                              ? "border-indigo-400 bg-white ring-2 ring-indigo-100"
+                              : "border-slate-200 bg-white hover:border-indigo-300"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              setSelectedAgreementInstallmentIds((current) =>
+                                event.target.checked
+                                  ? [...current, cuota.id]
+                                  : current.filter((id) => id !== cuota.id)
+                              );
+                              setPaymentError("");
+                            }}
+                            className="h-5 w-5 rounded border-slate-300 text-indigo-600"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-bold text-slate-900">
+                              Installment #{cuota.numero_cuota}
+                            </span>
+                            <span className="block text-xs text-slate-500">
+                              Due {new Date(cuota.fecha_vencimiento).toLocaleDateString("en-US")}
+                            </span>
+                          </span>
+                          <span className="text-base font-black text-slate-900">{fmt(pending)}</span>
+                        </label>
+                      );
+                    })}
+
+                    <div className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
+                      selectedAgreementCoverageShort
+                        ? "bg-rose-50 text-rose-800"
+                        : "bg-emerald-50 text-emerald-800"
+                    }`}>
+                      <span className="font-semibold">Selected coverage</span>
+                      <b>{fmt(selectedAgreementCapacity)} / {fmt(paidToOldDebt)}</b>
+                    </div>
+                    {selectedAgreementCoverageShort && (
+                      <p className="text-xs font-semibold text-rose-700">
+                        Select additional installments before saving the sale.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
             <Suspense fallback={<div className="text-sm text-gray-400 p-3">Loading payment plan…</div>}>
               <ClientPaymentView
                 compact
