@@ -89,6 +89,7 @@ const COMPANY_PHONE   = import.meta?.env?.VITE_COMPANY_PHONE   || "";
 const COMPANY_ADDRESS = import.meta?.env?.VITE_COMPANY_ADDRESS || "";
 const EMAIL_MODE = (import.meta?.env?.VITE_EMAIL_MODE || "mailto").toLowerCase();
 const OFFLINE_REFRESH_MS = 6 * 60 * 60 * 1000;
+const CLIENT_BALANCE_VIEW = "clientes_balance_v2";
 
 /* ========================= Stripe QR Payment Helpers ========================= */
 const CHECKOUT_FN_URL =
@@ -1335,7 +1336,7 @@ useEffect(() => {
     try {
       const [{ data: clientes, error: clientsError }, { data: inventario, error: inventoryError }] = await Promise.all([
         supabase
-          .from("clientes_balance")
+          .from(CLIENT_BALANCE_VIEW)
           .select("id,nombre,negocio,telefono,email,direccion,balance")
           .order("nombre", { ascending: true })
           .limit(3000),
@@ -1649,7 +1650,7 @@ useEffect(() => {
       if (isOffline) return;
       try {
         const { data } = await supabase
-          .from("clientes_balance")
+          .from(CLIENT_BALANCE_VIEW)
           .select("direccion")
           .limit(5);
 
@@ -1750,7 +1751,9 @@ useEffect(() => {
       if (clientCacheRef.current.has(term)) {
         setClients(promoteRecentMatches(clientCacheRef.current.get(term)));
         setClientLoading(false);
-        return;
+        // Cached results make typing feel immediate, but their A/R balance can
+        // become stale after a sale or payment. Revalidate whenever online.
+        if (isOffline) return;
       }
 
       const memoryResults = promoteRecentMatches(cachedClientsRef.current)
@@ -1823,7 +1826,7 @@ useEffect(() => {
         const tokens = safe.split(/\s+/).filter(Boolean);
 
         const { data: d1, error: e1 } = await supabase
-          .from("clientes_balance")
+          .from(CLIENT_BALANCE_VIEW)
           .select(primaryCols)
           .or(primaryOr)
           .limit(100);
@@ -1858,7 +1861,7 @@ useEffect(() => {
             : fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
           const { data: d2, error: e2 } = await supabase
-            .from("clientes_balance")
+            .from(CLIENT_BALANCE_VIEW)
             .select(fbCols)
             .or(fbOr)
             .limit(100);
@@ -1874,7 +1877,7 @@ useEffect(() => {
         let andData = [];
         if (baseData.length === 0 && tokens.length >= 2) {
           const { data: dAnd, error: eAnd } = await supabase
-            .from("clientes_balance")
+            .from(CLIENT_BALANCE_VIEW)
             .select("id,nombre,negocio,telefono,email,direccion,balance")
             .ilike("nombre", `%${tokens[0]}%`)
             .or(`negocio.ilike.%${tokens.slice(1).join(" ")}%,telefono.ilike.%${tokens.slice(1).join(" ")}%,email.ilike.%${tokens.slice(1).join(" ")}%`)
@@ -1901,7 +1904,7 @@ useEffect(() => {
 
           if (tokenFilters) {
             const { data: dTokens, error: eTokens } = await supabase
-              .from("clientes_balance")
+              .from(CLIENT_BALANCE_VIEW)
               .select("id,nombre,negocio,telefono,email,direccion,balance")
               .or(tokenFilters)
               .limit(120);
@@ -4002,14 +4005,14 @@ async function handleDeletePendingSale(id) {
   }
 
   /* ===================== Guardar venta ===================== */
-  async function saveSale(agreementDataOverride = null) {
+  async function saveSale() {
     // Blocks a second concurrent call (rapid double-click/double-tap) synchronously —
     // see submitGuardRef declaration above. Released on every exit path below.
     if (!submitGuardRef.current.tryAcquire()) {
       console.warn("saveSale: duplicate submit blocked (double-click guard)");
       return;
     }
-    const candidateAgreementData = agreementDataOverride || pendingAgreementData;
+    const candidateAgreementData = pendingAgreementData;
     const resolvedAgreementData =
       candidateAgreementData &&
       !candidateAgreementData.waiting &&
@@ -4018,39 +4021,9 @@ async function handleDeletePendingSale(id) {
         : null;
     setSaving(true);
     setPaymentError("");
-     // Si hay crédito y el modal de acuerdo no se ha confirmado aún, mostrarlo
     // Use the same FIFO/store-credit-aware value shown in the checkout UI.
     // This is only the NEW credit created by this sale, not the prior A/R balance.
     const amountToCreditCheck = amountToCredit;
-
-   // Solo mostrar modal de acuerdo si:
-// 1. Esta venta deja crédito nuevo real (evita solo ruido de centavos)
-// 2. El sistema está disponible
-// 3. No se ha respondido ya
-const esCreditoSignificativo = amountToCreditCheck > 0.01;
-const ventaPermiteAcuerdo = saleTotalWithTax > 100;
-
-	if (selectedClient?.id && ventaPermiteAcuerdo && esCreditoSignificativo && agreementSystemReady && !resolvedAgreementData) {
-  const acuerdosPrevios = await getAcuerdosActivos(selectedClient.id);
-  const deudaEnAcuerdos = Number(
-    acuerdosPrevios.reduce((s, a) => s + Number(a.monto_pendiente || 0), 0).toFixed(2)
-  );
-  const deudaPrevia = Number(
-    Math.max(deudaEnAcuerdos, balanceAfter - amountToCreditCheck, 0).toFixed(2)
-  );
-  setPendingAgreementData({
-    montoCredito: Number(amountToCreditCheck.toFixed(2)),
-    saldoActual: creditProfile?.saldo || 0,
-    clientName: selectedClient?.nombre || '',
-    deudaPrevia,
-    acuerdosPrevios,
-    waiting: true,
-  });
-  setSaving(false);
-  submitGuardRef.current.release();
-  return;
-}
-
 
      // 🆕 Generar transaction_id único para esta transacción física
   const transactionId = makeUUID();
@@ -6887,7 +6860,6 @@ function renderStepPayment() {
       deudaPrevia: previousDebt,
       acuerdosPrevios: previousAgreements,
       waiting: true,
-      configureOnly: true,
       previousConfigured: configuredAgreementIsCurrent ? pendingAgreementData : null,
     });
   };
@@ -7646,9 +7618,6 @@ function renderStepPayment() {
                 skipped: result.skipped || false,
               };
               setPendingAgreementData(confirmedAgreementData);
-              if (!pendingAgreementData?.configureOnly) {
-                saveSale(confirmedAgreementData);
-              }
             }}
             montoCredito={pendingAgreementData?.montoCredito || 0}
             clientName={pendingAgreementData?.clientName || ''}
@@ -7656,8 +7625,8 @@ function renderStepPayment() {
             deudaPrevia={pendingAgreementData?.deudaPrevia || 0}
             acuerdosPrevios={pendingAgreementData?.acuerdosPrevios || []}
             reglasCredito={reglasCredito}
-            confirmLabel={pendingAgreementData?.configureOnly ? "Use this plan" : "Confirm & Save"}
-            skipLabel={pendingAgreementData?.configureOnly ? "Continue without plan" : "No agreement"}
+            confirmLabel="Use this plan"
+            skipLabel="Continue without plan"
             initialNumCuotas={
               pendingAgreementData?.previousConfigured?.numCuotas ||
               pendingAgreementData?.previousConfigured?.plan?.num_cuotas ||
