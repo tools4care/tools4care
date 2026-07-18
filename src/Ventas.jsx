@@ -35,8 +35,10 @@ import {
 } from "./utils/productSearch";
 import {
   clientDigits,
+  findClientIdsByPhone,
   filterClientsLocal,
   isPhoneLikeSearch,
+  phoneIdFilter,
   phoneSearchVariants,
 } from "./utils/clientSearch";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
@@ -1791,6 +1793,10 @@ useEffect(() => {
         const phoneLike = isPhoneLikeSearch(safe);
         const phoneVariants = phoneSearchVariants(safe);
         const phoneDigits = clientDigits(safe);
+        const normalizedPhoneIds = phoneLike
+          ? await findClientIdsByPhone(supabase, safe, 100)
+          : [];
+        const normalizedPhoneFilter = phoneIdFilter("id", normalizedPhoneIds);
 
         let primaryFields = ["nombre", "negocio", "telefono", "email"];
         let primaryCols = "id,nombre,negocio,telefono,email,direccion,balance";
@@ -1804,6 +1810,7 @@ useEffect(() => {
           ? [
               ...phoneFilters,
               `telefono.ilike.${phoneDigits}%`,
+              normalizedPhoneFilter,
               `nombre.ilike.%${safe}%`,
               `negocio.ilike.%${safe}%`,
               `email.ilike.%${safe}%`,
@@ -1843,6 +1850,7 @@ useEffect(() => {
             ? [
                 ...phoneFilters,
                 `telefono.ilike.${phoneDigits}%`,
+                normalizedPhoneFilter,
                 `nombre.ilike.%${safe}%`,
                 `negocio.ilike.%${safe}%`,
                 `email.ilike.%${safe}%`,

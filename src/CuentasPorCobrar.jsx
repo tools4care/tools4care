@@ -5,7 +5,13 @@ import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { supabase } from "./supabaseClient";
 import { logAudit } from "./lib/auditLog";
-import { clientDigits, isPhoneLikeSearch, phoneSearchVariants } from "./utils/clientSearch";
+import {
+  clientDigits,
+  findClientIdsByPhone,
+  isPhoneLikeSearch,
+  phoneIdFilter,
+  phoneSearchVariants,
+} from "./utils/clientSearch";
 import dayjs from "dayjs";
 import {
   ResponsiveContainer,
@@ -2203,14 +2209,18 @@ export default function CuentasPorCobrar() {
           // Con búsqueda: mostrar cualquier cliente que coincida (incluso saldo $0)
           const phoneLike = isPhoneLikeSearch(term);
           const digits = clientDigits(term);
+          const normalizedPhoneIds = phoneLike
+            ? await findClientIdsByPhone(supabase, term, 100)
+            : [];
           const phoneFilters = phoneSearchVariants(term).map((v) => `telefono.ilike.%${v}%`);
           const filters = [
             `cliente_nombre.ilike.%${term}%`,
             `nombre_negocio.ilike.%${term}%`,
             `direccion.ilike.%${term}%`,
             `telefono.ilike.%${term}%`,
+            phoneIdFilter("cliente_id", normalizedPhoneIds),
             ...(phoneLike && digits ? [`telefono.ilike.%${digits}%`, ...phoneFilters] : []),
-          ];
+          ].filter(Boolean);
           query = query.or(filters.join(","));
         } else {
           // Sin búsqueda: solo clientes con saldo pendiente (vista A/R normal)

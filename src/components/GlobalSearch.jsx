@@ -4,7 +4,13 @@ import { Search, X, Users, Package, FileText, CreditCard, ShoppingBag, ArrowRigh
 import { supabase } from "../supabaseClient";
 import { useVan } from "../hooks/VanContext";
 import { barcodeVariants, isCodeLikeSearch } from "../utils/productSearch";
-import { clientDigits, isPhoneLikeSearch, phoneSearchVariants } from "../utils/clientSearch";
+import {
+  clientDigits,
+  findClientIdsByPhone,
+  isPhoneLikeSearch,
+  phoneIdFilter,
+  phoneSearchVariants,
+} from "../utils/clientSearch";
 
 const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const money = (value) => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -52,6 +58,9 @@ export default function GlobalSearch() {
       const like = `%${term}%`;
       const codeLike = isCodeLikeSearch(term);
       const phoneLike = isPhoneLikeSearch(term);
+      const normalizedPhoneIds = phoneLike
+        ? await findClientIdsByPhone(supabase, term, 50)
+        : [];
       const productCodeFilters = barcodeVariants(term)
         .map((code) => `codigo.ilike.${codeLike ? `${code}%` : `%${code}%`}`)
         .join(",");
@@ -64,9 +73,10 @@ export default function GlobalSearch() {
             `nombre.ilike.${like}`,
             `negocio.ilike.${like}`,
             `telefono.ilike.${like}`,
+            phoneIdFilter("id", normalizedPhoneIds),
             `email.ilike.${like}`,
             ...(phoneLike ? [`telefono.ilike.%${clientDigits(term)}%`, ...phoneFilters] : []),
-          ].join(","))
+          ].filter(Boolean).join(","))
           .limit(6);
         const productQuery = supabase
           .from("productos")

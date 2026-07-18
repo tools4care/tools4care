@@ -2,6 +2,12 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
 import {
+  findClientIdsByPhone,
+  isPhoneLikeSearch,
+  phoneIdFilter,
+  phoneSearchVariants,
+} from "./utils/clientSearch";
+import {
   LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from "recharts";
@@ -191,15 +197,23 @@ export default function SimuladorCredito({ onClose }) {
 
       setSearching(true);
       try {
+        const term = searchQuery.trim();
+        const phoneLike = isPhoneLikeSearch(term);
+        const normalizedPhoneIds = phoneLike
+          ? await findClientIdsByPhone(supabase, term, 100)
+          : [];
+        const filters = [
+          `cliente_nombre.ilike.%${term}%`,
+          `telefono.ilike.%${term}%`,
+          ...phoneSearchVariants(term).map((value) => `telefono.ilike.%${value}%`),
+          phoneIdFilter("cliente_id", normalizedPhoneIds),
+          `direccion.ilike.%${term}%`,
+          `nombre_negocio.ilike.%${term}%`,
+        ].filter(Boolean);
         const { data, error } = await supabase
           .from("v_cxc_cliente_detalle_ext")
           .select("cliente_id, cliente_nombre, saldo, score_base, limite_politica, credito_disponible, telefono, direccion, nombre_negocio, limite_manual")
-          .or(
-            `cliente_nombre.ilike.%${searchQuery}%,` +
-            `telefono.ilike.%${searchQuery}%,` +
-            `direccion.ilike.%${searchQuery}%,` +
-            `nombre_negocio.ilike.%${searchQuery}%`
-          )
+          .or(filters.join(","))
           .limit(10);
 
         if (!error) {

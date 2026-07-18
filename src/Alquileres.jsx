@@ -3,6 +3,12 @@ import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
+import {
+  findClientIdsByPhone,
+  isPhoneLikeSearch,
+  phoneIdFilter,
+  phoneSearchVariants,
+} from "./utils/clientSearch";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import {
@@ -485,8 +491,18 @@ function NewRentalForm({ van, isAdmin, saving, onSave, onCancel }) {
     const term = clientSearch.trim();
     if (!term) { setClientResults([]); setShowClientDropdown(false); return; }
     const timer = setTimeout(async () => {
+      const phoneLike = isPhoneLikeSearch(term);
+      const normalizedPhoneIds = phoneLike
+        ? await findClientIdsByPhone(supabase, term, 100)
+        : [];
+      const filters = [
+        `nombre.ilike.%${term}%`,
+        `telefono.ilike.%${term}%`,
+        ...phoneSearchVariants(term).map((value) => `telefono.ilike.%${value}%`),
+        phoneIdFilter("id", normalizedPhoneIds),
+      ].filter(Boolean);
       let q = supabase.from("clientes").select("id, nombre, telefono, email")
-        .or(`nombre.ilike.%${term}%,telefono.ilike.%${term}%`)
+        .or(filters.join(","))
         .order("nombre").limit(25);
       if (!isAdmin && van?.id) q = q.eq("van_id", van.id);
       const { data } = await q;

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
+import { canonicalPhoneDigits, isPhoneLikeSearch } from "./utils/clientSearch";
 import dayjs from "dayjs";
 
 /* ---------- helpers ---------- */
@@ -998,11 +999,14 @@ export default function Suplidores() {
 
   const filtrados = useMemo(() => {
     const q = (busqueda || "").trim().toLowerCase();
+    const phoneLike = isPhoneLikeSearch(q);
+    const phoneDigits = canonicalPhoneDigits(q);
     let list = suplidoresConBalance;
     if (q) list = list.filter((s) =>
       (s.nombre || "").toLowerCase().includes(q) ||
       (s.contacto || "").toLowerCase().includes(q) ||
       (s.telefono || "").toLowerCase().includes(q) ||
+      (phoneLike && canonicalPhoneDigits(s.telefono).includes(phoneDigits)) ||
       (s.email || "").toLowerCase().includes(q)
     );
     if (filtro === "balance") list = list.filter((s) => s._balance > 0.005);

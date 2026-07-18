@@ -31,6 +31,11 @@ export function clientDigits(value) {
   return normalizeClientTerm(value).replace(/\D/g, "");
 }
 
+export function canonicalPhoneDigits(value) {
+  const digits = clientDigits(value);
+  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
 export function isPhoneLikeSearch(value) {
   const term = normalizeClientTerm(value);
   const digits = clientDigits(term);
@@ -63,6 +68,29 @@ export function phoneSearchVariants(value) {
   return variants;
 }
 
+export async function findClientIdsByPhone(db, value, limit = 100) {
+  const digits = canonicalPhoneDigits(value);
+  if (!db || digits.length < 3 || !isPhoneLikeSearch(value)) return [];
+
+  const { data, error } = await db.rpc("buscar_clientes_por_telefono", {
+    p_busqueda: value,
+    p_limite: limit,
+  });
+  if (error) {
+    console.warn("Normalized phone search unavailable:", error.message || error);
+    return [];
+  }
+
+  return [...new Set((data || []).map((row) => row?.cliente_id).filter(Boolean))];
+}
+
+export function phoneIdFilter(column, ids) {
+  const safeIds = (ids || []).filter((id) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(id))
+  );
+  return safeIds.length ? `${column}.in.(${safeIds.join(",")})` : "";
+}
+
 export function addressText(direccion) {
   if (!direccion) return "";
   if (typeof direccion === "string") return direccion;
@@ -76,8 +104,8 @@ export function addressText(direccion) {
 
 export function clientSearchScore(client, term) {
   const safe = normalizeText(term);
-  const digits = clientDigits(term);
-  const phoneDigits = clientDigits(client?.telefono);
+  const digits = canonicalPhoneDigits(term);
+  const phoneDigits = canonicalPhoneDigits(client?.telefono);
   const variants = phoneSearchVariants(term)
     .map(clientDigits)
     .filter(Boolean)
