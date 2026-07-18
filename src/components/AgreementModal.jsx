@@ -16,8 +16,11 @@ export default function AgreementModal({
   deudaPrevia = 0,
   acuerdosPrevios = [],
   reglasCredito = null,
+  confirmLabel = "Confirm & Save",
+  skipLabel = "No agreement",
+  initialNumCuotas = null,
 }) {
-  const [numCuotas, setNumCuotas] = useState(null); // null = auto
+  const [numCuotas, setNumCuotas] = useState(initialNumCuotas); // null = auto
   const [isException, setIsException] = useState(false);
   const [exceptionNote, setExceptionNote] = useState("");
 
@@ -212,7 +215,7 @@ export default function AgreementModal({
         )}
 
         {/* Buttons */}
-        <div className="p-4 border-t flex gap-3">
+        <div className="p-4 border-t flex flex-col sm:flex-row gap-3">
           <button
             onClick={onClose}
             className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold transition-colors"
@@ -229,7 +232,7 @@ export default function AgreementModal({
   })}
   className="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-lg font-semibold transition-colors"
 >
-  ⏭️ Sin acuerdo
+  ⏭️ {skipLabel}
 </button>
           <button
             onClick={handleConfirm}
@@ -240,7 +243,7 @@ export default function AgreementModal({
                 : "bg-gray-300 cursor-not-allowed"
             }`}
           >
-            ✅ Confirm & Save
+            ✅ {confirmLabel}
           </button>
         </div>
       </div>

@@ -4001,7 +4001,13 @@ async function handleDeletePendingSale(id) {
       console.warn("saveSale: duplicate submit blocked (double-click guard)");
       return;
     }
-    const resolvedAgreementData = agreementDataOverride || pendingAgreementData;
+    const candidateAgreementData = agreementDataOverride || pendingAgreementData;
+    const resolvedAgreementData =
+      candidateAgreementData &&
+      !candidateAgreementData.waiting &&
+      Math.abs(Number(candidateAgreementData.montoCredito || 0) - Number(amountToCredit || 0)) <= 0.01
+        ? candidateAgreementData
+        : null;
     setSaving(true);
     setPaymentError("");
      // Si hay crédito y el modal de acuerdo no se ha confirmado aún, mostrarlo
@@ -6843,6 +6849,30 @@ function renderStepPayment() {
     agreementAllocationMode === "selected" &&
     paidToOldDebt > 0.005 &&
     selectedAgreementCapacity + 0.005 < paidToOldDebt;
+  const configuredAgreementIsCurrent =
+    pendingAgreementData &&
+    !pendingAgreementData.waiting &&
+    Math.abs(Number(pendingAgreementData.montoCredito || 0) - Number(amountToCredit || 0)) <= 0.01;
+
+  const configureNewPaymentAgreement = async () => {
+    if (!selectedClient?.id || amountToCredit <= 0.01) return;
+    const previousAgreements = await getAcuerdosActivos(selectedClient.id);
+    const previousDebt = Number(
+      previousAgreements
+        .reduce((sum, agreement) => sum + Number(agreement.monto_pendiente || 0), 0)
+        .toFixed(2)
+    );
+    setPendingAgreementData({
+      montoCredito: Number(amountToCredit.toFixed(2)),
+      saldoActual: Number(creditProfile?.saldo || balanceBefore || 0),
+      clientName: `${selectedClient?.nombre || ""} ${selectedClient?.apellido || ""}`.trim(),
+      deudaPrevia: previousDebt,
+      acuerdosPrevios: previousAgreements,
+      waiting: true,
+      configureOnly: true,
+      previousConfigured: configuredAgreementIsCurrent ? pendingAgreementData : null,
+    });
+  };
 
   const sendSaleToAR = () => {
     setPayments([{ forma: "efectivo", monto: 0, toAR: true }]);
@@ -7120,6 +7150,45 @@ function renderStepPayment() {
           </div>
         )}
       </section>
+
+      {selectedClient?.id && amountToCredit > 0.01 && agreementSystemReady && (
+        <section className={`rounded-2xl border-2 p-4 ${
+          configuredAgreementIsCurrent
+            ? "border-emerald-300 bg-emerald-50"
+            : "border-indigo-300 bg-indigo-50"
+        }`} aria-label="New sale payment plan">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className={`text-xs font-black uppercase tracking-wide ${
+                configuredAgreementIsCurrent ? "text-emerald-700" : "text-indigo-700"
+              }`}>
+                {configuredAgreementIsCurrent ? "Payment plan ready" : "Balance will remain"}
+              </div>
+              <div className="mt-1 text-lg font-black text-slate-950">
+                {configuredAgreementIsCurrent && !pendingAgreementData?.skipped
+                  ? `${pendingAgreementData?.numCuotas || pendingAgreementData?.plan?.num_cuotas || 1} installments for ${fmt(amountToCredit)}`
+                  : configuredAgreementIsCurrent && pendingAgreementData?.skipped
+                    ? "No payment agreement selected"
+                    : `Set installments for ${fmt(amountToCredit)}`}
+              </div>
+              <p className="mt-0.5 text-xs text-slate-600">
+                Choose the number of payments and review due dates before completing this sale.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={configureNewPaymentAgreement}
+              className={`min-h-12 shrink-0 rounded-xl px-5 py-3 text-sm font-black text-white shadow-sm ${
+                configuredAgreementIsCurrent
+                  ? "bg-emerald-700 hover:bg-emerald-800"
+                  : "bg-indigo-600 hover:bg-indigo-700"
+              }`}
+            >
+              {configuredAgreementIsCurrent ? "Edit payment plan" : "Set payment plan"}
+            </button>
+          </div>
+        </section>
+      )}
 
       {((storeMode && locationSettings.customer_display_enabled) || (!storeMode && selectedClient?.id)) && (
         <div className="space-y-2">
@@ -7545,7 +7614,7 @@ function renderStepPayment() {
         {!!pendingAgreementData?.waiting && <Suspense fallback={null}><AgreementModal
             isOpen={!!pendingAgreementData?.waiting}
             onClose={() => {
-              setPendingAgreementData(null);
+              setPendingAgreementData(pendingAgreementData?.previousConfigured || null);
               setSaving(false);
             }}
             onConfirm={(result) => {
@@ -7559,7 +7628,9 @@ function renderStepPayment() {
                 skipped: result.skipped || false,
               };
               setPendingAgreementData(confirmedAgreementData);
-              saveSale(confirmedAgreementData);
+              if (!pendingAgreementData?.configureOnly) {
+                saveSale(confirmedAgreementData);
+              }
             }}
             montoCredito={pendingAgreementData?.montoCredito || 0}
             clientName={pendingAgreementData?.clientName || ''}
@@ -7567,6 +7638,13 @@ function renderStepPayment() {
             deudaPrevia={pendingAgreementData?.deudaPrevia || 0}
             acuerdosPrevios={pendingAgreementData?.acuerdosPrevios || []}
             reglasCredito={reglasCredito}
+            confirmLabel={pendingAgreementData?.configureOnly ? "Use this plan" : "Confirm & Save"}
+            skipLabel={pendingAgreementData?.configureOnly ? "Continue without plan" : "No agreement"}
+            initialNumCuotas={
+              pendingAgreementData?.previousConfigured?.numCuotas ||
+              pendingAgreementData?.previousConfigured?.plan?.num_cuotas ||
+              null
+            }
           /></Suspense>}
 
           {step === 1 && renderStepClient()}
