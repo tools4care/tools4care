@@ -31,7 +31,7 @@ function decisionCopy({ nivel, saleFits, usageAfterPct, overdueSignal, reglasCre
       label: "Sell with caution",
       tone: "blue",
       title: "Good to sell, monitor balance",
-      detail: "Sale fits the limit. Confirm payment plan if leaving a balance.",
+      detail: "Sale fits the limit. Review the amount being added to the customer balance.",
     };
   }
 
@@ -73,7 +73,11 @@ export default function CreditRiskPanel({
   const saleFits = limit <= 0 ? true : sale <= available + 0.005;
   const roomAfterSale = Math.max(0, available - sale);
   const overBy = Math.max(0, sale - available);
-  const overdueSignal = Number(creditProfile?.diasRetraso || 0) > 0 || (clientRisk.recomendaciones || []).some((r) => /vencid|broken|atras/i.test(String(r)));
+  const recommendations = clientRisk.recomendaciones || [];
+  const overdueSignal = Number(creditProfile?.diasRetraso || 0) > 0 || recommendations.some((r) => /vencid|broken|atras/i.test(String(r)));
+  const creditRecommendations = recommendations.filter(
+    (recommendation) => !/payment\s*(plan|agreement)|installment|acuerdo\s+de\s+pago|cuotas?/i.test(String(recommendation))
+  );
   const pagoMinimo = Number(reglasCredito?.pagoMinimoRequerido || reglasCredito?.pagoMinimo || 0);
   const decision = decisionCopy({ nivel, saleFits, usageAfterPct, overdueSignal, reglasCredito });
 
@@ -176,11 +180,11 @@ export default function CreditRiskPanel({
           <ProductosHabituales productos={productosHabituales} onAdd={onAddHabitual} />
         )}
 
-        {(clientRisk.recomendaciones || []).length > 0 && (
+        {creditRecommendations.length > 0 && (
           <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
             <div className="text-[10px] text-gray-500 uppercase font-bold mb-2">What to do next</div>
             <div className="space-y-1.5">
-              {(clientRisk.recomendaciones || []).slice(0, 4).map((r, i) => (
+              {creditRecommendations.slice(0, 4).map((r, i) => (
                 <div key={i} className="text-xs text-gray-700 leading-snug">{r}</div>
               ))}
             </div>
