@@ -630,6 +630,16 @@ const TRANSFER_SUBS = [
   { key: "applepay", label: "Apple Pay", color: "bg-gray-800"   },
 ];
 
+function paymentMethodLabel(method, transferMethod, reference) {
+  if (method === "Transfer" && transferMethod) {
+    return `Transfer - ${TRANSFER_SUBS.find((option) => option.key === transferMethod)?.label || transferMethod}`;
+  }
+  if (method === "Check" && String(reference || "").trim()) {
+    return `Check - ${String(reference).trim()}`;
+  }
+  return method;
+}
+
 /* -------------------- COMPONENTE PRINCIPAL -------------------- */
 export default function Clientes() {
   const { puedeEliminarClientes } = usePermisos();
@@ -2468,6 +2478,7 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [paymentDone, setPaymentDone] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
   const [mensaje, setMensaje] = useState("");
+  const [showCustomerPaymentSummary, setShowCustomerPaymentSummary] = useState(false);
 
   // 🆕 ESTADOS PARA STRIPE QR
   const [showQRModal, setShowQRModal] = useState(false);
@@ -2603,15 +2614,6 @@ let restante = pago;
     return { cuotas: resultado, sobrante: Math.max(0, restante), totalPendiente: Math.round(totalPendiente * 100) / 100 };
   }, [totalPaymentAmount, cuotasPendientes]);
 
-  const comprasPorMes = {};
-  let totalLifetime = 0;
-  (resumen.ventas || []).forEach(v => {
-    if (!v.fecha || !v.total_venta) return;
-    const mes = v.fecha.slice(0, 7);
-    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
-    totalLifetime += Number(v.total_venta || 0);
-  });
-
   const saldoActual = Number(saldoBase ?? 0);
   const disponible = Number(resumen?.cxc?.disponible ?? 0);
   const limite = Number(resumen?.cxc?.limite ?? 0);
@@ -2622,6 +2624,17 @@ let restante = pago;
   const payCents = Math.max(0, Math.round(montoNum * 100));
   const excedenteCents = Math.max(0, payCents - prevCents);
   const excedente = excedenteCents / 100;
+  const remainingBalance = Math.max(0, (prevCents - Math.min(payCents, prevCents)) / 100);
+  const paymentPreviewParts = [
+    {
+      amount: round2(Number(monto || 0)),
+      method: paymentMethodLabel(metodo, subMetodo, checkReference),
+    },
+    ...extraPayments.map((part) => ({
+      amount: round2(Number(part.amount || 0)),
+      method: paymentMethodLabel(part.method, part.subMethod, part.reference),
+    })),
+  ].filter((part) => part.amount > 0);
 
   // 🆕 FUNCIÓN PARA GENERAR QR
   async function handleGenerateQR() {
@@ -2818,21 +2831,16 @@ let restante = pago;
       const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
       const saldoActualUI = round2(Number(saldoBase ?? resumen?.balance ?? cliente?.balance ?? 0));
-      const buildMethodLabel = (method, transferMethod, reference) => method === "Transfer" && transferMethod
-        ? `Transfer - ${TRANSFER_SUBS.find((option) => option.key === transferMethod)?.label || transferMethod}`
-        : method === "Check"
-        ? `Check - ${String(reference || "").trim()}`
-        : method;
       const rawPaymentParts = [
         {
           amount: round2(Number(monto || 0)),
-          method: buildMethodLabel(metodo, subMetodo, checkReference),
+          method: paymentMethodLabel(metodo, subMetodo, checkReference),
           reference: metodo === "Check" ? checkReference.trim() : null,
           baseMethod: metodo,
         },
         ...extraPayments.map((part) => ({
           amount: round2(Number(part.amount || 0)),
-          method: buildMethodLabel(part.method, part.subMethod, part.reference),
+          method: paymentMethodLabel(part.method, part.subMethod, part.reference),
           reference: part.method === "Check" ? String(part.reference || "").trim() : null,
           baseMethod: part.method,
         })),
@@ -2958,86 +2966,109 @@ let restante = pago;
   return (
     <>
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-[9999] p-0 sm:p-4">
-        <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-md sm:max-w-3xl h-[100dvh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col">
-          <div className="p-6 bg-gradient-to-r from-green-600 to-emerald-600 text-white sticky top-0 z-20 shadow-lg">
-            <h3 className="text-2xl font-bold flex items-center gap-2">
-              <DollarSign size={24} />
-              Payment for {cliente.nombre}
-            </h3>
-            <p className="text-green-100 mt-2">Record a new payment from this client</p>
+        <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-md sm:max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[92vh] overflow-hidden flex flex-col">
+          <div className="px-5 py-4 bg-gradient-to-r from-emerald-700 to-green-600 text-white sticky top-0 z-20 shadow-lg sm:px-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <DollarSign size={22} />
+                  <h3 className="truncate text-xl font-black">Record Payment</h3>
+                </div>
+                <p className="mt-1 truncate text-sm text-emerald-100">{cliente.nombre}</p>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={guardando}
+                aria-label="Close payment"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 disabled:opacity-50"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           <form onSubmit={guardarAbono} className="flex-1 flex flex-col min-h-0">
-            <div className="p-6 overflow-y-auto flex-1">
-              <div className="grid grid-cols-3 gap-3 mb-6">
-                <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border-2 border-gray-200">
-                  <div className="text-xs text-gray-500 uppercase font-bold">Balance</div>
-                  <div className={`text-2xl font-bold mt-1 ${saldoActual > 0 ? "text-red-600" : "text-green-600"}`}>${saldoActual.toFixed(2)}</div>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              <div className="mb-4 rounded-2xl bg-gradient-to-r from-slate-950 to-slate-800 px-5 py-5 text-white shadow-lg">
+                <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-300">Outstanding balance</div>
+                <div className={`mt-1 text-5xl font-black tracking-tight ${saldoActual > 0 ? "text-white" : "text-emerald-300"}`}>
+                  {cargandoSaldo ? "—" : fmtSafe(saldoActual)}
                 </div>
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border-2 border-blue-200">
-                  <div className="text-xs text-blue-600 uppercase font-bold">Effective Limit</div>
-                  <div className="text-2xl font-bold text-blue-700 mt-1">${limite.toFixed(2)}</div>
-                </div>
-                <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-xl p-4 border-2 border-emerald-200">
-                  <div className="text-xs text-emerald-600 uppercase font-bold">Available</div>
-                  <div className={`text-2xl font-bold mt-1 ${disponible >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${disponible.toFixed(2)}</div>
+                <div className="mt-2 text-sm text-slate-300">
+                  Enter the payment received. The remaining balance updates automatically.
                 </div>
               </div>
 
-              <div className="space-y-4 mb-4">
-                <div>
-                  <label className="font-bold text-gray-800 mb-2 block text-lg">First Payment Source</label>
-                  <input
-                    className="w-full px-4 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 text-2xl font-bold"
-                    placeholder="0.00"
-                    type="number" min="0.01" step="0.01"
-                    value={monto}
-                    onChange={e => setMonto(e.target.value)}
-                    required
-                  />
-                  {/* Balance restante — visible inmediatamente */}
-                  {montoNum > 0 && (
-                    <div className={`mt-3 rounded-xl p-4 border-2 flex items-center justify-between ${
-                      excedente > 0
-                        ? "bg-orange-50 border-orange-300"
-                        : "bg-green-50 border-green-300"
-                    }`}>
-                      <div>
-                        <div className="text-xs font-bold uppercase tracking-wide text-gray-500">
-                          {excedente > 0 ? "Overpayment — return to customer" : "Remaining balance after payment"}
-                        </div>
-                        <div className={`text-4xl font-black mt-0.5 ${excedente > 0 ? "text-orange-600" : "text-green-600"}`}>
-                          ${excedente > 0
-                            ? excedente.toFixed(2)
-                            : Math.max(0, (prevCents - payCents) / 100).toFixed(2)
-                          }
-                        </div>
-                      </div>
-                      <div className="text-3xl">{excedente > 0 ? "⚠️" : "✅"}</div>
-                    </div>
-                  )}
+              {mensaje && (
+                <div className={`mb-4 rounded-xl border px-4 py-3 text-sm font-bold ${
+                  mensaje.includes("Error") || mensaje.startsWith("❌")
+                    ? "border-red-200 bg-red-50 text-red-700"
+                    : "border-blue-200 bg-blue-50 text-blue-800"
+                }`}>
+                  {mensaje}
                 </div>
+              )}
 
-                {/* Payment sources */}
-                <div>
-                  <label className="font-bold text-gray-800 mb-2 block text-lg">First Payment Method</label>
-                  <div className="flex gap-2">
-                    <select
-                      className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white font-medium"
-                      value={metodo}
-                      onChange={e => { setMetodo(e.target.value); setSubMetodo(null); }}
-                    >
-                      <option value="Cash">💵 Cash</option>
-                      <option value="Card">💳 Card</option>
-                      <option value="Transfer">🏦 Transfer</option>
-                      <option value="Check">🧾 Check</option>
-                    </select>
-                    {metodo === "Card" && (
-                      <button type="button" onClick={handleGenerateQR}
-                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 whitespace-nowrap">
-                        📱 QR
-                      </button>
-                    )}
+              <section className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
+                  <div className="font-black text-slate-900">Collect payment</div>
+                  <div className="text-xs text-slate-500">Choose a method and confirm each amount.</div>
+                </div>
+                <div className="space-y-3 p-4">
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(180px,0.65fr)]">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Payment method</label>
+                      <select
+                        aria-label="Payment method"
+                        className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 font-bold text-slate-800 outline-none transition-all focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                        value={metodo}
+                        onChange={e => {
+                          setMetodo(e.target.value);
+                          setSubMetodo(null);
+                          setCheckReference("");
+                          setApplyCardFee(false);
+                          setMensaje("");
+                        }}
+                      >
+                        <option value="Cash">💵 Cash</option>
+                        <option value="Card">💳 Card</option>
+                        <option value="Transfer">🏦 Transfer</option>
+                        <option value="Check">🧾 Check</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <label className="text-xs font-black uppercase tracking-wide text-slate-500">Amount</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMonto(String(round2(Math.max(0, saldoActual - extraPayments.reduce((sum, part) => sum + Number(part.amount || 0), 0)))));
+                            setMensaje("");
+                          }}
+                          className="text-xs font-black text-emerald-700 hover:text-emerald-900"
+                        >
+                          Pay full
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg font-black text-slate-400">$</span>
+                        <input
+                          aria-label="Payment amount"
+                          className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white py-3 pl-9 pr-4 text-right text-2xl font-black text-slate-950 outline-none transition-all focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                          placeholder="0.00"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={monto}
+                          onChange={e => {
+                            setMonto(e.target.value);
+                            setMensaje("");
+                          }}
+                          required
+                        />
+                      </div>
+                    </div>
                   </div>
                   {metodo === "Transfer" && (
                     <div className="mt-3 pt-3 border-t border-gray-200">
@@ -3063,15 +3094,19 @@ let restante = pago;
                         Check number / reference
                       </label>
                       <input
+                        aria-label="Check number or reference"
                         value={checkReference}
-                        onChange={(e) => setCheckReference(e.target.value)}
+                        onChange={(e) => {
+                          setCheckReference(e.target.value);
+                          setMensaje("");
+                        }}
                         placeholder="Example: 1042 · Bank name"
                         className="w-full border-2 border-amber-200 rounded-xl px-4 py-3 bg-amber-50 focus:border-amber-500 outline-none"
                       />
                     </div>
                   )}
                   {metodo === "Card" && (
-                    <div className="mt-4 pt-4 border-t-2 border-gray-200">
+                    <div className="mt-3 rounded-xl border border-purple-200 bg-purple-50 p-3">
                       <label className="flex items-center gap-3 cursor-pointer">
                         <input type="checkbox" checked={applyCardFee} onChange={(e) => setApplyCardFee(e.target.checked)}
                           className="w-5 h-5 text-purple-600 rounded focus:ring-2 focus:ring-purple-500" />
@@ -3091,6 +3126,14 @@ let restante = pago;
                           <span className="text-sm text-purple-600 font-semibold">(Fee: {fmtSafe(Number(monto) * (cardFeePercentage / 100))})</span>
                         </div>
                       )}
+                      <button
+                        type="button"
+                        onClick={handleGenerateQR}
+                        disabled={!Number(monto)}
+                        className="mt-3 min-h-11 w-full rounded-xl border border-purple-300 bg-white px-4 text-sm font-black text-purple-700 transition-colors hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Generate Stripe QR
+                      </button>
                     </div>
                   )}
 
@@ -3108,8 +3151,12 @@ let restante = pago;
                           </div>
                           <div className="grid gap-2 sm:grid-cols-[1fr_0.8fr]">
                             <select
+                              aria-label={`Payment source ${index + 2} method`}
                               value={part.method}
-                              onChange={(event) => setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, method: event.target.value, reference: "" } : item))}
+                              onChange={(event) => {
+                                setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, method: event.target.value, reference: "", subMethod: null } : item));
+                                setMensaje("");
+                              }}
                               className="min-h-12 rounded-xl border-2 border-emerald-200 bg-white px-3 font-semibold outline-none focus:border-emerald-500"
                             >
                               <option value="Cash">💵 Cash</option>
@@ -3118,11 +3165,15 @@ let restante = pago;
                               <option value="Check">🧾 Check</option>
                             </select>
                             <input
+                              aria-label={`Payment source ${index + 2} amount`}
                               type="number"
                               min="0.01"
                               step="0.01"
                               value={part.amount}
-                              onChange={(event) => setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, amount: event.target.value } : item))}
+                              onChange={(event) => {
+                                setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, amount: event.target.value } : item));
+                                setMensaje("");
+                              }}
                               placeholder="$0.00"
                               className="min-h-12 rounded-xl border-2 border-emerald-200 bg-white px-3 text-right text-lg font-black outline-none focus:border-emerald-500"
                               required
@@ -3130,12 +3181,29 @@ let restante = pago;
                           </div>
                           {part.method === "Check" && (
                             <input
+                              aria-label={`Payment source ${index + 2} check number or reference`}
                               value={part.reference || ""}
-                              onChange={(event) => setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, reference: event.target.value } : item))}
+                              onChange={(event) => {
+                                setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, reference: event.target.value } : item));
+                                setMensaje("");
+                              }}
                               placeholder="Check number / bank reference"
                               className="mt-2 min-h-11 w-full rounded-xl border-2 border-amber-200 bg-white px-3 outline-none focus:border-amber-500"
                               required
                             />
+                          )}
+                          {part.method === "Transfer" && (
+                            <select
+                              aria-label={`Payment source ${index + 2} transfer service`}
+                              value={part.subMethod || ""}
+                              onChange={(event) => setExtraPayments((current) => current.map((item) => item.id === part.id ? { ...item, subMethod: event.target.value || null } : item))}
+                              className="mt-2 min-h-11 w-full rounded-xl border-2 border-blue-200 bg-white px-3 font-semibold text-blue-800 outline-none focus:border-blue-500"
+                            >
+                              <option value="">Select transfer service (optional)</option>
+                              {TRANSFER_SUBS.map((option) => (
+                                <option key={option.key} value={option.key}>{option.label}</option>
+                              ))}
+                            </select>
                           )}
                         </div>
                       ))}
@@ -3146,7 +3214,10 @@ let restante = pago;
                     <button
                       type="button"
                       disabled={extraPayments.length >= 3}
-                      onClick={() => setExtraPayments((current) => [...current, { id: makeUUID(), method: "Card", amount: "", reference: "" }])}
+                      onClick={() => {
+                        setExtraPayments((current) => [...current, { id: makeUUID(), method: "Card", amount: "", reference: "" }]);
+                        setMensaje("");
+                      }}
                       className="min-h-11 rounded-xl border-2 border-emerald-500 bg-white px-4 font-black text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >+ Split payment</button>
                     {extraPayments.length > 0 && (
@@ -3157,12 +3228,66 @@ let restante = pago;
                     )}
                   </div>
                 </div>
+              </section>
 
-              
+              <section className="mb-3 overflow-hidden rounded-2xl border border-blue-200 bg-blue-50">
+                <div className="grid grid-cols-2 divide-x divide-blue-200">
+                  <div className="px-4 py-3">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Paid now</div>
+                    <div className="mt-0.5 text-2xl font-black text-slate-950">{fmtSafe(totalPaymentAmount)}</div>
+                  </div>
+                  <div className="px-4 py-3 text-right">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">
+                      {excedente > 0 ? "Change to return" : "Remaining balance"}
+                    </div>
+                    <div className={`mt-0.5 text-2xl font-black ${excedente > 0 ? "text-orange-700" : remainingBalance > 0 ? "text-amber-700" : "text-emerald-700"}`}>
+                      {fmtSafe(excedente > 0 ? excedente : remainingBalance)}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <button
+                type="button"
+                onClick={() => setShowCustomerPaymentSummary(true)}
+                disabled={totalPaymentAmount <= 0}
+                className="mb-3 flex min-h-16 w-full items-center justify-between gap-3 rounded-2xl border-2 border-blue-300 bg-gradient-to-r from-white to-blue-50 px-4 py-3 text-left text-blue-950 shadow-sm transition-all hover:from-blue-50 hover:to-indigo-100 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-lg text-white">👤</span>
+                  <span>
+                    <span className="block font-black">Show summary to customer</span>
+                    <span className="block text-xs font-normal text-blue-700">Balance, payment sources and remaining amount</span>
+                  </span>
+                </span>
+                <span className="shrink-0 text-xl text-blue-600">→</span>
+              </button>
+
+              <details className="mb-3 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-black text-slate-700">
+                  <span>Account and payment details</span>
+                  <span className="text-slate-400">⌄</span>
+                </summary>
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-100 bg-slate-50 p-3">
+                  <div className="rounded-lg bg-white p-3">
+                    <div className="text-[9px] font-black uppercase tracking-wide text-slate-400">Balance</div>
+                    <div className="mt-1 text-sm font-black text-red-700">{fmtSafe(saldoActual)}</div>
+                  </div>
+                  <div className="rounded-lg bg-white p-3">
+                    <div className="text-[9px] font-black uppercase tracking-wide text-slate-400">Credit limit</div>
+                    <div className="mt-1 text-sm font-black text-blue-700">{fmtSafe(limite)}</div>
+                  </div>
+                  <div className="rounded-lg bg-white p-3">
+                    <div className="text-[9px] font-black uppercase tracking-wide text-slate-400">Available</div>
+                    <div className={`mt-1 text-sm font-black ${disponible >= 0 ? "text-emerald-700" : "text-red-700"}`}>{fmtSafe(disponible)}</div>
+                  </div>
+                </div>
+              </details>
+
 {/* 🆕 INDICADOR DE COBERTURA DE ACUERDOS */}
 {cuotasPendientes.length > 0 && (
-  <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-4">
-    <div className="flex items-center justify-between mb-3">
+  <details className="mb-3 overflow-hidden rounded-xl border border-indigo-200 bg-indigo-50">
+    <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
       <h5 className="font-bold text-indigo-900 flex items-center gap-2 text-sm">
         📋 Payment Agreements
         <span className="bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full text-xs font-bold">
@@ -3172,7 +3297,8 @@ let restante = pago;
       <span className="text-sm font-bold text-indigo-700">
         Total: ${coberturaCuotas.totalPendiente.toFixed(2)}
       </span>
-    </div>
+    </summary>
+    <div className="border-t border-indigo-200 p-4">
 
 {/* Lista de cuotas — SIEMPRE VISIBLE */}
     <div className="space-y-2">
@@ -3318,69 +3444,16 @@ let restante = pago;
       </div>
     )}
   </div>
+  </details>
 )}
-              </div>
-
-              {/* Resumen de compras/pagos */}
-              <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-5 border-2 border-gray-200 shadow-sm">
-                <h4 className="font-bold mb-4 text-gray-900 flex items-center gap-2 text-lg">
-                  <TrendingUp size={20} />
-                  Purchase History Summary
-                </h4>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <p className="text-sm font-bold text-gray-700 mb-3">Monthly Purchases:</p>
-                    <div className="max-h-36 overflow-y-auto space-y-2">
-                      {Object.keys(comprasPorMes).length === 0 ? (
-                        <p className="text-gray-500 text-sm italic">No sales registered</p>
-                      ) : (
-                        Object.entries(comprasPorMes).sort((a,b) => b[0].localeCompare(a[0])).map(([mes, total]) => (
-                          <div key={mes} className="flex justify-between items-center py-2 bg-white rounded-lg px-3 border border-gray-200">
-                            <span className="text-sm text-gray-700 font-semibold">{mes}</span>
-                            <span className="font-bold text-blue-700">${total.toFixed(2)}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="text-sm font-bold text-gray-700 mb-3">Recent Payments:</p>
-                    <div className="max-h-36 overflow-y-auto space-y-2">
-                      {resumen.pagos?.length === 0 ? (
-                        <p className="text-gray-500 text-sm italic">No previous payments</p>
-                      ) : (
-                        resumen.pagos.map(p => (
-                          <div key={p.id} className="flex justify-between items-center py-2 bg-white rounded-lg px-3 border border-gray-200">
-                            <span className="text-sm text-gray-700 font-semibold">{p.fecha_pago?.slice(0,10)}</span>
-                            <span className="font-bold text-green-700">${(p.monto || 0).toFixed(2)}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="border-t-2 border-gray-300 pt-4">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-gray-900 text-lg">Lifetime Total:</span>
-                    <span className="text-3xl font-bold text-green-700">${totalLifetime.toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="h-[140px]" />
+              <div className="h-2" />
             </div>
 
-            <div
-              className="fixed left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-3xl bg-white border-t-2 border-gray-200 rounded-t-xl shadow-2xl p-4 z-[10000] pb-[env(safe-area-inset-bottom)]"
-              style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
-            >
+            <div className="shrink-0 border-t border-slate-200 bg-white p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] sm:p-4">
               <div className="flex gap-3">
                 <button
                   type="button"
-                  className="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
+                  className="flex min-h-14 flex-1 items-center justify-center gap-2 rounded-xl border-2 border-slate-300 bg-white px-4 font-black text-slate-700 transition-colors hover:bg-slate-50"
                   onClick={onClose}
                   disabled={guardando}
                 >
@@ -3389,8 +3462,8 @@ let restante = pago;
                 </button>
                 <button
                   type="submit"
-                  disabled={guardando}
-                  className="flex-[2] bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg text-lg"
+                  disabled={guardando || cargandoSaldo || saldoActual <= 0 || totalPaymentAmount <= 0}
+                  className="flex min-h-14 flex-[2] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-5 text-base font-black text-white shadow-lg transition-all hover:from-emerald-700 hover:to-green-700 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-400"
                 >
                   {guardando ? (
                     <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>Processing...</>
@@ -3403,6 +3476,80 @@ let restante = pago;
           </form>
         </div>
       </div>
+
+      {showCustomerPaymentSummary && (
+        <div className="fixed inset-0 z-[99998] flex flex-col overflow-hidden bg-gradient-to-b from-slate-950 via-blue-950 to-slate-900 text-white">
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-white/10 bg-slate-950/90 px-4 py-3 sm:px-6">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-200">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              Customer payment summary
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCustomerPaymentSummary(false)}
+              className="rounded-lg bg-white/10 px-4 py-2 text-sm font-black text-white hover:bg-white/20"
+            >
+              Close
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 sm:p-8">
+            <div className="mx-auto max-w-3xl space-y-4">
+              <div className="py-4 text-center">
+                <div className="text-xs font-black uppercase tracking-[0.24em] text-blue-300">Account payment</div>
+                <div className="mt-2 text-3xl font-black sm:text-4xl">{cliente.nombre}</div>
+                <div className="mt-1 text-sm text-slate-400">{new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-white/10 p-5 text-center shadow-2xl backdrop-blur sm:p-7">
+                <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-300">Balance after payment</div>
+                <div className={`mt-2 text-6xl font-black tracking-tight sm:text-7xl ${remainingBalance > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+                  {fmtSafe(remainingBalance)}
+                </div>
+                <div className="mx-auto mt-5 grid max-w-xl grid-cols-2 divide-x divide-white/10 rounded-2xl bg-black/20">
+                  <div className="p-4">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Previous balance</div>
+                    <div className="mt-1 text-2xl font-black text-white">{fmtSafe(saldoActual)}</div>
+                  </div>
+                  <div className="p-4">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Payment today</div>
+                    <div className="mt-1 text-2xl font-black text-emerald-300">− {fmtSafe(Math.min(totalPaymentAmount, saldoActual))}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/10">
+                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                  <span className="font-black">Payment breakdown</span>
+                  <span className="text-sm font-bold text-blue-200">{paymentPreviewParts.length} {paymentPreviewParts.length === 1 ? "source" : "sources"}</span>
+                </div>
+                <div className="divide-y divide-white/10">
+                  {paymentPreviewParts.map((part, index) => (
+                    <div key={`${part.method}-${index}`} className="flex items-center justify-between gap-4 px-4 py-4">
+                      <span className="font-bold text-slate-200">{part.method}</span>
+                      <span className="text-xl font-black text-white">{fmtSafe(part.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between bg-black/20 px-4 py-4">
+                  <span className="font-black text-slate-300">Total received</span>
+                  <span className="text-2xl font-black text-emerald-300">{fmtSafe(totalPaymentAmount)}</span>
+                </div>
+              </div>
+
+              {excedente > 0 && (
+                <div className="rounded-2xl border-2 border-orange-400 bg-orange-500/20 p-5 text-center">
+                  <div className="text-xs font-black uppercase tracking-wide text-orange-200">Change to return</div>
+                  <div className="mt-1 text-4xl font-black text-orange-300">{fmtSafe(excedente)}</div>
+                </div>
+              )}
+
+              <div className="pb-5 pt-2 text-center text-xs text-slate-400">
+                Please review the amounts before the payment is recorded.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pantalla de éxito con opciones de recibo */}
       {paymentDone && receiptData && (
