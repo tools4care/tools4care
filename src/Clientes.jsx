@@ -688,11 +688,21 @@ export default function Clientes() {
 
   // Ref para buscar con atajo
   const searchRef = useRef(null);
+  const searchShellRef = useRef(null);
   const [hl, setHl] = useState(-1);
   useEffect(() => setHl(-1), [clientes]);
   useEffect(() => {
     if (hl >= 0) document.getElementById(`cliente-row-${hl}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [hl]);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      searchRef.current?.focus({ preventScroll: true });
+      if (window.innerWidth < 768) {
+        searchShellRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   /* -------------------- Debounce búsqueda -------------------- */
   useEffect(() => {
@@ -1362,17 +1372,25 @@ const fetchPage = async (opts = {}) => {
   /* -------------------- UI -------------------- */
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
-        {/* Header Mejorado */}
-        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl p-6 mb-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
-                Client Management
+      <div className="max-w-7xl mx-auto px-2.5 py-3 sm:px-6 sm:py-6">
+        <section
+          ref={searchShellRef}
+          aria-labelledby="customer-search-title"
+          className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-lg dark:border-slate-700 dark:bg-slate-800 sm:mb-5 sm:p-5"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1
+                id="customer-search-title"
+                className="truncate text-xl font-black text-slate-950 dark:text-white sm:text-2xl"
+              >
+                Customers
               </h1>
-              <p className="text-gray-600 dark:text-slate-400 text-sm">Manage your clients and track their payments</p>
+              <p className="mt-0.5 hidden text-xs text-slate-500 dark:text-slate-400 sm:block">
+                Find an account, review its balance or record a payment.
+              </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2">
               {clienteSeleccionado?.id && (
                 <button
                   onClick={() => safeGetCxc(clienteSeleccionado.id).then(info => {
@@ -1382,92 +1400,110 @@ const fetchPage = async (opts = {}) => {
                       setTimeout(() => setMensaje(""), 1200);
                     }
                   })}
-                  className="bg-white text-blue-700 border-2 border-blue-200 hover:border-blue-400 hover:bg-blue-50 px-4 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-sm"
+                  className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-200 bg-white text-blue-700 transition-colors hover:border-blue-400 hover:bg-blue-50"
                   title="Refresh credit"
+                  aria-label="Refresh selected customer credit"
                 >
                   <RefreshCcw size={18} />
-                  <span className="hidden sm:inline">Refresh</span>
                 </button>
               )}
               <button
                 onClick={() => { abrirNuevoCliente(); navigate("/clientes/nuevo"); }}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                className="flex min-h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-3.5 text-sm font-black text-white shadow-md transition-all hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg sm:px-5"
                 title="New Client (⌘/Ctrl+N)"
               >
-                <Plus size={20} />
-                <span>New Client</span>
+                <Plus size={18} />
+                <span>New customer</span>
               </button>
             </div>
           </div>
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-5 border-2 border-blue-200 hover:border-blue-300 transition-all hover:shadow-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-blue-600 text-sm font-semibold uppercase tracking-wide">Total Clients</p>
-                  <p className="text-4xl font-bold text-blue-700 mt-1">{totales.totalClients}</p>
-                </div>
-                <div className="bg-blue-500 p-3 rounded-xl shadow-lg">
-                  <User className="text-white" size={24} />
-                </div>
-              </div>
+          <div className="mb-2 flex items-end justify-between gap-3 px-0.5">
+            <div>
+              <label htmlFor="customer-management-search" className="block text-sm font-black text-slate-800 dark:text-slate-100">
+                Find a customer
+              </label>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                Search by name, phone, email, business or address.
+              </p>
             </div>
+            <span className="hidden text-[11px] font-semibold text-blue-600 sm:block">Start typing to filter</span>
+          </div>
 
-            <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-5 border-2 border-amber-200 hover:border-amber-300 transition-all hover:shadow-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-amber-600 text-sm font-semibold uppercase tracking-wide">Clients with Debt</p>
-                  <p className="text-4xl font-bold text-amber-700 mt-1">{totales.withDebt}</p>
-                </div>
-                <div className="bg-amber-500 p-3 rounded-xl shadow-lg">
-                  <TrendingUp className="text-white" size={24} />
-                </div>
-              </div>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-blue-500" size={21} />
+            <input
+              ref={searchRef}
+              id="customer-management-search"
+              type="text"
+              inputMode="search"
+              enterKeyHint="search"
+              autoComplete="off"
+              autoFocus
+              aria-label="Find a customer"
+              className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white py-3.5 pl-12 pr-12 text-base font-semibold text-slate-950 shadow-sm outline-none transition-all placeholder:font-normal placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 sm:text-lg"
+              placeholder="Name, phone, email or business…"
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value ?? "")}
+              onFocus={() => {
+                window.requestAnimationFrame(() => {
+                  searchShellRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+                });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setHl((i) => Math.min(i < 0 ? 0 : i + 1, clientes.length - 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setHl((i) => Math.max(i - 1, 0));
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  const target = hl >= 0 ? clientes[hl] : clientes[0];
+                  if (target) abrirDetalleCliente(target, target.direccion);
+                } else if (e.key === "Escape") {
+                  setBusqueda("");
+                  setHl(-1);
+                }
+              }}
+              title="Focus Search (⌘/Ctrl+K)"
+            />
+            {busqueda && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBusqueda("");
+                  setHl(-1);
+                  searchRef.current?.focus();
+                }}
+                aria-label="Clear customer search"
+                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-slate-100 text-lg font-bold text-slate-500 transition-colors hover:bg-slate-200"
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
+              <div className="text-[9px] font-black uppercase tracking-wide text-blue-600 sm:text-[10px]">Customers</div>
+              <div className="mt-0.5 text-lg font-black text-blue-800 sm:text-xl">{totales.totalClients}</div>
             </div>
-
-            <div className="bg-gradient-to-br from-red-50 to-rose-50 rounded-2xl p-5 border-2 border-red-200 hover:border-red-300 transition-all hover:shadow-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-red-600 text-sm font-semibold uppercase tracking-wide">Total Outstanding</p>
-                  <p className="text-4xl font-bold text-red-700 mt-1">
-                    {fmtSafe(totales.totalOutstanding)}
-                  </p>
-                </div>
-                <div className="bg-red-500 p-3 rounded-xl shadow-lg">
-                  <DollarSign className="text-white" size={24} />
-                </div>
+            <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5">
+              <div className="text-[9px] font-black uppercase tracking-wide text-amber-700 sm:text-[10px]">With debt</div>
+              <div className="mt-0.5 text-lg font-black text-amber-800 sm:text-xl">{totales.withDebt}</div>
+            </div>
+            <div className="min-w-0 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5">
+              <div className="text-[9px] font-black uppercase tracking-wide text-rose-600 sm:text-[10px]">Outstanding</div>
+              <div className="mt-0.5 truncate text-base font-black text-rose-700 sm:text-xl">
+                {fmtSafe(totales.totalOutstanding)}
               </div>
             </div>
           </div>
-        </div>
+        </section>
 
         {/* Main card */}
-        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl border-2 border-gray-200 dark:border-slate-700 overflow-hidden">
-          {/* Search */}
-          <div className="p-6 bg-gradient-to-r from-gray-50 to-blue-50 dark:from-slate-900 dark:to-slate-900 border-b-2 border-gray-200 dark:border-slate-700">
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-blue-500" size={22} />
-              <input
-                ref={searchRef}
-                autoFocus
-                className="w-full pl-12 pr-4 py-4 border-2 border-blue-300 dark:border-slate-600 rounded-2xl focus:ring-4 focus:ring-blue-200 focus:border-blue-500 transition-all duration-200 bg-white dark:bg-slate-900 dark:text-slate-100 shadow-md hover:shadow-lg text-base sm:text-lg font-semibold placeholder:font-normal placeholder:text-gray-400"
-                placeholder="Search clients by name, phone, email, business or address..."
-                value={busqueda}
-                onChange={e => setBusqueda(e.target.value ?? "")}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, clientes.length - 1)); }
-                  else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
-                  else if (e.key === "Enter") {
-                    e.preventDefault();
-                    const target = hl >= 0 ? clientes[hl] : clientes[0];
-                    if (target) abrirDetalleCliente(target, target.direccion);
-                  } else if (e.key === "Escape") { setHl(-1); }
-                }}
-                title="Focus Search (⌘/Ctrl+K)"
-              />
-            </div>
-          </div>
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
 
           {/* Loading */}
           {isLoading && (
@@ -1479,91 +1515,15 @@ const fetchPage = async (opts = {}) => {
             </div>
           )}
 
-          {/* --- PANEL STICKY DE BALANCES EN MÓVIL --- */}
-          {busqueda.trim() !== "" && !isLoading && clientes.length > 0 && (
-            <div className="md:hidden sticky top-0 z-20 bg-white border-b-2 border-gray-200 shadow-md">
-              <div className="px-4 py-3">
-                <div className="text-xs text-gray-500 mb-2 font-semibold">
-                  📊 Results: {clientes.length} • Quick balances
-                </div>
-
-                <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
-                  {clientes.slice(0, 10).map((c) => {
-                    const saldo = Number(c.balance || 0);
-
-                    return (
-                      <div
-                        key={c.id}
-                        className={`shrink-0 min-w-[260px] max-w-[300px] p-4 rounded-xl border-2 shadow-md
-                ${saldo > 0 ? "border-rose-300 bg-gradient-to-br from-rose-50 to-red-50" : "border-emerald-300 bg-gradient-to-br from-emerald-50 to-green-50"}`}
-                      >
-                        {/* Header: Nombre + botón Payment */}
-                        <div className="flex items-start justify-between gap-2 mb-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-bold text-gray-900 truncate">
-                              {c.nombre || "—"}
-                            </div>
-                            {c.negocio && (
-                              <div className="text-xs text-gray-600 truncate mt-0.5">
-                                {c.negocio}
-                              </div>
-                            )}
-                            {c.telefono && (
-                              <div className="text-xs text-gray-500 truncate mt-0.5">
-                                {formatPhoneForInput(c.telefono)}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Botón directo a Abono */}
-                          <button
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold
-                               bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white whitespace-nowrap shadow-md"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const info = await safeGetCxc(c.id);
-                              setClienteSeleccionado(c);
-                              setResumen((r) => ({
-                                ...r,
-                                balance: info ? info.saldo : saldo,
-                                cxc: info ?? null,
-                              }));
-                              setMostrarAbono(true);
-                            }}
-                            title="Registrar pago"
-                          >
-                            <DollarSign size={14} />
-                            Payment
-                          </button>
-                        </div>
-
-                        {/* Balance y abrir Stats tocando el cuerpo */}
-                        <button
-                          className="mt-2 w-full text-left bg-white/60 rounded-lg p-3 hover:bg-white/80 transition-all"
-                          onClick={() => abrirDetalleCliente(c)}
-                        >
-                          <div
-                            className={`text-2xl font-bold ${
-                              saldo > 0 ? "text-rose-600" : "text-emerald-600"
-                            }`}
-                          >
-                            {fmtSafe(saldo)}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">Tap for details</div>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Table */}
           {!isLoading && (
             <>
               {/* Mobile View - Cards */}
-              <div className="md:hidden space-y-4 p-4">
+              <div className="space-y-2 p-2.5 md:hidden">
+                <div className="flex items-center justify-between gap-3 px-1 py-1 text-[11px] font-semibold text-slate-500">
+                  <span>{busqueda.trim() ? `${clientes.length} matching customers` : "Customer list"}</span>
+                  <span>Tap for details</span>
+                </div>
                 {clientes.map((c, idx) => {
                   // Dirección: aceptar string u objeto
                   const dRaw = c.direccion;
@@ -1581,26 +1541,49 @@ const fetchPage = async (opts = {}) => {
                     <div
                       id={`cliente-row-${idx}`}
                       key={c.id}
-                      className={`bg-gradient-to-br from-white to-blue-50 border-2 rounded-2xl p-5 shadow-lg hover:shadow-xl transition-all cursor-pointer ${
-                        idx === hl ? "border-blue-500 ring-2 ring-blue-300" : "border-blue-100"
+                      className={`cursor-pointer rounded-xl border bg-white p-3 shadow-sm transition-all active:scale-[0.99] ${
+                        idx === hl ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200"
                       }`}
                       onClick={() => abrirDetalleCliente(c, dObj ? d : dRaw)}
                     >
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="bg-gradient-to-br from-blue-500 to-indigo-500 rounded-xl p-2.5 shadow-md">
-                            <User className="text-white" size={20} />
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                            <User size={18} />
                           </div>
-                          <div>
-                            <h3 className="font-bold text-gray-900 text-lg">{c.nombre}</h3>
+                          <div className="min-w-0">
+                            <h3 className="truncate text-sm font-black text-slate-900">{c.nombre}</h3>
                             {c.negocio && (
-                              <p className="text-sm text-gray-600 flex items-center gap-1 mt-0.5">
-                                <Building2 size={14} />
+                              <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-slate-500">
+                                <Building2 size={12} />
                                 {c.negocio}
                               </p>
                             )}
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                              {c.telefono && (
+                                <span className="flex items-center gap-1">
+                                  <Phone size={12} />
+                                  {formatPhoneForInput(c.telefono)}
+                                </span>
+                              )}
+                              {c.email && (
+                                <span className="max-w-[180px] truncate">{c.email}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-black ${
+                            safe2(saldo) > 0
+                              ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200"
+                              : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                          }`}
+                        >
+                          {safe2(saldo) > 0 ? fmtSafe(saldo) : "No balance"}
+                        </span>
+                      </div>
+
+                      {safe2(saldo) > 0 && (
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
@@ -1609,44 +1592,12 @@ const fetchPage = async (opts = {}) => {
                             setResumen((r) => ({ ...r, balance: info ? info.saldo : saldo, cxc: info || null }));
                             setMostrarAbono(true);
                           }}
-                          className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md"
+                          className="mt-2.5 flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-black text-white shadow-sm transition-colors hover:bg-emerald-700"
                         >
-                          <DollarSign size={16} />
-                          Payment
+                          <DollarSign size={14} />
+                          Record payment
                         </button>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div className="bg-white/70 rounded-lg p-3">
-                          <p className="text-xs text-gray-500 font-semibold uppercase">Phone</p>
-                          <p className="text-sm font-medium text-gray-900 mt-1">{formatPhoneForInput(c.telefono)}</p>
-                        </div>
-                        <div className="bg-white/70 rounded-lg p-3">
-                          <p className="text-xs text-gray-500 font-semibold uppercase">Email</p>
-                          <p className="text-sm font-medium text-gray-900 truncate mt-1">{c.email}</p>
-                        </div>
-                      </div>
-
-                      <div className="mb-4 bg-white/70 rounded-lg p-3">
-                        <p className="text-xs text-gray-500 font-semibold uppercase mb-1.5">Address</p>
-                        <p className="text-sm text-gray-800 flex items-start gap-2">
-                          <MapPin size={14} className="shrink-0 mt-0.5 text-gray-400" />
-                          <span>{prettyAddress(c.direccion)}</span>
-                        </p>
-                      </div>
-
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="text-xs text-gray-500 font-semibold uppercase">Balance</p>
-                          <span
-                            className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold mt-1 shadow-sm ${
-                              safe2(saldo) > 0 ? "bg-red-500 text-white" : "bg-green-500 text-white"
-                            }`}
-                          >
-                            {fmtSafe(saldo)}
-                          </span>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
