@@ -7,10 +7,11 @@ import { useVan } from "./hooks/VanContext";
 import { logAudit } from "./lib/auditLog";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useToast } from "./hooks/useToast";
-import { Package, Check, X, Search, ChevronDown } from "lucide-react";
+import { Package, Check, X, ChevronDown } from "lucide-react";
 import PageHeader from "./components/ui/PageHeader";
 import Avatar from "./components/ui/Avatar";
 import { SkeletonCard } from "./components/ui/Skeleton";
+import PrimarySearch from "./components/ui/PrimarySearch";
 import { barcodeVariants, compactSearchTerm, digitsOnly, isCodeLikeSearch } from "./utils/productSearch";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner").then((module) => ({ default: module.BarcodeScanner })));
 
@@ -705,6 +706,7 @@ export default function Productos() {
   const location = useLocation();
   const navigate = useNavigate();
   const modalAutoOpenRef = useRef(false);
+  const productSearchRef = useRef(null);
 
   const [hl, setHl] = useState(-1);
   useEffect(() => setHl(-1), [productos.length, pagina, busqueda]);
@@ -824,16 +826,16 @@ export default function Productos() {
     if (!raw) return;
     setShowScanner(false);
     setTimeout(() => {
-      const searchInput = document.querySelector('input[placeholder="Search by code, name, brand, category..."]');
+      const searchInput = productSearchRef.current;
       if (searchInput) { searchInput.focus(); searchInput.select(); }
     }, 60);
     setPagina(1);
     setBusqueda(raw);
   };
 
-  function handleBuscar(e) {
+  function handleBuscar(value) {
     setPagina(1);
-    setBusqueda(e.target.value || "");
+    setBusqueda(value || "");
     setHl(-1);
   }
   
@@ -1232,17 +1234,23 @@ export default function Productos() {
       <PageHeader icon={Package} title="Product Inventory" color="pink" />
 
       {/* BARRA DE BÚSQUEDA Y ACCIONES */}
-      <div className="max-w-5xl mx-auto mb-4 flex flex-col sm:flex-row gap-2">
-        <div className="flex gap-2 w-full">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-500" size={20} />
-            <input
-              type="text"
-              autoFocus
-              placeholder="Search by code, name, brand, category..."
-              value={busqueda}
-              onChange={handleBuscar}
-              onKeyDown={(e) => {
+      <div className="mx-auto mb-4 max-w-5xl">
+        <PrimarySearch
+          id="product-catalog-search"
+          label="Find a product"
+          description="Search by name, brand, category, product code or barcode."
+          placeholder="Name, brand, category, product code or barcode…"
+          value={busqueda}
+          onChange={handleBuscar}
+          inputRef={productSearchRef}
+          busy={loading}
+          busyLabel="Loading products"
+          status={
+            busqueda.trim()
+              ? `${total} matching ${total === 1 ? "product" : "products"}`
+              : `${total} products`
+          }
+          onKeyDown={(e) => {
                 const list = productos || [];
                 if (e.key === "ArrowDown") { e.preventDefault(); setHl((i) => Math.min(i < 0 ? 0 : i + 1, list.length - 1)); }
                 else if (e.key === "ArrowUp") { e.preventDefault(); setHl((i) => Math.max(i - 1, 0)); }
@@ -1250,30 +1258,32 @@ export default function Productos() {
                 else if (e.key === "PageUp") { e.preventDefault(); if (pagina > 1) setPagina(pagina - 1); }
                 else if (e.key === "Enter") { if (hl >= 0 && list[hl]) abrirModal(list[hl]); else if (list.length > 0) abrirModal(list[0]); }
                 else if (e.key === "Escape") { setHl(-1); }
-              }}
-              className="w-full pl-11 pr-4 py-3 border-2 border-blue-300 rounded-2xl focus:ring-4 focus:ring-blue-200 focus:border-blue-500 transition-all duration-200 bg-white shadow-md hover:shadow-lg text-base sm:text-lg font-semibold placeholder:font-normal placeholder:text-gray-400"
-            />
-          </div>
-          {/* 🆕 BOTÓN ESCÁNER MEJORADO */}
-          <button
-            onClick={() => setShowScanner(true)}
-            className="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 whitespace-nowrap flex items-center gap-2"
-            title="Scan barcode"
-          >
-            <span className="text-lg">📷</span>
-            <span className="hidden sm:inline">Scan</span>
-          </button>
-        </div>
-        {puedeCrearProductos && (
-          <button
-            onClick={() => agregarProductoNuevo()}
-            className="bg-green-700 text-white font-bold rounded px-5 py-2 whitespace-nowrap flex items-center justify-center gap-2"
-            disabled={guardandoProducto}
-          >
-            <span>+</span>
-            <span>{guardandoProducto ? "Saving..." : "Add product"}</span>
-          </button>
-        )}
+          }}
+          rightAction={
+            <button
+              type="button"
+              onClick={() => setShowScanner(true)}
+              className="flex min-h-14 shrink-0 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 font-black text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 active:scale-95"
+              title="Scan barcode"
+              aria-label="Scan product barcode"
+            >
+              <span aria-hidden="true">📷</span>
+              <span className="hidden sm:inline">Scan</span>
+            </button>
+          }
+        >
+          {puedeCrearProductos && (
+            <button
+              type="button"
+              onClick={() => agregarProductoNuevo()}
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-2 font-black text-white transition-colors hover:bg-emerald-800 disabled:opacity-50 sm:w-auto"
+              disabled={guardandoProducto}
+            >
+              <span>+</span>
+              <span>{guardandoProducto ? "Saving..." : "Add product"}</span>
+            </button>
+          )}
+        </PrimarySearch>
       </div>
 
       {/* 🆕 ESCÁNER MEJORADO */}

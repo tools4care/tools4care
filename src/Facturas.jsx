@@ -6,17 +6,12 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { useLocation } from "react-router-dom";
 import { SkeletonCard } from "./components/ui/Skeleton";
+import PrimarySearch from "./components/ui/PrimarySearch";
 
 /* ===================== Iconos SVG ===================== */
 const IconInvoice = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-  </svg>
-);
-
-const IconSearch = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
   </svg>
 );
 
@@ -969,9 +964,9 @@ export default function Facturas() {
 
         {/* Header Mejorado */}
         <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl p-6">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6">
+          <div className="mb-4 flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2 flex items-center gap-3">
+              <h1 className="mb-1 flex items-center gap-3 bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-2xl font-bold text-transparent sm:text-3xl">
                 <IconInvoice />
                 Invoices
               </h1>
@@ -979,19 +974,103 @@ export default function Facturas() {
                 Manage and download your invoices
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="text-sm text-gray-600 dark:text-slate-300 bg-blue-100 dark:bg-blue-900/40 px-4 py-2 rounded-full font-semibold">
-                Page {pagina} / {totalPaginas}
-              </div>
-              <button
-                onClick={limpiarFiltros}
-                className="flex items-center gap-2 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white px-5 py-2.5 rounded-xl font-semibold shadow-lg transition-all"
-              >
-                <IconFilter />
-                Clear Filters
-              </button>
+            <div className="shrink-0 rounded-full bg-blue-100 px-3 py-2 text-xs font-semibold text-gray-600 dark:bg-blue-900/40 dark:text-slate-300 sm:px-4 sm:text-sm">
+              Page {pagina} / {totalPaginas}
             </div>
           </div>
+
+          <PrimarySearch
+            id="invoice-search"
+            label="Find an invoice"
+            description="Search by customer name or invoice number."
+            placeholder="Customer or invoice number…"
+            value={busqueda}
+            onChange={handleBusquedaChange}
+            busy={loading}
+            busyLabel="Loading invoices"
+            status={`${totalVentas} matching ${totalVentas === 1 ? "invoice" : "invoices"}`}
+            className="mb-4 border-blue-100 bg-blue-50/30 shadow-none dark:border-slate-700 dark:bg-slate-900/30"
+            rightAction={
+              <button
+                type="button"
+                onClick={limpiarFiltros}
+                className="flex min-h-14 shrink-0 items-center justify-center gap-2 rounded-xl bg-slate-700 px-3 font-black text-white transition-colors hover:bg-slate-800 sm:px-4"
+              >
+                <IconFilter />
+                <span className="hidden sm:inline">Clear filters</span>
+                <span className="sm:hidden">Clear</span>
+              </button>
+            }
+          >
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="relative">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">From</span>
+                <span className="pointer-events-none absolute bottom-3 left-3 text-gray-400">
+                  <IconCalendar />
+                </span>
+                <input
+                  type="date"
+                  className="min-h-11 w-full rounded-xl border-2 border-gray-300 bg-white py-2.5 pl-10 pr-3 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                  value={fechaInicio}
+                  onChange={(e) => {
+                    setFechaInicio(e.target.value);
+                    setPagina(1);
+                  }}
+                  aria-label="Invoice start date"
+                />
+              </label>
+
+              <label className="relative">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">To</span>
+                <span className="pointer-events-none absolute bottom-3 left-3 text-gray-400">
+                  <IconCalendar />
+                </span>
+                <input
+                  type="date"
+                  className="min-h-11 w-full rounded-xl border-2 border-gray-300 bg-white py-2.5 pl-10 pr-3 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                  value={fechaFin}
+                  onChange={(e) => {
+                    setFechaFin(e.target.value);
+                    setPagina(1);
+                  }}
+                  aria-label="Invoice end date"
+                />
+              </label>
+
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">Status</span>
+                <select
+                  className="min-h-11 w-full rounded-xl border-2 border-gray-300 bg-white px-3 py-2.5 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                  value={estadoFiltro}
+                  onChange={(e) => {
+                    setEstadoFiltro(e.target.value);
+                    setPagina(1);
+                  }}
+                >
+                  <option value="all">All Status</option>
+                  <option value="pagado">Paid</option>
+                  <option value="parcial">Partial</option>
+                  <option value="pendiente">Pending</option>
+                </select>
+              </label>
+
+              {usuario?.rol === "admin" && (
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">Location</span>
+                  <select
+                    className="min-h-11 w-full rounded-xl border-2 border-blue-300 bg-blue-50 px-3 py-2.5 font-medium text-blue-800 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                    value={vanFiltro}
+                    onChange={(e) => { setVanFiltro(e.target.value); setPagina(1); }}
+                  >
+                    <option value="">All VANs</option>
+                    {vans.map(v => (
+                      <option key={v.id} value={v.id}>{v.nombre_van}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          </PrimarySearch>
 
           {/* Selector de Período para Estadísticas */}
           <div className="mb-4">
@@ -1019,122 +1098,48 @@ export default function Facturas() {
           </div>
 
           {/* Estadísticas Visuales */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-            <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-5 text-white shadow-lg hover:shadow-xl transition-shadow relative overflow-hidden">
+          <div className="mb-2 grid grid-cols-3 gap-2 sm:gap-4">
+            <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 p-3 text-white shadow-md transition-shadow hover:shadow-lg sm:rounded-2xl sm:p-5">
               <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4 scale-[2]">
                 <IconDollar />
               </div>
               <div className="relative z-10">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-semibold opacity-90">Total Revenue</div>
+                <div className="mb-1 flex items-center justify-between">
+                  <div className="truncate text-[10px] font-semibold uppercase opacity-90 sm:text-sm sm:normal-case">Revenue</div>
                   <IconDollar />
                 </div>
-                <div className="text-4xl font-bold mb-1">${estadisticas.totalGeneral.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div className="text-sm opacity-80">{estadisticas.cantidadTotal} invoices</div>
+                <div className="mb-1 truncate text-base font-black sm:text-2xl lg:text-3xl">${estadisticas.totalGeneral.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] opacity-80 sm:text-sm">{estadisticas.cantidadTotal} invoices</div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-5 text-white shadow-lg hover:shadow-xl transition-shadow relative overflow-hidden">
+            <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 p-3 text-white shadow-md transition-shadow hover:shadow-lg sm:rounded-2xl sm:p-5">
               <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4 scale-[2]">
                 <IconCheck />
               </div>
               <div className="relative z-10">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-semibold opacity-90">Total Paid</div>
+                <div className="mb-1 flex items-center justify-between">
+                  <div className="truncate text-[10px] font-semibold uppercase opacity-90 sm:text-sm sm:normal-case">Paid</div>
                   <IconCheck />
                 </div>
-                <div className="text-4xl font-bold mb-1">${estadisticas.totalPagado.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div className="text-sm opacity-80">{estadisticas.cantidadPagadas} paid</div>
+                <div className="mb-1 truncate text-base font-black sm:text-2xl lg:text-3xl">${estadisticas.totalPagado.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] opacity-80 sm:text-sm">{estadisticas.cantidadPagadas} paid</div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl p-5 text-white shadow-lg hover:shadow-xl transition-shadow relative overflow-hidden">
+            <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 p-3 text-white shadow-md transition-shadow hover:shadow-lg sm:rounded-2xl sm:p-5">
               <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4 scale-[2]">
                 <IconClock />
               </div>
               <div className="relative z-10">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-semibold opacity-90">Pending</div>
+                <div className="mb-1 flex items-center justify-between">
+                  <div className="truncate text-[10px] font-semibold uppercase opacity-90 sm:text-sm sm:normal-case">Pending</div>
                   <IconClock />
                 </div>
-                <div className="text-4xl font-bold mb-1">${estadisticas.totalPendiente.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div className="text-sm opacity-80">{estadisticas.cantidadPendientes} pending</div>
+                <div className="mb-1 truncate text-base font-black sm:text-2xl lg:text-3xl">${estadisticas.totalPendiente.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] opacity-80 sm:text-sm">{estadisticas.cantidadPendientes} pending</div>
               </div>
             </div>
-          </div>
-
-          {/* Filtros Mejorados */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                <IconSearch />
-              </div>
-              <input
-                className="w-full border-2 border-gray-300 rounded-xl pl-10 pr-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-                placeholder="Search client or invoice..."
-                value={busqueda}
-                onChange={(e) => handleBusquedaChange(e.target.value)}
-              />
-            </div>
-
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                <IconCalendar />
-              </div>
-              <input
-                type="date"
-                className="w-full border-2 border-gray-300 rounded-xl pl-10 pr-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-                value={fechaInicio}
-                onChange={(e) => {
-                  setFechaInicio(e.target.value);
-                  setPagina(1);
-                }}
-                placeholder="Start date"
-              />
-            </div>
-
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                <IconCalendar />
-              </div>
-              <input
-                type="date"
-                className="w-full border-2 border-gray-300 rounded-xl pl-10 pr-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-                value={fechaFin}
-                onChange={(e) => {
-                  setFechaFin(e.target.value);
-                  setPagina(1);
-                }}
-                placeholder="End date"
-              />
-            </div>
-
-            <select
-              className="border-2 border-gray-300 rounded-xl px-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
-              value={estadoFiltro}
-              onChange={(e) => {
-                setEstadoFiltro(e.target.value);
-                setPagina(1);
-              }}
-            >
-              <option value="all">All Status</option>
-              <option value="pagado">Paid</option>
-              <option value="parcial">Partial</option>
-              <option value="pendiente">Pending</option>
-            </select>
-
-            {usuario?.rol === "admin" && (
-              <select
-                className="border-2 border-blue-300 rounded-xl px-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all bg-blue-50 text-blue-800 font-medium"
-                value={vanFiltro}
-                onChange={(e) => { setVanFiltro(e.target.value); setPagina(1); }}
-              >
-                <option value="">All VANs</option>
-                {vans.map(v => (
-                  <option key={v.id} value={v.id}>{v.nombre_van}</option>
-                ))}
-              </select>
-            )}
           </div>
         </div>
 

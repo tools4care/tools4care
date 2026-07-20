@@ -4,6 +4,7 @@ import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
 import { canonicalPhoneDigits, isPhoneLikeSearch } from "./utils/clientSearch";
 import dayjs from "dayjs";
+import PrimarySearch from "./components/ui/PrimarySearch";
 
 /* ---------- helpers ---------- */
 function fmt$(n) {
@@ -1036,44 +1037,64 @@ export default function Suplidores() {
 
   return (
     <div className="max-w-5xl mx-auto">
-      <h2 className="text-2xl font-bold mb-4">Suppliers</h2>
-
-      {/* Stats bar */}
-      {!loading && suplidores.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div className="bg-white border rounded-2xl p-3 text-center shadow-sm">
-            <div className="text-2xl font-bold text-gray-800">{stats.total}</div>
-            <div className="text-xs text-gray-500 font-medium uppercase tracking-wide mt-0.5">Suppliers</div>
-          </div>
-          <div className="bg-white border rounded-2xl p-3 text-center shadow-sm">
-            <div className="text-2xl font-bold text-amber-700">{fmt$(stats.totalOwed)}</div>
-            <div className="text-xs text-gray-500 font-medium uppercase tracking-wide mt-0.5">Total owed</div>
-          </div>
-          <div className="bg-white border rounded-2xl p-3 text-center shadow-sm">
-            <div className="text-2xl font-bold text-blue-700">{stats.withBalance}</div>
-            <div className="text-xs text-gray-500 font-medium uppercase tracking-wide mt-0.5">With balance</div>
-          </div>
-          <div className={`border rounded-2xl p-3 text-center shadow-sm ${stats.overdue > 0 ? "bg-red-50 border-red-200" : "bg-white"}`}>
-            <div className={`text-2xl font-bold ${stats.overdue > 0 ? "text-red-700" : "text-gray-400"}`}>{stats.overdue}</div>
-            <div className="text-xs text-gray-500 font-medium uppercase tracking-wide mt-0.5">Overdue</div>
-          </div>
-        </div>
-      )}
-
-      {/* Search + New */}
-      <div className="flex flex-col sm:flex-row gap-2 mb-3">
-        <input
-          className="border rounded-xl p-2.5 w-full focus:outline-none focus:ring-2 focus:ring-blue-400"
-          placeholder="Search by name, contact, phone or email…"
+      <div className="mb-4">
+        <PrimarySearch
+          id="supplier-search"
+          label="Find a supplier"
+          description="Search by supplier, contact person, phone number or email."
+          placeholder="Name, contact, phone or email…"
           value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-        />
-        <button
-          className="bg-green-700 text-white rounded-xl px-5 py-2 font-semibold hover:bg-green-800 flex-shrink-0"
-          onClick={() => setShowCrear((v) => !v)}
+          onChange={setBusqueda}
+          status={`${filtrados.length} matching ${filtrados.length === 1 ? "supplier" : "suppliers"}`}
+          rightAction={
+            <button
+              type="button"
+              className="flex min-h-14 shrink-0 items-center justify-center rounded-xl bg-emerald-700 px-4 text-sm font-black text-white transition-colors hover:bg-emerald-800 sm:px-5"
+              onClick={() => setShowCrear((v) => !v)}
+            >
+              <span className="sm:hidden">{showCrear ? "Cancel" : "+ New"}</span>
+              <span className="hidden sm:inline">{showCrear ? "Cancel" : "+ New supplier"}</span>
+            </button>
+          }
         >
-          {showCrear ? "Cancel" : "+ New supplier"}
-        </button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
+              {[
+                { key: "todos", label: "All" },
+                { key: "balance", label: "Has balance" },
+                { key: "alpedia", label: "Paid up" },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                    filtro === key ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                  onClick={() => setFiltro(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1 text-sm text-slate-500">
+              <span className="mr-1">Sort:</span>
+              <button
+                type="button"
+                className={`rounded-lg px-2.5 py-1.5 ${sort === "balance" ? "bg-blue-100 font-semibold text-blue-700" : "hover:bg-slate-100"}`}
+                onClick={() => setSort("balance")}
+              >
+                Balance
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg px-2.5 py-1.5 ${sort === "nombre" ? "bg-blue-100 font-semibold text-blue-700" : "hover:bg-slate-100"}`}
+                onClick={() => setSort("nombre")}
+              >
+                Name
+              </button>
+            </div>
+          </div>
+        </PrimarySearch>
       </div>
 
       {showCrear && (
@@ -1085,41 +1106,27 @@ export default function Suplidores() {
         </div>
       )}
 
-      {/* Filters + Sort */}
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-          {[
-            { key: "todos", label: "All" },
-            { key: "balance", label: "Has balance" },
-            { key: "alpedia", label: "Paid up" },
-          ].map(({ key, label }) => (
-            <button
-              key={key}
-              className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
-                filtro === key ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700"
-              }`}
-              onClick={() => setFiltro(key)}
-            >
-              {label}
-            </button>
-          ))}
+      {/* Stats bar */}
+      {!loading && suplidores.length > 0 && (
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-xl border bg-white p-2.5 text-center shadow-sm">
+            <div className="text-xl font-black text-gray-800">{stats.total}</div>
+            <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">Suppliers</div>
+          </div>
+          <div className="rounded-xl border bg-white p-2.5 text-center shadow-sm">
+            <div className="truncate text-xl font-black text-amber-700">{fmt$(stats.totalOwed)}</div>
+            <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">Total owed</div>
+          </div>
+          <div className="rounded-xl border bg-white p-2.5 text-center shadow-sm">
+            <div className="text-xl font-black text-blue-700">{stats.withBalance}</div>
+            <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">With balance</div>
+          </div>
+          <div className={`rounded-xl border p-2.5 text-center shadow-sm ${stats.overdue > 0 ? "border-red-200 bg-red-50" : "bg-white"}`}>
+            <div className={`text-xl font-black ${stats.overdue > 0 ? "text-red-700" : "text-gray-400"}`}>{stats.overdue}</div>
+            <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">Overdue</div>
+          </div>
         </div>
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <span>Sort:</span>
-          <button
-            className={`px-2 py-1 rounded-lg ${sort === "balance" ? "bg-blue-100 text-blue-700 font-semibold" : "hover:bg-gray-100"}`}
-            onClick={() => setSort("balance")}
-          >
-            Balance
-          </button>
-          <button
-            className={`px-2 py-1 rounded-lg ${sort === "nombre" ? "bg-blue-100 text-blue-700 font-semibold" : "hover:bg-gray-100"}`}
-            onClick={() => setSort("nombre")}
-          >
-            Name
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* List */}
       {loading ? (

@@ -35,6 +35,7 @@ import { usePermisos } from "./hooks/usePermisos";
 import { getAcuerdosActivos } from "./lib/paymentAgreements";
 import ClientPaymentView from "./components/ClientPaymentView";
 import ModifyAgreementModal from "./components/ModifyAgreementModal";
+import PrimarySearch from "./components/ui/PrimarySearch";
 
 const PAGE_SIZE_DEFAULT = 25;
 const CXC_SECRET = import.meta.env.VITE_CXC_SECRET || "#cxcadmin2025";
@@ -2438,15 +2439,17 @@ export default function CuentasPorCobrar() {
             </div>
             
             {/* Search */}
-            <div className="space-y-3">
-              <div className="relative">
-                <input
-                  value={q}
-                  onChange={(e) => {
-                    setQ(e.target.value);
+            <PrimarySearch
+              id="accounts-receivable-search"
+              label="Find a customer account"
+              description="Search by customer, business, address or phone number."
+              placeholder="Name, business, address or phone…"
+              value={q}
+              onChange={(value) => {
+                    setQ(value);
                     setPage(1);
                   }}
-                  onKeyDown={(e) => {
+              onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       tryUnlockBySecret(e.currentTarget.value);
                       if (e.currentTarget.value.trim() === CXC_SECRET) {
@@ -2456,17 +2459,12 @@ export default function CuentasPorCobrar() {
                       }
                     }
                   }}
-                  placeholder="🔍 Search customer..."
-                  className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 pr-10 text-base focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none"
-                />
-                {adminMode && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-100 text-purple-700 border border-purple-300 text-xs font-bold">
-                      🔒 Admin
-                    </span>
-                  </div>
-                )}
-              </div>
+              hint={adminMode ? "🔒 Admin mode active" : "Start typing to filter"}
+              status={`${total} matching customer ${total === 1 ? "account" : "accounts"}`}
+              busy={loading}
+              busyLabel="Loading accounts"
+              className="border-blue-100 bg-blue-50/30 shadow-none dark:border-slate-700 dark:bg-slate-900/30"
+            >
 
               {/* Score Filters */}
               <div className="overflow-x-auto pb-2 -mx-3 px-3">
@@ -2565,23 +2563,23 @@ export default function CuentasPorCobrar() {
                   </button>
                 )}
               </div>
-            </div>
+            </PrimarySearch>
           </div>
         </div>
 
         {/* Metrics */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4">
-          <div className="bg-gradient-to-br from-red-50 to-pink-50 border-2 border-red-200 rounded-xl p-4 shadow-lg">
-            <div className="text-red-600 text-xs uppercase font-bold mb-1">💸 Total A/R</div>
-            <div className="text-2xl sm:text-3xl font-bold text-red-700">{fmt(metrics.saldoTotal)}</div>
+        <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-4">
+          <div className="rounded-xl border border-red-200 bg-gradient-to-br from-red-50 to-pink-50 p-2.5 shadow-md sm:border-2 sm:p-4 sm:shadow-lg">
+            <div className="mb-1 truncate text-[9px] font-bold uppercase text-red-600 sm:text-xs">💸 Total A/R</div>
+            <div className="truncate text-base font-black text-red-700 sm:text-3xl">{fmt(metrics.saldoTotal)}</div>
           </div>
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-4 shadow-lg">
-            <div className="text-blue-600 text-xs uppercase font-bold mb-1">📊 Avg Score</div>
-            <div className="text-2xl sm:text-3xl font-bold text-blue-700">{metrics.avgScore || 0}</div>
+          <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-2.5 shadow-md sm:border-2 sm:p-4 sm:shadow-lg">
+            <div className="mb-1 truncate text-[9px] font-bold uppercase text-blue-600 sm:text-xs">📊 Avg Score</div>
+            <div className="text-base font-black text-blue-700 sm:text-3xl">{metrics.avgScore || 0}</div>
           </div>
-          <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-4 shadow-lg">
-            <div className="text-green-600 text-xs uppercase font-bold mb-1">👥 Customers</div>
-            <div className="text-2xl sm:text-3xl font-bold text-green-700">{metrics.clientes}</div>
+          <div className="rounded-xl border border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 p-2.5 shadow-md sm:border-2 sm:p-4 sm:shadow-lg">
+            <div className="mb-1 truncate text-[9px] font-bold uppercase text-green-600 sm:text-xs">👥 Customers</div>
+            <div className="text-base font-black text-green-700 sm:text-3xl">{metrics.clientes}</div>
           </div>
         </div>
 
