@@ -117,6 +117,36 @@ const fmtCurrency = (n) => {
   })}`;
 };
 
+// Reads a signed cash discrepancy (positive = counted more than expected,
+// negative = counted less) and returns how to label/color/show it so the
+// direction is never ambiguous — "Over" (surplus) vs "Short" (missing cash).
+function describeDiscrepancy(diferencia) {
+  const rounded = Math.round(Number(diferencia || 0) * 100) / 100;
+  if (Math.abs(rounded) < 0.005) {
+    return {
+      isBalanced: true, isOver: false, isShort: false,
+      label: "Balanced", text: "$0.00",
+      badge: "✅ Balanced — No discrepancy",
+      classes: { bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-800", accent: "text-emerald-600" },
+      hex: { bg: "#f0fdf4", border: "#bbf7d0", text: "#166534" },
+    };
+  }
+  const isOver = rounded > 0;
+  const amountText = `${isOver ? "+" : "-"}${fmtCurrency(Math.abs(rounded))}`;
+  return {
+    isBalanced: false, isOver, isShort: !isOver,
+    label: isOver ? "Over" : "Short",
+    text: amountText,
+    badge: `${isOver ? "🔵 Over" : "⚠️ Short"}: ${amountText}`,
+    classes: isOver
+      ? { bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-800", accent: "text-amber-600" }
+      : { bg: "bg-red-50", border: "border-red-200", text: "text-red-800", accent: "text-red-600" },
+    hex: isOver
+      ? { bg: "#fffbeb", border: "#fde68a", text: "#92400e" }
+      : { bg: "#fef2f2", border: "#fecaca", text: "#991b1b" },
+  };
+}
+
 function sanitizeMoneyInput(value) {
   const clean = String(value || "").replace(/[^\d.]/g, "");
   const [whole, ...decimals] = clean.split(".");
@@ -937,7 +967,7 @@ useEffect(() => {
       return;
     }
 
-    if (totales.diferencia >= NOTE_REQUIRED_DISCREPANCY && !observaciones.trim()) {
+    if (Math.abs(totales.diferencia) >= NOTE_REQUIRED_DISCREPANCY && !observaciones.trim()) {
       setMensaje("You must provide a note for the discrepancy");
       setTipoMensaje("warning");
       return;
@@ -1142,6 +1172,7 @@ useEffect(() => {
       const totalReal = cashReal + cardReal + transferReal + otherReal;
       const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
       const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
+      const discrepancyInfo = describeDiscrepancy(totales.diferencia);
 
       const gastosRows = gastosValidos.map((g) => `
         <tr>
@@ -1247,9 +1278,9 @@ useEffect(() => {
             <div style="background:white;border:1px solid #e5e7eb;border-radius:8px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:16px;">${observaciones}</div>
             ` : ""}
 
-            <div style="background:${totales.diferencia === 0 ? "#f0fdf4" : "#fef2f2"};border:1px solid ${totales.diferencia === 0 ? "#bbf7d0" : "#fecaca"};border-radius:8px;padding:12px;">
-              <div style="font-weight:bold;color:${totales.diferencia === 0 ? "#166534" : "#991b1b"};font-size:14px;">
-                ${totales.diferencia === 0 ? "✅ Balanced — No discrepancy" : `⚠️ Discrepancy: ${fmtCurrency(totales.diferencia)}`}
+            <div style="background:${discrepancyInfo.hex.bg};border:1px solid ${discrepancyInfo.hex.border};border-radius:8px;padding:12px;">
+              <div style="font-weight:bold;color:${discrepancyInfo.hex.text};font-size:14px;">
+                ${discrepancyInfo.badge}
               </div>
             </div>
           </div>
@@ -1558,7 +1589,8 @@ useEffect(() => {
     const efectivoNeto = totalEfectivo - gastosTotal;
     const totalCajaNeto = efectivoNeto + totalTarjeta + totalTransferencia + totalOtros;
     const totalReal = cashReal + cardReal + transferReal + otherReal;
-    const diferencia = Math.abs(totalCajaNeto - totalReal);
+    // Signed: positive = counted more than expected (over), negative = counted less (short).
+    const diferencia = totalReal - totalCajaNeto;
 
     return {
       totalVentas,          // Solo para display (sin devoluciones)
@@ -1583,6 +1615,8 @@ useEffect(() => {
     otherReal,
     gastos,
   ]);
+
+  const discrepancy = useMemo(() => describeDiscrepancy(totales.diferencia), [totales.diferencia]);
 
   /* ========================= Combined Transactions List ========================= */
   const transaccionesCompletas = useMemo(() => {
@@ -2341,7 +2375,7 @@ useEffect(() => {
             {/* Notes */}
             <div className="w-full">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Notes {totales.diferencia >= NOTE_REQUIRED_DISCREPANCY && "(required)"}
+                Notes {Math.abs(totales.diferencia) >= NOTE_REQUIRED_DISCREPANCY && "(required)"}
               </label>
               <textarea
                 value={observaciones}
@@ -2368,7 +2402,7 @@ useEffect(() => {
               onClick={handleCierreVan}
               disabled={
                 cargando ||
-                (totales.diferencia >= NOTE_REQUIRED_DISCREPANCY &&
+                (Math.abs(totales.diferencia) >= NOTE_REQUIRED_DISCREPANCY &&
                   !observaciones.trim())
               }
               className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2449,44 +2483,28 @@ useEffect(() => {
 
           <div
             className={`bg-gradient-to-br rounded-xl p-4 border ${
-              totales.diferencia === 0
+              discrepancy.isBalanced
                 ? "bg-gradient-to-br from-green-50 to-emerald-50 border-green-200"
+                : discrepancy.isOver
+                ? "bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-200"
                 : "bg-gradient-to-br from-red-50 to-rose-50 border-red-200"
             }`}
           >
             <div className="flex items-center justify-between">
               <div>
-                <p
-                  className={`text-sm font-medium ${
-                    totales.diferencia === 0
-                      ? "text-green-600"
-                      : "text-red-600"
-                  }`}
-                >
-                  Discrepancy
+                <p className={`text-sm font-medium ${discrepancy.classes.accent}`}>
+                  {discrepancy.isBalanced ? "Discrepancy" : `Discrepancy — ${discrepancy.label} (${discrepancy.isOver ? "cash surplus" : "cash missing"})`}
                 </p>
-                <p
-                  className={`text-2xl font-bold ${
-                    totales.diferencia === 0
-                      ? "text-green-800"
-                      : "text-red-800"
-                  }`}
-                >
-                  {totales.diferencia > 0
-                    ? fmtCurrency(totales.diferencia)
-                    : "$0.00"}
+                <p className={`text-2xl font-bold ${discrepancy.classes.text}`}>
+                  {discrepancy.text}
                 </p>
               </div>
-              {totales.diferencia === 0 ? (
-                <CheckCircle
-                  className="text-green-600"
-                  size={24}
-                />
+              {discrepancy.isBalanced ? (
+                <CheckCircle className="text-green-600" size={24} />
+              ) : discrepancy.isOver ? (
+                <TrendingUp className="text-amber-600" size={24} />
               ) : (
-                <AlertTriangle
-                  className="text-red-600"
-                  size={24}
-                />
+                <AlertTriangle className="text-red-600" size={24} />
               )}
             </div>
           </div>
@@ -2748,25 +2766,15 @@ useEffect(() => {
               </div>
             </div>
             <div
-              className={`bg-white rounded-lg p-4 shadow-sm ${
-                totales.diferencia === 0
-                  ? "border-green-200"
-                  : "border-red-200"
+              className={`bg-white rounded-lg p-4 shadow-sm border ${
+                discrepancy.isBalanced ? "border-green-200" : discrepancy.isOver ? "border-amber-200" : "border-red-200"
               }`}
             >
               <div className="text-sm text-gray-600 mb-1">
                 Closure Status
               </div>
-              <div
-                className={`text-2xl font-bold ${
-                  totales.diferencia === 0
-                    ? "text-green-800"
-                    : "text-red-800"
-                }`}
-              >
-                {totales.diferencia === 0
-                  ? "Balanced"
-                  : "Discrepancy"}
+              <div className={`text-2xl font-bold ${discrepancy.classes.text}`}>
+                {discrepancy.isBalanced ? "Balanced" : `${discrepancy.label} ${discrepancy.text}`}
               </div>
             </div>
           </div>
@@ -2808,10 +2816,12 @@ useEffect(() => {
                     <p className="text-lg font-bold text-orange-800">–{fmtCurrency(totales.gastosTotal)}</p>
                   </div>
                 )}
-                <div className={`border rounded-xl p-3 text-center ${totales.diferencia === 0 ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-200"}`}>
-                  <p className={`text-xs font-medium ${totales.diferencia === 0 ? "text-emerald-600" : "text-red-600"}`}>Discrepancy</p>
-                  <p className={`text-lg font-bold ${totales.diferencia === 0 ? "text-emerald-800" : "text-red-800"}`}>
-                    {totales.diferencia === 0 ? "✓ $0.00" : fmtCurrency(totales.diferencia)}
+                <div className={`border rounded-xl p-3 text-center ${discrepancy.classes.bg} ${discrepancy.classes.border}`}>
+                  <p className={`text-xs font-medium ${discrepancy.classes.accent}`}>
+                    {discrepancy.isBalanced ? "Discrepancy" : `Discrepancy (${discrepancy.label})`}
+                  </p>
+                  <p className={`text-lg font-bold ${discrepancy.classes.text}`}>
+                    {discrepancy.isBalanced ? "✓ $0.00" : discrepancy.text}
                   </p>
                 </div>
               </div>

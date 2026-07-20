@@ -611,7 +611,10 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     const real = cierreRecord
       ? { cash: null, card: null, transfer: null, other: null, total: Number(cierreRecord.caja_real || 0) }
       : null;
-    const variance = cierreRecord ? Math.abs(Number(cierreRecord.discrepancia || 0)) : null;
+    // Stored discrepancia is (expected - actual): positive means short.
+    // Flip the sign so positive = over / negative = short, matching the
+    // convention renderCloseoutPdfReport() and the rest of the app use.
+    const variance = cierreRecord ? -Number(cierreRecord.discrepancia || 0) : null;
 
     const customerMap = new Map();
     ventas.forEach((sale) => {

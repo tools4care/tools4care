@@ -18,6 +18,7 @@ import { usePendingSalesCloud } from "./hooks/usePendingSalesCloud";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useLocationSettings } from "./hooks/useLocationSettings";
 import { buildCustomerDisplaySnapshot, publishCustomerDisplay } from "./lib/customerDisplay";
+import { isPoleDisplayEnabled, reconnectPoleDisplay, writePoleDisplay } from "./lib/poleDisplay";
 import { getMoneyAppliedToSale, getReturnLineUnit, getReturnQuote } from "./lib/returnPricing";
 import {
   getStoredStoreCashSessionIdForDevice,
@@ -481,7 +482,7 @@ function printThermalReceipt(payload) {
   ]
     .filter(r => Number(r.val || 0) > 0)
     .map(r => `<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0;">
-      <span style="color:#444;">&nbsp;&nbsp;${r.label}:</span>
+      <span style="color:#000;">&nbsp;&nbsp;${r.label}:</span>
       <span>${fmtR(r.val)}</span>
     </div>`)
     .join("");
@@ -550,7 +551,7 @@ function printThermalReceipt(payload) {
   /* Footer */
   .footer { text-align:center; font-size:10px; margin-top:6px; }
   .footer .tagline { font-size:11px; font-weight:bold; margin-bottom:2px; }
-  .footer .policy  { font-size:9px; color:#333; margin-top:3px; line-height:1.4; }
+  .footer .policy  { font-size:10px; color:#000; margin-top:3px; line-height:1.4; }
 </style>
 </head><body>
 
@@ -575,7 +576,7 @@ ${pointOfSaleName ? `<div style="font-size:10px;">Location: <strong>${pointOfSal
 <!-- ═══ CUSTOMER ══════════════════════════════════════════ -->
 ${clientName
   ? `<div style="font-size:11px;"><strong>Customer:</strong> ${clientName}${creditNumber ? `  •  Acct #${creditNumber}` : ""}</div>`
-  : `<div class="center" style="font-size:11px;color:#444;">— Walk-in / Quick Sale —</div>`
+  : `<div class="center" style="font-size:11px;color:#000;">— Walk-in / Quick Sale —</div>`
 }
 
 <div class="divider-solid"></div>
@@ -611,7 +612,7 @@ ${paymentSection}
 </div>
 
 ${Number(prevBalance||0) > 0
-  ? `<div class="row" style="font-size:10px;color:#555;margin-top:2px;">
+  ? `<div class="row" style="font-size:10px;color:#000;margin-top:2px;">
        <span>Previous Balance:</span><span>${fmtR(prevBalance)}</span>
      </div>` : ""}
 
@@ -655,7 +656,7 @@ ${Number(creditLimit||0) > 0 ? `
     with original receipt • Unused condition<br>
     No returns on opened products
   </div>
-  <div style="margin-top:4px;font-size:9px;color:#555;">${COMPANY_EMAIL}</div>
+  <div style="margin-top:4px;font-size:10px;color:#000;">${COMPANY_EMAIL}</div>
 </div>
 
 <!-- Feed paper before cut -->
@@ -3068,6 +3069,26 @@ useEffect(() => {
     if (!storeMode || !locationSettings.customer_display_enabled || !van?.id) return;
     publishCustomerDisplay(customerDisplaySnapshot);
   }, [storeMode, locationSettings.customer_display_enabled, van?.id, customerDisplaySnapshot]);
+
+  // Physical numeric pole display — silently reattach to a previously
+  // authorized serial port on load (never prompts; that requires a click).
+  useEffect(() => {
+    if (!storeMode || !isPoleDisplayEnabled()) return;
+    reconnectPoleDisplay();
+  }, [storeMode]);
+
+  useEffect(() => {
+    if (!storeMode || !isPoleDisplayEnabled()) return;
+    const snap = customerDisplaySnapshot;
+    if (snap.change > 0) {
+      writePoleDisplay("CHANGE DUE", fmt(snap.change));
+    } else if (snap.items.length > 0) {
+      const last = snap.items[snap.items.length - 1];
+      writePoleDisplay(last.name, `TOTAL ${fmt(snap.purchaseTotal)}`);
+    } else {
+      writePoleDisplay("WELCOME", "TOOLS4CARE");
+    }
+  }, [storeMode, customerDisplaySnapshot]);
 
   const openCustomerDisplay = useCallback(() => {
     if (!van?.id) return;
@@ -6524,6 +6545,21 @@ function renderStepProducts() {
               if (products.length > 0) setFocusedProductIdx(0);
             } else if (e.key === "Enter") {
               e.preventDefault();
+              // Barcode scanners type the code then fire Enter almost instantly —
+              // often faster than the debounced search above can refresh `products`.
+              // Look up an exact code match directly in the already-loaded inventory
+              // instead of trusting the (possibly stale) `products` list, otherwise
+              // Enter can add whatever was showing before the scan (e.g. a top-seller
+              // like "Agua") instead of the scanned item.
+              const typed = productSearch.trim();
+              if (typed && isCodeLikeSearch(typed)) {
+                const source = allProducts.length > 0 ? allProducts : topProducts;
+                const exactMatches = filterProductRowsLocal(source, typed, { inStockOnly: true, limit: 5 });
+                if (hasExactCodeMatch(exactMatches, typed)) {
+                  handleAddProduct(exactMatches[0]);
+                  return;
+                }
+              }
               const idx = focusedProductIdx >= 0 ? focusedProductIdx : 0;
               if (products[idx]) handleAddProduct(products[idx]);
             } else if (e.key === "Escape") {
@@ -7006,6 +7042,12 @@ function renderStepPayment() {
                         value={p.monto === 0 ? "" : p.monto}
                         onChange={(e) => handleChangePayment(i, "monto", e.target.value.trim() || 0)}
                         onFocus={(e) => { if (p.monto === 0) e.target.value = ""; }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !saleSaveDisabled) {
+                            e.preventDefault();
+                            saveSale();
+                          }
+                        }}
                         onBlur={(e) => {
                           const val = e.target.value.trim();
                           if (!val || val === "." || val === "0") handleChangePayment(i, "monto", 0);
@@ -7595,8 +7637,8 @@ function renderStepPayment() {
   /* ======================== Render raíz ======================== */
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-2 sm:p-4">
-      <div className="w-full max-w-4xl mx-auto">
-        
+      <div className={`w-full mx-auto ${storeMode ? "max-w-[1600px]" : "max-w-4xl"}`}>
+
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 lg:pb-20">
           {modalPendingSales && renderPendingSalesModal()}
           {showQRModal && renderQRModal()}
@@ -7650,7 +7692,7 @@ function renderStepPayment() {
         )}
 
         {/* ── Desktop POS Toolbar — always visible on lg screens ── */}
-        <div className="hidden lg:flex fixed bottom-0 left-[260px] right-0 z-40 bg-gray-900 border-t-2 border-gray-700 px-4 py-2 gap-2 items-center">
+        <div className="hidden lg:flex fixed bottom-0 left-[248px] xl:left-[268px] right-0 z-40 bg-gray-900 border-t-2 border-gray-700 px-4 py-2 gap-2 items-center">
           {/* Step indicators */}
           <div className="flex items-center gap-1 mr-3">
             {[1,2,3].map(s => (

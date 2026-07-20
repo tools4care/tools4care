@@ -34,6 +34,7 @@ import {
 import {
   closeoutHasVariance,
   closeoutPaymentRows,
+  describeVariance,
   downloadStoreCloseoutPdf,
   printStoreCloseoutThermal,
 } from "../lib/storeCloseoutReport";
@@ -68,7 +69,7 @@ function Metric({ label, value, detail, tone = "slate" }) {
 function ReconciliationField({ label, system, value, onChange, help, min }) {
   const numeric = value === "" ? null : Number(value);
   const difference = numeric == null || !Number.isFinite(numeric) ? null : numeric - Number(system || 0);
-  const balanced = difference != null && Math.abs(difference) < 0.005;
+  const variance = difference != null ? describeVariance(difference) : null;
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -76,8 +77,12 @@ function ReconciliationField({ label, system, value, onChange, help, min }) {
         <div className="text-right"><div className="text-[10px] font-black uppercase tracking-wider text-slate-400">System</div><div className="font-black text-slate-800">{money(system)}</div></div>
       </div>
       <input type="number" min={min} step="0.01" value={value} onChange={(event) => onChange(event.target.value)} className="mt-3 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-lg font-black outline-none focus:border-blue-500" placeholder="Verified total" required />
-      {difference != null && Number.isFinite(difference) && (
-        <div className={`mt-2 text-right text-xs font-black ${balanced ? "text-emerald-700" : "text-rose-700"}`}>Difference {money(difference)}</div>
+      {variance && (
+        <div className={`mt-2 text-right text-xs font-black ${
+          variance.isBalanced ? "text-emerald-700" : variance.isOver ? "text-amber-700" : "text-rose-700"
+        }`}>
+          {variance.isBalanced ? "Balanced" : `${variance.label} ${variance.text}`}
+        </div>
       )}
     </div>
   );
@@ -557,7 +562,11 @@ export default function StoreRegister() {
                 <label className="mt-5 block text-sm font-bold text-slate-700">Cash counted
                   <input type="number" min="0" step="0.01" value={countedCash} onChange={(e) => setCountedCash(e.target.value)} className="mt-2 w-full rounded-xl border-2 border-slate-200 px-4 py-4 text-2xl font-black outline-none focus:border-blue-500" placeholder="$0.00" required />
                 </label>
-                {liveVariance !== null && Number.isFinite(liveVariance) && <div className={`mt-3 rounded-xl border p-3 text-center font-black ${Math.abs(liveVariance) < 0.005 ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>Difference: {money(liveVariance)}</div>}
+                {liveVariance !== null && Number.isFinite(liveVariance) && (() => {
+                  const v = describeVariance(liveVariance);
+                  const tone = v.isBalanced ? "border-emerald-200 bg-emerald-50 text-emerald-800" : v.isOver ? "border-amber-200 bg-amber-50 text-amber-800" : "border-rose-200 bg-rose-50 text-rose-800";
+                  return <div className={`mt-3 rounded-xl border p-3 text-center font-black ${tone}`}>{v.isBalanced ? "Balanced" : `${v.label}: ${v.text}`}</div>;
+                })()}
 
                 <div className="mt-6 border-t border-slate-200 pt-5">
                   <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Payment reconciliation</div>
@@ -593,7 +602,7 @@ export default function StoreRegister() {
                     <td className="whitespace-nowrap px-5 py-3">{dateTime(row.closed_at)}</td>
                     <td className="px-5 py-3 text-right font-bold tabular-nums">{row.expected_cash == null ? "—" : money(row.expected_cash)}</td>
                     <td className="px-5 py-3 text-right font-bold tabular-nums">{row.counted_cash == null ? "—" : money(row.counted_cash)}</td>
-                    <td className={`px-5 py-3 text-right font-black tabular-nums ${Math.abs(Number(row.variance || 0)) > 0.004 ? "text-rose-700" : "text-emerald-700"}`}>{row.variance == null ? "—" : money(row.variance)}</td>
+                    <td className={`px-5 py-3 text-right font-black tabular-nums ${row.variance == null || describeVariance(row.variance).isBalanced ? "text-emerald-700" : describeVariance(row.variance).isOver ? "text-amber-700" : "text-rose-700"}`}>{row.variance == null ? "—" : describeVariance(row.variance).isBalanced ? money(0) : describeVariance(row.variance).text}</td>
                     <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${row.status === "open" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span>{row.closeout_report_status === "adjusted" && <div className="mt-1 text-[10px] font-black text-rose-600">Adjusted after close</div>}{row.closeout_print_status === "pending" && row.closeout_report_id && <div className="mt-1 text-[10px] font-bold text-amber-600">Print / reprint pending</div>}{row.reopened_at && <div className="mt-1 text-[10px] font-bold text-amber-600">Reopened</div>}</td>
                     <td className="px-5 py-3"><div className="flex flex-wrap gap-2">{row.status === "open" && row.id !== managedSession?.id && (row.cashier_id === usuario?.id || privileged) && <button onClick={() => setReviewSessionId(row.id)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800">Review & Close</button>}{row.closeout_report_id && <button type="button" onClick={() => loadCloseoutReport(row)} disabled={reportLoading} className="flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800 disabled:opacity-50"><Eye size={14} />View / Print</button>}{privileged && row.status === "closed" && <button onClick={() => { setReopenId(row.id); setReopenReason(""); }} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Reopen</button>}</div></td>
                   </tr>
@@ -621,7 +630,17 @@ export default function StoreRegister() {
                 </div>
                 <div className="overflow-hidden rounded-2xl border border-slate-200">
                   <div className="grid grid-cols-[1fr_0.8fr_0.8fr_0.7fr] bg-slate-100 px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500"><span>Method</span><span className="text-right">System</span><span className="text-right">Verified</span><span className="text-right">Difference</span></div>
-                  {closeoutPaymentRows(closedReport).map((row) => <div key={row.key} className="grid grid-cols-[1fr_0.8fr_0.8fr_0.7fr] border-t border-slate-100 px-4 py-3 text-sm"><span className="font-black text-slate-800">{row.label}</span><span className="text-right font-bold tabular-nums">{money(row.system)}</span><span className="text-right font-bold tabular-nums">{money(row.declared)}</span><span className={`text-right font-black tabular-nums ${Math.abs(row.variance) > 0.009 ? "text-rose-700" : "text-emerald-700"}`}>{money(row.variance)}</span></div>)}
+                  {closeoutPaymentRows(closedReport).map((row) => {
+                    const v = describeVariance(row.variance);
+                    return (
+                      <div key={row.key} className="grid grid-cols-[1fr_0.8fr_0.8fr_0.7fr] border-t border-slate-100 px-4 py-3 text-sm">
+                        <span className="font-black text-slate-800">{row.label}</span>
+                        <span className="text-right font-bold tabular-nums">{money(row.system)}</span>
+                        <span className="text-right font-bold tabular-nums">{money(row.declared)}</span>
+                        <span className={`text-right font-black tabular-nums ${v.isBalanced ? "text-emerald-700" : v.isOver ? "text-amber-700" : "text-rose-700"}`}>{v.isBalanced ? money(0) : v.text}</span>
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="grid gap-3 rounded-2xl bg-slate-50 p-4 text-sm sm:grid-cols-2"><div><span className="text-xs font-black uppercase text-slate-400">Opened</span><div className="font-bold text-slate-800">{dateTime(closedReport.opened_at)}</div></div><div><span className="text-xs font-black uppercase text-slate-400">Closed</span><div className="font-bold text-slate-800">{dateTime(closedReport.closed_at)}</div></div><div><span className="text-xs font-black uppercase text-slate-400">Closed by</span><div className="font-bold text-slate-800">{closedReport.closed_by_name}</div></div><div><span className="text-xs font-black uppercase text-slate-400">Card batch</span><div className="font-bold text-slate-800">{closedReport.card_batch_reference || "Not entered"}</div></div></div>
                 {closedReport.notes && <div className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-700"><span className="font-black">Closing notes:</span> {closedReport.notes}</div>}

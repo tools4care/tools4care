@@ -58,19 +58,35 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   const collectionRate = totales.totalVentas > 0 ? (totalPayments / totales.totalVentas) * 100 : 0;
   const expenseRate = totales.totalCaja > 0 ? (totales.gastosTotal / totales.totalCaja) * 100 : 0;
 
+  // `variance` is signed: positive = counted more than expected (over),
+  // negative = counted less (short). Magnitude checks must use the absolute
+  // value, or a shortage (always <= 0.01) would misreport as "Balanced".
+  const absVariance = variance == null ? null : Math.abs(variance);
+  const isOver = variance != null && variance > 0.005;
+  const isShort = variance != null && variance < -0.005;
+  const varianceText = variance == null ? "—" : `${isOver ? "+" : isShort ? "-" : ""}${fmtCurrency(absVariance)}`;
+
   const status = variance == null
     ? "Not yet closed"
-    : variance <= 0.01 ? "Balanced" : variance < NOTE_REQUIRED_DISCREPANCY ? "Minor variance" : "Needs review";
+    : absVariance <= 0.01
+      ? "Balanced"
+      : isOver
+        ? (absVariance < NOTE_REQUIRED_DISCREPANCY ? "Minor overage" : "Over — needs review")
+        : (absVariance < NOTE_REQUIRED_DISCREPANCY ? "Minor shortage" : "Short — needs review");
   const statusColor = variance == null
     ? [100, 116, 139]
-    : variance <= 0.01 ? [22, 163, 74] : variance < NOTE_REQUIRED_DISCREPANCY ? [217, 119, 6] : [220, 38, 38];
+    : absVariance <= 0.01
+      ? [22, 163, 74]
+      : isOver
+        ? [217, 119, 6]
+        : absVariance < NOTE_REQUIRED_DISCREPANCY ? [217, 119, 6] : [220, 38, 38];
 
   const recommendations = [];
   if (!closed) {
     recommendations.push("This is a live preview — the period has not been officially closed, so real cash count and variance are not recorded.");
   }
-  if (variance != null && variance >= NOTE_REQUIRED_DISCREPANCY) {
-    recommendations.push(`Variance of ${fmtCurrency(variance)} requires review against receipts and counted money.`);
+  if (variance != null && absVariance >= NOTE_REQUIRED_DISCREPANCY) {
+    recommendations.push(`${isOver ? "Overage" : "Shortage"} of ${fmtCurrency(absVariance)} requires review against receipts and counted money.`);
   }
   if (totales.gastosTotal > 0) {
     recommendations.push(`Confirm ${fmtCurrency(totales.gastosTotal)} in ${expenseLabel.toLowerCase()} and receipt photos before final filing.`);
@@ -201,7 +217,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   const dashCardW = (contentWidth - dashGap * 3) / 4;
   drawDashboardCard(margin, dashY, dashCardW, 28, "System collected", fmtCurrency(totales.totalCaja), `${collectionRate.toFixed(1)}% of sales collected`, [37, 99, 235]);
   drawDashboardCard(margin + (dashCardW + dashGap), dashY, dashCardW, 28, "Real counted", closed ? fmtCurrency(totalReal) : "—", closed ? "Manual counted money entered" : "Not recorded for this report", [5, 150, 105]);
-  drawDashboardCard(margin + (dashCardW + dashGap) * 2, dashY, dashCardW, 28, "Over / short", variance == null ? "—" : fmtCurrency(variance), status, statusColor);
+  drawDashboardCard(margin + (dashCardW + dashGap) * 2, dashY, dashCardW, 28, "Over / short", varianceText, status, statusColor);
   drawDashboardCard(margin + (dashCardW + dashGap) * 3, dashY, dashCardW, 28, "Net cash turn-in", fmtCurrency(totales.efectivoNeto), `Cash minus ${fmtCurrency(totales.gastosTotal)} expenses`, [79, 70, 229]);
 
   dashY += 36;
@@ -311,7 +327,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
   const cardW = (contentWidth - cardGap * 3) / 4;
   metricCard(margin, y, cardW, "System collected", fmtCurrency(totales.totalCaja), "Gross money in system", [37, 99, 235]);
   metricCard(margin + (cardW + cardGap), y, cardW, "Real counted", closed ? fmtCurrency(totalReal) : "—", closed ? `Entered by ${countedByLabel}` : "Not recorded for this report", [5, 150, 105]);
-  metricCard(margin + (cardW + cardGap) * 2, y, cardW, "Variance", variance == null ? "—" : fmtCurrency(variance), status, statusColor);
+  metricCard(margin + (cardW + cardGap) * 2, y, cardW, "Variance", varianceText, status, statusColor);
   metricCard(margin + (cardW + cardGap) * 3, y, cardW, "Net A/R", `${cxc.cambioNeto >= 0 ? "+" : ""}${fmtCurrency(cxc.cambioNeto)}`, "Debt movement today", cxc.cambioNeto > 0 ? [217, 119, 6] : [5, 150, 105]);
 
   y += 34;

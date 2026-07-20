@@ -7,6 +7,17 @@ import { useVan } from "../hooks/VanContext";
 import { useToast } from "../hooks/useToast";
 import { useLocationSettings } from "../hooks/useLocationSettings";
 import { getSaleTaxParts } from "../lib/saleTax";
+import {
+  isPoleDisplaySupported,
+  isPoleDisplayEnabled,
+  setPoleDisplayEnabled,
+  isPoleDisplayConnected,
+  getPoleDisplayBaudRate,
+  setPoleDisplayBaudRate,
+  connectPoleDisplay,
+  disconnectPoleDisplay,
+  writePoleDisplay,
+} from "../lib/poleDisplay";
 
 const fmt = (n) =>
   (Number(n) || 0).toLocaleString("en-US", {
@@ -79,6 +90,13 @@ export default function TaxConfig() {
   });
   const [saving, setSaving]  = useState(false);
 
+  // ── Pole display (physical numeric customer display, Web Serial) ──
+  const poleDisplaySupported = isPoleDisplaySupported();
+  const [poleDisplayOn, setPoleDisplayOn] = useState(isPoleDisplayEnabled());
+  const [poleBaudRate, setPoleBaudRate] = useState(getPoleDisplayBaudRate());
+  const [poleConnected, setPoleConnected] = useState(isPoleDisplayConnected());
+  const [poleConnecting, setPoleConnecting] = useState(false);
+
   // ── Report ──
   const [period, setPeriod]   = useState("month");
   const [loading, setLoading] = useState(false);
@@ -142,6 +160,40 @@ export default function TaxConfig() {
       avgTax: ventas.length ? Number((taxTotal / ventas.length).toFixed(2)) : 0,
     };
   }, [ventas, config]);
+
+  const handleTogglePoleDisplay = (checked) => {
+    setPoleDisplayOn(checked);
+    setPoleDisplayEnabled(checked);
+  };
+
+  const handlePoleBaudRateChange = (rate) => {
+    setPoleBaudRate(rate);
+    setPoleDisplayBaudRate(rate);
+  };
+
+  const handleConnectPoleDisplay = async () => {
+    setPoleConnecting(true);
+    try {
+      await connectPoleDisplay(poleBaudRate);
+      setPoleConnected(true);
+      await writePoleDisplay("TOOLS4CARE", "READY");
+      toast.success("Pole display connected.");
+    } catch (error) {
+      toast.error(error?.message || "Could not connect to the pole display.");
+    } finally {
+      setPoleConnecting(false);
+    }
+  };
+
+  const handleDisconnectPoleDisplay = async () => {
+    await disconnectPoleDisplay();
+    setPoleConnected(false);
+  };
+
+  const handleTestPoleDisplay = async () => {
+    const ok = await writePoleDisplay("TOOLS4CARE TEST", fmt(12.34));
+    if (!ok) toast.error("Not connected — click Connect first.");
+  };
 
   const handleSave = async () => {
     const rate = parseFloat(config.rate);
@@ -268,6 +320,85 @@ export default function TaxConfig() {
                 </label>
               ))}
             </div>
+          </div>
+
+          <div className="border-t border-gray-100 pt-5">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="font-semibold text-gray-900">Customer number display (pole display)</h3>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  For a physical numeric display wired to this terminal — not the browser popup above.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <div
+                  className={`relative w-11 h-6 rounded-full transition-colors ${poleDisplayOn ? "bg-blue-600" : "bg-gray-300"}`}
+                  onClick={() => handleTogglePoleDisplay(!poleDisplayOn)}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${poleDisplayOn ? "translate-x-5" : ""}`} />
+                </div>
+                <span className="text-sm font-semibold text-gray-700">{poleDisplayOn ? "Enabled" : "Disabled"}</span>
+              </label>
+            </div>
+
+            {!poleDisplaySupported && (
+              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+                This browser doesn't support Web Serial. Use Chrome or Edge on this terminal to connect a pole display.
+              </div>
+            )}
+
+            {poleDisplaySupported && poleDisplayOn && (
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${poleConnected ? "text-emerald-700" : "text-gray-500"}`}>
+                  <span className={`h-2 w-2 rounded-full ${poleConnected ? "bg-emerald-500" : "bg-gray-400"}`} />
+                  {poleConnected ? "Connected" : "Not connected"}
+                </span>
+
+                <select
+                  value={poleBaudRate}
+                  onChange={(e) => handlePoleBaudRateChange(Number(e.target.value))}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                  disabled={poleConnected}
+                >
+                  {[2400, 4800, 9600, 19200].map((rate) => (
+                    <option key={rate} value={rate}>{rate} baud</option>
+                  ))}
+                </select>
+
+                {poleConnected ? (
+                  <button
+                    type="button"
+                    onClick={handleDisconnectPoleDisplay}
+                    className="px-3 py-1.5 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold"
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleConnectPoleDisplay}
+                    disabled={poleConnecting}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-semibold"
+                  >
+                    {poleConnecting ? "Connecting…" : "Connect display"}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleTestPoleDisplay}
+                  disabled={!poleConnected}
+                  className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50 text-sm font-semibold text-gray-700"
+                >
+                  Send test
+                </button>
+
+                <p className="w-full text-xs text-gray-400">
+                  Uses the CD5220 command set (9600 baud is the common default). If the test text doesn't
+                  show correctly, try a different baud rate — most generic pole displays use one of the options above.
+                </p>
+              </div>
+            )}
           </div>
 
           {config.enabled && (
