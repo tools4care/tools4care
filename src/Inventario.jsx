@@ -62,9 +62,22 @@ export default function Inventory() {
   const [editingQty, setEditingQty]         = useState(null); // { producto_id, value }
   const [savingQtyIds, setSavingQtyIds]     = useState(new Set());
   const editQtyInputRef                     = useRef(null);
+  const searchInputRef                      = useRef(null);
+  const searchShellRef                      = useRef(null);
   const searchTimerRef = useRef(null);
   const searchSeqRef = useRef(0);
   const offset = page * PAGE_SIZE;
+
+  // Keep product lookup ready as soon as Inventory opens.
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+      if (window.innerWidth < 768) {
+        searchShellRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   // ── Guardar conteo físico (SET, no incremento) ───────────
   async function handleSetQty(producto_id, rawValue) {
@@ -396,54 +409,118 @@ export default function Inventory() {
       </div>
 
       {/* ── Controls card (overlapping header) ───────────────── */}
-      <div className="max-w-4xl mx-auto px-4 -mt-10 relative z-10">
-        <div className="bg-white rounded-2xl shadow-xl p-4">
+      <div ref={searchShellRef} className="relative z-10 mx-auto -mt-10 max-w-4xl px-3 sm:px-4">
+        <section aria-labelledby="inventory-search-title" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xl sm:p-5">
+          <div className="mb-2 flex items-end justify-between gap-3 px-0.5">
+            <div>
+              <h2 id="inventory-search-title" className="text-sm font-black text-slate-800">
+                Find a product
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Search by name, brand, product code or barcode.
+              </p>
+            </div>
+            <span className="hidden text-[11px] font-semibold text-blue-600 sm:block">
+              Start typing to filter
+            </span>
+          </div>
+
           {/* Search row */}
-          <div className="flex gap-2 mb-3">
-            <div className="flex-1 flex items-center gap-2 border-2 border-gray-200 rounded-xl px-3 py-2 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
-              <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="flex items-stretch gap-2">
+            <div className="relative min-w-0 flex-1">
+              <svg className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               <input
-                className="flex-1 outline-none text-sm bg-transparent placeholder-gray-400"
-                placeholder="Search by name, brand or code…"
+                ref={searchInputRef}
+                id="inventory-product-search"
+                data-testid="inventory-product-search"
+                type="text"
+                inputMode="search"
+                enterKeyHint="search"
+                autoComplete="off"
+                autoFocus
+                aria-label="Find a product"
+                className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white py-3.5 pl-12 pr-12 text-base font-semibold text-slate-950 shadow-sm outline-none transition-all placeholder:font-normal placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 sm:text-lg"
+                placeholder="Name, brand, product code or barcode…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onFocus={() => {
+                  window.requestAnimationFrame(() => {
+                    searchShellRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+                  });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setSearch("");
+                    searchInputRef.current?.focus();
+                  }
+                }}
               />
               {search && (
-                <button onClick={() => setSearch("")} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
-              )}
-              {isSearchingDB && (
-                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    searchInputRef.current?.focus();
+                  }}
+                  aria-label="Clear product search"
+                  className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-slate-100 text-lg font-bold text-slate-500 transition-colors hover:bg-slate-200"
+                >
+                  ×
+                </button>
               )}
             </div>
             <button
               onClick={() => setShowScanner(true)}
-              className="bg-indigo-600 text-white px-3 py-2 rounded-xl shadow hover:bg-indigo-700 active:scale-95 transition-all"
+              type="button"
+              className="flex min-h-14 shrink-0 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 font-black text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 active:scale-95"
               title="Scan barcode"
-            >📷</button>
+              aria-label="Scan product barcode"
+            >
+              <span aria-hidden="true">📷</span>
+              <span className="hidden sm:inline">Scan</span>
+            </button>
+          </div>
+
+          <div className="mt-2 flex min-h-5 items-center justify-between gap-3 px-0.5 text-[11px] font-semibold">
+            <span className="text-slate-500">
+              {search.trim()
+                ? `${filteredInventory.length} matching ${filteredInventory.length === 1 ? "product" : "products"}`
+                : `${filteredInventory.length} products in ${selected.nombre}`}
+            </span>
+            {isSearchingDB && (
+              <span className="flex items-center gap-1.5 text-blue-600">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                Searching all products
+              </span>
+            )}
           </div>
 
           {/* Action buttons */}
-          <div className="flex gap-2">
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <div className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+              Inventory tools
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {/* Add Stock: disabled for vendedores when viewing warehouse */}
             {(puedeAgregarAlmacen || selected?.tipo !== "warehouse") ? (
               <button
                 onClick={() => setModalOpen(true)}
                 disabled={!isOnline}
-                className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-xl font-semibold text-sm shadow disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-700 active:scale-95 transition-all"
+                className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white shadow transition-all hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <span className="text-base">➕</span> Add Stock
               </button>
             ) : (
-              <div className="flex-1 flex items-center justify-center gap-2 bg-slate-100 text-slate-400 py-2.5 rounded-xl font-semibold text-sm border border-slate-200 cursor-not-allowed" title="Only admins can add stock to the warehouse">
+              <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-3 py-2.5 text-sm font-semibold text-slate-400 cursor-not-allowed" title="Only admins can add stock to the warehouse">
                 <span className="text-base">🔒</span> Add Stock
               </div>
             )}
             <button
               onClick={() => setModalTransferOpen(true)}
               disabled={!isOnline}
-              className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white py-2.5 rounded-xl font-semibold text-sm shadow disabled:opacity-40 disabled:cursor-not-allowed hover:bg-emerald-700 active:scale-95 transition-all"
+              className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white shadow transition-all hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <span className="text-base">🔁</span> Transfer
             </button>
@@ -451,20 +528,21 @@ export default function Inventory() {
               <button
                 onClick={() => setInvoiceImporterOpen(true)}
                 disabled={!isOnline}
-                className="flex-1 flex items-center justify-center gap-2 bg-violet-600 text-white py-2.5 rounded-xl font-semibold text-sm shadow disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-700 active:scale-95 transition-all"
+                className="col-span-2 flex min-h-11 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow transition-all hover:bg-violet-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 sm:col-span-1"
               >
                 <span className="text-base">📄</span> Import Invoice
               </button>
             )}
+            </div>
           </div>
 
           {/* Extended search notice */}
           {dbSearchResults !== null && (
-            <div className="mt-2 text-xs text-blue-600 font-semibold text-center">
+            <div className="mt-2 text-center text-xs font-semibold text-blue-600">
               🔍 Extended search — showing results from all products
             </div>
           )}
-        </div>
+        </section>
       </div>
 
       <InventoryTransferReceipts
