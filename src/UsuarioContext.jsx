@@ -1,6 +1,14 @@
 import { createContext, useContext, useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
+import {
+  claimActiveSession,
+  clearLocalSessionId,
+  ensureLocalSessionClaimed,
+  isSessionStillActive,
+} from "./lib/sessionGuard";
+
+const SESSION_CHECK_INTERVAL_MS = 45000;
 
 const UsuarioContext = createContext();
 
@@ -41,6 +49,17 @@ export function UsuarioProvider({ children }) {
   // Ref para evitar llamadas duplicadas (getSession + onAuthStateChange)
   const loadingRef = useRef(false);
   const lastSessionIdRef = useRef(null);
+
+  // A real SIGNED_IN event is a fresh login action — claim this device as
+  // the account's only active session. Anything else (INITIAL_SESSION,
+  // getSession on mount) is just resuming a persisted session, so only
+  // silently adopt one if this device never claimed it before.
+  function claimOrEnsureSession(userId, source) {
+    const task = source === "onAuthStateChange:SIGNED_IN"
+      ? claimActiveSession(userId)
+      : ensureLocalSessionClaimed(userId);
+    task.catch((err) => console.warn("[UsuarioContext] session claim failed:", err?.message));
+  }
 
   async function cargarUsuarioActual(session, source = "unknown") {
     if (!session?.user) {
@@ -144,6 +163,7 @@ export function UsuarioProvider({ children }) {
 
         setUsuario(userRow);
         guardarUsuarioCache(userRow);
+        claimOrEnsureSession(userRow.id, source);
         // user loaded from DB
         setCargando(false);
         loadingRef.current = false;
@@ -210,6 +230,7 @@ export function UsuarioProvider({ children }) {
         if (retry) {
           setUsuario(retry);
           guardarUsuarioCache(retry);
+          claimOrEnsureSession(retry.id, source);
           // found on retry
           setCargando(false);
           loadingRef.current = false;
@@ -228,6 +249,7 @@ export function UsuarioProvider({ children }) {
 
       setUsuario(nuevoUsuario);
       guardarUsuarioCache(nuevoUsuario);
+      claimOrEnsureSession(nuevoUsuario.id, source);
       // new user created
 
     } catch (err) {
@@ -269,6 +291,7 @@ export function UsuarioProvider({ children }) {
       if (event === "SIGNED_OUT") {
         setUsuario(null);
         guardarUsuarioCache(null);
+        clearLocalSessionId();
         setCargando(false);
         return;
       }
@@ -315,6 +338,22 @@ export function UsuarioProvider({ children }) {
   }, []);
 
   // (debug log removed from production)
+
+  // Periodically confirm this device is still the account's active session.
+  // If another device logged in and displaced it, sign out here — but only
+  // on a definitive "no longer active" result, never on a failed/offline
+  // check (isSessionStillActive returns null for that).
+  useEffect(() => {
+    if (!usuario?.id) return undefined;
+    const interval = setInterval(async () => {
+      const stillActive = await isSessionStillActive(usuario.id);
+      if (stillActive === false) {
+        toast.error("Your account was signed in on another device. You've been logged out here.", 0);
+        await supabase.auth.signOut();
+      }
+    }, SESSION_CHECK_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [usuario?.id, toast]);
 
   return (
     <UsuarioContext.Provider value={{ usuario, setUsuario, cargando }}>
