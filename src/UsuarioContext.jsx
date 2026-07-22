@@ -50,14 +50,15 @@ export function UsuarioProvider({ children }) {
   const loadingRef = useRef(false);
   const lastSessionIdRef = useRef(null);
 
-  // A real SIGNED_IN event is a fresh login action — claim this device as
-  // the account's only active session. Anything else (INITIAL_SESSION,
-  // getSession on mount) is just resuming a persisted session, so only
-  // silently adopt one if this device never claimed it before.
-  function claimOrEnsureSession(userId, source) {
+  // A real SIGNED_IN event is a fresh login action — claim a session slot
+  // for this device (evicting the oldest if the account is already at its
+  // 2-device limit). Anything else (INITIAL_SESSION, getSession on mount)
+  // is just resuming a persisted session, so only silently adopt a slot if
+  // this device never claimed one before.
+  function claimOrEnsureSession(source) {
     const task = source === "onAuthStateChange:SIGNED_IN"
-      ? claimActiveSession(userId)
-      : ensureLocalSessionClaimed(userId);
+      ? claimActiveSession()
+      : ensureLocalSessionClaimed();
     task.catch((err) => console.warn("[UsuarioContext] session claim failed:", err?.message));
   }
 
@@ -163,7 +164,7 @@ export function UsuarioProvider({ children }) {
 
         setUsuario(userRow);
         guardarUsuarioCache(userRow);
-        claimOrEnsureSession(userRow.id, source);
+        claimOrEnsureSession(source);
         // user loaded from DB
         setCargando(false);
         loadingRef.current = false;
@@ -230,7 +231,7 @@ export function UsuarioProvider({ children }) {
         if (retry) {
           setUsuario(retry);
           guardarUsuarioCache(retry);
-          claimOrEnsureSession(retry.id, source);
+          claimOrEnsureSession(source);
           // found on retry
           setCargando(false);
           loadingRef.current = false;
@@ -249,7 +250,7 @@ export function UsuarioProvider({ children }) {
 
       setUsuario(nuevoUsuario);
       guardarUsuarioCache(nuevoUsuario);
-      claimOrEnsureSession(nuevoUsuario.id, source);
+      claimOrEnsureSession(source);
       // new user created
 
     } catch (err) {
@@ -348,7 +349,7 @@ export function UsuarioProvider({ children }) {
     const interval = setInterval(async () => {
       const stillActive = await isSessionStillActive(usuario.id);
       if (stillActive === false) {
-        toast.error("Your account was signed in on another device. You've been logged out here.", 0);
+        toast.error("Your account reached the limit of 2 devices signed in at once, and a newer login elsewhere closed this session.", 0);
         await supabase.auth.signOut();
       }
     }, SESSION_CHECK_INTERVAL_MS);
