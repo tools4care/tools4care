@@ -15,6 +15,7 @@ import {
   Search, History, Eye, Printer, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { useToast } from "./hooks/useToast";
+import { useDebouncedEffect } from "./hooks/useDebouncedEffect";
 
 /* ========================= Constants ========================= */
 const EXPENSE_CATEGORIES_VAN = [
@@ -1132,6 +1133,8 @@ function HistorialCierres({ van, usuario }) {
       setLoading(false);
     }
   };
+
+  useDebouncedEffect(() => { searchCierres(); }, [van?.id, from, to]);
 
   const generatePreview = async (fechas, previewObservaciones = "", period = null, cierreRecord = null) => {
     if (!van?.id || !fechas.length) return;

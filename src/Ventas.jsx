@@ -1464,6 +1464,11 @@ useEffect(() => {
   const [showPOSActions, setShowPOSActions] = useState(false);
   const lastReceiptRef = useRef(null); // stores last receipt payload for reprint
 
+  // Caches the resolved store cash register session for this van+user so
+  // saveSale() doesn't make a network round trip to re-look it up on every
+  // single sale — the open register doesn't change between sales.
+  const storeCashSessionCacheRef = useRef({ key: null, session: null });
+
   // ---- PHYSICAL STORE MODE
   const { storeMode } = useStoreMode();
   const { settings: locationSettings } = useLocationSettings();
@@ -4099,7 +4104,16 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
           }
           storeCashSession = { id: storedSessionId };
         } else {
-          storeCashSession = await resolveOpenStoreCashSession(supabase, van.id, usuario.id);
+          const cacheKey = `${van.id}|${usuario.id}`;
+          const cached = storeCashSessionCacheRef.current;
+          if (cached.key === cacheKey && cached.session?.id) {
+            storeCashSession = cached.session;
+          } else {
+            storeCashSession = await resolveOpenStoreCashSession(supabase, van.id, usuario.id);
+            if (storeCashSession?.id) {
+              storeCashSessionCacheRef.current = { key: cacheKey, session: storeCashSession };
+            }
+          }
           if (!storeCashSession?.id) {
             throw new Error("Open the Cash Register on this computer before completing the sale.");
           }
@@ -4495,6 +4509,8 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
         if (registerLink.error) {
           console.error("Sale saved but could not be linked to the store register:", registerLink.error);
           toast.warning("Sale saved, but its cash-register link needs review.", 7000);
+          // The cached session may have been closed elsewhere — force a fresh lookup next sale.
+          storeCashSessionCacheRef.current = { key: null, session: null };
         }
       }
 
@@ -4634,30 +4650,36 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       )
         : null;
 
-      if (agreementPlanForSMS && agreementPlanForSMS.cuotas?.length > 0) {
-        const scheduleLines = agreementPlanForSMS.cuotas
-          .map(c => `#${c.numero_cuota}: $${c.monto.toFixed(2)} due ${c.fecha_display}`)
-          .join('\n');
-        
-        const payloadWithSchedule = {
-          ...payload,
-          notas: (payload.notas || '') + '\n---\nPAYMENT SCHEDULE:\n' + scheduleLines,
-        };
+      // Sending the receipt (SMS/email) involves a channel-picker modal and a
+      // network call to a third-party provider that can be slow — run it in
+      // the background so completing the sale (print, next customer) never
+      // waits on it.
+      (async () => {
+        if (agreementPlanForSMS && agreementPlanForSMS.cuotas?.length > 0) {
+          const scheduleLines = agreementPlanForSMS.cuotas
+            .map(c => `#${c.numero_cuota}: $${c.monto.toFixed(2)} due ${c.fecha_display}`)
+            .join('\n');
 
-        try {
-          await requestAndSendNotifications({
-            client: selectedClient,
-            payload: payloadWithSchedule,
-          });
-        } catch (smsErr) {
-          console.warn('SMS error (non-blocking):', smsErr.message);
+          const payloadWithSchedule = {
+            ...payload,
+            notas: (payload.notas || '') + '\n---\nPAYMENT SCHEDULE:\n' + scheduleLines,
+          };
+
           try {
-            await requestAndSendNotifications({ client: selectedClient, payload });
-          } catch { /* silenciar */ }
+            await requestAndSendNotifications({
+              client: selectedClient,
+              payload: payloadWithSchedule,
+            });
+          } catch (smsErr) {
+            console.warn('SMS error (non-blocking):', smsErr.message);
+            try {
+              await requestAndSendNotifications({ client: selectedClient, payload });
+            } catch { /* silenciar */ }
+          }
+        } else {
+          await requestAndSendNotifications({ client: selectedClient, payload });
         }
-      } else {
-        await requestAndSendNotifications({ client: selectedClient, payload });
-      }
+      })().catch((err) => console.warn('Notification flow error (non-blocking):', err?.message));
 
            // ✅ Limpiar venta pendiente de la NUBE si existía
       if (currentCloudPendingId) {

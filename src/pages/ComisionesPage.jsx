@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useUsuario } from '../UsuarioContext';
 import { ComisionesService } from '../lib/comisiones-service';
 import { useToast } from '../hooks/useToast';
+import { useDebouncedEffect } from '../hooks/useDebouncedEffect';
 
 export default function ComisionesPage() {
   const { usuario } = useUsuario();
@@ -106,6 +107,10 @@ export default function ComisionesPage() {
       setCargando(false);
     }
   };
+
+  useDebouncedEffect(() => {
+    if (vanSeleccionada && vendedorSeleccionado) cargarDatos();
+  }, [vanSeleccionada, vendedorSeleccionado, fechaInicio, fechaFin]);
 
   const actualizarPorcentaje = async (metodo, nuevoValor) => {
     const nuevaConfig = { ...configuracion };

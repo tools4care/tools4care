@@ -2979,6 +2979,29 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* Date range selector — controls every metric card and chart below */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-2xl border border-gray-200 shadow-sm px-4 py-3">
+          <div className="text-sm font-semibold text-gray-600">
+            Showing data for the last <span className="font-black text-gray-900">{rangeDays} days</span>
+          </div>
+          <div className="inline-flex rounded-xl bg-gray-100 p-1" aria-label="Dashboard date range">
+            {[7, 14, 30].map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setRangeDays(days)}
+                className={`rounded-lg px-3.5 py-2 text-xs font-black transition-all ${
+                  rangeDays === days
+                    ? "bg-gray-900 text-white shadow"
+                    : "text-gray-500 hover:bg-gray-200"
+                }`}
+              >
+                {days} days
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Métricas Clave */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {loading ? (
@@ -3135,23 +3158,6 @@ export default function Dashboard() {
                   </div>
 
                   <div className="flex flex-col items-end gap-3">
-                    <div className="inline-flex rounded-xl bg-white/10 p-1 ring-1 ring-white/10" aria-label="Sales performance period">
-                      {[7, 14, 30].map((days) => (
-                        <button
-                          key={days}
-                          type="button"
-                          onClick={() => setRangeDays(days)}
-                          className={`rounded-lg px-3.5 py-2 text-xs font-black transition-all ${
-                            rangeDays === days
-                              ? "bg-white text-slate-900 shadow"
-                              : "text-slate-300 hover:bg-white/10 hover:text-white"
-                          }`}
-                        >
-                          {days} days
-                        </button>
-                      ))}
-                    </div>
-
                     {/* Quick stats pills */}
                     <div className="flex flex-wrap justify-end gap-2">
                     <div className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 text-center min-w-[80px]">

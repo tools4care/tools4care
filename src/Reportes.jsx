@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
+import { useDebouncedEffect } from "./hooks/useDebouncedEffect";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, PieChart, Pie, Cell, Legend,
@@ -293,7 +294,7 @@ function FinancialLedgerReport({ van }) {
     }
   };
 
-  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to]);
 
   const totals = useMemo(() => days.reduce((a, d) => ({
     moneyIn: a.moneyIn + Number(d.money_in || 0),
@@ -532,6 +533,8 @@ function CierreDiarioReport({ van }) {
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
+
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to]);
 
   const totals = useMemo(() => rows.reduce((t, r) => ({
     vendido:      t.vendido      + r.vendido,
@@ -846,6 +849,8 @@ function VentasReport({ van, usuario }) {
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
+
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to, filtroUsuario]);
 
   const summary = useMemo(() => {
     const total = data.reduce((s, r) => s + Number(r.total_venta || 0), 0);
@@ -1422,7 +1427,7 @@ function DiscountAuditReport({ van, usuario }) {
     }
   };
 
-  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to]);
 
   const summary = useMemo(() => ({
     count: rows.length,
@@ -1573,7 +1578,7 @@ function DevolucionesReport({ van, usuario }) {
 
   const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
 
-  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to]);
 
   const search = async () => {
     if (!van?.id) return;
@@ -1935,7 +1940,7 @@ function TopClientesReport({ van, usuario }) {
   const [searched, setSearched] = useState(false);
   const [sortBy, setSortBy]   = useState("total");
 
-  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to]);
 
   const search = async () => {
     if (!van?.id) return;
@@ -2118,7 +2123,7 @@ function ProductosReport({ van, usuario }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
-  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to]);
   useEffect(() => { setPage(1); }, [data]);
 
   const search = async () => {
@@ -2371,6 +2376,8 @@ function GananciasReport({ van, usuario }) {
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
+
+  useDebouncedEffect(() => { search(); }, [van?.id, from, to]);
 
   const summary = useMemo(() => ({
     revenue: data.reduce((s,p)=>s+p.totalRevenue,0),
@@ -2859,6 +2866,8 @@ function PaymentBreakdownReport({ van, usuario }) {
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
+
+  useDebouncedEffect(() => { search(); }, [effectiveVanId, from, to, metodo, driverFiltro]);
 
   /* ── Totals ── */
   const totals = useMemo(() => ({
