@@ -34,6 +34,7 @@ const CHART_COLORS = ["#059669", "#2563eb", "#f59e0b", "#e11d48", "#7c3aed", "#0
 const CATEGORY_OPTIONS = [
   { value: "ALL", label: "All categories" },
   { value: "combustible", label: "Fuel" },
+  { value: "pago_empleado", label: "Employee Payment/Wages" },
   { value: "peaje", label: "Tolls" },
   { value: "comida", label: "Meals" },
   { value: "mantenimiento", label: "Maintenance" },

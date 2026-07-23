@@ -26,6 +26,7 @@ import {
 
 /* === CxC centralizado === */
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
+import { getSaleTaxParts } from "./lib/saleTax";
 
 /* === Offline === */
 import { guardarPagoOffline, obtenerClientesCache, guardarClientesCache } from "./utils/offlineDB";
@@ -1218,7 +1219,7 @@ const fetchPage = async (opts = {}) => {
       }
       setResumen((prev) => ({ ...prev, timelineLoading: true }));
       const [ventasRes, pagosRes, ledgerRes, cxcInfo] = await Promise.all([
-        supabase.from("ventas").select("id, fecha, created_at, total_venta, total, total_pagado, estado_pago, tipo, numero_factura, venta_origen_id").eq("cliente_id", clienteSeleccionado.id),
+        supabase.from("ventas").select("id, fecha, created_at, total_venta, total, total_pagado, estado_pago, tipo, numero_factura, venta_origen_id, pago").eq("cliente_id", clienteSeleccionado.id),
         supabase.from("pagos").select("id, fecha_pago, monto, metodo_pago").eq("cliente_id", clienteSeleccionado.id),
         supabase
           .from("v_financial_ledger")
@@ -1287,32 +1288,32 @@ const fetchPage = async (opts = {}) => {
   const pageCount = useMemo(() => Math.max(1, Math.ceil(totalRows / pageSize)), [totalRows, pageSize]);
 
   /* -------------------- PDF helper -------------------- */
+  // Net returns against sales per month, and pull the tax actually recorded
+  // with each sale (getSaleTaxParts reads it from the stored payment JSON)
+  // so this statement shows real subtotal/tax/total, not just a raw sum.
   const comprasPorMes = useMemo(() => {
     const m = {};
-    (resumen.ventas || []).forEach(v => {
-      if (!v.fecha || !v.total_venta) return;
+    (resumen.ventas || []).forEach((v) => {
+      if (!v.fecha) return;
       const mes = v.fecha.slice(0, 7);
-      m[mes] = (m[mes] || 0) + Number(v.total_venta || 0);
+      const sign = (v.tipo || "venta") === "devolucion" ? -1 : 1;
+      const parts = getSaleTaxParts(v);
+      if (!m[mes]) m[mes] = { subtotal: 0, tax: 0, total: 0 };
+      m[mes].subtotal += sign * parts.subtotal;
+      m[mes].tax += sign * parts.tax;
+      m[mes].total += sign * parts.grand;
     });
     return m;
   }, [resumen.ventas]);
 
-  const lifetimeTotal = Object.values(comprasPorMes).reduce((a, b) => a + b, 0);
-
-  const dataChart = useMemo(() => {
-    const meses = [];
-    const hoy = new Date();
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
-      const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      meses.unshift(label);
-    }
-    return meses.map(mes => ({
-      mes: mes.slice(5),
-      fullMes: mes,
-      compras: comprasPorMes[mes] || 0
-    }));
-  }, [comprasPorMes]);
+  const lifetimeTotals = useMemo(() => Object.values(comprasPorMes).reduce(
+    (acc, m) => ({
+      subtotal: acc.subtotal + m.subtotal,
+      tax: acc.tax + m.tax,
+      total: acc.total + m.total,
+    }),
+    { subtotal: 0, tax: 0, total: 0 }
+  ), [comprasPorMes]);
 
   async function generatePDF() {
     if (!clienteSeleccionado) return;
@@ -1321,52 +1322,85 @@ const fetchPage = async (opts = {}) => {
     const businessName = "Tools4Care";
     const businessAddress = "108 Lafayette St, Salem, MA 01970";
     const businessPhone = "(978) 594-1624";
-    const reportTitle = "Sales Report";
 
     doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
     doc.text(businessName, 14, 20);
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
     doc.text(businessAddress, 14, 27);
     doc.text(`Phone: ${businessPhone}`, 14, 34);
     doc.setLineWidth(0.5);
     doc.line(14, 38, 196, 38);
 
-    doc.setFontSize(14);
-    doc.text("Client Information:", 14, 46);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("Barber Expense Statement", 14, 47);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    doc.text("Summary of business purchases for expense / tax record-keeping purposes (e.g. IRS filing).", 14, 53);
+    doc.setTextColor(0);
+    doc.setLineWidth(0.5);
+    doc.line(14, 58, 196, 58);
+
     doc.setFontSize(12);
-    doc.text(`Full Name: ${clienteSeleccionado.nombre || ""}`, 14, 53);
-    doc.text(`Business Name: ${clienteSeleccionado.negocio || ""}`, 14, 60);
+    doc.setFont("helvetica", "bold");
+    doc.text("Client Information", 14, 66);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Full Name: ${clienteSeleccionado.nombre || ""}`, 14, 73);
+    doc.text(`Business Name: ${clienteSeleccionado.negocio || ""}`, 14, 79);
     const dirTxt = prettyAddress(clienteSeleccionado.direccion);
-    doc.text(`Address: ${dirTxt}`, 14, 67);
-    doc.text(`Phone: ${formatPhoneForInput(clienteSeleccionado.telefono) || ""}`, 14, 74);
+    doc.text(`Address: ${dirTxt}`, 14, 85);
+    doc.text(`Phone: ${formatPhoneForInput(clienteSeleccionado.telefono) || ""}`, 14, 91);
+
+    const todayStr = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    doc.text(`Statement date: ${todayStr}`, 140, 73);
 
     doc.setLineWidth(0.5);
-    doc.line(14, 78, 196, 78);
-
-    doc.setFontSize(16);
-    doc.text(reportTitle, 14, 86);
-    const todayStr = new Date().toLocaleDateString("en-US");
-    doc.setFontSize(11);
-    doc.text(`Date: ${todayStr}`, 14, 93);
-
-    const ventasData = Object.entries(comprasPorMes)
-      .map(([mes, total]) => [mes, fmtSafe(total)])
-      .sort((a,b) => b[0].localeCompare(a[0]));
+    doc.line(14, 96, 196, 96);
 
     autoTable(doc, {
-      startY: 100,
-      head: [["Month", "Total Sales"]],
-      body: ventasData,
+      startY: 102,
+      head: [["Lifetime Summary", "Amount"]],
+      body: [
+        ["Total Purchases (before tax)", fmtSafe(lifetimeTotals.subtotal)],
+        ["Total Tax Paid", fmtSafe(lifetimeTotals.tax)],
+        ["Lifetime Total (with tax)", fmtSafe(lifetimeTotals.total)],
+      ],
+      theme: "grid",
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [25, 118, 210] },
+      bodyStyles: { fontStyle: "bold" },
+    });
+
+    const monthlyRows = Object.entries(comprasPorMes)
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([mes, vals]) => {
+        const [y, mo] = mes.split("-").map(Number);
+        const label = new Date(y, mo - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+        return [label, fmtSafe(vals.subtotal), fmtSafe(vals.tax), fmtSafe(vals.total)];
+      });
+
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 8,
+      head: [["Month", "Subtotal", "Tax", "Total"]],
+      body: monthlyRows,
       theme: "grid",
       styles: { fontSize: 10 },
       headStyles: { fillColor: [25, 118, 210] },
     });
 
     const finalY = doc.lastAutoTable.finalY || 110;
-    doc.setFontSize(12);
-    doc.text(`Lifetime Total Sales: ${fmtSafe(lifetimeTotal)}`, 14, finalY + 10);
+    doc.setFontSize(8);
+    doc.setTextColor(120);
+    doc.text(
+      "This statement is provided for your records and does not constitute tax advice. Please consult your accountant or tax professional.",
+      14, finalY + 10, { maxWidth: 182 }
+    );
 
-    doc.save(`SalesReport_${clienteSeleccionado.nombre || "Client"}.pdf`);
+    doc.save(`BarberExpenseStatement_${clienteSeleccionado.nombre || "Client"}.pdf`);
   }
 
   /* -------------------- UI -------------------- */

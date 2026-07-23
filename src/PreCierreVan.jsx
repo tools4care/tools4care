@@ -20,6 +20,7 @@ import { useDebouncedEffect } from "./hooks/useDebouncedEffect";
 /* ========================= Constants ========================= */
 const EXPENSE_CATEGORIES_VAN = [
   { value: "combustible",     label: "Fuel",          icon: "⛽" },
+  { value: "pago_empleado",   label: "Employee Payment/Wages", icon: "🧑‍💼" },
   { value: "comida",          label: "Meals",         icon: "🍔" },
   { value: "peaje",           label: "Tolls",         icon: "🛣️" },
   { value: "estacionamiento", label: "Parking",       icon: "🅿️" },
