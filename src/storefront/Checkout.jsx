@@ -974,9 +974,23 @@ function ReturnHandler({ onPaid, clientSecret: csFromProps }) {
 
 
 function PaymentBlock({ onPaid, total, clientSecret }) {
+  const [walletAvailable, setWalletAvailable] = useState(false);
   return (
-    <div className="space-y-3">
-      <AppleGooglePayButton total={total} onPaid={onPaid} clientSecret={clientSecret} />
+    <div className="bg-white rounded-2xl shadow-sm p-4 space-y-3 w-full min-w-0 overflow-hidden">
+      <h3 className="text-sm font-bold text-gray-800">Payment method</h3>
+      <AppleGooglePayButton
+        total={total}
+        onPaid={onPaid}
+        clientSecret={clientSecret}
+        onAvailabilityChange={setWalletAvailable}
+      />
+      {walletAvailable && (
+        <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+          <div className="h-px flex-1 bg-gray-200" />
+          Or pay with card
+          <div className="h-px flex-1 bg-gray-200" />
+        </div>
+      )}
       <ReturnHandler onPaid={onPaid} clientSecret={clientSecret} />
       <PaymentForm onPaid={onPaid} />
     </div>
@@ -986,7 +1000,7 @@ function PaymentBlock({ onPaid, total, clientSecret }) {
 
 
 
-function AppleGooglePayButton({ total, onPaid, clientSecret }) {
+function AppleGooglePayButton({ total, onPaid, clientSecret, onAvailabilityChange }) {
   const stripe = useStripe();
   const [pr, setPr] = useState(null);
 
@@ -1045,15 +1059,16 @@ function AppleGooglePayButton({ total, onPaid, clientSecret }) {
     paymentRequest.canMakePayment().then((result) => {
       if (result) setPr(paymentRequest);
       else setPr(null);
+      onAvailabilityChange?.(!!result);
     });
 
     return () => paymentRequest.off("paymentmethod");
-  }, [stripe, total, clientSecret, onPaid]);
+  }, [stripe, total, clientSecret, onPaid, onAvailabilityChange]);
 
   if (!pr) return null;
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm p-4 w-full min-w-0 overflow-hidden">
+    <div className="w-full min-w-0 overflow-hidden">
       <PaymentRequestButtonElement
         options={{
           paymentRequest: pr,
@@ -1061,7 +1076,7 @@ function AppleGooglePayButton({ total, onPaid, clientSecret }) {
         }}
       />
       <div className="mt-2 text-xs text-gray-500">
-        Apple Pay / Google Pay will appear if supported by the device and browser.
+        Pay instantly with your saved card — no need to type it in.
       </div>
     </div>
   );
@@ -1103,7 +1118,7 @@ function PaymentForm({ onPaid }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-4 space-y-3 w-full min-w-0 overflow-hidden">
+    <form onSubmit={handleSubmit} className="space-y-3 w-full min-w-0 overflow-hidden">
       {/* Spinner visible mientras Stripe carga */}
       {!ready && (
         <div className="flex flex-col items-center justify-center py-8 gap-3">
