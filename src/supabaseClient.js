@@ -1,10 +1,12 @@
 // src/supabaseClient.js
 import { createClient } from "@supabase/supabase-js";
 
-// ENV de Vite
-const supabaseUrl =
+// ENV de Vite — exported so any file building raw fetch() calls to Edge
+// Functions (instead of using the supabase client) always gets a real URL,
+// never a literal "undefined" if the Vite env var isn't set at build time.
+export const supabaseUrl =
   import.meta?.env?.VITE_SUPABASE_URL || "https://gvloygqbavibmpakzdma.supabase.co";
-const supabaseAnonKey =
+export const supabaseAnonKey =
   import.meta?.env?.VITE_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o";
 const functionsUrl = import.meta?.env?.VITE_SB_FUNCTIONS_URL;

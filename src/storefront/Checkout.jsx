@@ -8,23 +8,23 @@ import {
   useStripe,
   useElements,
 } from "@stripe/react-stripe-js";
-import { supabase } from "../supabaseClient";
+import { supabase, supabaseUrl, supabaseAnonKey } from "../supabaseClient";
 import { getAnonId } from "../utils/anon";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
-const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
+const FN_URL = `${supabaseUrl}/functions/v1/create_payment_intent`;
 const MIN_PAYMENT_CENTS = 50;
 
 async function sendOrderEmail({ to, subject, html }) {
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-order-email`;
+  const url = `${supabaseUrl}/functions/v1/send-order-email`;
   const payload = { to, subject, html };
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
       },
       body: JSON.stringify(payload),
     });
@@ -440,7 +440,7 @@ export default function Checkout() {
         };
         const res = await fetch(FN_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${supabaseAnonKey}` },
           body: JSON.stringify({ amount: payload.amount, currency: "usd", metadata: payload.metadata, shipping: payload.shipping }),
         });
         if (!res.ok) {

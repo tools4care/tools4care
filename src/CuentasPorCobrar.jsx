@@ -3,7 +3,7 @@ import { useSyncGlobal } from "./hooks/SyncContext";
 import { useToast } from "./hooks/useToast";
 import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
-import { supabase } from "./supabaseClient";
+import { supabase, supabaseAnonKey } from "./supabaseClient";
 import { logAudit } from "./lib/auditLog";
 import {
   clientDigits,
@@ -2393,7 +2393,7 @@ export default function CuentasPorCobrar() {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session?.access_token}`,
-          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+          "apikey": supabaseAnonKey,
         },
         body: JSON.stringify({ updates }),
       });

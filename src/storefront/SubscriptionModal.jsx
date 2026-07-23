@@ -2,10 +2,10 @@
 import { useEffect, useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { supabase } from "../supabaseClient";
+import { supabase, supabaseUrl, supabaseAnonKey } from "../supabaseClient";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
-const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create_payment_intent`;
+const FN_URL = `${supabaseUrl}/functions/v1/create_payment_intent`;
 
 const CICLO_LABEL = {
   semana:     "per week",
@@ -347,7 +347,7 @@ export default function SubscriptionModal({ plan, user, onClose }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          Authorization: `Bearer ${supabaseAnonKey}`,
         },
         body: JSON.stringify({
           amount: amountCents,
@@ -450,11 +450,11 @@ export default function SubscriptionModal({ plan, user, onClose }) {
     try {
       const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
       if (adminEmail) {
-        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-order-email`, {
+        await fetch(`${supabaseUrl}/functions/v1/send-order-email`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            Authorization: `Bearer ${supabaseAnonKey}`,
           },
           body: JSON.stringify({
             to: adminEmail,
