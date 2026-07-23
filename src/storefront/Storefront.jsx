@@ -899,7 +899,7 @@ export default function Storefront() {
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold leading-tight">Weekly deals & new arrivals</h1>
             <p className="mt-2 text-white/90">Discover special prices and freshly added products.</p>
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4 flex flex-wrap gap-2">
               <button onClick={() => offersRef.current?.scrollIntoView({ behavior: "smooth" })}
                 className="rounded-lg bg-white text-gray-900 px-4 py-2 font-semibold hover:bg-gray-100">
                 View deals
