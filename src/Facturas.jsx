@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
 import { loadPdfLibs } from "./utils/lazyPdf";
+import { getSaleTaxParts } from "./lib/saleTax";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { useLocation } from "react-router-dom";
@@ -179,6 +180,20 @@ async function fetchDetalleFromVenta(ventaId) {
   return normalizeDetalleRows(items, map);
 }
 
+// The "facturas_ext" view doesn't necessarily expose the raw payment JSON,
+// so pull the tax actually recorded with the sale directly from `ventas`.
+async function fetchSaleTaxParts(ventaId, fallbackTotal) {
+  try {
+    const { data } = await supabase
+      .from("ventas")
+      .select("pago, total_venta, total")
+      .eq("id", ventaId)
+      .maybeSingle();
+    if (data) return getSaleTaxParts(data);
+  } catch { /* fall through to no-tax default below */ }
+  return { subtotal: fallbackTotal, tax: 0, grand: fallbackTotal };
+}
+
 /* ===================== PDF ===================== */
 async function buildFacturaPDF(factura) {
   const { jsPDF, autoTable } = await loadPdfLibs();
@@ -300,8 +315,9 @@ async function buildFacturaPDF(factura) {
     balance = Math.max(0, totalFactura - paidAmount);
   }
 
-  const taxRate = 0; // Ajustar si aplica impuesto
-  const taxAmount = subtotalAcumulado * taxRate;
+  const taxInfo = await fetchSaleTaxParts(factura.id, totalFactura);
+  const taxAmount = taxInfo.tax;
+  const taxRateDisplay = taxInfo.subtotal > 0 ? (taxInfo.tax / taxInfo.subtotal) * 100 : 0;
 
   autoTable(doc, {
     startY: 240,
@@ -356,7 +372,7 @@ async function buildFacturaPDF(factura) {
 
   // Tax
   finalY += rowHeight;
-  drawSummaryRow(`Tax (${(taxRate*100).toFixed(0)}%):`, money(taxAmount), finalY);
+  drawSummaryRow(`Tax (${taxRateDisplay.toFixed(2).replace(/\.00$/, "")}%):`, money(taxAmount), finalY);
 
   // Separador
   finalY += 5;
@@ -413,7 +429,7 @@ async function uploadFacturaPDF(factura) {
 }
 
 /* Build a complete styled HTML invoice — same data as the PDF */
-function buildFullInvoiceHTML(factura, { pdfUrl = "" } = {}) {
+function buildFullInvoiceHTML(factura, { pdfUrl = "", taxAmount = 0 } = {}) {
   const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
   const empresa = {
     nombre: "TOOLS4CARE",
@@ -553,7 +569,7 @@ function buildFullInvoiceHTML(factura, { pdfUrl = "" } = {}) {
       </tr>
       <tr>
         <td style="padding:4px 0;color:#6b7280;font-size:13px;">Tax</td>
-        <td style="padding:4px 0;text-align:right;font-size:13px;">$0.00</td>
+        <td style="padding:4px 0;text-align:right;font-size:13px;">${fmt(taxAmount)}</td>
       </tr>
       <tr>
         <td style="padding:12px 0 4px;font-size:16px;font-weight:800;color:#0b4a6f;border-top:2px solid #e5e7eb;">TOTAL</td>
@@ -868,15 +884,16 @@ export default function Facturas() {
 
       // 2. Build one full-invoice HTML per selected invoice, with a PDF link
       const invoicesWithPdf = await Promise.all(withDetail.map(async (f) => {
+        const taxInfo = await fetchSaleTaxParts(f.id, Number(f.total || 0));
         try {
-          return { factura: f, pdfUrl: await uploadFacturaPDF(f) };
+          return { factura: f, pdfUrl: await uploadFacturaPDF(f), taxAmount: taxInfo.tax };
         } catch (error) {
           console.warn("Could not create invoice PDF link:", error?.message || error);
-          return { factura: f, pdfUrl: "" };
+          return { factura: f, pdfUrl: "", taxAmount: taxInfo.tax };
         }
       }));
       const html = invoicesWithPdf
-        .map(({ factura, pdfUrl }) => buildFullInvoiceHTML(factura, { pdfUrl }))
+        .map(({ factura, pdfUrl, taxAmount }) => buildFullInvoiceHTML(factura, { pdfUrl, taxAmount }))
         .join('<div style="page-break-after:always;height:24px;"></div>');
 
       const count = withDetail.length;
@@ -922,8 +939,9 @@ export default function Facturas() {
       } catch (error) {
         console.warn("Could not create invoice PDF link:", error?.message || error);
       }
+      const taxInfo = await fetchSaleTaxParts(f.id, Number(f.total || 0));
 
-      const html = buildFullInvoiceHTML(f, { pdfUrl });
+      const html = buildFullInvoiceHTML(f, { pdfUrl, taxAmount: taxInfo.tax });
 
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {

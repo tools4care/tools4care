@@ -669,7 +669,6 @@ export default function Clientes() {
   const [mensaje, setMensaje] = useState("");
   const [estadoInput, setEstadoInput] = useState("");
   const [estadoOpciones, setEstadoOpciones] = useState(estadosUSA);
-  const [mesSeleccionado, setMesSeleccionado] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Auto-refresh crédito refs
@@ -1280,7 +1279,6 @@ const fetchPage = async (opts = {}) => {
         timeline: withBalances,
         timelineLoading: false,
       });
-      setMesSeleccionado(null);
     }
     if (clienteSeleccionado && (mostrarStats || mostrarEdicion || mostrarAbono)) cargarResumen();
   }, [clienteSeleccionado, mostrarStats, mostrarEdicion, mostrarAbono]);
@@ -1288,40 +1286,32 @@ const fetchPage = async (opts = {}) => {
   const pageCount = useMemo(() => Math.max(1, Math.ceil(totalRows / pageSize)), [totalRows, pageSize]);
 
   /* -------------------- PDF helper -------------------- */
-  // Net returns against sales per month, and pull the tax actually recorded
-  // with each sale (getSaleTaxParts reads it from the stored payment JSON)
-  // so this statement shows real subtotal/tax/total, not just a raw sum.
-  const comprasPorMes = useMemo(() => {
-    const m = {};
-    (resumen.ventas || []).forEach((v) => {
-      if (!v.fecha) return;
-      const mes = v.fecha.slice(0, 7);
-      const sign = (v.tipo || "venta") === "devolucion" ? -1 : 1;
-      const parts = getSaleTaxParts(v);
-      if (!m[mes]) m[mes] = { subtotal: 0, tax: 0, total: 0 };
-      m[mes].subtotal += sign * parts.subtotal;
-      m[mes].tax += sign * parts.tax;
-      m[mes].total += sign * parts.grand;
-    });
-    return m;
-  }, [resumen.ventas]);
-
-  const lifetimeTotals = useMemo(() => Object.values(comprasPorMes).reduce(
-    (acc, m) => ({
-      subtotal: acc.subtotal + m.subtotal,
-      tax: acc.tax + m.tax,
-      total: acc.total + m.total,
-    }),
-    { subtotal: 0, tax: 0, total: 0 }
-  ), [comprasPorMes]);
-
-  async function generatePDF() {
+  // Totals are tax-inclusive (getSaleTaxParts reads the tax actually stored
+  // with each sale) and net returns against sales, but the statement itself
+  // only shows one number per month/lifetime — no subtotal/tax breakdown.
+  async function generatePDF(range) {
     if (!clienteSeleccionado) return;
     const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     const businessName = "Tools4Care";
     const businessAddress = "108 Lafayette St, Salem, MA 01970";
     const businessPhone = "(978) 594-1624";
+
+    const ventasInRange = (resumen.ventas || []).filter((v) => {
+      if (!range?.start && !range?.end) return true;
+      const f = v.fecha || "";
+      return (!range.start || f >= range.start) && (!range.end || f <= range.end);
+    });
+
+    const comprasPorMes = {};
+    ventasInRange.forEach((v) => {
+      if (!v.fecha) return;
+      const mes = v.fecha.slice(0, 7);
+      const sign = (v.tipo || "venta") === "devolucion" ? -1 : 1;
+      comprasPorMes[mes] = (comprasPorMes[mes] || 0) + sign * getSaleTaxParts(v).grand;
+    });
+    const totalForRange = Object.values(comprasPorMes).reduce((a, b) => a + b, 0);
+    const rangeLabel = range?.label || "Lifetime";
 
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
@@ -1357,35 +1347,32 @@ const fetchPage = async (opts = {}) => {
 
     const todayStr = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
     doc.text(`Statement date: ${todayStr}`, 140, 73);
+    doc.text(`Report period: ${rangeLabel}`, 140, 79);
 
     doc.setLineWidth(0.5);
     doc.line(14, 96, 196, 96);
 
     autoTable(doc, {
       startY: 102,
-      head: [["Lifetime Summary", "Amount"]],
-      body: [
-        ["Total Purchases (before tax)", fmtSafe(lifetimeTotals.subtotal)],
-        ["Total Tax Paid", fmtSafe(lifetimeTotals.tax)],
-        ["Lifetime Total (with tax)", fmtSafe(lifetimeTotals.total)],
-      ],
+      head: [["Summary", "Amount"]],
+      body: [[`Total (${rangeLabel})`, fmtSafe(totalForRange)]],
       theme: "grid",
-      styles: { fontSize: 10 },
+      styles: { fontSize: 11 },
       headStyles: { fillColor: [25, 118, 210] },
       bodyStyles: { fontStyle: "bold" },
     });
 
     const monthlyRows = Object.entries(comprasPorMes)
       .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([mes, vals]) => {
+      .map(([mes, total]) => {
         const [y, mo] = mes.split("-").map(Number);
         const label = new Date(y, mo - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
-        return [label, fmtSafe(vals.subtotal), fmtSafe(vals.tax), fmtSafe(vals.total)];
+        return [label, fmtSafe(total)];
       });
 
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 8,
-      head: [["Month", "Subtotal", "Tax", "Total"]],
+      head: [["Month", "Total"]],
       body: monthlyRows,
       theme: "grid",
       styles: { fontSize: 10 },
@@ -1837,8 +1824,6 @@ const fetchPage = async (opts = {}) => {
           open={mostrarStats}
           cliente={clienteSeleccionado}
           resumen={resumen}
-          mesSeleccionado={mesSeleccionado}
-          setMesSeleccionado={setMesSeleccionado}
           onClose={() => setMostrarStats(false)}
           onEdit={() => { setMostrarStats(false); handleEditCliente(clienteSeleccionado); }}
           onDelete={puedeEliminarClientes ? handleEliminar : null}
@@ -2067,27 +2052,81 @@ const fetchPage = async (opts = {}) => {
 }
 
 /* -------------------- MODAL: ESTADÍSTICAS (HEADER COMPACTO) -------------------- */
+const STATS_RANGE_PRESETS = [
+  { value: "lifetime", label: "Lifetime" },
+  { value: "last_3_months", label: "Last 3 Months" },
+  { value: "last_12_months", label: "Last 12 Months" },
+  { value: "this_year", label: "This Calendar Year" },
+  { value: "last_year", label: "Last Calendar Year" },
+  { value: "custom", label: "Custom Range" },
+];
+
+function resolveStatsRange(preset, customFrom, customTo) {
+  const today = new Date();
+  const todayISO = today.toISOString().slice(0, 10);
+  if (preset === "last_3_months") {
+    const d = new Date(today); d.setMonth(d.getMonth() - 3);
+    return { start: d.toISOString().slice(0, 10), end: todayISO, label: "Last 3 Months" };
+  }
+  if (preset === "last_12_months") {
+    const d = new Date(today); d.setFullYear(d.getFullYear() - 1);
+    return { start: d.toISOString().slice(0, 10), end: todayISO, label: "Last 12 Months" };
+  }
+  if (preset === "this_year") {
+    return { start: `${today.getFullYear()}-01-01`, end: todayISO, label: `Calendar Year ${today.getFullYear()}` };
+  }
+  if (preset === "last_year") {
+    const y = today.getFullYear() - 1;
+    return { start: `${y}-01-01`, end: `${y}-12-31`, label: `Calendar Year ${y}` };
+  }
+  if (preset === "custom" && customFrom && customTo) {
+    const fromLabel = new Date(`${customFrom}T00:00:00`).toLocaleDateString("en-US");
+    const toLabel = new Date(`${customTo}T00:00:00`).toLocaleDateString("en-US");
+    return { start: customFrom, end: customTo, label: `${fromLabel} – ${toLabel}` };
+  }
+  return { start: null, end: null, label: "Lifetime" };
+}
+
 function ClienteStatsModal({
-  open, cliente, resumen, mesSeleccionado, setMesSeleccionado, onClose, onEdit, onDelete, generatePDF, onRefreshCredito
+  open, cliente, resumen, onClose, onEdit, onDelete, generatePDF, onRefreshCredito
 }) {
+  const [rangePreset, setRangePreset] = useState("lifetime");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
   if (!open || !cliente) return null;
+
+  const resolvedRange = resolveStatsRange(rangePreset, customFrom, customTo);
+  const inRange = (dateStr) => {
+    if (!resolvedRange.start && !resolvedRange.end) return true;
+    const f = dateStr || "";
+    return (!resolvedRange.start || f >= resolvedRange.start) && (!resolvedRange.end || f <= resolvedRange.end);
+  };
+  const ventasInRange = (resumen.ventas || []).filter((v) => inRange(v.fecha));
+  const ventaIdsInRange = new Set(ventasInRange.map((v) => v.id));
+  const pagosInRange = (resumen.pagos || []).filter((p) => inRange(p.fecha_pago));
+  const productosInRange = (resumen.productosComprados || []).filter((row) =>
+    (!resolvedRange.start && !resolvedRange.end) || ventaIdsInRange.has(row.venta_id)
+  );
 
   const comprasPorMes = {};
   let lifetimeTotal = 0;
-  (resumen.ventas || []).forEach(v => {
-    if (!v.fecha || !v.total_venta) return;
+  ventasInRange.forEach(v => {
+    if (!v.fecha) return;
     const mes = v.fecha.slice(0, 7);
-    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + Number(v.total_venta || 0);
-    lifetimeTotal += Number(v.total_venta || 0);
+    const sign = (v.tipo || "venta") === "devolucion" ? -1 : 1;
+    const amount = sign * getSaleTaxParts(v).grand;
+    comprasPorMes[mes] = (comprasPorMes[mes] || 0) + amount;
+    lifetimeTotal += amount;
   });
   const pagosPorMes = {};
-  (resumen.pagos || []).forEach(p => {
+  pagosInRange.forEach(p => {
     if (!p.fecha_pago) return;
     const mes = p.fecha_pago.slice(0, 7);
     pagosPorMes[mes] = (pagosPorMes[mes] || 0) + Number(p.monto || 0);
   });
   const productMap = {};
-  (resumen.productosComprados || []).forEach((row) => {
+  productosInRange.forEach((row) => {
     const name = row.productos?.nombre || "Unknown product";
     const qty = Number(row.cantidad || 0);
     const revenue = Number(row.subtotal || 0) || (qty * Number(row.precio_unitario || 0));
@@ -2234,8 +2273,8 @@ function ClienteStatsModal({
               <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5 shadow-lg">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-green-700 text-sm font-bold uppercase tracking-wide">Lifetime Sales</p>
-                    <p className="text-3xl font-bold text-green-800 mt-2">${(resumen.ventas || []).reduce((s,v)=>s+Number(v.total_venta||0),0).toFixed(2)}</p>
+                    <p className="text-green-700 text-sm font-bold uppercase tracking-wide">Sales · {resolvedRange.label}</p>
+                    <p className="text-3xl font-bold text-green-800 mt-2">{fmtSafe(lifetimeTotal)}</p>
                   </div>
                   <div className="bg-green-500 p-3 rounded-xl shadow-md">
                     <TrendingUp className="text-white" size={24} />
@@ -2246,8 +2285,8 @@ function ClienteStatsModal({
               <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-2xl p-5 shadow-lg">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-blue-700 text-sm font-bold uppercase tracking-wide">Total Orders</p>
-                    <p className="text-3xl font-bold text-blue-800 mt-2">{(resumen.ventas || []).length}</p>
+                    <p className="text-blue-700 text-sm font-bold uppercase tracking-wide">Orders · {resolvedRange.label}</p>
+                    <p className="text-3xl font-bold text-blue-800 mt-2">{ventasInRange.length}</p>
                   </div>
                   <div className="bg-blue-500 p-3 rounded-xl shadow-md">
                     <FileText className="text-white" size={24} />
@@ -2346,24 +2385,45 @@ function ClienteStatsModal({
               loading={resumen.timelineLoading}
             />
 
-            {/* Filtro por mes */}
+            {/* Filtro por rango de fecha — controla las tarjetas, el chart y el PDF */}
             <div className="mb-6">
               <label className="flex items-center gap-2 font-bold text-gray-800 mb-3 text-lg">
                 <Calendar size={20} />
-                Filter by Month
+                Date Range
               </label>
               <select
                 className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white font-medium shadow-sm"
-                value={mesSeleccionado || ""}
-                onChange={e => {
-                  setMesSeleccionado(e.target.value || null);
-                }}
+                value={rangePreset}
+                onChange={e => setRangePreset(e.target.value)}
               >
-                <option value="">All months</option>
-                {Object.keys(comprasPorMes).sort().reverse().map(mes => (
-                  <option key={mes} value={mes}>{mes}</option>
+                {STATS_RANGE_PRESETS.map(p => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
+              {rangePreset === "custom" && (
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">From</span>
+                    <input
+                      type="date"
+                      className="w-full px-3 py-2.5 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white font-medium"
+                      value={customFrom}
+                      max={customTo || undefined}
+                      onChange={e => setCustomFrom(e.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">To</span>
+                    <input
+                      type="date"
+                      className="w-full px-3 py-2.5 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white font-medium"
+                      value={customTo}
+                      min={customFrom || undefined}
+                      onChange={e => setCustomTo(e.target.value)}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
 
             {/* Chart */}
@@ -2398,7 +2458,7 @@ function ClienteStatsModal({
             {/* Acciones secundarias */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
               <button 
-                onClick={generatePDF} 
+                onClick={() => generatePDF(resolvedRange)} 
                 className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all"
               >
                 <Download size={18} />
