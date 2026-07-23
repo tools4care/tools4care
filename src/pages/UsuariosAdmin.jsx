@@ -2,7 +2,7 @@
 // Admin-only: manage users (add / change role / activate-deactivate / delete)
 import { createElement, useState, useEffect, useCallback } from "react";
 import { supabase }                        from "../supabaseClient";
-import { supabaseAdmin, isAdminConfigured } from "../supabaseAdmin";
+import * as adminApi from "../lib/adminApi";
 import { useUsuario }                      from "../UsuarioContext";
 import {
   Shield, Star, User, Check, X, RefreshCw, AlertCircle,
@@ -136,47 +136,28 @@ function NuevoUsuarioModal({ onClose, onCreado, onTriggerError }) {
     e.preventDefault();
     if (!email.trim() || !password.trim()) { setError("Email and password are required."); return; }
     if (password.length < 6)               { setError("Password must be at least 6 characters."); return; }
-    if (!isAdminConfigured)                { setError("Service key not configured. See setup instructions."); return; }
 
     setSaving(true);
     setError("");
 
-    // 1. Create auth user (email_confirm: true → no email required)
-    const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
-      email:         email.trim(),
-      password:      password,
-      email_confirm: true,
-      user_metadata: { full_name: nombre.trim() },
-    });
-
-    if (authErr) {
-      if (authErr.message.toLowerCase().includes("database error")) {
+    try {
+      const created = await adminApi.createUser({
+        email: email.trim(),
+        password,
+        nombre: nombre.trim(),
+        rol,
+      });
+      onCreado(created);
+    } catch (err) {
+      const msg = err.message || "";
+      if (msg.toLowerCase().includes("database error")) {
         onTriggerError?.();
         setError("DB trigger error — run the SQL migration fix shown on the Users page, then retry.");
       } else {
-        setError("Auth error: " + authErr.message);
+        setError(msg);
       }
       setSaving(false);
-      return;
     }
-
-    // 2. Upsert into usuarios (handles both: trigger already inserted OR no trigger)
-    const { error: dbErr } = await supabaseAdmin.from("usuarios").upsert({
-      id:     authData.user.id,
-      email:  email.trim(),
-      nombre: nombre.trim() || null,
-      rol,
-      activo: true,
-    }, { onConflict: "id" });
-
-    if (dbErr) {
-      // Auth user was created but DB insert failed — still show a partial warning
-      setError("User created in auth but DB insert failed: " + dbErr.message + ". Check Supabase dashboard.");
-      setSaving(false);
-      return;
-    }
-
-    onCreado({ id: authData.user.id, email: email.trim(), nombre: nombre.trim(), rol, activo: true });
   }
 
   return (
@@ -314,53 +295,23 @@ function EliminarModal({ usuario: u, onClose, onEliminado, onCascadeError }) {
 
   async function handleDelete() {
     if (!match) return;
-    if (!isAdminConfigured) { setError("Service key not configured."); return; }
 
     setSaving(true);
     setError("");
 
-    // 1. Delete from Supabase auth first (ignore 404 – user may not exist in auth)
-    const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(u.id);
-    if (authErr && authErr.status !== 404) {
-      setError("Auth error: " + authErr.message);
-      setSaving(false);
-      return;
-    }
-
-    // 2. Delete / nullify all FK-dependent records before deleting the user
-    await Promise.all([
-      // Config / session tables — delete entirely
-      supabaseAdmin.from("usuarios_vans").delete().eq("usuario_id", u.id),
-      supabaseAdmin.from("usuario_sesion").delete().eq("usuario_id", u.id),
-      supabaseAdmin.from("ventas_pendientes").delete().eq("usuario_id", u.id),
-      supabaseAdmin.from("configuraciones_comisiones").delete().eq("vendedor_id", u.id),
-      supabaseAdmin.from("comisiones_calculadas").delete().eq("vendedor_id", u.id),
-      // Business data — preserve records but nullify the user reference
-      supabaseAdmin.from("ventas").update({ usuario_id: null }).eq("usuario_id", u.id),
-      supabaseAdmin.from("cierres_dia").update({ usuario_id: null }).eq("usuario_id", u.id),
-      // cierres_van rows are referenced by ventas/pagos.cierre_id, so they can't
-      // be hard-deleted — nullify the user reference instead, like cierres_dia
-      supabaseAdmin.from("cierres_van").update({ usuario_id: null }).eq("usuario_id", u.id),
-      supabaseAdmin.from("acuerdos_pago").update({ usuario_id: null }).eq("usuario_id", u.id),
-      supabaseAdmin.from("cxc_movimientos").update({ usuario_id: null }).eq("usuario_id", u.id),
-      supabaseAdmin.from("cliente_credito_movimientos").update({ usuario_id: null }).eq("usuario_id", u.id),
-      supabaseAdmin.from("audit_log").update({ usuario_id: null }).eq("usuario_id", u.id),
-    ]);
-
-    // 3. Delete from usuarios table (use admin client to bypass RLS)
-    const { error: dbErr } = await supabaseAdmin.from("usuarios").delete().eq("id", u.id);
-    if (dbErr) {
-      if (dbErr.message.includes("foreign key constraint")) {
+    try {
+      await adminApi.deleteUser(u.id);
+      onEliminado(u.id);
+    } catch (err) {
+      const msg = err.message || "";
+      if (msg.includes("foreign key constraint")) {
         onCascadeError?.();
         setError("FK constraint — run the SQL cascade fix shown on the Users page, then retry.");
       } else {
-        setError("DB error: " + dbErr.message);
+        setError(msg);
       }
       setSaving(false);
-      return;
     }
-
-    onEliminado(u.id);
   }
 
   return (
@@ -460,18 +411,15 @@ function PermisosModal({ usuario: u, onClose, onGuardado, onTriggerError }) {
   useEffect(() => {
     let active = true;
     async function loadLocationAccess() {
-      const [locationResult, assignmentResult] = await Promise.all([
-        supabaseAdmin.from("v_vans_app").select("id, nombre, placa, tipo, activo").eq("activo", true).order("nombre"),
-        supabaseAdmin.from("usuarios_vans").select("van_id, activo").eq("usuario_id", u.id),
-      ]);
-      if (!active) return;
-      if (locationResult.error || assignmentResult.error) {
-        setError("Could not load location access.");
-      } else {
-        setLocations(locationResult.data || []);
-        setSelectedLocationIds((assignmentResult.data || []).filter((row) => row.activo !== false).map((row) => row.van_id));
+      try {
+        const { locations, selectedLocationIds } = await adminApi.getLocationAccess(u.id);
+        if (!active) return;
+        setLocations(locations || []);
+        setSelectedLocationIds(selectedLocationIds || []);
+      } catch {
+        if (active) setError("Could not load location access.");
       }
-      setLoadingLocations(false);
+      if (active) setLoadingLocations(false);
     }
     loadLocationAccess();
     return () => { active = false; };
@@ -486,43 +434,29 @@ function PermisosModal({ usuario: u, onClose, onGuardado, onTriggerError }) {
   }
 
   async function handleSave() {
-    if (!isAdminConfigured) { setError("Service key not configured."); return; }
     setSaving(true);
     setError("");
     const descuento_max = sinLimite ? null : (descuentoMax === "" ? null : parseFloat(descuentoMax));
     const modulos       = useRoleDefault ? null : selectedMods;
-    const { error: err } = await supabaseAdmin.from("usuarios").update({ descuento_max, modulos }).eq("id", u.id);
-    if (err) {
-      if (err.message.includes("updated_at") || err.message.includes("no field")) {
+    try {
+      await adminApi.updatePermissions({
+        id: u.id,
+        descuento_max,
+        modulos,
+        locationIds: selectedLocationIds,
+        isAdminRole: isAdmin,
+      });
+      onGuardado({ ...u, descuento_max, modulos });
+    } catch (err) {
+      const msg = err.message || "";
+      if (msg.includes("updated_at") || msg.includes("no field")) {
         onTriggerError?.();
         setError("DB migration required — run the SQL fix shown on the Users page.");
       } else {
-        setError("Error: " + err.message);
+        setError(msg);
       }
       setSaving(false);
-      return;
     }
-
-    const { error: deleteAssignmentsError } = await supabaseAdmin
-      .from("usuarios_vans")
-      .delete()
-      .eq("usuario_id", u.id);
-    if (deleteAssignmentsError) {
-      setError("User settings were saved, but location access could not be updated: " + deleteAssignmentsError.message);
-      setSaving(false);
-      return;
-    }
-    if (!isAdmin && selectedLocationIds.length > 0) {
-      const { error: insertAssignmentsError } = await supabaseAdmin
-        .from("usuarios_vans")
-        .insert(selectedLocationIds.map((van_id) => ({ usuario_id: u.id, van_id, activo: true })));
-      if (insertAssignmentsError) {
-        setError("User settings were saved, but location access could not be updated: " + insertAssignmentsError.message);
-        setSaving(false);
-        return;
-      }
-    }
-    onGuardado({ ...u, descuento_max, modulos });
   }
 
   return (
@@ -684,32 +618,16 @@ function ResetPasswordModal({ usuario: u, onClose, onDone }) {
   async function handleSubmit(e) {
     e.preventDefault();
     if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
-    if (!isAdminConfigured)   { setError("Service key not configured."); return; }
 
     setSaving(true);
     setError("");
 
-    const { error: err } = await supabaseAdmin.auth.admin.updateUserById(u.id, { password });
-    if (err) {
-      // No auth.users record for this id (e.g. a row created directly in `usuarios`) —
-      // create one with the same id so it links to the existing usuarios row.
-      if (err.status === 404 || err.message.toLowerCase().includes("not found")) {
-        const { error: createErr } = await supabaseAdmin.auth.admin.createUser({
-          id: u.id,
-          email: u.email,
-          password,
-          email_confirm: true,
-        });
-        if (createErr) {
-          setError("Error: " + createErr.message);
-          setSaving(false);
-          return;
-        }
-      } else {
-        setError("Error: " + err.message);
-        setSaving(false);
-        return;
-      }
+    try {
+      await adminApi.resetPassword({ id: u.id, email: u.email, password });
+    } catch (err) {
+      setError(err.message || "Could not reset password.");
+      setSaving(false);
+      return;
     }
     onDone();
   }
@@ -964,28 +882,6 @@ export default function UsuariosAdmin() {
           </button>
         </div>
       </div>
-
-      {/* ─── Service key setup banner ─── */}
-      {!isAdminConfigured && (
-        <div className="bg-sky-50 border border-sky-200 rounded-xl px-5 py-4 mb-5">
-          <div className="flex items-center gap-2 text-sky-800 font-semibold text-sm mb-1">
-            <Key size={15} /> Service Key required for Add / Delete
-          </div>
-          <p className="text-xs text-sky-700 mb-2">
-            To create or delete users you need the <strong>service_role</strong> key from your Supabase project.
-          </p>
-          <ol className="text-xs text-sky-700 space-y-0.5 list-decimal list-inside mb-3">
-            <li>Supabase Dashboard → Project Settings → API</li>
-            <li>Copy the <strong>service_role</strong> secret</li>
-            <li>Add to <code className="bg-sky-100 px-1 rounded">.env</code>: <code className="bg-sky-100 px-1 rounded">VITE_SUPABASE_SERVICE_KEY=eyJ…</code></li>
-            <li>Add the same key in <strong>Vercel → Settings → Environment Variables</strong></li>
-            <li>Redeploy — role/status changes work without this key</li>
-          </ol>
-          <p className="text-xs text-sky-500 italic">
-            ⚠ Role changes and active/inactive toggles work without this key.
-          </p>
-        </div>
-      )}
 
       {/* ─── DB trigger error banner ─── */}
       {triggerErr && (

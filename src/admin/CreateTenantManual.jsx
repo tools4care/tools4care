@@ -1,7 +1,6 @@
 // src/admin/CreateTenantManual.jsx
 import { useState } from 'react'
 import { createTenant } from './useCreateTenant'
-import { isAdminConfigured } from '../supabaseAdmin'
 
 const PLANS = [
   { value: 'basic',      label: 'Basic',      color: 'text-gray-600' },
@@ -40,18 +39,6 @@ export default function CreateTenantManual() {
       setError(err.message)
       setStatus('error')
     }
-  }
-
-  // Guard: if service key is missing, show a clear warning instead of a broken form
-  if (!isAdminConfigured) {
-    return (
-      <div className="max-w-md mx-auto p-6 bg-yellow-50 border border-yellow-200 rounded-xl">
-        <p className="text-sm text-yellow-800 font-medium">
-          ⚠️ <strong>VITE_SUPABASE_SERVICE_KEY</strong> not configured.
-          Add it to your <code>.env</code> file and Vercel environment variables, then redeploy.
-        </p>
-      </div>
-    )
   }
 
   return (
