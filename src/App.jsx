@@ -58,6 +58,7 @@ const GlobalSearch = lazy(() => import('./components/GlobalSearch'));
 
 // 🧾 Tax / Impuestos
 const TaxConfig = lazy(() => import('./pages/TaxConfig'));
+const BusinessInfoAdmin = lazy(() => import('./pages/BusinessInfoAdmin'));
 const CreateTenantManual = lazy(() => import('./admin/CreateTenantManual'));
 const ListaEmergencia = lazy(() => import('./ListaEmergencia'));
 
@@ -272,6 +273,7 @@ export default function App() {
 
             {/* 🧾 TAX / IMPUESTOS */}
             <Route path="tax" element={<AdminRoute><TaxConfig /></AdminRoute>} />
+            <Route path="business-info" element={<AdminRoute><BusinessInfoAdmin /></AdminRoute>} />
 
             {/* 🏢 NUEVO TENANT (ADMIN) */}
             <Route path="admin/new-client" element={<AdminRoute><CreateTenantManual /></AdminRoute>} />

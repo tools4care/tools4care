@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import {
   Activity,
   BarChart3,
+  Contact,
   FileCog,
   Globe2,
   Receipt,
@@ -40,6 +41,13 @@ const ADMIN_TOOLS = [
     description: "Configure tax rules used by sales and invoices.",
     icon: Receipt,
     tone: "from-amber-500 to-orange-700",
+  },
+  {
+    to: "/business-info",
+    title: "Business Info",
+    description: "Edit the public /info landing page linked from the business card QR code.",
+    icon: Contact,
+    tone: "from-lime-500 to-green-700",
   },
   {
     to: "/usuarios",
