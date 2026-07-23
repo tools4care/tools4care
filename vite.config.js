@@ -22,6 +22,13 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Vite's internal dynamic-import helper (a virtual module, not in
+          // node_modules) was landing inside whichever vendor chunk Rollup
+          // picked by default — which happened to be the heavy 'pdf' chunk,
+          // forcing every route with a lazy import (including the public
+          // storefront) to fetch jsPDF/html2canvas just to load its own code.
+          // Giving it its own tiny chunk decouples it from that.
+          if (id === '\0vite/preload-helper.js') return 'vite-helpers';
           if (id.includes('node_modules')) {
             if (id.includes('recharts') || id.includes('d3-') || id.includes('victory')) return 'charts';
             if (id.includes('@supabase')) return 'supabase';
