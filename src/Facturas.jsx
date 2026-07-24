@@ -654,9 +654,12 @@ export default function Facturas() {
   // Período para estadísticas (7, 30, 90 días o "all")
   const [periodoStats, setPeriodoStats] = useState(30);
 
-  // Admin: filtro por VAN ("" = todas)
+  // Admin: filtro por VAN ("" = todas). Arranca en la van actual del usuario
+  // y solo se auto-completa una vez — después el admin puede cambiarla
+  // libremente a "All VANs" o a otra sin que se le revierta.
   const [vans, setVans] = useState([]);
-  const [vanFiltro, setVanFiltro] = useState("");
+  const [vanFiltro, setVanFiltro] = useState(van?.id || "");
+  useEffect(() => { if (van?.id && !vanFiltro) setVanFiltro(van.id); }, [van?.id]);
 
   // Estadísticas
   const [estadisticas, setEstadisticas] = useState({
