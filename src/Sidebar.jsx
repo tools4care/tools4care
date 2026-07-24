@@ -44,6 +44,39 @@ function preloadSales() {
   return salesPreload;
 }
 
+function MenuGroup({ title, icon, items, open, onToggle, active, location }) {
+  if (items.length === 0) return null;
+  const expanded = open || active;
+  return (
+    <div className="mt-0.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-xl font-medium transition-colors duration-150 ${
+          active ? "bg-white/10 text-white ring-1 ring-white/10" : "hover:bg-white/[0.06] text-slate-300 hover:text-white"
+        }`}
+      >
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-slate-500 to-slate-700">
+          {icon}
+        </div>
+        <span className="text-sm font-semibold">{title}</span>
+        <span className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-400">
+          {items.length}
+          <CaretDown size={14} weight="bold" className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
+        </span>
+      </button>
+      {expanded && (
+        <div className="ml-5 mt-1 pl-3 border-l border-white/10 flex flex-col gap-0.5">
+          {items.map(({ to, icon, text, gradient }) => (
+            <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NavLink({ to, icon, text, gradient, location, large = false }) {
   const isActive = location.pathname === to || location.pathname.startsWith(to + "/");
   return (
@@ -79,6 +112,12 @@ export default function Sidebar() {
   const [servicesOpen, setServicesOpen] = useState(
     () => location.pathname.startsWith("/suscripciones") || location.pathname.startsWith("/alquileres")
   );
+  const [financeOpen, setFinanceOpen] = useState(
+    () => ["/facturas", "/cxc", "/reportes"].some((p) => location.pathname.startsWith(p))
+  );
+  const [opsOpen, setOpsOpen] = useState(
+    () => ["/inventario", "/cierres", "/suplidores", "/emergencia", "/tax"].some((p) => location.pathname.startsWith(p))
+  );
 
   // ── Main menu filtered by per-user module permissions ──
   const iconProps = { size: ICON_SIZE, weight: "duotone", className: "text-white" };
@@ -105,24 +144,28 @@ export default function Sidebar() {
   // visible in the mobile More menu). Keep it visible for users whose older
   // explicit module allowlist does not yet contain the new key.
   const serviceKeys = new Set(["suscripciones", "alquileres"]);
+  const financeKeys = new Set(["facturas", "cxc", "reportes"]);
+  const opsKeys = new Set(["inventario", "cierres", "suplidores", "emergencia", "tax"]);
   const storeKeys = new Set(["dashboard", "ventas", "register", "returns", "productos", "clientes", "inventario", "facturas", "cxc", "emergencia", "reportes", "cierres", "suplidores", "tax"]);
   const visibleItems = allMenuItems.filter(item =>
     (!storeMode || storeKeys.has(item.key)) && (item.key === "emergencia" || item.key === "returns" || item.key === "tax" || puedeVerModulo(item.key))
   );
   const services = visibleItems.filter(item => serviceKeys.has(item.key));
-  const primaryItems = visibleItems.filter(item => !serviceKeys.has(item.key));
+  const finance = visibleItems.filter(item => financeKeys.has(item.key));
+  const ops = visibleItems.filter(item => opsKeys.has(item.key));
+  // Sales, Products, and Customers are the day-to-day actions, so they stay
+  // one click away instead of tucked in a group like the rest of the menu.
+  const primaryItems = visibleItems.filter(item => !serviceKeys.has(item.key) && !financeKeys.has(item.key) && !opsKeys.has(item.key));
 
   // A counter workstation starts with the actions used throughout a sale.
-  // Van mode keeps the route-oriented order users already know.
-  const storeOrder = [
-    "dashboard", "ventas", "register", "returns", "productos", "clientes", "inventario", "facturas", "cxc",
-    "emergencia", "reportes", "cierres", "suplidores", "tax",
-  ];
+  const storeOrder = ["dashboard", "ventas", "register", "returns", "productos", "clientes"];
   const menuBase = storeMode
     ? [...primaryItems].sort((a, b) => storeOrder.indexOf(a.key) - storeOrder.indexOf(b.key))
     : primaryItems;
-  const servicesActive = services.some(({ to }) => location.pathname === to || location.pathname.startsWith(`${to}/`));
-  const servicesExpanded = servicesOpen || servicesActive;
+  const groupActive = (items) => items.some(({ to }) => location.pathname === to || location.pathname.startsWith(`${to}/`));
+  const servicesActive = groupActive(services);
+  const financeActive = groupActive(finance);
+  const opsActive = groupActive(ops);
 
   async function handleLogout() {
     setVan(null);
@@ -177,40 +220,33 @@ export default function Sidebar() {
             <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} large={storeMode} />
           ))}
 
-          {services.length > 0 && (
-            <div className="mt-0.5">
-              <button
-                type="button"
-                onClick={() => setServicesOpen((open) => !open)}
-                aria-expanded={servicesExpanded}
-                className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-xl font-medium transition-colors duration-150 ${
-                  servicesActive
-                    ? "bg-white/10 text-white ring-1 ring-white/10"
-                    : "hover:bg-white/[0.06] text-slate-300 hover:text-white"
-                }`}
-              >
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-slate-500 to-slate-700">
-                  <Wrench size={ICON_SIZE} weight="duotone" className="text-white" />
-                </div>
-                <span className="text-sm font-semibold">Services</span>
-                <span className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-400">
-                  {services.length}
-                  <CaretDown
-                    size={14}
-                    weight="bold"
-                    className={`transition-transform ${servicesExpanded ? "rotate-180" : ""}`}
-                  />
-                </span>
-              </button>
-              {servicesExpanded && (
-                <div className="ml-5 mt-1 pl-3 border-l border-white/10 flex flex-col gap-0.5">
-                  {services.map(({ to, icon, text, gradient }) => (
-                    <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <MenuGroup
+            title="Finance"
+            icon={<ChartBar size={ICON_SIZE} weight="duotone" className="text-white" />}
+            items={finance}
+            open={financeOpen}
+            onToggle={() => setFinanceOpen((open) => !open)}
+            active={financeActive}
+            location={location}
+          />
+          <MenuGroup
+            title="Operations"
+            icon={<Stack size={ICON_SIZE} weight="duotone" className="text-white" />}
+            items={ops}
+            open={opsOpen}
+            onToggle={() => setOpsOpen((open) => !open)}
+            active={opsActive}
+            location={location}
+          />
+          <MenuGroup
+            title="Services"
+            icon={<Wrench size={ICON_SIZE} weight="duotone" className="text-white" />}
+            items={services}
+            open={servicesOpen}
+            onToggle={() => setServicesOpen((open) => !open)}
+            active={servicesActive}
+            location={location}
+          />
 
           {/* ── Admin-only section ── */}
           {isAdmin && (
