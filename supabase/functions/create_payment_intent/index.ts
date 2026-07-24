@@ -40,8 +40,20 @@ const SHIPPING_METHODS: Record<string, (sub: number) => number> = {
   express: () => 14.99,
 };
 
+// Must stay in sync with the same table in src/storefront/Checkout.jsx.
+// Average combined state + local sales tax rate per state (approximate).
 const STATE_TAX: Record<string, number> = {
-  FL: 0.06, NY: 0.08875, NJ: 0.06625, CA: 0.0725, TX: 0.0625, MA: 0.0625,
+  AL: 0.0924, AK: 0.0176, AZ: 0.0838, AR: 0.0944, CA: 0.0882,
+  CO: 0.0777, CT: 0.0635, DE: 0.0000, FL: 0.0702, GA: 0.0738,
+  HI: 0.0444, ID: 0.0602, IL: 0.0882, IN: 0.0700, IA: 0.0694,
+  KS: 0.0870, KY: 0.0600, LA: 0.0956, ME: 0.0550, MD: 0.0600,
+  MA: 0.0625, MI: 0.0600, MN: 0.0749, MS: 0.0707, MO: 0.0829,
+  MT: 0.0000, NE: 0.0694, NV: 0.0823, NH: 0.0000, NJ: 0.0660,
+  NM: 0.0772, NY: 0.0853, NC: 0.0698, ND: 0.0696, OH: 0.0724,
+  OK: 0.0895, OR: 0.0000, PA: 0.0634, RI: 0.0700, SC: 0.0746,
+  SD: 0.0611, TN: 0.0955, TX: 0.0820, UT: 0.0719, VT: 0.0624,
+  VA: 0.0575, WA: 0.0886, WV: 0.0650, WI: 0.0543, WY: 0.0544,
+  DC: 0.0600, PR: 0.1050,
 };
 
 const LOCAL_CODES: Record<string, { type: "percent" | "amount" | "free_shipping"; value: number }> = {

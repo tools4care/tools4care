@@ -402,7 +402,7 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col">
+    <div className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 hover:border-gray-300">
       <div className="p-3 flex-1 flex flex-col">
         {/* Imagen — clickeable para abrir lightbox */}
         <div className="relative">
@@ -863,7 +863,7 @@ export default function Storefront() {
             ) : (
               <img src="/icons/icon-192.png" alt="Tools4Care" className="h-8 w-8 rounded-lg object-contain" />
             )}
-            <span className="truncate max-w-[160px] font-bold text-blue-700 tracking-tight hidden sm:block">
+            <span className="truncate max-w-[160px] font-bold tracking-tight hidden sm:block bg-gradient-to-r from-blue-700 to-indigo-600 bg-clip-text text-transparent">
               {siteName || "TOOLS4CARE"}
             </span>
           </button>
@@ -894,31 +894,34 @@ export default function Storefront() {
       </header>
 
       {/* HERO */}
-      <section className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white">
-        <div className="max-w-7xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-6 items-center">
-          <div>
+      <section className="relative overflow-hidden bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white">
+        {/* Decorative blurred orbs — pure CSS, no images/JS, cheap to paint */}
+        <div className="pointer-events-none absolute -top-24 -left-16 w-72 h-72 rounded-full bg-white/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 right-0 w-96 h-96 rounded-full bg-fuchsia-400/20 blur-3xl" />
+        <div className="relative max-w-7xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-6 items-center">
+          <div className="animate-[heroIn_0.5s_ease-out]">
             <h1 className="text-2xl sm:text-3xl font-bold leading-tight">Weekly deals & new arrivals</h1>
             <p className="mt-2 text-white/90">Discover special prices and freshly added products.</p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button onClick={() => offersRef.current?.scrollIntoView({ behavior: "smooth" })}
-                className="rounded-lg bg-white text-gray-900 px-4 py-2 font-semibold hover:bg-gray-100">
+                className="rounded-lg bg-white text-gray-900 px-4 py-2 font-semibold shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
                 View deals
               </button>
-              <a href="#catalog" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10">
+              <a href="#catalog" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10 hover:-translate-y-0.5 transition-all">
                 Browse catalog
               </a>
-              <a href="#subscriptions" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10">
+              <a href="#subscriptions" className="rounded-lg border border-white/30 px-4 py-2 hover:bg-white/10 hover:-translate-y-0.5 transition-all">
                 📦 Subscriptions
               </a>
               {rackItems.length > 0 && (
                 <button onClick={() => rackRef.current?.scrollIntoView({ behavior: "smooth" })}
-                  className="rounded-lg bg-yellow-400 text-gray-900 px-4 py-2 font-bold hover:bg-yellow-300 flex items-center gap-1 animate-pulse">
+                  className="rounded-lg bg-yellow-400 text-gray-900 px-4 py-2 font-bold hover:bg-yellow-300 hover:-translate-y-0.5 transition-all flex items-center gap-1 animate-pulse">
                   🏷️ The Rack
                 </button>
               )}
             </div>
           </div>
-          <div className="bg-white/10 rounded-2xl p-3">
+          <div className="relative bg-white/10 rounded-2xl p-3 backdrop-blur-sm ring-1 ring-white/10">
             {deals.length ? (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {deals.slice(0, 6).map((p) => (
@@ -935,7 +938,10 @@ export default function Storefront() {
       {/* DEALS */}
       <section ref={offersRef} className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-end justify-between mb-4">
-          <h2 className="text-xl font-bold">Featured deals</h2>
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-blue-600 to-purple-600" />
+            Featured deals
+          </h2>
           <a href="#catalog" className="text-sm text-blue-600 hover:underline">See full catalog →</a>
         </div>
         {loading ? (
@@ -1001,7 +1007,10 @@ export default function Storefront() {
 
       {/* NEW ARRIVALS */}
       <section className="max-w-7xl mx-auto px-4 pb-2">
-        <h2 className="text-xl font-bold mb-4">New arrivals</h2>
+        <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+          <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-emerald-500 to-teal-600" />
+          New arrivals
+        </h2>
         {loading ? (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
@@ -1138,7 +1147,10 @@ export default function Storefront() {
       {/* CATALOG + FILTERS */}
       <section id="catalog" className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-center gap-2 mb-3">
-          <h2 className="text-xl font-bold">Catalog</h2>
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-indigo-500 to-blue-600" />
+            Catalog
+          </h2>
           <span className="text-sm text-gray-500">
             {loading ? "Loading…" : `${rows.length} product${rows.length === 1 ? "" : "s"}`}
           </span>
@@ -1230,11 +1242,15 @@ export default function Storefront() {
         </div>
       </nav>
 
-      {/* Keyframes para el toast */}
+      {/* Keyframes para el toast y el hero */}
       <style>{`
         @keyframes slideIn {
           from { opacity: 0; transform: translateY(-12px) scale(0.95); }
           to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        @keyframes heroIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0);   }
         }
       `}</style>
     </div>

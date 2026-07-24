@@ -259,7 +259,25 @@ const SHIPPING_METHODS = [
   { key: "express", label: "Express (1–2 days)", calc: () => 14.99, note: null },
 ];
 
-const STATE_TAX = { FL:0.06, NY:0.08875, NJ:0.06625, CA:0.0725, TX:0.0625, MA:0.0625 };
+// Average combined state + local sales tax rate per state (approximate —
+// actual rate varies by city/county). Covers all 50 states + DC + PR so
+// checkout never silently charges $0 tax outside a handful of states.
+// Must stay in sync with the same table in
+// supabase/functions/create_payment_intent/index.ts, which is the
+// authoritative copy used to compute the real charge.
+const STATE_TAX = {
+  AL: 0.0924, AK: 0.0176, AZ: 0.0838, AR: 0.0944, CA: 0.0882,
+  CO: 0.0777, CT: 0.0635, DE: 0.0000, FL: 0.0702, GA: 0.0738,
+  HI: 0.0444, ID: 0.0602, IL: 0.0882, IN: 0.0700, IA: 0.0694,
+  KS: 0.0870, KY: 0.0600, LA: 0.0956, ME: 0.0550, MD: 0.0600,
+  MA: 0.0625, MI: 0.0600, MN: 0.0749, MS: 0.0707, MO: 0.0829,
+  MT: 0.0000, NE: 0.0694, NV: 0.0823, NH: 0.0000, NJ: 0.0660,
+  NM: 0.0772, NY: 0.0853, NC: 0.0698, ND: 0.0696, OH: 0.0724,
+  OK: 0.0895, OR: 0.0000, PA: 0.0634, RI: 0.0700, SC: 0.0746,
+  SD: 0.0611, TN: 0.0955, TX: 0.0820, UT: 0.0719, VT: 0.0624,
+  VA: 0.0575, WA: 0.0886, WV: 0.0650, WI: 0.0543, WY: 0.0544,
+  DC: 0.0600, PR: 0.1050,
+};
 
 function calcShipping(methodKey, subtotal, freeShippingOverride = false) {
   if (freeShippingOverride) return 0;
@@ -383,7 +401,10 @@ export default function Checkout() {
   const discount = useMemo(() => computeDiscount(subtotal, promo), [subtotal, promo]);
   const subAfterDiscount = useMemo(() => Math.max(0, subtotal - discount), [subtotal, discount]);
   const freeShippingOverride = promo?.freeShipping === true;
-  const shippingCost = useMemo(() => calcShipping(shipping.method, subAfterDiscount, freeShippingOverride), [shipping.method, subAfterDiscount, freeShippingOverride]);
+  const shippingCost = useMemo(
+    () => (items.length ? calcShipping(shipping.method, subAfterDiscount, freeShippingOverride) : 0),
+    [items.length, shipping.method, subAfterDiscount, freeShippingOverride]
+  );
   const taxes = useMemo(() => calcTax(subAfterDiscount, shipping.state), [subAfterDiscount, shipping.state]);
   const total = useMemo(() => Math.max(0, subAfterDiscount + shippingCost + taxes), [subAfterDiscount, shippingCost, taxes]);
   const stockIssues = useMemo(() => items.filter((it) => Number(it.qty) > Number(it.producto?.stock ?? Infinity)), [items]);
@@ -523,14 +544,6 @@ export default function Checkout() {
         taxes: Number(meta.taxes_cents ?? 0) / 100 || taxes,
       };
       amounts.total = Number((amounts.sub_after_discount + amounts.shipping + amounts.taxes).toFixed(2));
-      const itemsPayload = list.map((it) => ({
-        producto_id: it.producto_id,
-        qty: Number(it.qty || 0),
-        precio_unit: Number(it.producto?.precio || 0),
-        nombre: it.producto?.nombre || "",
-        marca: it.producto?.marca || null,
-        codigo: it.producto?.codigo || null,
-      }));
       const addressJson = {
         line1: shipping.address1 || null,
         line2: shipping.address2 || null,
@@ -539,25 +552,6 @@ export default function Checkout() {
         postal_code: shipping.zip || null,
         country: shipping.country || "US",
       };
-      let orderIdFromRpc = null;
-      try {
-        const { data: newOrderId, error: rpcErr } = await supabase.rpc("sp_create_order_and_discount", {
-          p_payment_intent_id: paymentIntent.id,
-          p_currency: paymentIntent.currency || "usd",
-          p_name: shipping.name || null,
-          p_email: shipping.email || null,
-          p_phone: phoneDigits(shipping.phone) || null,
-          p_address: addressJson,
-          p_amount_subtotal: amounts.subtotal,
-          p_amount_shipping: amounts.shipping,
-          p_amount_taxes: amounts.taxes,
-          p_amount_total: amounts.total,
-          p_items: itemsPayload,
-          p_discount_amount: amounts.discount || 0,
-          p_promo_code: promo?.code || null,
-        });
-        if (!rpcErr) orderIdFromRpc = newOrderId || null;
-      } catch {}
       const finalizeAndEmail = async (oid) => {
         try {
           await supabase.from("cart_items").delete().eq("cart_id", cid);
