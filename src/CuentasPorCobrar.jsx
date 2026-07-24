@@ -2883,9 +2883,8 @@ export default function CuentasPorCobrar() {
 
       {/* Edit Limit Modal */}
       {edit.open && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center overflow-hidden">
-          {/* Mobile: Full screen con safe areas */}
-          <div className="bg-white w-full h-auto sm:max-w-md sm:rounded-2xl shadow-2xl flex flex-col sm:m-4">
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center overflow-hidden p-4">
+          <div className="bg-white w-full max-h-[90vh] sm:max-w-md rounded-2xl shadow-2xl flex flex-col">
             {/* Header - Con safe area */}
             <div className="flex-shrink-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white pt-safe pb-4 px-4 sm:px-6 sm:py-6 shadow-lg">
               <div className="flex items-start justify-between gap-3">
