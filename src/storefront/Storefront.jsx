@@ -1,5 +1,5 @@
 // src/storefront/Storefront.jsx
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import {
@@ -376,13 +376,11 @@ function DealCardMini({ p, onAdd }) {
 
 /* ─── Product Card — FUERA de Storefront para evitar re-creación en cada render ─── */
 function ProductCard({ p, onAdd, onOpenLightbox }) {
-  const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
 
   const price = Number(p.price_online ?? p.price_base ?? 0);
   const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
-  const maxQty = p.stock > 0 ? p.stock : 99;
   const lowStock = p.stock > 0 && p.stock <= 5;
   const hasMultiple = (p.images?.length ?? 0) > 1;
 
@@ -390,8 +388,7 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
     if (adding) return;
     setAdding(true);
     try {
-      await onAdd(p, qty);
-      setQty(1);
+      await onAdd(p, 1);
       setAdded(true);
       setTimeout(() => setAdded(false), 2000);
     } catch (e) {
@@ -452,29 +449,13 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
           {hasOffer && <span className="text-xs text-gray-400 line-through">{fmtPrice(p.price_base)}</span>}
         </div>
 
-        {/* Qty + Add */}
-        <div className="mt-3 flex items-center gap-2">
-          <div className="flex items-center border rounded-lg overflow-hidden shrink-0">
-            <button
-              type="button"
-              className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-              onClick={() => setQty((q) => Math.max(1, q - 1))}
-              disabled={qty <= 1}
-            >−</button>
-            <span className="w-7 text-center text-sm font-semibold">{qty}</span>
-            <button
-              type="button"
-              className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-              onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
-              disabled={qty >= maxQty}
-            >+</button>
-          </div>
-
+        {/* Add one unit; quantity is edited only inside the cart. */}
+        <div className="mt-3">
           <button
             type="button"
             onClick={doAdd}
             disabled={adding}
-            className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-all duration-200 ${
+            className={`w-full rounded-lg px-3 py-2 text-sm font-semibold transition-all duration-200 ${
               added
                 ? "bg-emerald-500 text-white scale-[1.02]"
                 : "bg-blue-600 text-white hover:bg-blue-700 active:scale-95 disabled:opacity-50"
