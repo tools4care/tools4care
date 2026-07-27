@@ -43,6 +43,7 @@ import {
   Printer,
   Camera,
   ExternalLink,
+  Receipt,
 } from "lucide-react";
 import { useToast } from "./hooks/useToast";
 
@@ -525,6 +526,7 @@ export default function CierreVan() {
   const [gastos, setGastos] = useState([]);
   const [gastosLoading, setGastosLoading] = useState(false);
   const [gastoUploading, setGastoUploading] = useState(null);
+  const [expensesOpen, setExpensesOpen] = useState(false);
 
   // ── Abonos CxC (para desglose de transferencias — display only) ──
   const [abonosCxC, setAbonosCxC] = useState([]);
@@ -550,14 +552,15 @@ export default function CierreVan() {
         .in("fecha", fechasSeleccionadas)
         .is("cierre_id", null)
         .order("fecha", { ascending: true });
-      setGastos(
-        (data || []).map((g) => ({ ...g, _key: g.id, _saved: true }))
-      );
+      const loadedExpenses = (data || []).map((g) => ({ ...g, _key: g.id, _saved: true }));
+      setGastos(loadedExpenses);
+      if (loadedExpenses.length > 0) setExpensesOpen(true);
       setGastosLoading(false);
     })();
   }, [van?.id, fechasSeleccionadas]);
 
   function addGasto() {
+    setExpensesOpen(true);
     const defaultFecha = fechasSeleccionadas[0] || new Date().toISOString().slice(0, 10);
     setGastos((prev) => [
       ...prev,
@@ -1913,29 +1916,41 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* Step 1: Expenses before counting money */}
-        <div className="bg-white rounded-xl shadow-lg border-2 border-orange-200 p-4 sm:p-6 mb-6">
-          <div className="flex items-start justify-between gap-3 mb-4">
-            <div>
-              <div className="text-xs font-black uppercase tracking-wider text-orange-500">Step 1</div>
-              <h3 className="text-lg font-bold text-orange-900">Record Today&apos;s Expenses</h3>
-              <p className="text-xs text-orange-700 mt-1">
-                Expenses remain recorded as money received, but are subtracted from the cash you should physically have.
-              </p>
+        {/* Optional expenses — compact unless needed */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
+                <Receipt size={19} />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-800">Expenses</h3>
+                <p className="text-xs text-gray-500">
+                  {gastos.length > 0 ? `${gastos.length} recorded · ${fmtCurrency(totalGastos)}` : "Optional — add only when needed"}
+                </p>
+              </div>
             </div>
-            <div className="text-right shrink-0">
-              <div className="text-xs text-orange-500 font-semibold uppercase">Expenses</div>
-              <div className="text-xl font-extrabold text-orange-700">{fmtCurrency(totalGastos)}</div>
+            <div className="flex items-center gap-3">
+              <div className="hidden sm:block text-right">
+                <div className="text-[11px] uppercase tracking-wide text-gray-400">Expected cash</div>
+                <div className="font-black text-green-700">{fmtCurrency(totales.efectivoNeto)}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => gastos.length === 0 ? addGasto() : setExpensesOpen((open) => !open)}
+                className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-bold text-orange-700 hover:bg-orange-100"
+              >
+                {gastos.length === 0 ? <Plus size={15} /> : null}
+                {gastos.length === 0 ? "Add expense" : expensesOpen ? "Hide" : "Manage"}
+              </button>
             </div>
           </div>
 
+          {expensesOpen && (
+          <div className="mt-4 border-t border-gray-100 pt-4">
           <div className="space-y-3">
             {gastosLoading ? (
               <div className="text-sm text-gray-400 py-3 text-center">Loading expenses…</div>
-            ) : gastos.length === 0 ? (
-              <div className="text-sm text-gray-400 py-3 text-center border-2 border-dashed rounded-xl">
-                No expenses recorded
-              </div>
             ) : gastos.map((g) => (
               <div key={g._key} className="border border-orange-100 bg-orange-50/40 rounded-xl p-3">
                 <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr_120px_auto] gap-2">
@@ -1995,11 +2010,12 @@ useEffect(() => {
               <span>Cash expected in hand:</span><span>{fmtCurrency(totales.efectivoNeto)}</span>
             </div>
           </div>
+          </div>
+          )}
         </div>
 
-        {/* Step 2: Payment Methods Panel */}
+        {/* Payment Methods Panel */}
         <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6 mb-6">
-          <div className="text-xs font-black uppercase tracking-wider text-blue-500">Step 2</div>
           <h3 className="text-lg font-bold text-gray-800 mb-1">Count the Money You Have</h3>
           <p className="text-xs text-gray-500 mb-4">Cash expected already considers the expenses entered above.</p>
 
