@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -26,7 +25,6 @@ import {
   MapPin,
   Wrench,
   Warning,
-  CaretDown,
   Gear,
   CurrencyDollar,
 } from "@phosphor-icons/react";
@@ -42,39 +40,6 @@ function preloadSales() {
     });
   }
   return salesPreload;
-}
-
-function MenuGroup({ title, icon, items, open, onToggle, active, location }) {
-  if (items.length === 0) return null;
-  const expanded = open || active;
-  return (
-    <div className="mt-0.5">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-xl font-medium transition-colors duration-150 ${
-          active ? "bg-white/10 text-white ring-1 ring-white/10" : "hover:bg-white/[0.06] text-slate-300 hover:text-white"
-        }`}
-      >
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-slate-500 to-slate-700">
-          {icon}
-        </div>
-        <span className="text-sm font-semibold">{title}</span>
-        <span className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-400">
-          {items.length}
-          <CaretDown size={14} weight="bold" className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
-        </span>
-      </button>
-      {expanded && (
-        <div className="ml-5 mt-1 pl-3 border-l border-white/10 flex flex-col gap-0.5">
-          {items.map(({ to, icon, text, gradient }) => (
-            <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function NavLink({ to, icon, text, gradient, location, large = false, activeOverride = false }) {
@@ -109,13 +74,6 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { isAdmin, isSupervisor, puedeVerModulo, puedeCambiarVan } = usePermisos();
   const { storeMode, isExplicitStore, setStoreMode } = useStoreMode();
-  const [servicesOpen, setServicesOpen] = useState(
-    () => location.pathname.startsWith("/suscripciones") || location.pathname.startsWith("/alquileres")
-  );
-  const [opsOpen, setOpsOpen] = useState(
-    () => ["/inventario", "/cierres", "/suplidores", "/emergencia", "/tax"].some((p) => location.pathname.startsWith(p))
-  );
-
   // ── Main menu filtered by per-user module permissions ──
   const iconProps = { size: ICON_SIZE, weight: "duotone", className: "text-white" };
   const allMenuItems = [
@@ -227,24 +185,26 @@ export default function Sidebar() {
               activeOverride={financeActive || location.pathname === "/finance"}
             />
           )}
-          <MenuGroup
-            title="Operations"
-            icon={<Stack size={ICON_SIZE} weight="duotone" className="text-white" />}
-            items={ops}
-            open={opsOpen}
-            onToggle={() => setOpsOpen((open) => !open)}
-            active={opsActive}
-            location={location}
-          />
-          <MenuGroup
-            title="Services"
-            icon={<Wrench size={ICON_SIZE} weight="duotone" className="text-white" />}
-            items={services}
-            open={servicesOpen}
-            onToggle={() => setServicesOpen((open) => !open)}
-            active={servicesActive}
-            location={location}
-          />
+          {ops.length > 0 && (
+            <NavLink
+              to="/operations"
+              icon={<Stack size={ICON_SIZE} weight="duotone" className="text-white" />}
+              text="Operations"
+              gradient="from-slate-500 to-slate-700"
+              location={location}
+              activeOverride={opsActive || location.pathname === "/operations"}
+            />
+          )}
+          {services.length > 0 && (
+            <NavLink
+              to="/services"
+              icon={<Wrench size={ICON_SIZE} weight="duotone" className="text-white" />}
+              text="Services"
+              gradient="from-slate-500 to-slate-700"
+              location={location}
+              activeOverride={servicesActive || location.pathname === "/services"}
+            />
+          )}
 
           {/* ── Admin-only section ── */}
           {isAdmin && (
