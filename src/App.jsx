@@ -19,6 +19,7 @@ const PreCierreVan = lazy(() => import("./PreCierreVan"));
 const Facturas = lazy(() => import("./Facturas"));
 const CuentasPorCobrar = lazy(() => import("./CuentasPorCobrar.jsx"));
 const CreditoSimulador = lazy(() => import("./CreditoSimulador"));
+const FinanceHub = lazy(() => import("./pages/FinanceHub"));
 
 // === Online ===
 const OnlineLayout = lazy(() => import("./online/OnlineLayout"));
@@ -238,6 +239,7 @@ export default function App() {
             <Route path="store/register" element={<StoreOnlyRoute><StoreRegister /></StoreOnlyRoute>} />
             <Route path="cierres" element={<PreCierreVan />} />
             <Route path="cierres/van" element={<CierreVan />} />
+            <Route path="finance" element={<FinanceHub />} />
             <Route path="facturas" element={<Facturas />} />
             <Route path="cxc" element={<CuentasPorCobrar />} />
             <Route path="cxc/sim" element={<CreditoSimulador />} />

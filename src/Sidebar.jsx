@@ -77,8 +77,8 @@ function MenuGroup({ title, icon, items, open, onToggle, active, location }) {
   );
 }
 
-function NavLink({ to, icon, text, gradient, location, large = false }) {
-  const isActive = location.pathname === to || location.pathname.startsWith(to + "/");
+function NavLink({ to, icon, text, gradient, location, large = false, activeOverride = false }) {
+  const isActive = activeOverride || location.pathname === to || location.pathname.startsWith(to + "/");
   return (
     <Link
       to={to}
@@ -111,9 +111,6 @@ export default function Sidebar() {
   const { storeMode, isExplicitStore, setStoreMode } = useStoreMode();
   const [servicesOpen, setServicesOpen] = useState(
     () => location.pathname.startsWith("/suscripciones") || location.pathname.startsWith("/alquileres")
-  );
-  const [financeOpen, setFinanceOpen] = useState(
-    () => ["/facturas", "/cxc", "/reportes"].some((p) => location.pathname.startsWith(p))
   );
   const [opsOpen, setOpsOpen] = useState(
     () => ["/inventario", "/cierres", "/suplidores", "/emergencia", "/tax"].some((p) => location.pathname.startsWith(p))
@@ -220,15 +217,16 @@ export default function Sidebar() {
             <NavLink key={to} to={to} icon={icon} text={text} gradient={gradient} location={location} large={storeMode} />
           ))}
 
-          <MenuGroup
-            title="Finance"
-            icon={<ChartBar size={ICON_SIZE} weight="duotone" className="text-white" />}
-            items={finance}
-            open={financeOpen}
-            onToggle={() => setFinanceOpen((open) => !open)}
-            active={financeActive}
-            location={location}
-          />
+          {finance.length > 0 && (
+            <NavLink
+              to="/finance"
+              icon={<ChartBar size={ICON_SIZE} weight="duotone" className="text-white" />}
+              text="Finance"
+              gradient="from-slate-500 to-slate-700"
+              location={location}
+              activeOverride={financeActive || location.pathname === "/finance"}
+            />
+          )}
           <MenuGroup
             title="Operations"
             icon={<Stack size={ICON_SIZE} weight="duotone" className="text-white" />}
