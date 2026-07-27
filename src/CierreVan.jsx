@@ -2025,7 +2025,7 @@ useEffect(() => {
               </div>
 
               <div className="mb-2">
-                <p className="text-sm text-gray-600">Gross Cash Received</p>
+                <p className="text-sm text-gray-600">System cash</p>
                 <p className="text-lg font-bold text-green-800">
                   {fmtCurrency(totales.totalEfectivo)}
                 </p>
@@ -2040,14 +2040,11 @@ useEffect(() => {
                     🔄 Incl. –{fmtCurrency(totales.totalCashRefunds)} real refunds already deducted
                   </p>
                 )}
-                <p className="text-xs text-gray-500 mt-0.5">
-                  ✅ No duplications
-                </p>
               </div>
 
               <div>
                 <p className="text-sm text-gray-600">
-                  Cash I Physically Have
+                    Counted cash
                 </p>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
@@ -2088,20 +2085,17 @@ useEffect(() => {
               </div>
 
               <div className="mb-2">
-                <p className="text-sm text-gray-600">System Total (from RPC)</p>
+                <p className="text-sm text-gray-600">System amount</p>
                 <p className="text-lg font-bold text-blue-800">
                   {totales.totalTarjeta > 0
                     ? fmtCurrency(totales.totalTarjeta)
                     : "$0.00"}
                 </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  ✅ No duplications
-                </p>
               </div>
 
               <div>
                 <p className="text-sm text-gray-600">
-                  What I Have
+                    Counted amount
                 </p>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
@@ -2142,7 +2136,7 @@ useEffect(() => {
               </div>
 
               <div className="mb-2">
-                <p className="text-sm text-gray-600">System Total (from RPC)</p>
+                <p className="text-sm text-gray-600">System amount</p>
                 <p className="text-lg font-bold text-purple-800">
                   {totales.totalTransferencia > 0
                     ? fmtCurrency(totales.totalTransferencia)
@@ -2177,14 +2171,11 @@ useEffect(() => {
                     )}
                   </div>
                 )}
-                <p className="text-xs text-gray-500 mt-1">
-                  ✅ No duplications
-                </p>
               </div>
 
               <div>
                 <p className="text-sm text-gray-600">
-                  What I Have
+                    Counted amount
                 </p>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
@@ -2242,7 +2233,7 @@ useEffect(() => {
 
               <div>
                 <p className="text-sm text-gray-600">
-                  What I Have
+                  Counted amount
                 </p>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
@@ -2424,28 +2415,12 @@ useEffect(() => {
         </div>
 
         {/* Summary cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6">
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-blue-600 text-sm font-medium">
-                  Total Sales
-                </p>
-                <p className="text-2xl font-bold text-blue-800">
-                  {totales.totalVentas > 0
-                    ? fmtCurrency(totales.totalVentas)
-                    : "$0.00"}
-                </p>
-              </div>
-              <DollarSign className="text-blue-600" size={24} />
-            </div>
-          </div>
-
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6">
           <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-green-600 text-sm font-medium">
-                  Total in System
+                  Expected total
                 </p>
                 <p className="text-2xl font-bold text-green-800">
                   {totales.totalCaja > 0
@@ -2464,7 +2439,7 @@ useEffect(() => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-purple-600 text-sm font-medium">
-                  Total Real
+                  Counted total
                 </p>
                 <p className="text-2xl font-bold text-purple-800">
                   {fmtCurrency(
@@ -2494,7 +2469,7 @@ useEffect(() => {
             <div className="flex items-center justify-between">
               <div>
                 <p className={`text-sm font-medium ${discrepancy.classes.accent}`}>
-                  {discrepancy.isBalanced ? "Discrepancy" : `Discrepancy — ${discrepancy.label} (${discrepancy.isOver ? "cash surplus" : "cash missing"})`}
+                  {discrepancy.isBalanced ? "Difference" : `${discrepancy.label} (${discrepancy.isOver ? "surplus" : "missing"})`}
                 </p>
                 <p className={`text-2xl font-bold ${discrepancy.classes.text}`}>
                   {discrepancy.text}

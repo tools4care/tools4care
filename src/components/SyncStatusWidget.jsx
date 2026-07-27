@@ -57,18 +57,6 @@ function fmtFecha(ts) {
   });
 }
 
-function fmtHoraHasta8pm() {
-  const ahora = new Date();
-  const hoy8pm = new Date();
-  hoy8pm.setHours(20, 0, 0, 0);
-  if (ahora >= hoy8pm) hoy8pm.setDate(hoy8pm.getDate() + 1);
-  const diffMs = hoy8pm - ahora;
-  const h = Math.floor(diffMs / 3600000);
-  const m = Math.floor((diffMs % 3600000) / 60000);
-  if (h > 0) return `en ${h}h ${m}m`;
-  return `en ${m}m`;
-}
-
 function fmtNombreBackup(nombre) {
   // backup-2026-04-28T02-00-00.json → 28 abr, 02:00
   try {
@@ -197,11 +185,13 @@ function RestoreModal({ backupNombre, onClose }) {
   );
 }
 
+// Kept only for backward compatibility with older cached builds. The current
+// dashboard no longer exposes direct restoration into the active database.
+void RestoreModal;
 // ── Componente principal ──────────────────────────────────────
 export default function SyncStatusWidget({
   syncing = false,
   lastSync = null,
-  historialBackups = [],
   ventasPendientes = 0,
   syncError = null,
   onSyncNow = null,
@@ -217,7 +207,6 @@ export default function SyncStatusWidget({
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [backupProgress, setBackupProgress] = useState(0); // 0-100
   const [downloadingId,  setDownloadingId]  = useState(null);
-  const [restoreTarget,  setRestoreTarget]  = useState(null); // nombre del backup a restaurar
 
   // Cargar lista de backups en la nube (via edge function con service key)
   const cargarCloudBackups = useCallback(async () => {
@@ -318,25 +307,22 @@ export default function SyncStatusWidget({
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-bold text-gray-800">💾 Copias de Seguridad</h2>
-            <p className="text-sm text-gray-400 mt-0.5">Automáticas cada noche · Guardadas en la nube</p>
+            <h2 className="text-xl font-bold text-gray-800">Protección de datos</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Exportaciones rápidas complementarias</p>
           </div>
           <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full ${c.badge}`}>
             {estadoSync.icon} {estadoSync.texto}
           </span>
         </div>
 
-        {/* Info rápida */}
-        <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div className="bg-gray-50 rounded-2xl p-3">
             <p className="text-xs text-gray-400 mb-0.5">Último sync</p>
             <p className="font-semibold text-gray-700">{fmtFecha(lastSync)}</p>
           </div>
-          <div className="bg-gray-50 rounded-2xl p-3">
-            <p className="text-xs text-gray-400 mb-0.5">Próximo automático</p>
-            <p className="font-semibold text-gray-700">
-              {isOnline ? `Hoy 2 AM` : "Al reconectar"}
-            </p>
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+            <p className="text-xs font-bold text-emerald-700 mb-0.5">Respaldo principal</p>
+            <p className="text-sm font-semibold text-emerald-900">Cifrado y automático en servidor externo</p>
           </div>
         </div>
 
@@ -349,10 +335,10 @@ export default function SyncStatusWidget({
           {creatingBackup ? (
             <>
               <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-              Creando backup... {backupProgress}%
+              Exportando... {backupProgress}%
             </>
           ) : (
-            <>📥 Crear backup ahora</>
+            <>Descargar exportación ahora</>
           )}
         </button>
 
@@ -370,7 +356,7 @@ export default function SyncStatusWidget({
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              ☁️ Backups en la nube
+              Exportaciones recientes
             </p>
             <button onClick={cargarCloudBackups} className="text-xs text-blue-500 hover:text-blue-700">
               ↺ Actualizar
@@ -384,8 +370,7 @@ export default function SyncStatusWidget({
             </div>
           ) : cloudBackups.length === 0 ? (
             <div className="text-center py-4 text-gray-400 text-xs bg-gray-50 rounded-2xl">
-              <p>No hay backups en la nube aún</p>
-              <p className="mt-0.5">El primero se crea esta noche automáticamente</p>
+              <p>No hay exportaciones recientes</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -415,12 +400,6 @@ export default function SyncStatusWidget({
                     >
                       {downloadingId === f.name ? "⏳" : "⬇️"} Guardar
                     </button>
-                    <button
-                      onClick={() => setRestoreTarget(f.name)}
-                      className="text-xs font-bold px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-all shadow-sm"
-                    >
-                      🔄 Restaurar
-                    </button>
                   </div>
                 </div>
               ))}
@@ -440,19 +419,12 @@ export default function SyncStatusWidget({
           {onOpenBackupManager && (
             <button onClick={onOpenBackupManager}
               className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-100 transition-all">
-              🗂️ Ver caché local{backupCount > 0 ? ` (${backupCount})` : ""}
+              Ver datos offline{backupCount > 0 ? ` (${backupCount})` : ""}
             </button>
           )}
         </div>
       </div>
 
-      {/* Modal de restauración */}
-      {restoreTarget && (
-        <RestoreModal
-          backupNombre={restoreTarget}
-          onClose={() => { setRestoreTarget(null); cargarCloudBackups(); }}
-        />
-      )}
     </>
   );
 }
