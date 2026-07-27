@@ -2,6 +2,7 @@
 // Context global de sincronización offline → online
 // Se inicializa una sola vez en LayoutPrivado y cualquier pantalla
 // puede suscribirse a onSyncComplete para refrescarse automáticamente.
+/* eslint-disable react-refresh/only-export-components */
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
@@ -18,6 +19,7 @@ import {
 } from '../utils/offlineDB';
 import { sincronizarVentasPendientes, sincronizarPagosPendientes } from '../utils/syncManager';
 import { guardarBackupAutomatico, obtenerBackupsGuardados, limpiarBackupsAntiguos } from '../utils/backupManager';
+import { fetchAllCustomersForOffline } from '../utils/offlinePreparation';
 
 const SyncContext = createContext(null);
 
@@ -92,12 +94,9 @@ export function SyncProvider({ children }) {
       pagosSubidos  = resPagos.sincronizados  || 0;
 
       // 2. Descargar clientes con balance
-      const { data: clientes, error: eClientes } = await supabase
-        .from('clientes_balance')
-        .select('id,nombre,negocio,telefono,email,direccion,balance')
-        .order('nombre', { ascending: true })
-        .limit(3000);
-      if (eClientes) throw new Error('Clientes: ' + eClientes.message);
+      const clientes = await fetchAllCustomersForOffline(supabase, {
+        view: 'clientes_balance_v2',
+      });
       await guardarClientesCache(clientes || []);
 
       // 3. Descargar inventario van
@@ -181,7 +180,11 @@ export function SyncProvider({ children }) {
       // 7. Notificar a todos los listeners (vistas que necesitan refrescarse)
       const resumenSync = { ventasSubidas, pagosSubidos, clientes: clientes?.length || 0 };
       listenersRef.current.forEach(cb => {
-        try { cb(resumenSync); } catch {}
+        try {
+          cb(resumenSync);
+        } catch {
+          // Un listener defectuoso no debe impedir que finalice el sync global.
+        }
       });
 
     } catch (error) {
@@ -191,7 +194,7 @@ export function SyncProvider({ children }) {
       syncingRef.current = false;
       setSyncing(false);
     }
-  }, [vanId, usuarioId, contarPendientes]);
+  }, [vanId, usuarioId, van?.nombre, van?.nombre_van, contarPendientes]);
 
   // ── Al montar: sync inicial + 8pm + reconexión ──────────────
   useEffect(() => {

@@ -27,6 +27,8 @@ import {
 } from "./lib/storeRegister";
 import { useProductosHabituales } from "./hooks/useProductosHabituales";
 import { useSyncGlobal } from "./hooks/SyncContext";
+import { checkServerReachable, reportConnectionFailure } from "./utils/networkStatus";
+import { fetchAllCustomersForOffline } from "./utils/offlinePreparation";
 import {
   barcodeVariants,
   compactSearchTerm,
@@ -1217,7 +1219,7 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productError, setProductError] = useState("");
   const [cart, setCart] = useState([]);
-  const { productos: productosHabituales } = useProductosHabituales(selectedClient?.id);
+  const { productos: productosHabituales } = useProductosHabituales(isOffline ? null : selectedClient?.id);
   const productosHabitualesConStock = useMemo(() => {
     return (productosHabituales || [])
       .map((ph) => ({ ...ph, _row: allProducts.find((p) => p.producto_id === ph.producto_id) }))
@@ -1335,12 +1337,8 @@ useEffect(() => {
 
     setOfflineReady((prev) => ({ ...prev, loading: true, error: "" }));
     try {
-      const [{ data: clientes, error: clientsError }, { data: inventario, error: inventoryError }] = await Promise.all([
-        supabase
-          .from(CLIENT_BALANCE_VIEW)
-          .select("id,nombre,negocio,telefono,email,direccion,balance")
-          .order("nombre", { ascending: true })
-          .limit(3000),
+      const [clientes, { data: inventario, error: inventoryError }] = await Promise.all([
+        fetchAllCustomersForOffline(supabase, { view: CLIENT_BALANCE_VIEW }),
         supabase
           .from("stock_van")
           .select("producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)")
@@ -1350,7 +1348,6 @@ useEffect(() => {
           .limit(1200),
       ]);
 
-      if (clientsError) throw new Error(`Customers: ${clientsError.message}`);
       if (inventoryError) throw new Error(`Inventory: ${inventoryError.message}`);
 
       const cachedClients = (clientes || []).map((c) => ({
@@ -2957,7 +2954,7 @@ useEffect(() => {
       (notes && notes.trim().length > 0);
 
     // No guardar si no hay cliente, no hay datos significativos, o ya terminamos
-    if (!selectedClient || !hasMeaning || step >= 4) return;
+    if (!selectedClient || !hasMeaning || step >= 4 || isOffline) return;
 
     // Debounce de 2 segundos para no bombardear la DB
     autoSaveTimerRef.current = setTimeout(async () => {
@@ -2986,7 +2983,7 @@ useEffect(() => {
         clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [selectedClient?.id, cartSafe.length, payments, notes, step]);
+  }, [selectedClient?.id, cartSafe.length, payments, notes, step, isOffline]);
 
   // useMemo: solo recalcula cuando el carrito o pagos cambian
   const saleTotal = useMemo(
@@ -3691,9 +3688,10 @@ function clearSale() {
     setPayments([{ forma: "efectivo", monto: 0 }]);
 
     // Check if this client has any pending sale on this van
-    if (c?.id && van?.id) {
+    let canUseCloud = !isOffline;
+    if (c?.id && van?.id && canUseCloud) {
       try {
-        const { data: pending } = await supabase
+        const pendingLookup = supabase
           .from("ventas_pendientes")
           .select("id, cliente_id, cliente_data, cart, total_estimado, updated_at, step, notes, payments")
           .eq("van_id", van.id)
@@ -3702,6 +3700,11 @@ function clearSale() {
           .order("updated_at", { ascending: false })
           .limit(1)
           .maybeSingle();
+        const { data: pending, error: pendingError } = await Promise.race([
+          pendingLookup,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("offline-timeout")), 3000)),
+        ]);
+        if (pendingError) throw pendingError;
 
         if (pending) {
           // Pause — show the alert modal instead of setting the client immediately
@@ -3711,12 +3714,14 @@ function clearSale() {
       } catch (err) {
         // If the check fails, just continue normally
         console.warn("Could not check pending sales for client:", err?.message);
+        canUseCloud = false;
+        reportConnectionFailure();
       }
     }
 
     // No pending sale — proceed normally
     setSelectedClient(c);
-    runCreditAgent(c.id);
+    if (canUseCloud && navigator.onLine) runCreditAgent(c.id);
   }
 
   async function handleSelectPendingSale(sale, fallbackClient = null) {
@@ -4050,12 +4055,13 @@ async function handleDeletePendingSale(id) {
     // Use the same FIFO/store-credit-aware value shown in the checkout UI.
     // This is only the NEW credit created by this sale, not the prior A/R balance.
     const amountToCreditCheck = amountToCredit;
+    const saleIsOffline = isOffline || !(await checkServerReachable({ force: true, timeoutMs: 3000 }));
 
      // 🆕 Generar transaction_id único para esta transacción física
   const transactionId = makeUUID();
 	/* ========== AGENTE DE CRÉDITO: VALIDACIÓN PREVIA A GUARDAR ========== */
 // Si la venta actual se paga completa (no se extiende crédito nuevo), omitir alertas de riesgo
-if (selectedClient?.id && amountToCreditCheck > 0.0001) {
+if (!saleIsOffline && selectedClient?.id && amountToCreditCheck > 0.0001) {
   // Ejecutar agente contra el total actual
   await runCreditAgent(selectedClient.id, saleTotal);
 
@@ -4097,7 +4103,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
 	      if (cartSafe.length === 0) throw new Error("Add at least one product.");
 
       if (storeMode) {
-        if (isOffline) {
+        if (saleIsOffline) {
           const storedSessionId = getStoredStoreCashSessionIdForDevice(van.id, getStoreDeviceId());
           if (!storedSessionId) {
             throw new Error("Open the Cash Register before completing a Physical Store sale.");
@@ -4163,7 +4169,7 @@ if (selectedClient?.id && amountToCreditCheck > 0.0001) {
       }
 
       // ============== MODO OFFLINE ==============
-      if (isOffline) {
+      if (saleIsOffline) {
         try {
           // Calcular pagos y estado igual que en modo online
           const paid_offline = payments.reduce((s, p) => s + (p?.toAR ? 0 : Number(p.monto || 0)), 0);

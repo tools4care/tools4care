@@ -1,6 +1,6 @@
 // src/hooks/useOffline.js
 import { useState, useEffect } from 'react';
-import { isOnline, onConnectionChange } from '../utils/networkStatus';
+import { checkServerReachable, isOnline, onConnectionChange } from '../utils/networkStatus';
 
 export function useOffline() {
   const [isOffline, setIsOffline] = useState(!isOnline());
@@ -12,22 +12,25 @@ export function useOffline() {
 
     // Escuchar cambios de conexión
     const cleanup = onConnectionChange((online) => {
-      const wasOffline = isOffline;
-      setIsOffline(!online);
-
-      // Mostrar notificación cuando cambia el estado
-      if (wasOffline && online) {
-        // Se recuperó la conexión
-        setShowNotification(true);
-        setTimeout(() => setShowNotification(false), 3000);
-      } else if (!wasOffline && !online) {
-        // Se perdió la conexión
-        setShowNotification(true);
-        setTimeout(() => setShowNotification(false), 5000);
-      }
+      setIsOffline((wasOffline) => {
+        if (wasOffline !== !online) {
+          setShowNotification(true);
+          setTimeout(() => setShowNotification(false), online ? 3000 : 5000);
+        }
+        return !online;
+      });
     });
 
-    return cleanup;
+    const probe = () => checkServerReachable().then((online) => setIsOffline(!online));
+    const timer = window.setInterval(probe, 15000);
+    const onVisible = () => { if (!document.hidden) probe(); };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      cleanup();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   return {
