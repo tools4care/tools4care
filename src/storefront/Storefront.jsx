@@ -215,7 +215,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
             <input
               ref={inputRef}
               className="flex-1 outline-none text-sm sm:text-base placeholder:text-gray-400"
-              placeholder="Search by code, name, or brand…"
+              placeholder="What are you looking for today?"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -1113,12 +1113,12 @@ export default function Storefront() {
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              className="w-full flex items-center gap-2 border rounded-lg px-3 py-2 text-sm text-left text-gray-400 bg-white hover:border-blue-300 hover:bg-blue-50/40 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300"
+              className="w-full flex items-center gap-2 border-2 border-blue-200 rounded-xl px-3 py-2 text-sm text-left text-gray-500 bg-blue-50/60 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-blue-300"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" className="shrink-0 text-gray-400">
+              <svg width="18" height="18" viewBox="0 0 24 24" className="shrink-0 text-blue-500">
                 <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
               </svg>
-              <span className="flex-1 truncate">Search by code, name, or brand…</span>
+              <span className="flex-1 truncate font-medium">What are you looking for today?</span>
             </button>
           </div>
 
