@@ -100,32 +100,19 @@ export default function AccountPanel({ open, onClose, user }) {
   }, [open, user]);
 
   async function loadOrders() {
-    if (!user) return;
+    if (!user?.email) return;
     setLoadingOrders(true);
     try {
-      // Try by user_id first, fallback by email
-      let q = supabase
+      // orders has no user_id column — checkout ties orders to the email
+      // used at purchase time, not the auth identity, so that's the join key.
+      const { data, error } = await supabase
         .from("orders")
         .select("id, created_at, status, amount_total, currency, tracking_number, name, email")
+        .eq("email", user.email)
         .order("created_at", { ascending: false })
         .limit(30);
-
-      if (user.id) q = q.eq("user_id", user.id);
-      else if (user.email) q = q.eq("email", user.email);
-
-      const { data, error } = await q;
-      if (error && user.email) {
-        // fallback by email
-        const { data: d2 } = await supabase
-          .from("orders")
-          .select("id, created_at, status, amount_total, currency, tracking_number, name, email")
-          .eq("email", user.email)
-          .order("created_at", { ascending: false })
-          .limit(30);
-        setOrders(d2 || []);
-      } else {
-        setOrders(data || []);
-      }
+      if (error) throw error;
+      setOrders(data || []);
     } catch {
       setOrders([]);
     } finally {

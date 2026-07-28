@@ -30,6 +30,7 @@ import AuthModal from "./AuthModal";
 // no business being in every storefront visitor's critical path — only
 // shoppers who actually open the subscribe flow should pay for it.
 const SubscriptionModal = lazy(() => import("./SubscriptionModal"));
+const AccountPanel = lazy(() => import("./AccountPanel"));
 
 /* ─── env / cache ─── */
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
@@ -787,6 +788,7 @@ export default function Storefront() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("signup");
   const [cartOpen, setCartOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [count, setCount] = useState(0);
   const [cartBump, setCartBump] = useState(false);
 
@@ -1205,7 +1207,13 @@ export default function Storefront() {
             </div>
           ) : (
             <div className="hidden sm:flex items-center gap-2">
-              <span className="text-sm text-gray-600 truncate max-w-[140px]">{user.email}</span>
+              <button
+                className="text-sm text-gray-600 truncate max-w-[140px] hover:text-blue-600 hover:underline"
+                onClick={() => setAccountOpen(true)}
+                title="My account"
+              >
+                {user.email}
+              </button>
               <button className="text-sm rounded-lg border px-3 py-1.5 hover:bg-gray-50" onClick={() => supabase.auth.signOut()}>Sign out</button>
             </div>
           )}
@@ -1542,6 +1550,11 @@ export default function Storefront() {
 
       <AuthModal open={authOpen} mode={authMode} onClose={() => setAuthOpen(false)} onSignedIn={() => setAuthOpen(false)} />
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
+      {accountOpen && (
+        <Suspense fallback={null}>
+          <AccountPanel open={accountOpen} onClose={() => setAccountOpen(false)} user={user} />
+        </Suspense>
+      )}
 
       {/* Mobile bottom bar */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
@@ -1554,7 +1567,12 @@ export default function Storefront() {
             <Search size={21} />
             Search
           </button>
-          {!user && (
+          {user ? (
+            <button className="flex flex-col items-center text-xs gap-0.5" onClick={() => setAccountOpen(true)}>
+              <User size={21} />
+              Account
+            </button>
+          ) : (
             <button className="flex flex-col items-center text-xs gap-0.5" onClick={() => { setAuthMode("login"); setAuthOpen(true); }}>
               <User size={21} />
               Login
