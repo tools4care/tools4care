@@ -1113,12 +1113,23 @@ export default function Storefront() {
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              className="w-full flex items-center gap-2 border-2 border-blue-200 rounded-xl px-3 py-2 text-sm text-left text-gray-500 bg-blue-50/60 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-blue-300"
+              className="w-full flex items-center gap-2.5 rounded-2xl px-4 py-2.5 sm:py-3 text-sm text-left text-gray-700 bg-white shadow-md hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 animate-[borderFlow_4s_linear_infinite]"
+              style={{
+                backgroundImage:
+                  "linear-gradient(white, white), linear-gradient(90deg, #2563eb, #9333ea, #2563eb, #9333ea, #2563eb)",
+                backgroundOrigin: "border-box",
+                backgroundClip: "padding-box, border-box",
+                backgroundSize: "100% 100%, 300% 100%",
+                border: "2px solid transparent",
+              }}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" className="shrink-0 text-blue-500">
+              <svg width="19" height="19" viewBox="0 0 24 24" className="shrink-0 text-blue-600">
                 <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
               </svg>
-              <span className="flex-1 truncate font-medium">What are you looking for today?</span>
+              <span className="flex-1 truncate font-semibold">What are you looking for today?</span>
+              <span className="hidden sm:inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-white bg-gradient-to-r from-blue-600 to-purple-600 px-2.5 py-1 rounded-full">
+                🔍 Search
+              </span>
             </button>
           </div>
 
@@ -1504,6 +1515,10 @@ export default function Storefront() {
         @keyframes heroIn {
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0);   }
+        }
+        @keyframes borderFlow {
+          from { background-position: 0 0, 0% 50%; }
+          to   { background-position: 0 0, 200% 50%; }
         }
       `}</style>
     </div>
