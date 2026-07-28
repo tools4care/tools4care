@@ -3,6 +3,21 @@ import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } fro
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import {
+  Search,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  ShoppingCart,
+  Home,
+  User,
+  Images,
+  ImageOff,
+  Plus,
+  Minus,
+  Check,
+  Loader2,
+} from "lucide-react";
+import {
   addToCart,
   ensureCart,
   cartCount,
@@ -101,10 +116,10 @@ function ImageLightbox({ images, startIndex = 0, onClose }) {
     >
       {/* Cerrar */}
       <button
-        className="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none font-light z-10"
+        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors z-10"
         onClick={onClose}
         aria-label="Close"
-      >×</button>
+      ><X size={20} /></button>
 
       {/* Contador */}
       {images.length > 1 && (
@@ -139,15 +154,15 @@ function ImageLightbox({ images, startIndex = 0, onClose }) {
       {images.length > 1 && (
         <>
           <button
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white text-xl flex items-center justify-center transition-colors"
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-colors"
             onClick={(e) => { e.stopPropagation(); prev(); }}
             aria-label="Previous"
-          >‹</button>
+          ><ChevronLeft size={22} /></button>
           <button
-            className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white text-xl flex items-center justify-center transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-colors"
             onClick={(e) => { e.stopPropagation(); next(); }}
             aria-label="Next"
-          >›</button>
+          ><ChevronRight size={22} /></button>
         </>
       )}
 
@@ -244,9 +259,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-1 sm:px-6 sm:pt-6">
-            <svg width="20" height="20" viewBox="0 0 24 24" className="mt-1.5 text-gray-300 shrink-0">
-              <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
-            </svg>
+            <Search size={20} className="mt-1.5 text-gray-300 shrink-0" />
             <input
               ref={inputRef}
               className="flex-1 min-w-0 border-0 border-b-2 border-gray-200 bg-transparent pb-3 text-xl sm:text-2xl font-semibold tracking-tight text-gray-900 caret-blue-600 !outline-none transition-colors focus:border-blue-500 placeholder:font-normal placeholder:text-gray-300"
@@ -262,7 +275,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
               aria-label="Close search"
               className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M18.3 5.71a1 1 0 00-1.41 0L12 10.59 7.11 5.7A1 1 0 105.7 7.11L10.59 12 5.7 16.89a1 1 0 101.41 1.41L12 13.41l4.89 4.89a1 1 0 001.41-1.41L13.41 12l4.89-4.89a1 1 0 000-1.4z"/></svg>
+              <X size={18} />
             </button>
           </div>
 
@@ -296,7 +309,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
                     {p.main_image_url ? (
                       <img src={p.main_image_url} alt="" className="w-full h-full object-contain p-1" />
                     ) : (
-                      <span className="text-[9px] text-gray-300">no img</span>
+                      <ImageOff size={14} className="text-gray-300" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -309,13 +322,13 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
                     onClick={(e) => quickAdd(e, p)}
                     disabled={outOfStock}
                     title={outOfStock ? "Out of stock" : "Quick add to cart"}
-                    className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-base font-bold transition-all duration-200 ${
+                    className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 ${
                       addedId === p.id
                         ? "bg-emerald-500 text-white scale-110"
                         : "bg-gray-100 text-gray-600 hover:bg-blue-600 hover:text-white disabled:opacity-30 disabled:hover:bg-gray-100 disabled:hover:text-gray-600"
                     }`}
                   >
-                    {addedId === p.id ? "✓" : "+"}
+                    {addedId === p.id ? <Check size={16} strokeWidth={3} /> : <Plus size={16} />}
                   </button>
                 </div>
               );
@@ -353,7 +366,9 @@ function AddedToast({ toasts, onViewCart }) {
                      pointer-events-auto animate-[slideIn_0.25s_ease-out]"
           style={{ animation: "slideIn 0.25s ease-out" }}
         >
-          <span className="text-emerald-400 text-base shrink-0">✓</span>
+          <span className="shrink-0 flex items-center justify-center w-5 h-5 rounded-full bg-emerald-400/20 text-emerald-400">
+            <Check size={13} strokeWidth={3} />
+          </span>
           <span className="truncate max-w-[160px]">{t.name}</span>
           <span className="text-gray-400 text-xs hidden sm:inline shrink-0">added</span>
           <button
@@ -445,7 +460,7 @@ function CartDrawer({ open, onClose }) {
         <div className="flex-1 overflow-y-auto p-3 overscroll-contain">
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-gray-400 mt-4 justify-center">
-              <span className="animate-spin">⟳</span> Loading…
+              <Loader2 size={16} className="animate-spin" /> Loading…
             </div>
           ) : lines.length === 0 ? (
             <div className="text-sm text-gray-500 mt-4 text-center">Your cart is empty.</div>
@@ -464,7 +479,7 @@ function CartDrawer({ open, onClose }) {
                           <img src={l.main_image_url} alt="" className="w-full h-full object-contain p-1"
                             loading="lazy" onError={(e) => (e.currentTarget.style.display = "none")} />
                         ) : (
-                          <span className="text-[10px] text-gray-400">no image</span>
+                          <ImageOff size={16} className="text-gray-300" />
                         )}
                       </div>
                     </div>
@@ -473,17 +488,17 @@ function CartDrawer({ open, onClose }) {
                       <div className="text-xs text-gray-500">{l.marca || "—"}</div>
                       <div className="mt-2 flex items-center gap-2">
                         <button
-                          className="w-8 h-8 rounded-lg border hover:bg-gray-50 text-lg font-bold flex items-center justify-center disabled:opacity-40"
+                          className="w-8 h-8 rounded-lg border hover:bg-gray-50 flex items-center justify-center disabled:opacity-40"
                           onClick={() => handleQty(l.producto_id, Math.max(0, qty - 1))}
                           title="Less"
-                        >−</button>
+                        ><Minus size={14} /></button>
                         <span className="w-8 text-center text-sm font-semibold">{qty}</span>
                         <button
-                          className="w-8 h-8 rounded-lg border hover:bg-gray-50 text-lg font-bold flex items-center justify-center disabled:opacity-40"
+                          className="w-8 h-8 rounded-lg border hover:bg-gray-50 flex items-center justify-center disabled:opacity-40"
                           onClick={() => handleQty(l.producto_id, qty + 1)}
                           disabled={stock > 0 ? atMax : false}
                           title={atMax ? "No more stock" : "More"}
-                        >+</button>
+                        ><Plus size={14} /></button>
                         <button
                           className="ml-1 text-xs text-rose-500 hover:text-rose-700 hover:underline"
                           onClick={() => handleRemove(l.producto_id)}
@@ -541,7 +556,7 @@ function DealCardMini({ p, onAdd }) {
           <img src={p.main_image_url} alt={p.nombre} className="w-full h-full object-contain p-2"
             loading="lazy" onError={(e) => (e.currentTarget.style.display = "none")} />
         ) : (
-          <span className="text-xs text-gray-400">no image</span>
+          <ImageOff size={22} className="text-gray-300" />
         )}
       </div>
       <div className="mt-2 font-semibold line-clamp-1 text-sm text-gray-900">{p.nombre}</div>
@@ -612,7 +627,7 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
                 className="w-full h-full object-contain p-2 hover:scale-105 transition-transform duration-200" loading="lazy"
                 onError={(e) => { e.currentTarget.style.display = "none"; }} />
             ) : (
-              <span className="text-xs text-gray-400">no image</span>
+              <ImageOff size={22} className="text-gray-300" />
             )}
           </div>
           {(hasOffer || p.is_deal) && (
@@ -632,7 +647,7 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
           {/* Indicador de múltiples fotos */}
           {hasMultiple && (
             <span className="absolute bottom-2 right-2 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/50 text-white font-medium">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M22 16V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M2 6v14a2 2 0 0 0 2 2h14v-2H4V6z"/></svg>
+              <Images size={10} />
               {images.length}
             </span>
           )}
@@ -697,11 +712,11 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
           >
             {adding ? (
               <span className="inline-flex items-center justify-center gap-1.5">
-                <span className="animate-spin text-base leading-none">⟳</span>
+                <Loader2 size={16} className="animate-spin" />
               </span>
             ) : added ? (
               <span className="inline-flex items-center justify-center gap-1.5">
-                <span>✓</span> Added!
+                <Check size={15} strokeWidth={3} /> Added!
               </span>
             ) : outOfStock ? (
               "Out of stock"
@@ -738,9 +753,7 @@ function CartIcon({ count, onClick, bump }) {
       className="relative ml-1 hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 hover:bg-gray-50"
       aria-label="Cart"
     >
-      <svg width="22" height="22" viewBox="0 0 24 24" className="text-gray-700">
-        <path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z" />
-      </svg>
+      <ShoppingCart size={20} className="text-gray-700" />
       <span
         className={`absolute -top-1 -right-1 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5 transition-transform ${bump ? "scale-125" : "scale-100"}`}
         style={{ transition: "transform 0.2s cubic-bezier(0.34,1.56,0.64,1)" }}
@@ -1177,12 +1190,10 @@ export default function Storefront() {
                 border: "2px solid transparent",
               }}
             >
-              <svg width="19" height="19" viewBox="0 0 24 24" className="shrink-0 text-blue-600">
-                <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
-              </svg>
+              <Search size={19} className="shrink-0 text-blue-600" />
               <span className="flex-1 truncate font-semibold">What are you looking for today?</span>
               <span className="hidden sm:inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-white bg-gradient-to-r from-blue-600 to-purple-600 px-2.5 py-1 rounded-full">
-                🔍 Search
+                <Search size={11} strokeWidth={3} /> Search
               </span>
             </button>
           </div>
@@ -1536,21 +1547,21 @@ export default function Storefront() {
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t shadow-sm">
         <div className="flex justify-around items-center py-2">
           <button className="flex flex-col items-center text-xs gap-0.5" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" /></svg>
+            <Home size={21} />
             Home
           </button>
-          <a href="#catalog" className="flex flex-col items-center text-xs gap-0.5">
-            <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.471 6.471 0 0 0 4.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14" /></svg>
+          <button type="button" className="flex flex-col items-center text-xs gap-0.5" onClick={() => setSearchOpen(true)}>
+            <Search size={21} />
             Search
-          </a>
+          </button>
           {!user && (
             <button className="flex flex-col items-center text-xs gap-0.5" onClick={() => { setAuthMode("login"); setAuthOpen(true); }}>
-              <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z" /></svg>
+              <User size={21} />
               Login
             </button>
           )}
           <button className="relative flex flex-col items-center text-xs gap-0.5" onClick={() => setCartOpen(true)}>
-            <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2M7.16 14h9.69c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 21.34 5H6.21l-.94-2H2v2h2l3.6 7.59L6.25 13a2 2 0 0 0 .09 1c.24.61.82 1 1.49 1Z" /></svg>
+            <ShoppingCart size={21} />
             <span
               className="absolute -top-1 right-0 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5"
               style={{ transition: "transform 0.2s cubic-bezier(0.34,1.56,0.64,1)", transform: cartBump ? "scale(1.3)" : "scale(1)" }}
