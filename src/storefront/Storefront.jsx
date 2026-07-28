@@ -181,6 +181,21 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Lock background scroll while the overlay is open (mobile: prevents the
+  // page behind from scrolling under the fixed modal).
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.paddingRight = prevPaddingRight;
+    };
+  }, [open]);
+
   if (!open) return null;
 
   const nq = norm(query);
@@ -202,37 +217,46 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
 
   return (
     <div className="fixed inset-0 z-[200]">
-      <div className="absolute inset-0 bg-black/50 animate-[fadeBackdrop_0.18s_ease-out]" onClick={onClose} />
-      <div className="absolute inset-0 flex items-start justify-center px-4 pt-[8vh] pb-4">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[fadeBackdrop_0.2s_ease-out]"
+        onClick={onClose}
+      />
+      <div className="absolute inset-0 flex items-center justify-center p-3 sm:p-4">
         <div
-          className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden animate-[searchIn_0.22s_cubic-bezier(0.16,1,0.3,1)]"
+          className="flex w-full max-w-lg max-h-[85vh] sm:max-h-[75vh] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 animate-[searchIn_0.25s_cubic-bezier(0.16,1,0.3,1)]"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center gap-2 border-b px-4 py-3">
-            <svg width="18" height="18" viewBox="0 0 24 24" className="text-gray-400 shrink-0">
+          <div className="flex items-center gap-2.5 border-b px-4 py-3.5 sm:px-5 sm:py-4">
+            <svg width="20" height="20" viewBox="0 0 24 24" className="text-blue-500 shrink-0">
               <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
             </svg>
             <input
               ref={inputRef}
-              className="flex-1 outline-none text-sm sm:text-base placeholder:text-gray-400"
+              className="flex-1 min-w-0 outline-none text-base sm:text-lg font-semibold tracking-tight text-gray-900 placeholder:font-medium placeholder:text-gray-400"
               placeholder="What are you looking for today?"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              enterKeyHint="search"
             />
-            <button type="button" onClick={onClose} className="text-xs font-semibold text-gray-400 hover:text-gray-600 border rounded-md px-1.5 py-0.5">
-              ESC
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close search"
+              className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M18.3 5.71a1 1 0 00-1.41 0L12 10.59 7.11 5.7A1 1 0 105.7 7.11L10.59 12 5.7 16.89a1 1 0 101.41 1.41L12 13.41l4.89 4.89a1 1 0 001.41-1.41L13.41 12l4.89-4.89a1 1 0 000-1.4z"/></svg>
             </button>
           </div>
 
-          <div className="max-h-[60vh] overflow-y-auto">
+          <div className="flex-1 overflow-y-auto overscroll-contain">
             {nq && list.length === 0 && (
-              <div className="px-4 py-10 text-center text-sm text-gray-400">
+              <div className="px-4 py-12 text-center text-sm text-gray-400">
                 No products match "<span className="font-medium text-gray-600">{query}</span>"
               </div>
             )}
 
             {!nq && list.length > 0 && (
-              <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+              <div className="px-4 sm:px-5 pt-3.5 pb-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
                 Popular right now
               </div>
             )}
@@ -247,10 +271,10 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
                   tabIndex={0}
                   onClick={() => onSelect(p)}
                   onKeyDown={(e) => e.key === "Enter" && onSelect(p)}
-                  className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-blue-50/70 transition-colors border-b last:border-b-0 animate-[resultIn_0.25s_ease-out_both]"
+                  className="flex items-center gap-3 px-4 sm:px-5 py-3 cursor-pointer active:bg-blue-50 hover:bg-blue-50/70 transition-colors border-b last:border-b-0 animate-[resultIn_0.25s_ease-out_both]"
                   style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
                 >
-                  <div className="w-11 h-11 shrink-0 rounded-lg border bg-white overflow-hidden flex items-center justify-center">
+                  <div className="w-12 h-12 shrink-0 rounded-xl border bg-white overflow-hidden flex items-center justify-center">
                     {p.main_image_url ? (
                       <img src={p.main_image_url} alt="" className="w-full h-full object-contain p-1" />
                     ) : (
@@ -258,7 +282,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-gray-900 truncate">{p.nombre}</div>
+                    <div className="text-sm font-semibold text-gray-900 truncate">{p.nombre}</div>
                     <div className="text-[11px] text-gray-400 truncate">{p.marca || "—"}{p.codigo ? ` · ${p.codigo}` : ""}</div>
                   </div>
                   <div className="text-sm font-bold text-gray-900 shrink-0">{fmtPrice(price)}</div>
@@ -267,7 +291,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
                     onClick={(e) => quickAdd(e, p)}
                     disabled={outOfStock}
                     title={outOfStock ? "Out of stock" : "Quick add to cart"}
-                    className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 ${
+                    className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-base font-bold transition-all duration-200 ${
                       addedId === p.id
                         ? "bg-emerald-500 text-white scale-110"
                         : "bg-gray-100 text-gray-600 hover:bg-blue-600 hover:text-white disabled:opacity-30 disabled:hover:bg-gray-100 disabled:hover:text-gray-600"
@@ -280,7 +304,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
             })}
 
             {!nq && list.length === 0 && (
-              <div className="px-4 py-10 text-center text-sm text-gray-400">Type to search products…</div>
+              <div className="px-4 py-12 text-center text-sm text-gray-400">Type to search products…</div>
             )}
           </div>
         </div>
@@ -289,7 +313,7 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
       <style>{`
         @keyframes fadeBackdrop { from { opacity: 0; } to { opacity: 1; } }
         @keyframes searchIn {
-          from { opacity: 0; transform: translateY(-16px) scale(0.97); }
+          from { opacity: 0; transform: translateY(10px) scale(0.96); }
           to   { opacity: 1; transform: translateY(0) scale(1); }
         }
         @keyframes resultIn {
