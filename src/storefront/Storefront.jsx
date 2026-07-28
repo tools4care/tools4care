@@ -1,5 +1,5 @@
 // src/storefront/Storefront.jsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import {
@@ -11,22 +11,39 @@ import {
   removeCartItem,
 } from "./cartApi";
 import AuthModal from "./AuthModal";
-import SubscriptionModal from "./SubscriptionModal";
+// Lazy: SubscriptionModal eagerly loads Stripe.js at import time, which has
+// no business being in every storefront visitor's critical path — only
+// shoppers who actually open the subscribe flow should pay for it.
+const SubscriptionModal = lazy(() => import("./SubscriptionModal"));
 
 /* ─── env / cache ─── */
 const ENV_ONLINE_VAN_ID = import.meta.env.VITE_ONLINE_VAN_ID || null;
 let ONLINE_VAN_ID_CACHE = ENV_ONLINE_VAN_ID || null;
+let ONLINE_VAN_ID_INFLIGHT = null;
 
+// Reload runs this on mount, and the realtime-subscription effect runs it
+// again independently — without sharing the in-flight request both fire
+// their own "vans" lookup at once, doubling that round trip for nothing.
 async function getOnlineVanId() {
   if (ONLINE_VAN_ID_CACHE) return ONLINE_VAN_ID_CACHE;
-  const { data, error } = await supabase
-    .from("vans")
-    .select("id, nombre_van")
-    .ilike("nombre_van", "%online%")
-    .maybeSingle();
-  if (error) { console.error(error); return null; }
-  ONLINE_VAN_ID_CACHE = data?.id ?? null;
-  return ONLINE_VAN_ID_CACHE;
+  if (ONLINE_VAN_ID_INFLIGHT) return ONLINE_VAN_ID_INFLIGHT;
+
+  ONLINE_VAN_ID_INFLIGHT = (async () => {
+    const { data, error } = await supabase
+      .from("vans")
+      .select("id, nombre_van")
+      .ilike("nombre_van", "%online%")
+      .maybeSingle();
+    if (error) { console.error(error); return null; }
+    ONLINE_VAN_ID_CACHE = data?.id ?? null;
+    return ONLINE_VAN_ID_CACHE;
+  })();
+
+  try {
+    return await ONLINE_VAN_ID_INFLIGHT;
+  } finally {
+    ONLINE_VAN_ID_INFLIGHT = null;
+  }
 }
 
 async function selectInChunks({ table, columns, key, ids, chunkSize = 150 }) {
@@ -326,19 +343,26 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
   );
 }
 
-function AddedToast({ toasts }) {
+function AddedToast({ toasts, onViewCart }) {
   return (
     <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className="flex items-center gap-2 bg-gray-900 text-white px-4 py-3 rounded-2xl shadow-xl text-sm font-medium
-                     animate-[slideIn_0.25s_ease-out]"
+          className="flex items-center gap-3 bg-gray-900 text-white pl-4 pr-2 py-2.5 rounded-2xl shadow-xl text-sm font-medium
+                     pointer-events-auto animate-[slideIn_0.25s_ease-out]"
           style={{ animation: "slideIn 0.25s ease-out" }}
         >
-          <span className="text-emerald-400 text-base">✓</span>
-          <span className="truncate max-w-[220px]">{t.name}</span>
-          <span className="text-gray-400 text-xs ml-1">added to cart</span>
+          <span className="text-emerald-400 text-base shrink-0">✓</span>
+          <span className="truncate max-w-[160px]">{t.name}</span>
+          <span className="text-gray-400 text-xs hidden sm:inline shrink-0">added</span>
+          <button
+            type="button"
+            onClick={onViewCart}
+            className="shrink-0 text-xs font-bold text-blue-300 hover:text-blue-200 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors"
+          >
+            View cart →
+          </button>
         </div>
       ))}
     </div>
@@ -867,8 +891,10 @@ export default function Storefront() {
       if (stErr) throw stErr;
 
       const ids = (stock || []).map((r) => r.producto_id);
-      let metasMap = new Map();
-      if (ids.length) {
+
+      // These three only depend on `ids`, not on each other — running them
+      // sequentially added ~800ms of pure waterfall for no reason.
+      async function fetchMetas() {
         const metas = [];
         for (let i = 0; i < ids.length; i += 150) {
           const { data, error } = await supabase
@@ -879,33 +905,29 @@ export default function Storefront() {
           if (error) throw error;
           metas.push(...(data || []));
         }
-        metas.forEach((m) => metasMap.set(m.producto_id, m));
+        return metas;
       }
 
-      let coverMap = new Map();
-      if (ids.length) {
-        const covers = await selectInChunks({ table: "product_main_image_v", columns: "producto_id, main_image_url", key: "producto_id", ids, chunkSize: 150 });
-        coverMap = new Map(covers.map((c) => [c.producto_id, c.main_image_url]));
-      }
+      const [metas, covers, imgs] = ids.length
+        ? await Promise.all([
+            fetchMetas(),
+            selectInChunks({ table: "product_main_image_v", columns: "producto_id, main_image_url", key: "producto_id", ids, chunkSize: 150 }),
+            selectInChunks({ table: "product_images", columns: "producto_id, url, is_primary, sort_order", key: "producto_id", ids, chunkSize: 150 }),
+          ])
+        : [[], [], []];
+
+      const metasMap = new Map(metas.map((m) => [m.producto_id, m]));
+      const coverMap = new Map(covers.map((c) => [c.producto_id, c.main_image_url]));
 
       // Cargar todas las imágenes por producto (para el carrusel)
-      let imagesMap = new Map();
-      if (ids.length) {
-        const imgs = await selectInChunks({
-          table: "product_images",
-          columns: "producto_id, url, is_primary, sort_order",
-          key: "producto_id",
-          ids,
-          chunkSize: 150,
+      const imagesMap = new Map();
+      imgs
+        .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) || (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .forEach((img) => {
+          const arr = imagesMap.get(img.producto_id) || [];
+          arr.push(img.url);
+          imagesMap.set(img.producto_id, arr);
         });
-        imgs
-          .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) || (a.sort_order ?? 0) - (b.sort_order ?? 0))
-          .forEach((img) => {
-            const arr = imagesMap.get(img.producto_id) || [];
-            arr.push(img.url);
-            imagesMap.set(img.producto_id, arr);
-          });
-      }
 
       const enriched = (stock || [])
         .filter((r) => !!r.productos)
@@ -1111,7 +1133,7 @@ export default function Storefront() {
       )}
 
       {/* Toast */}
-      <AddedToast toasts={toasts} />
+      <AddedToast toasts={toasts} onViewCart={() => setCartOpen(true)} />
 
       {/* Search overlay */}
       <SearchOverlay
@@ -1498,11 +1520,13 @@ export default function Storefront() {
       </footer>
 
       {subModal && (
-        <SubscriptionModal
-          plan={subModal}
-          user={user}
-          onClose={() => setSubModal(null)}
-        />
+        <Suspense fallback={null}>
+          <SubscriptionModal
+            plan={subModal}
+            user={user}
+            onClose={() => setSubModal(null)}
+          />
+        </Suspense>
       )}
 
       <AuthModal open={authOpen} mode={authMode} onClose={() => setAuthOpen(false)} onSignedIn={() => setAuthOpen(false)} />
