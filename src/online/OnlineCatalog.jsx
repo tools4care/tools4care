@@ -107,8 +107,88 @@ function StatusDot({ visible, visibleOnline }) {
   return <span className="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0" title="Hidden" />;
 }
 
-function ProductEditor({ product, onClose, onToggle, onUpdate, onImages }) {
+/* ─── Compact search used to link a sibling color/size variant ─── */
+function VariantLinkSearch({ excludeId, onPick }) {
+  const [q, setQ] = useState("");
+  const [opts, setOpts] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) { setOpts([]); return; }
+    const h = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const like = `%${term}%`;
+        const { data, error } = await supabase
+          .from("productos")
+          .select("id, nombre, marca, codigo")
+          .or(`nombre.ilike.${like},marca.ilike.${like},codigo.ilike.${like}`)
+          .neq("id", excludeId)
+          .limit(15);
+        if (error) throw error;
+        setOpts(data || []);
+      } catch (e) {
+        console.error(e);
+        setOpts([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 250);
+    return () => clearTimeout(h);
+  }, [q, excludeId]);
+
+  return (
+    <div>
+      <input
+        className="w-full rounded-xl border px-3 py-2 text-sm"
+        placeholder="Search the other color/size by name, brand or code…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      {loading && <div className="mt-1 text-xs text-gray-400">Searching…</div>}
+      {opts.length > 0 && (
+        <ul className="mt-2 max-h-40 overflow-auto rounded-xl border divide-y">
+          {opts.map((p) => (
+            <li
+              key={p.id}
+              className="cursor-pointer px-3 py-2 text-sm hover:bg-gray-50"
+              onClick={() => { onPick(p); setQ(""); setOpts([]); }}
+            >
+              <div className="font-semibold text-gray-800">{p.nombre}</div>
+              <div className="text-[11px] text-gray-400">{p.marca || "—"} · <span className="font-mono">{p.codigo}</span></div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ProductEditor({ product, onClose, onToggle, onUpdate, onImages, siblings = [], onLinkVariant, onUnlinkVariant }) {
+  const [linkTarget, setLinkTarget] = useState(null);
+  const [linkLabel, setLinkLabel] = useState("");
+  const [linkAxis, setLinkAxis] = useState("Color");
+
+  useEffect(() => {
+    if (product) setLinkAxis(product.variant_axis || siblings[0]?.variant_axis || "Color");
+    setLinkTarget(null);
+    setLinkLabel("");
+  }, [product?.id]); // eslint-disable-line
+
   if (!product) return null;
+
+  async function confirmLink() {
+    if (!linkTarget || !linkLabel.trim()) return;
+    await onLinkVariant({
+      productId: product.id,
+      targetId: linkTarget.id,
+      targetLabel: linkLabel.trim(),
+      axis: linkAxis,
+    });
+    setLinkTarget(null);
+    setLinkLabel("");
+  }
   return (
     <div className="fixed inset-0 z-[90]">
       <button type="button" aria-label="Close editor" className="absolute inset-0 bg-slate-950/45" onClick={onClose} />
@@ -201,6 +281,98 @@ function ProductEditor({ product, onClose, onToggle, onUpdate, onImages }) {
               </div>
             )}
           </section>
+
+          <section className="space-y-3 rounded-2xl border p-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-black text-gray-900">Variants (color / size)</h3>
+              {product.variant_group_id && (
+                <span className="text-[10px] font-bold uppercase tracking-wide text-blue-600">Linked</span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500">
+              Link this product to the other colors/sizes of the same item so shoppers see one card
+              with an option picker online. Stock and orders stay tracked per SKU.
+            </p>
+
+            {product.variant_group_id && (
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">
+                  Option label for this SKU (e.g. "Black")
+                </label>
+                <InlineInput
+                  value={product.variant_label || ""}
+                  placeholder="Black, Gold, Large…"
+                  onSave={(value) => onUpdate(product.id, { variant_label: value.trim() || null })}
+                />
+              </div>
+            )}
+
+            {siblings.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                  Linked in this group
+                </div>
+                {siblings.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between gap-2 rounded-xl border bg-gray-50 px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-gray-800">{s.variant_label || "—"}</div>
+                      <div className="truncate text-[11px] text-gray-400">{s.nombre} · Stock {s.qty}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {linkTarget ? (
+              <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                <div className="text-sm font-semibold text-gray-800">{linkTarget.nombre}</div>
+                <div className="text-[11px] text-gray-500">{linkTarget.marca || "—"} · <span className="font-mono">{linkTarget.codigo}</span></div>
+                <input
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-sm"
+                  placeholder='Label for this SKU (e.g. "Gold")'
+                  value={linkLabel}
+                  onChange={(e) => setLinkLabel(e.target.value)}
+                  autoFocus
+                />
+                <input
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-sm"
+                  placeholder="Swatch type (e.g. Color, Size)"
+                  value={linkAxis}
+                  onChange={(e) => setLinkAxis(e.target.value)}
+                />
+                <div className="flex justify-end gap-2">
+                  <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-bold text-gray-600" onClick={() => setLinkTarget(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                    disabled={!linkLabel.trim()}
+                    onClick={confirmLink}
+                  >
+                    Link
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                  {product.variant_group_id ? "Link another color/size to this group" : "Link this product to another color/size"}
+                </div>
+                <VariantLinkSearch excludeId={product.id} onPick={setLinkTarget} />
+              </div>
+            )}
+
+            {product.variant_group_id && (
+              <button
+                type="button"
+                className="w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                onClick={() => onUnlinkVariant(product.id)}
+              >
+                Remove this SKU from the group
+              </button>
+            )}
+          </section>
         </div>
       </aside>
     </div>
@@ -247,7 +419,7 @@ export default function OnlineCatalog() {
       if (ids.length) {
         const { data: metas, error: mErr } = await supabase
           .from("online_product_meta")
-          .select("producto_id, price_online, visible, visible_online, descripcion, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority, meta_updated_at")
+          .select("producto_id, price_online, visible, visible_online, descripcion, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority, meta_updated_at, variant_group_id, variant_label, variant_axis")
           .in("producto_id", ids);
         if (mErr) throw mErr;
         (metas || []).forEach((m) => metaMap.set(m.producto_id, m));
@@ -292,6 +464,9 @@ export default function OnlineCatalog() {
             deal_priority: Number(m.deal_priority ?? 0),
             meta_updated_at: m.meta_updated_at || null,
             main_image_url: coverMap.get(s.producto_id) || null,
+            variant_group_id: m.variant_group_id || null,
+            variant_label: m.variant_label || "",
+            variant_axis: m.variant_axis || "",
           };
         });
 
@@ -362,6 +537,41 @@ export default function OnlineCatalog() {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
+  async function onLinkVariant({ productId, targetId, targetLabel, axis }) {
+    try {
+      const { data: targetMeta } = await supabase
+        .from("online_product_meta")
+        .select("variant_group_id")
+        .eq("producto_id", targetId)
+        .maybeSingle();
+
+      const current = rows.find((r) => r.id === productId);
+      const groupId = current?.variant_group_id || targetMeta?.variant_group_id || crypto.randomUUID();
+      const cleanAxis = axis?.trim() || "Color";
+
+      await upsertMeta(productId, { variant_group_id: groupId, variant_axis: cleanAxis });
+      await upsertMeta(targetId, { variant_group_id: groupId, variant_label: targetLabel, variant_axis: cleanAxis });
+
+      setRows((prev) => prev.map((r) => {
+        if (r.id === productId) return { ...r, variant_group_id: groupId, variant_axis: cleanAxis };
+        if (r.id === targetId) return { ...r, variant_group_id: groupId, variant_label: targetLabel, variant_axis: cleanAxis };
+        return r;
+      }));
+      await reload();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function onUnlinkVariant(id) {
+    try {
+      await upsertMeta(id, { variant_group_id: null, variant_label: null });
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, variant_group_id: null, variant_label: "" } : r)));
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   function toggleDeal(id) {
     setExpandedDeals((prev) => {
       const next = new Set(prev);
@@ -378,6 +588,10 @@ export default function OnlineCatalog() {
     hidden: rows.filter((r) => !r.visible && !r.visible_online).length,
   }), [rows]);
   const selectedProduct = rows.find((row) => row.id === selectedId) || null;
+  const siblingProducts = useMemo(() => {
+    if (!selectedProduct?.variant_group_id) return [];
+    return rows.filter((r) => r.variant_group_id === selectedProduct.variant_group_id && r.id !== selectedProduct.id);
+  }, [rows, selectedProduct]);
   const pageSize = 50;
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -540,6 +754,7 @@ export default function OnlineCatalog() {
                       <StatusDot visible={r.visible} visibleOnline={r.visible_online} />
                       <span className="truncate font-bold text-gray-900">{r.nombre}</span>
                       {r.is_deal && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">{r.deal_badge}</span>}
+                      {r.variant_group_id && <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700" title="Linked to other colors/sizes">🎨 {r.variant_label || "variant"}</span>}
                     </span>
                     <span className="mt-0.5 block truncate text-xs text-gray-400">{r.marca} · {r.codigo}</span>
                   </span>
@@ -602,6 +817,11 @@ export default function OnlineCatalog() {
                             {r.is_deal && (
                               <span className="flex-shrink-0 text-[10px] bg-rose-100 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded-full font-semibold">
                                 {r.deal_badge || "Deal"}
+                              </span>
+                            )}
+                            {r.variant_group_id && (
+                              <span className="flex-shrink-0 text-[10px] bg-indigo-100 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded-full font-semibold" title="Linked to other colors/sizes">
+                                🎨 {r.variant_label || "variant"}
                               </span>
                             )}
                           </div>
@@ -794,6 +1014,9 @@ export default function OnlineCatalog() {
         onClose={() => setSelectedId(null)}
         onToggle={onToggle}
         onUpdate={onUpdate}
+        siblings={siblingProducts}
+        onLinkVariant={onLinkVariant}
+        onUnlinkVariant={onUnlinkVariant}
         onImages={() => {
           setImgPid(selectedProduct?.id || null);
           setImgOpen(true);
