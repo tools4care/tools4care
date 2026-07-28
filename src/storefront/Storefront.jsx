@@ -1494,7 +1494,7 @@ export default function Storefront() {
       </section>
 
       <footer className="mt-10 py-6 text-center text-sm text-gray-400 border-t">
-        © {new Date().getFullYear()} {siteName} — made with 💙
+        © {new Date().getFullYear()} {siteName}. All rights reserved.
       </footer>
 
       {subModal && (
