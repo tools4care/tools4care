@@ -24,7 +24,7 @@ export default function AuthCallback() {
         const next =
           url.searchParams.get("next") ||
           url.searchParams.get("redirect") ||
-          "/storefront";
+          "/store";
 
         if (!code) {
           setErr("Falta el código de verificación en la URL.");
@@ -62,7 +62,7 @@ export default function AuthCallback() {
           <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700 text-sm">
             {err}
             <div className="mt-2">
-              <a href="/storefront" className="text-blue-600 hover:underline">
+              <a href="/store" className="text-blue-600 hover:underline">
                 Volver a la tienda
               </a>
             </div>

@@ -1,6 +1,6 @@
 import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import { initSentry, SentryErrorBoundary } from "./sentry";
@@ -69,7 +69,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             Si el cliente no tiene internet, Supabase falla y no puede comprar.
         ─────────────────────────────────────────────────────────────── */}
         <Route
-          path="/storefront"
+          path="/store"
           element={
             <Suspense fallback={<StorefrontFallback />}>
               <Storefront />
@@ -118,7 +118,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         />
 
         {/* ─── Aliases de conveniencia ─────────────────────────────── */}
-        {/* /shop y /store redirigen a /storefront — se manejan en App */}
+        {/* /store es la ruta canónica; /storefront y /shop redirigen aquí
+            (a nivel raíz, para no cargar el bundle del POS solo por un redirect) */}
+        <Route path="/storefront" element={<Navigate to="/store" replace />} />
+        <Route path="/shop" element={<Navigate to="/store" replace />} />
 
         {/* ─── Sistema POS (vendedores en la van) ──────────────────── */}
         <Route

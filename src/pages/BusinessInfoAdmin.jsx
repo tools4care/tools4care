@@ -10,7 +10,7 @@ const FIELDS = [
   ["tagline", "Tagline"],
   ["address", "Address"],
   ["email", "Email"],
-  ["shopUrl", "Shop link (e.g. /storefront or a full URL)"],
+  ["shopUrl", "Shop link (e.g. /store or a full URL)"],
   ["instagramHandle", "Instagram handle (displayed)"],
   ["instagramUrl", "Instagram URL"],
   ["venmoHandle", "Venmo handle (displayed)"],

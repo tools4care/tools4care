@@ -809,6 +809,13 @@ export default function Storefront() {
     })();
   }, []);
 
+  // Browser tab should read as the customer-facing store, not the internal sales app.
+  useEffect(() => {
+    const previous = document.title;
+    document.title = `${settings?.site_name || "Tools4Care"} Store`;
+    return () => { document.title = previous; };
+  }, [settings]);
+
   // contador del carrito
   useEffect(() => {
     (async () => {

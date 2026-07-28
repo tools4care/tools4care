@@ -46,13 +46,13 @@ export default function AuthModal({ open, mode = "login", onClose, onSignedIn })
 
     try {
       if (tab === "signup") {
-        // ✅ Enviamos email con redirect a /auth/callback?next=/storefront
+        // ✅ Enviamos email con redirect a /auth/callback?next=/store
         const { data, error } = await supabase.auth.signUp({
           email,
           password: pass,
           options: {
             data: { name, role: "customer" }, // metadata útil
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=/storefront`,
+            emailRedirectTo: `${window.location.origin}/auth/callback?next=/store`,
           },
         });
         if (error) throw error;

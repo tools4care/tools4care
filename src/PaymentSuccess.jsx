@@ -65,7 +65,7 @@ export default function PaymentSuccess() {
               Reference: <code className="bg-gray-100 px-2 py-0.5 rounded">{piId}</code>
             </p>
           )}
-          <Link to="/storefront" className="inline-block rounded-lg bg-blue-600 text-white px-6 py-2.5 hover:bg-blue-700 text-sm font-medium">
+          <Link to="/store" className="inline-block rounded-lg bg-blue-600 text-white px-6 py-2.5 hover:bg-blue-700 text-sm font-medium">
             Back to store
           </Link>
         </div>
@@ -98,7 +98,7 @@ export default function PaymentSuccess() {
 
           <div className="space-y-2">
             <Link
-              to="/storefront"
+              to="/store"
               className="block w-full rounded-xl bg-blue-600 text-white px-4 py-3 hover:bg-blue-700 font-medium text-sm"
             >
               Continue shopping
@@ -132,7 +132,7 @@ export default function PaymentSuccess() {
             Reference: <code className="bg-gray-100 px-2 py-0.5 rounded">{piId}</code>
           </p>
         )}
-        <Link to="/storefront" className="inline-block rounded-lg border px-5 py-2.5 hover:bg-gray-50 text-sm">
+        <Link to="/store" className="inline-block rounded-lg border px-5 py-2.5 hover:bg-gray-50 text-sm">
           Back to store
         </Link>
       </div>

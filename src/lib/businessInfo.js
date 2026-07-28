@@ -11,7 +11,7 @@ export const DEFAULT_BUSINESS_INFO = {
   email: "tools4care@gmail.com",
   instagramHandle: "@tools4care",
   instagramUrl: "https://www.instagram.com/tools4care",
-  shopUrl: "/storefront",
+  shopUrl: "/store",
   venmoHandle: "@Jorge-ortiz-178",
   venmoUrl: "https://venmo.com/Jorge-ortiz-178",
   cashapp: [

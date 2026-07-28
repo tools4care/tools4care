@@ -184,9 +184,7 @@ export default function App() {
   return (
     <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>}>
     <Routes>
-          {/* Aliases de storefront (redirigen) */}
-          <Route path="/shop" element={<Navigate to="/storefront" replace />} />
-          <Route path="/store" element={<Navigate to="/storefront" replace />} />
+          {/* /shop y /store se manejan a nivel raíz en main.jsx */}
           <Route path="/online/checkout" element={<Navigate to="/checkout" replace />} />
 
           {/* --- Público general --- */}

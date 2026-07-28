@@ -689,7 +689,7 @@ export default function Checkout() {
             </div>
           </div>
           <div className="pt-2">
-            <Link to="/storefront" className="text-blue-600 hover:underline">
+            <Link to="/store" className="text-blue-600 hover:underline">
               Back to store →
             </Link>
           </div>
@@ -703,7 +703,7 @@ export default function Checkout() {
       <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b px-4 py-3">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold">Checkout</h1>
-          <Link to="/storefront" className="text-sm text-emerald-600 hover:underline font-medium">
+          <Link to="/store" className="text-sm text-emerald-600 hover:underline font-medium">
             ← Keep shopping
           </Link>
         </div>
