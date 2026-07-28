@@ -12,7 +12,7 @@ function slugify(name = "") {
     .toLowerCase();
 }
 
-export default function ProductImagesPanel({ open, productoId, onClose }) {
+export default function ProductImagesPanel({ open, productoId, productName, onClose }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -130,7 +130,7 @@ export default function ProductImagesPanel({ open, productoId, onClose }) {
     // eslint-disable-next-line no-alert
     if (
       !confirm(
-        "¿Eliminar esta imagen de la base de datos? (el archivo en Storage no se borra en este paso)"
+        "Delete this product image? This action cannot be undone."
       )
     )
       return;
@@ -155,62 +155,51 @@ export default function ProductImagesPanel({ open, productoId, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[100]">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-[1px]" onClick={onClose} />
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold">
-              Imágenes del producto #{productoId}
-            </h2>
+        <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+          <div className="flex items-start justify-between border-b px-6 py-5">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Product media</p>
+              <h2 className="text-xl font-black text-gray-900">{productName || `Product #${productoId}`}</h2>
+              <p className="mt-1 text-sm text-gray-500">Click the upload tile to add photos. Choose one as the storefront cover.</p>
+            </div>
             <button
               onClick={onClose}
-              className="rounded-lg border px-3 py-1.5 hover:bg-gray-50"
+              className="rounded-xl border px-3 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50"
             >
-              Cerrar
+              Close
             </button>
           </div>
 
-          <div className="mt-3">
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 cursor-pointer">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleUpload}
-              />
-              📤 Subir imagen
-            </label>
-          </div>
-
-          {err && (
+          <div className="flex-1 overflow-y-auto p-6">
+            {err && (
             <div className="mt-3 p-3 text-sm rounded bg-rose-50 text-rose-700 border border-rose-200">
               {err}
             </div>
-          )}
+            )}
 
-          <div className="mt-4">
             {loading && (
-              <div className="text-sm text-gray-500">Procesando…</div>
+              <div className="mb-3 text-sm font-semibold text-blue-600">Processing image…</div>
             )}
 
-            {!loading && rows.length === 0 && (
-              <div className="text-sm text-gray-500">
-                Aún no hay imágenes para este producto.
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+              <label className="flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-5 text-center transition hover:border-blue-400 hover:bg-blue-50">
+                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} disabled={loading} />
+                <span className="text-4xl text-blue-500">＋</span>
+                <span className="mt-3 font-black text-blue-800">Upload product photo</span>
+                <span className="mt-1 text-xs text-blue-600">JPG, PNG or WebP</span>
+              </label>
               {rows.map((r) => (
                 <div
                   key={r.id}
                   className="rounded-xl border overflow-hidden bg-white"
                 >
-                  <div className="h-40 bg-gray-50 flex items-center justify-center">
+                  <div className="h-44 bg-gray-50 flex items-center justify-center">
                     <img
                       src={r.url}
                       alt=""
-                      className="max-h-40 w-full object-contain"
+                      className="max-h-44 w-full object-contain"
                       loading="lazy"
                       onError={(e) => {
                         e.currentTarget.style.display = "none";
@@ -226,25 +215,24 @@ export default function ProductImagesPanel({ open, productoId, onClose }) {
                             : "bg-gray-50 border-gray-200 text-gray-700"
                         }`}
                       >
-                        {r.is_primary ? "Principal" : "Secundaria"}
+                        {r.is_primary ? "Storefront cover" : "Gallery image"}
                       </span>
-                      <span className="text-xs text-gray-500">#{r.id}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       {!r.is_primary && (
                         <button
                           className="px-2.5 py-1.5 rounded-lg border hover:bg-gray-50"
                           onClick={() => setPrimary(r.id)}
-                          title="Marcar como principal"
+                          title="Use as storefront cover"
                         >
-                          Hacer principal
+                          Set as cover
                         </button>
                       )}
                       <button
                         className="px-2.5 py-1.5 rounded-lg border hover:bg-gray-50"
                         onClick={() => removeRow(r.id)}
                       >
-                        Eliminar
+                        Delete
                       </button>
                     </div>
                   </div>
@@ -252,11 +240,6 @@ export default function ProductImagesPanel({ open, productoId, onClose }) {
               ))}
             </div>
 
-            <p className="mt-3 text-xs text-gray-500">
-              Nota: Por simplicidad, al eliminar aquí solo se borra el registro
-              en BD. El borrado del archivo en Storage es opcional y se puede
-              añadir después.
-            </p>
           </div>
         </div>
       </div>

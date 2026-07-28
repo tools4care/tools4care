@@ -107,6 +107,106 @@ function StatusDot({ visible, visibleOnline }) {
   return <span className="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0" title="Hidden" />;
 }
 
+function ProductEditor({ product, onClose, onToggle, onUpdate, onImages }) {
+  if (!product) return null;
+  return (
+    <div className="fixed inset-0 z-[90]">
+      <button type="button" aria-label="Close editor" className="absolute inset-0 bg-slate-950/45" onClick={onClose} />
+      <aside className="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col bg-white shadow-2xl">
+        <header className="flex items-start justify-between border-b px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Edit online product</p>
+            <h2 className="truncate text-xl font-black text-gray-900">{product.nombre}</h2>
+            <p className="text-xs text-gray-400">{product.marca} · {product.codigo}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-xl border px-3 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50">Close</button>
+        </header>
+
+        <div className="flex-1 space-y-6 overflow-y-auto p-5">
+          <section className="grid gap-4 sm:grid-cols-[150px_1fr]">
+            <button
+              type="button"
+              onClick={onImages}
+              className="group relative flex h-40 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50"
+            >
+              {product.main_image_url ? (
+                <img src={product.main_image_url} alt={product.nombre} className="h-full w-full object-contain p-2" />
+              ) : (
+                <span className="text-sm font-bold text-gray-400">＋ Add photo</span>
+              )}
+              <span className="absolute inset-x-2 bottom-2 rounded-lg bg-black/70 px-2 py-1.5 text-xs font-bold text-white">
+                Upload or manage photos
+              </span>
+            </button>
+            <div className="space-y-4 rounded-2xl border bg-gray-50 p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700">Admin visibility</span>
+                <Toggle checked={product.visible} onChange={(value) => onToggle(product.id, "visible", value)} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700">Published online</span>
+                <Toggle checked={product.visible_online} onChange={(value) => onToggle(product.id, "visible_online", value)} color="green" />
+              </div>
+              <div className="flex items-center justify-between border-t pt-3 text-sm">
+                <span className="text-gray-500">Available stock</span>
+                <span className={`font-black ${product.qty <= 3 ? "text-rose-600" : "text-gray-900"}`}>{product.qty}</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4 rounded-2xl border p-4">
+            <h3 className="font-black text-gray-900">Store information</h3>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Online price</label>
+              <InlineInput
+                value={product.price_online != null ? String(product.price_online) : ""}
+                placeholder={`Base price: ${fmtPrice(product.price_base)}`}
+                type="number"
+                prefix="$"
+                onSave={async (value) => {
+                  const trimmed = value.trim();
+                  const amount = trimmed === "" ? null : Number(trimmed);
+                  await onUpdate(product.id, { price_online: Number.isFinite(amount) ? amount : null });
+                }}
+                className="py-2.5"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Short description</label>
+              <InlineInput value={product.descripcion} placeholder="Describe the product for customers…" onSave={(value) => onUpdate(product.id, { descripcion: value.trim() })} className="py-2.5" />
+            </div>
+          </section>
+
+          <section className="space-y-4 rounded-2xl border p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-black text-gray-900">Promotion</h3>
+                <p className="text-xs text-gray-500">Feature this product as a deal.</p>
+              </div>
+              <Toggle checked={product.is_deal} onChange={(value) => onToggle(product.id, "is_deal", value)} color="amber" />
+            </div>
+            {product.is_deal && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-gray-500">Badge</label>
+                  <select value={product.deal_badge || "Deal"} onChange={(event) => onUpdate(product.id, { deal_badge: event.target.value })} className="w-full rounded-xl border bg-white px-3 py-2 text-sm">
+                    <option value="Deal">Deal</option><option value="Sale">Sale</option><option value="Hot">Hot</option>
+                    <option value="OUTLET">The Rack (Outlet)</option><option value="Refurb">Refurbished</option><option value="Open Box">Open Box</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-gray-500">Display priority</label>
+                  <InlineInput value={String(product.deal_priority || 0)} type="number" onSave={(value) => onUpdate(product.id, { deal_priority: Number(value) || 0 })} />
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 /* ─── Main component ─── */
 export default function OnlineCatalog() {
   const [q, setQ] = useState("");
@@ -115,6 +215,9 @@ export default function OnlineCatalog() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [onlineVan, setOnlineVan] = useState(null);
   const [expandedDeals, setExpandedDeals] = useState(new Set());
+  const [viewMode, setViewMode] = useState("list");
+  const [selectedId, setSelectedId] = useState(null);
+  const [page, setPage] = useState(1);
 
   const [imgOpen, setImgOpen] = useState(false);
   const [imgPid, setImgPid] = useState(null);
@@ -274,6 +377,12 @@ export default function OnlineCatalog() {
     deals: rows.filter((r) => r.is_deal).length,
     hidden: rows.filter((r) => !r.visible && !r.visible_online).length,
   }), [rows]);
+  const selectedProduct = rows.find((row) => row.id === selectedId) || null;
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => setPage(1), [q]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -338,6 +447,22 @@ export default function OnlineCatalog() {
               )}
               Refresh
             </button>
+            <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1">
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold ${viewMode === "list" ? "bg-white text-blue-700 shadow-sm" : "text-gray-500"}`}
+              >
+                ☷ List
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("details")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold ${viewMode === "details" ? "bg-white text-blue-700 shadow-sm" : "text-gray-500"}`}
+              >
+                ▦ Details
+              </button>
+            </div>
             <span className="text-xs text-gray-400 ml-auto">
               {lastUpdate ? `Updated ${lastUpdate.toLocaleTimeString()}` : "—"}
             </span>
@@ -364,9 +489,75 @@ export default function OnlineCatalog() {
             <div className="text-4xl mb-3">📭</div>
             <div className="text-gray-500">No products found.</div>
           </div>
+        ) : viewMode === "list" ? (
+          <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+            <div className="hidden grid-cols-[64px_minmax(260px,1fr)_120px_110px_120px] gap-3 border-b bg-gray-50 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-gray-500 md:grid">
+              <span>Image</span>
+              <span>Product</span>
+              <span>Status</span>
+              <span>Stock</span>
+              <span className="text-right">Price</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {visibleRows.map((r) => (
+                <div
+                  key={r.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedId(r.id)}
+                  onKeyDown={(event) => event.key === "Enter" && setSelectedId(r.id)}
+                  className="grid w-full grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-blue-50/60 md:grid-cols-[64px_minmax(260px,1fr)_120px_110px_120px] md:px-4"
+                >
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title="Manage product images"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setImgPid(r.id);
+                      setImgOpen(true);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.stopPropagation();
+                        setImgPid(r.id);
+                        setImgOpen(true);
+                      }
+                    }}
+                    className="group relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border bg-gray-50"
+                  >
+                    {r.main_image_url ? (
+                      <img src={r.main_image_url} alt={r.nombre} className="h-full w-full object-contain p-1" loading="lazy" />
+                    ) : (
+                      <span className="text-lg text-gray-300">＋</span>
+                    )}
+                    <span className="absolute inset-0 hidden items-center justify-center bg-black/55 text-[10px] font-bold text-white group-hover:flex">
+                      Photos
+                    </span>
+                  </span>
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2">
+                      <StatusDot visible={r.visible} visibleOnline={r.visible_online} />
+                      <span className="truncate font-bold text-gray-900">{r.nombre}</span>
+                      {r.is_deal && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">{r.deal_badge}</span>}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-gray-400">{r.marca} · {r.codigo}</span>
+                  </span>
+                  <span className="hidden text-xs font-semibold text-gray-600 md:block">
+                    {r.visible_online ? "Online" : r.visible ? "Admin only" : "Hidden"}
+                  </span>
+                  <span className={`hidden text-sm font-bold md:block ${r.qty <= 3 ? "text-rose-600" : "text-gray-700"}`}>{r.qty}</span>
+                  <span className="text-right">
+                    <span className="block text-sm font-black text-gray-900">{fmtPrice(r.price_online ?? r.price_base)}</span>
+                    <span className="text-[10px] font-semibold text-blue-600 md:hidden">Edit →</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : (
           <div className="space-y-2">
-            {rows.map((r) => {
+            {visibleRows.map((r) => {
               const hasOffer = r.price_online != null && r.price_base != null && r.price_online < r.price_base;
               const dealExpanded = expandedDeals.has(r.id);
 
@@ -380,7 +571,12 @@ export default function OnlineCatalog() {
                     <div className="flex gap-3">
 
                       {/* Thumbnail */}
-                      <div className="w-14 h-14 flex-shrink-0 rounded-xl border overflow-hidden bg-gray-50 flex items-center justify-center">
+                      <button
+                        type="button"
+                        onClick={() => { setImgPid(r.id); setImgOpen(true); }}
+                        title="Manage product images"
+                        className="group relative w-14 h-14 flex-shrink-0 rounded-xl border overflow-hidden bg-gray-50 flex items-center justify-center"
+                      >
                         {r.main_image_url ? (
                           <img
                             src={r.main_image_url}
@@ -394,7 +590,8 @@ export default function OnlineCatalog() {
                             <path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
                           </svg>
                         )}
-                      </div>
+                        <span className="absolute inset-0 hidden items-center justify-center bg-black/55 text-[9px] font-bold text-white group-hover:flex">Photos</span>
+                      </button>
 
                       {/* Info */}
                       <div className="flex-1 min-w-0">
@@ -499,16 +696,6 @@ export default function OnlineCatalog() {
                           )}
                         </button>
 
-                        {/* Images button */}
-                        <button
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium bg-gray-50 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-colors"
-                          onClick={() => { setImgPid(r.id); setImgOpen(true); }}
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24">
-                            <path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                          </svg>
-                          Images
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -587,14 +774,39 @@ export default function OnlineCatalog() {
             })}
           </div>
         )}
+
+        {rows.length > pageSize && (
+          <div className="mt-4 flex items-center justify-between rounded-2xl border bg-white px-4 py-3">
+            <span className="text-xs font-semibold text-gray-500">
+              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)} of {rows.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <button type="button" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Previous</button>
+              <span className="text-xs font-bold text-gray-600">Page {page} of {pageCount}</span>
+              <button type="button" disabled={page === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Next</button>
+            </div>
+          </div>
+        )}
       </div>
+
+      <ProductEditor
+        product={selectedProduct}
+        onClose={() => setSelectedId(null)}
+        onToggle={onToggle}
+        onUpdate={onUpdate}
+        onImages={() => {
+          setImgPid(selectedProduct?.id || null);
+          setImgOpen(true);
+        }}
+      />
 
       <Suspense fallback={null}>
         {imgOpen && (
           <ProductImagesPanel
             open={imgOpen}
             productoId={imgPid}
-            onClose={() => { setImgOpen(false); setImgPid(null); }}
+            productName={rows.find((row) => row.id === imgPid)?.nombre || ""}
+            onClose={() => { setImgOpen(false); setImgPid(null); reload(); }}
           />
         )}
       </Suspense>
