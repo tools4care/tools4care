@@ -226,13 +226,14 @@ function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSel
           className="flex w-full max-w-lg max-h-[85vh] sm:max-h-[75vh] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 animate-[searchIn_0.25s_cubic-bezier(0.16,1,0.3,1)]"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center gap-2.5 border-b px-4 py-3.5 sm:px-5 sm:py-4">
-            <svg width="20" height="20" viewBox="0 0 24 24" className="text-blue-500 shrink-0">
+          <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-1 sm:px-6 sm:pt-6">
+            <svg width="20" height="20" viewBox="0 0 24 24" className="mt-1.5 text-gray-300 shrink-0">
               <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
             </svg>
             <input
               ref={inputRef}
-              className="flex-1 min-w-0 outline-none text-base sm:text-lg font-semibold tracking-tight text-gray-900 placeholder:font-medium placeholder:text-gray-400"
+              className="flex-1 min-w-0 border-0 border-b-2 border-gray-200 bg-transparent pb-3 text-xl sm:text-2xl font-semibold tracking-tight text-gray-900 caret-blue-600 !outline-none transition-colors focus:border-blue-500 placeholder:font-normal placeholder:text-gray-300"
+              style={{ boxShadow: "none" }}
               placeholder="What are you looking for today?"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
