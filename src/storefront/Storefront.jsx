@@ -160,6 +160,147 @@ function ImageLightbox({ images, startIndex = 0, onClose }) {
 }
 
 /* ─── Toast flotante ─── */
+/* ─── Search overlay — command-palette style live product search ─── */
+function SearchOverlay({ open, onClose, products, suggestions = [], onAdd, onSelect }) {
+  const [query, setQuery] = useState("");
+  const [addedId, setAddedId] = useState(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setAddedId(null);
+      setTimeout(() => inputRef.current?.focus(), 30);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const nq = norm(query);
+  const results = nq
+    ? products.filter((p) => [p.nombre, p.marca, p.codigo].some((f) => norm(f).includes(nq))).slice(0, 8)
+    : [];
+  const list = nq ? results : suggestions;
+
+  async function quickAdd(e, p) {
+    e.stopPropagation();
+    try {
+      await onAdd(p, 1);
+      setAddedId(p.id);
+      setTimeout(() => setAddedId(null), 1200);
+    } catch (err) {
+      alert(String(err?.message || "Could not add to cart."));
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[200]">
+      <div className="absolute inset-0 bg-black/50 animate-[fadeBackdrop_0.18s_ease-out]" onClick={onClose} />
+      <div className="absolute inset-0 flex items-start justify-center px-4 pt-[8vh] pb-4">
+        <div
+          className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden animate-[searchIn_0.22s_cubic-bezier(0.16,1,0.3,1)]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-2 border-b px-4 py-3">
+            <svg width="18" height="18" viewBox="0 0 24 24" className="text-gray-400 shrink-0">
+              <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
+            </svg>
+            <input
+              ref={inputRef}
+              className="flex-1 outline-none text-sm sm:text-base placeholder:text-gray-400"
+              placeholder="Search by code, name, or brand…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button type="button" onClick={onClose} className="text-xs font-semibold text-gray-400 hover:text-gray-600 border rounded-md px-1.5 py-0.5">
+              ESC
+            </button>
+          </div>
+
+          <div className="max-h-[60vh] overflow-y-auto">
+            {nq && list.length === 0 && (
+              <div className="px-4 py-10 text-center text-sm text-gray-400">
+                No products match "<span className="font-medium text-gray-600">{query}</span>"
+              </div>
+            )}
+
+            {!nq && list.length > 0 && (
+              <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                Popular right now
+              </div>
+            )}
+
+            {list.map((p, i) => {
+              const price = Number(p.price_online ?? p.price_base ?? p.price ?? 0);
+              const outOfStock = Number(p.stock) <= 0;
+              return (
+                <div
+                  key={p.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelect(p)}
+                  onKeyDown={(e) => e.key === "Enter" && onSelect(p)}
+                  className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-blue-50/70 transition-colors border-b last:border-b-0 animate-[resultIn_0.25s_ease-out_both]"
+                  style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
+                >
+                  <div className="w-11 h-11 shrink-0 rounded-lg border bg-white overflow-hidden flex items-center justify-center">
+                    {p.main_image_url ? (
+                      <img src={p.main_image_url} alt="" className="w-full h-full object-contain p-1" />
+                    ) : (
+                      <span className="text-[9px] text-gray-300">no img</span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-gray-900 truncate">{p.nombre}</div>
+                    <div className="text-[11px] text-gray-400 truncate">{p.marca || "—"}{p.codigo ? ` · ${p.codigo}` : ""}</div>
+                  </div>
+                  <div className="text-sm font-bold text-gray-900 shrink-0">{fmtPrice(price)}</div>
+                  <button
+                    type="button"
+                    onClick={(e) => quickAdd(e, p)}
+                    disabled={outOfStock}
+                    title={outOfStock ? "Out of stock" : "Quick add to cart"}
+                    className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 ${
+                      addedId === p.id
+                        ? "bg-emerald-500 text-white scale-110"
+                        : "bg-gray-100 text-gray-600 hover:bg-blue-600 hover:text-white disabled:opacity-30 disabled:hover:bg-gray-100 disabled:hover:text-gray-600"
+                    }`}
+                  >
+                    {addedId === p.id ? "✓" : "+"}
+                  </button>
+                </div>
+              );
+            })}
+
+            {!nq && list.length === 0 && (
+              <div className="px-4 py-10 text-center text-sm text-gray-400">Type to search products…</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes fadeBackdrop { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes searchIn {
+          from { opacity: 0; transform: translateY(-16px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes resultIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function AddedToast({ toasts }) {
   return (
     <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
@@ -379,16 +520,25 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
 
-  const price = Number(p.price_online ?? p.price_base ?? 0);
-  const hasOffer = p.price_online != null && p.price_base != null && Number(p.price_online) < Number(p.price_base);
-  const lowStock = p.stock > 0 && p.stock <= 5;
-  const hasMultiple = (p.images?.length ?? 0) > 1;
+  const hasVariants = (p.variants?.length ?? 0) > 1;
+  const [selected, setSelected] = useState(() =>
+    hasVariants ? p.variants.find((v) => v.id === p.id) || p.variants[0] : null
+  );
+  const active = selected || p;
+
+  const price = Number(active.price_online ?? active.price_base ?? active.price ?? 0);
+  const hasOffer = active.price_online != null && active.price_base != null && Number(active.price_online) < Number(active.price_base);
+  const outOfStock = Number(active.stock) <= 0;
+  const lowStock = !outOfStock && active.stock <= 5;
+  const mainImage = active.main_image_url ?? p.main_image_url;
+  const images = active.images ?? p.images;
+  const hasMultiple = (images?.length ?? 0) > 1;
 
   async function doAdd() {
-    if (adding) return;
+    if (adding || outOfStock) return;
     setAdding(true);
     try {
-      await onAdd(p, 1);
+      await onAdd({ ...p, id: active.id, price, stock: active.stock, main_image_url: mainImage, images }, 1);
       setAdded(true);
       setTimeout(() => setAdded(false), 2000);
     } catch (e) {
@@ -405,11 +555,11 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
         <div className="relative">
           <div
             className="aspect-square bg-white rounded-xl border overflow-hidden flex items-center justify-center cursor-zoom-in"
-            onClick={() => p.main_image_url && onOpenLightbox(p)}
+            onClick={() => mainImage && onOpenLightbox({ ...p, main_image_url: mainImage, images })}
             title="Click to enlarge"
           >
-            {p.main_image_url ? (
-              <img src={p.main_image_url} alt={p.nombre}
+            {mainImage ? (
+              <img src={mainImage} alt={p.nombre}
                 className="w-full h-full object-contain p-2 hover:scale-105 transition-transform duration-200" loading="lazy"
                 onError={(e) => { e.currentTarget.style.display = "none"; }} />
             ) : (
@@ -421,16 +571,20 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
               {p.deal_badge || "Deal"}
             </span>
           )}
-          {lowStock && (
+          {outOfStock ? (
+            <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 border border-gray-300 font-medium">
+              Out of stock
+            </span>
+          ) : lowStock && (
             <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 font-medium">
-              {p.stock} left
+              {active.stock} left
             </span>
           )}
           {/* Indicador de múltiples fotos */}
           {hasMultiple && (
             <span className="absolute bottom-2 right-2 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/50 text-white font-medium">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M22 16V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M2 6v14a2 2 0 0 0 2 2h14v-2H4V6z"/></svg>
-              {p.images.length}
+              {images.length}
             </span>
           )}
         </div>
@@ -443,10 +597,41 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
           : <div className="mt-1 min-h-[32px]" />
         }
 
+        {/* Variant swatches (color/size) */}
+        {hasVariants && (
+          <div className="mt-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{selected?.axis || "Option"}</div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {p.variants.map((v) => {
+                const isActive = v.id === active.id;
+                const isOut = Number(v.stock) <= 0;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    disabled={isOut}
+                    title={isOut ? `${v.label} — out of stock` : v.label}
+                    onClick={() => setSelected(v)}
+                    className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                      isOut
+                        ? "border-gray-200 text-gray-300 line-through cursor-not-allowed"
+                        : isActive
+                        ? "border-blue-600 bg-blue-600 text-white"
+                        : "border-gray-300 text-gray-700 hover:border-blue-400"
+                    }`}
+                  >
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Precio */}
         <div className="mt-2 flex items-baseline gap-2">
           <span className="font-bold text-gray-900">{fmtPrice(price)}</span>
-          {hasOffer && <span className="text-xs text-gray-400 line-through">{fmtPrice(p.price_base)}</span>}
+          {hasOffer && <span className="text-xs text-gray-400 line-through">{fmtPrice(active.price_base)}</span>}
         </div>
 
         {/* Add one unit; quantity is edited only inside the cart. */}
@@ -454,7 +639,7 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
           <button
             type="button"
             onClick={doAdd}
-            disabled={adding}
+            disabled={adding || outOfStock}
             className={`w-full rounded-lg px-3 py-2 text-sm font-semibold transition-all duration-200 ${
               added
                 ? "bg-emerald-500 text-white scale-[1.02]"
@@ -469,6 +654,8 @@ function ProductCard({ p, onAdd, onOpenLightbox }) {
               <span className="inline-flex items-center justify-center gap-1.5">
                 <span>✓</span> Added!
               </span>
+            ) : outOfStock ? (
+              "Out of stock"
             ) : (
               "Add to cart"
             )}
@@ -528,6 +715,11 @@ export default function Storefront() {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [sort, setSort] = useState("relevance");
+
+  // Search overlay (modal command-palette)
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightId, setHighlightId] = useState(null);
+  const [pendingScrollId, setPendingScrollId] = useState(null);
 
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -649,7 +841,7 @@ export default function Storefront() {
         for (let i = 0; i < ids.length; i += 150) {
           const { data, error } = await supabase
             .from("online_product_meta")
-            .select("producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority")
+            .select("producto_id, price_online, descripcion, visible_online, is_deal, deal_starts_at, deal_ends_at, deal_badge, deal_priority, variant_group_id, variant_label, variant_axis")
             .eq("visible_online", true)
             .in("producto_id", ids.slice(i, i + 150));
           if (error) throw error;
@@ -710,12 +902,48 @@ export default function Storefront() {
             deal_ends_at: m.deal_ends_at || null,
             deal_badge: m.deal_badge || "Deal",
             deal_priority: Number(m.deal_priority ?? 0),
+            variant_group_id: m.variant_group_id || null,
+            variant_label: m.variant_label || "",
+            variant_axis: m.variant_axis || "Option",
           };
         })
-        .filter((p) => p.visible_online && p.stock > 0)
+        // Grouped variants (colors/sizes of the same item) stay visible even when
+        // this particular SKU is out of stock, so the swatch can render disabled
+        // instead of the whole card disappearing. Ungrouped products keep the
+        // original behavior of hiding once stock hits 0.
+        .filter((p) => p.visible_online && (p.stock > 0 || p.variant_group_id))
         .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
 
-      setAllRows(enriched);
+      const groups = new Map();
+      const singles = [];
+      enriched.forEach((p) => {
+        if (!p.variant_group_id) { singles.push(p); return; }
+        const arr = groups.get(p.variant_group_id) || [];
+        arr.push(p);
+        groups.set(p.variant_group_id, arr);
+      });
+
+      const grouped = [...groups.values()].map((members) => {
+        const primary = members.find((m) => m.stock > 0) || members[0];
+        return {
+          ...primary,
+          variants: members
+            .map((m) => ({
+              id: m.id,
+              label: m.variant_label || m.nombre,
+              axis: m.variant_axis || "Option",
+              price: m.price,
+              price_base: m.price_base,
+              price_online: m.price_online,
+              stock: m.stock,
+              main_image_url: m.main_image_url,
+              images: m.images,
+            }))
+            .sort((a, b) => a.label.localeCompare(b.label)),
+        };
+      });
+
+      setAllRows([...singles, ...grouped].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre))));
     } catch (err) {
       alert(err?.message || "Could not load products.");
       setAllRows([]);
@@ -764,6 +992,28 @@ export default function Storefront() {
     if (sort === "name_asc") list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
     setRows(list);
   }, [q, brand, minPrice, maxPrice, sort, allRows]);
+
+  // Jump to a product picked from the search overlay: clear filters so it's
+  // guaranteed to be in `rows`, then scroll to it once it renders and flash it.
+  useEffect(() => {
+    if (!pendingScrollId) return;
+    const el = document.getElementById(`product-${pendingScrollId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(pendingScrollId);
+    setPendingScrollId(null);
+    const t = setTimeout(() => setHighlightId(null), 1800);
+    return () => clearTimeout(t);
+  }, [pendingScrollId, rows]);
+
+  const handleSearchSelect = useCallback((product) => {
+    setSearchOpen(false);
+    setQ("");
+    setBrand("all");
+    setMinPrice("");
+    setMaxPrice("");
+    setPendingScrollId(product.id);
+  }, []);
 
   // Callback estable para agregar al carrito — no recrea ProductCard en cada render
   const handleAdd = useCallback(async (p, qty = 1) => {
@@ -831,6 +1081,16 @@ export default function Storefront() {
       {/* Toast */}
       <AddedToast toasts={toasts} />
 
+      {/* Search overlay */}
+      <SearchOverlay
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        products={allRows}
+        suggestions={deals.slice(0, 6)}
+        onAdd={handleAdd}
+        onSelect={handleSearchSelect}
+      />
+
       {/* HEADER */}
       <header className="sticky top-0 z-20 bg-white border-b shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
@@ -850,12 +1110,16 @@ export default function Storefront() {
           </button>
 
           <div className="flex-1">
-            <input
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-              placeholder="Search by code, name, or brand…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="w-full flex items-center gap-2 border rounded-lg px-3 py-2 text-sm text-left text-gray-400 bg-white hover:border-blue-300 hover:bg-blue-50/40 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" className="shrink-0 text-gray-400">
+                <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16a6.471 6.471 0 004.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/>
+              </svg>
+              <span className="flex-1 truncate">Search by code, name, or brand…</span>
+            </button>
           </div>
 
           {!user ? (
@@ -1173,7 +1437,15 @@ export default function Storefront() {
           <div className="py-12 text-center text-gray-400">No products match your filters.</div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {rows.map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpenLightbox={handleOpenLightbox} />)}
+            {rows.map((p) => (
+              <div
+                key={p.id}
+                id={`product-${p.id}`}
+                className={`rounded-xl transition-shadow duration-700 ${highlightId === p.id ? "ring-4 ring-blue-400 ring-offset-2" : ""}`}
+              >
+                <ProductCard p={p} onAdd={handleAdd} onOpenLightbox={handleOpenLightbox} />
+              </div>
+            ))}
           </div>
         )}
       </section>
