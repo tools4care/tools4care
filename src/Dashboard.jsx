@@ -1154,8 +1154,39 @@ function MetricCard({ title, value, unit, trend, icon, gradientFrom, gradientTo,
 }
 
 /* ---------- Daily action center ---------- */
+const HIDDEN_PRIORITIES_KEY = "dashboard_hidden_priority_keys";
+
+function loadHiddenPriorityKeys() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_PRIORITIES_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
 function DailyActionCenter({ loading, actions, onOpen }) {
-  const visible = actions.filter((action) => action.count > 0);
+  const [hiddenKeys, setHiddenKeys] = useState(loadHiddenPriorityKeys);
+
+  function persist(next) {
+    try { localStorage.setItem(HIDDEN_PRIORITIES_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    return next;
+  }
+
+  // Functional update: two dismiss clicks in quick succession each closed
+  // over the same stale `hiddenKeys`, so the second one silently overwrote
+  // the first instead of adding to it.
+  function hideAction(key) {
+    setHiddenKeys((prev) => (prev.includes(key) ? prev : persist([...prev, key])));
+  }
+
+  function unhideAll() {
+    setHiddenKeys(() => persist([]));
+  }
+
+  const shownActions = actions.filter((action) => !hiddenKeys.includes(action.key));
+  const visible = shownActions.filter((action) => action.count > 0);
 
   return (
     <section className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
@@ -1165,11 +1196,23 @@ function DailyActionCenter({ loading, actions, onOpen }) {
           <p className="text-xs text-slate-500">Items that need attention across the business</p>
         </div>
         {!loading && (
-          <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${
-            visible.length ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
-          }`}>
-            {visible.length ? `${visible.length} areas to review` : "All clear"}
-          </span>
+          <div className="flex items-center gap-2">
+            {hiddenKeys.length > 0 && (
+              <button
+                type="button"
+                onClick={unhideAll}
+                className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 underline-offset-2 hover:underline"
+                title="Show the cards you hid from this dashboard"
+              >
+                {hiddenKeys.length} hidden · Show
+              </button>
+            )}
+            <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+              visible.length ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+            }`}>
+              {visible.length ? `${visible.length} areas to review` : "All clear"}
+            </span>
+          </div>
         )}
       </div>
 
@@ -1181,34 +1224,43 @@ function DailyActionCenter({ loading, actions, onOpen }) {
         </div>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {actions.map((action) => {
+          {shownActions.map((action) => {
             const Icon = action.icon;
             const active = action.count > 0;
             return (
-              <button
-                key={action.key}
-                type="button"
-                onClick={() => onOpen(action)}
-                className={`text-left rounded-2xl border p-3.5 sm:p-4 transition-all active:scale-[0.98] ${
-                  active
-                    ? `${action.bg} ${action.border} hover:shadow-md`
-                    : "bg-slate-50 border-slate-200 hover:bg-slate-100"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                    active ? action.iconBg : "bg-slate-200 text-slate-500"
-                  }`}>
-                    <Icon size={18} />
+              <div key={action.key} className="relative">
+                <button
+                  type="button"
+                  onClick={() => onOpen(action)}
+                  className={`w-full text-left rounded-2xl border p-3.5 sm:p-4 transition-all active:scale-[0.98] ${
+                    active
+                      ? `${action.bg} ${action.border} hover:shadow-md`
+                      : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                      active ? action.iconBg : "bg-slate-200 text-slate-500"
+                    }`}>
+                      <Icon size={18} />
+                    </div>
+                    <ChevronRight size={17} className="text-slate-400 mt-1" />
                   </div>
-                  <ChevronRight size={17} className="text-slate-400 mt-1" />
-                </div>
-                <div className={`text-2xl font-black mt-3 ${active ? action.valueColor : "text-slate-500"}`}>
-                  {action.count}
-                </div>
-                <div className="text-xs sm:text-sm font-bold text-slate-800 leading-tight">{action.label}</div>
-                <div className="text-[11px] text-slate-500 mt-1 leading-tight">{action.detail}</div>
-              </button>
+                  <div className={`text-2xl font-black mt-3 ${active ? action.valueColor : "text-slate-500"}`}>
+                    {action.count}
+                  </div>
+                  <div className="text-xs sm:text-sm font-bold text-slate-800 leading-tight">{action.label}</div>
+                  <div className="text-[11px] text-slate-500 mt-1 leading-tight">{action.detail}</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); hideAction(action.key); }}
+                  title="Don't show this card again"
+                  className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-white active:scale-90 flex items-center justify-center text-xs shadow-sm transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
             );
           })}
         </div>
