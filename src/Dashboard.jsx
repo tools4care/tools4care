@@ -2412,22 +2412,27 @@ export default function Dashboard() {
     });
 
     let top = [];
-    const idsProds = Array.from(qtyMap.keys()).slice(0, 50);
+    // Sort by quantity BEFORE picking which ids to look up names for — doing
+    // it the other way (slice first, sort after) meant a product selling in
+    // high volume but encountered late in `det` could miss the name lookup
+    // entirely and fall back to showing its raw UUID, even though it existed
+    // in `productos` all along.
+    const topEntries = Array.from(qtyMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+    const idsProds = topEntries.map(([producto_id]) => producto_id);
     if (idsProds.length > 0) {
       const { data: prods } = await supabase
         .from("productos")
         .select("id,nombre")
         .in("id", idsProds);
       const nameMap = new Map((prods || []).map((p) => [p.id, p.nombre]));
-      top = Array.from(qtyMap.entries())
-        .map(([producto_id, cantidad]) => ({
-          producto_id,
-          cantidad,
-          revenue: revenueMap.get(producto_id) || 0,
-          nombre: nameMap.get(producto_id) || producto_id,
-        }))
-        .sort((a, b) => b.cantidad - a.cantidad)
-        .slice(0, 10);
+      top = topEntries.map(([producto_id, cantidad]) => ({
+        producto_id,
+        cantidad,
+        revenue: revenueMap.get(producto_id) || 0,
+        nombre: nameMap.get(producto_id) || producto_id,
+      }));
     }
     setProductosTop(top);
     } catch (err) {
@@ -2667,6 +2672,8 @@ export default function Dashboard() {
 
   const sparklineData = ventasSerie.map(d => ({ value: d.total }));
   const maxProducto = productosTop.length > 0 ? productosTop[0].cantidad : 1;
+  // Last entry in the range series is always today (rangeDaysArray ends at today).
+  const todayEntry = ventasSerie[ventasSerie.length - 1] || { total: 0, orders: 0 };
 
   // Normaliza direcciones que pueden venir como JSON string o texto plano
   function formatDireccion(dir) {
@@ -2758,9 +2765,9 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900 p-3 sm:p-6">
       <div className="w-full max-w-[1600px] mx-auto space-y-6">
 
-        {/* Header Mejorado */}
+        {/* Header */}
         <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl p-6">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
             <div>
               <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
                 Dashboard
@@ -2778,6 +2785,30 @@ export default function Dashboard() {
                   "Select a VAN"
                 )}
               </p>
+            </div>
+
+            {/* Today at a glance — fills the header with the numbers you'd
+                otherwise have to scroll for, using data already fetched
+                below (no extra queries). */}
+            <div className="flex items-center gap-4 sm:gap-6 w-full lg:w-auto justify-between lg:justify-end border-t lg:border-t-0 pt-4 lg:pt-0">
+              <div className="text-left lg:text-right">
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white leading-tight">
+                  {fmtMoney(todayEntry.total)}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                  Today · {todayEntry.orders} order{todayEntry.orders === 1 ? "" : "s"}
+                </div>
+              </div>
+              <div className="h-9 w-px bg-slate-200 dark:bg-slate-600 hidden sm:block" />
+              <div className="text-left lg:text-right">
+                <div className={`text-2xl sm:text-3xl font-black leading-tight flex items-center gap-1 ${
+                  metricas.crecimiento >= 0 ? "text-emerald-600" : "text-red-600"
+                }`}>
+                  <IconTrending up={metricas.crecimiento >= 0} />
+                  {metricas.crecimiento >= 0 ? "+" : ""}{metricas.crecimiento.toFixed(1)}%
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 font-semibold">vs previous period</div>
+              </div>
             </div>
           </div>
         </div>
