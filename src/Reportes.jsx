@@ -2361,10 +2361,12 @@ function GananciasReport({ van, usuario }) {
         const costo = Number(p.costo || 0);
         if (costo > 0) hasCost = true;
         const qty = Number(r.cantidad || 0);
-        // Revenue: prefer stored subtotal, else compute from price × (1 - discount%) × qty
+        // Always derive from precio_unitario + descuento — some historical
+        // rows have a stored subtotal that never got recalculated after a
+        // discount was applied, which understated the discount here.
         const descuentoPct = Number(r.descuento || 0);
         const precioConDescuento = Number(r.precio_unitario || 0) * (1 - descuentoPct / 100);
-        const revenue = Number(r.subtotal) > 0 ? Number(r.subtotal) : precioConDescuento * qty;
+        const revenue = precioConDescuento * qty;
         if (!map[p.id]) map[p.id] = { id:p.id, nombre:p.nombre, costo, totalQty:0, totalRevenue:0, totalCost:0 };
         map[p.id].totalQty     += qty;
         map[p.id].totalRevenue += revenue;

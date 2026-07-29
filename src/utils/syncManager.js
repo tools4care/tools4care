@@ -41,12 +41,16 @@ export async function sincronizarVentasPendientes() {
             const pct = Number(item.descuento_pct ?? 0);
             const qty = Number(item.cantidad ?? 1);
             const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
+            // Always derive from precio_unitario + descuento rather than
+            // trusting a pre-existing item.subtotal — a stale value there
+            // (from before a discount was applied) would get written to
+            // detalle_ventas verbatim and never self-correct.
             return {
               producto_id: item.producto_id,
               cantidad: qty,
               precio_unitario: base,
               descuento: pct,
-              subtotal: Number(item.subtotal) > 0 ? Number(item.subtotal) : Number((finalUnit * qty).toFixed(2)),
+              subtotal: Number((finalUnit * qty).toFixed(2)),
             };
           });
 
@@ -131,10 +135,10 @@ export async function sincronizarVentasPendientes() {
                 const pct  = Number(item.descuento_pct ?? 0);
                 const qty  = Number(item.cantidad ?? 1);
                 const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
-                // subtotal ya guardado en el item (post-fix) o lo calculamos aquí
-                const subtotal = Number(item.subtotal) > 0
-                  ? Number(item.subtotal)
-                  : Number((finalUnit * qty).toFixed(2));
+                // Always derive from precio_unitario + descuento — see the
+                // transaction_id path above for why a stored item.subtotal
+                // isn't trusted here either.
+                const subtotal = Number((finalUnit * qty).toFixed(2));
                 return {
                   venta_id: ventaId,
                   producto_id: item.producto_id,

@@ -378,11 +378,12 @@ function PestañaVentas({ productoId, costoUnit = 0 }) {
         const qty = Number(d.cantidad || 0);
         const base = Number(d.precio_unitario || 0);
         const pct  = Number(d.descuento || 0);
-        // si tiene subtotal guardado lo usa; si no (registros viejos) aplica el descuento
+        // Always derive from precio_unitario + descuento rather than trusting
+        // the stored subtotal — some historical rows have a subtotal that
+        // never got recalculated after a discount was applied, so revenue
+        // and profit here silently used the pre-discount price.
         const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
-        const total = Number(d.subtotal) > 0
-          ? Number(d.subtotal)
-          : Number((finalUnit * qty).toFixed(2));
+        const total = Number((finalUnit * qty).toFixed(2));
         return {
           venta_id: d.venta_id,
           qty,

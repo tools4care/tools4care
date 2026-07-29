@@ -2405,8 +2405,11 @@ export default function Dashboard() {
       const qty  = Number(r.cantidad || 0);
       const base = Number(r.precio_unitario || 0);
       const pct  = Number(r.descuento || 0);
+      // Always derive from precio_unitario + descuento rather than trusting
+      // the stored subtotal — some historical rows never got their subtotal
+      // recalculated after a discount was applied.
       const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
-      const rev  = Number(r.subtotal) > 0 ? Number(r.subtotal) : finalUnit * qty;
+      const rev  = finalUnit * qty;
       qtyMap.set(pid, (qtyMap.get(pid) || 0) + qty);
       revenueMap.set(pid, (revenueMap.get(pid) || 0) + rev);
     });
