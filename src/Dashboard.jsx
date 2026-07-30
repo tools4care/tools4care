@@ -44,6 +44,30 @@ function fmtMoney(n) {
 function shortDate(iso) {
   return dayjs(iso).format("MM-DD");
 }
+const VISIT_LEARNING_START = "2026-07-30";
+
+function normalizeShopKey(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/\b(BARBER\s*SHOP|BARBERSHOP|BARBER|SHOP|B\/S)\b/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function cadenceForGap(gap) {
+  if (gap <= 10) return { label: "weekly", alertAfter: 14 };
+  if (gap <= 21) return { label: "every two weeks", alertAfter: 24 };
+  if (gap <= 45) return { label: "monthly", alertAfter: 45 };
+  return { label: `every ~${Math.round(gap)} days`, alertAfter: Math.round(gap * 1.5) };
+}
 function rangeDaysArray(days) {
   const arr = [];
   for (let i = days - 1; i >= 0; i--) {
@@ -2188,24 +2212,82 @@ export default function Dashboard() {
   // it counts visits you make outside your usual schedule too.
   const [barberiaResumen, setBarberiaResumen] = useState([]);
   const [loadingBarberiaResumen, setLoadingBarberiaResumen] = useState(true);
+  const [barberiasAprendiendo, setBarberiasAprendiendo] = useState(0);
 
   useEffect(() => {
+    if (!van?.id) {
+      setBarberiaResumen([]);
+      setBarberiasAprendiendo(0);
+      setLoadingBarberiaResumen(false);
+      return;
+    }
+
     (async () => {
       setLoadingBarberiaResumen(true);
       try {
-        const { data } = await supabase
-          .from("v_barberia_resumen")
-          .select("*")
-          .order("days_since_last_visit", { ascending: false, nullsFirst: false });
-        setBarberiaResumen(data || []);
+        const { data, error } = await supabase
+          .from("ventas")
+          .select("fecha,cliente_id,clientes:cliente_id(barberia_id,barberias:barberia_id(nombre))")
+          .eq("van_id", van.id)
+          .gte("fecha", `${VISIT_LEARNING_START}T00:00:00-04:00`)
+          .neq("tipo", "devolucion")
+          .order("fecha", { ascending: true });
+        if (error) throw error;
+
+        const shops = new Map();
+        (data || []).forEach((sale) => {
+          const shopId = sale.clientes?.barberia_id;
+          if (!shopId) return;
+          if (!shops.has(shopId)) {
+            shops.set(shopId, {
+              barberia_id: shopId,
+              barberia_nombre: sale.clientes?.barberias?.nombre || "Barbershop",
+              dates: new Set(),
+            });
+          }
+          shops.get(shopId).dates.add(dayjs(sale.fecha).format("YYYY-MM-DD"));
+        });
+
+        let learning = 0;
+        const alerts = [];
+        shops.forEach((shop) => {
+          const dates = [...shop.dates].sort();
+          // Three distinct visit days provide two intervals: enough evidence
+          // to learn a useful cadence without producing noisy early alerts.
+          if (dates.length < 3) {
+            learning += 1;
+            return;
+          }
+          const gaps = dates.slice(1).map((date, index) => dayjs(date).diff(dayjs(dates[index]), "day"));
+          const typicalGap = median(gaps.filter((gap) => gap > 0));
+          if (!typicalGap) return;
+          const cadence = cadenceForGap(typicalGap);
+          const lastVisit = dates[dates.length - 1];
+          const daysSince = dayjs().startOf("day").diff(dayjs(lastVisit), "day");
+          if (daysSince >= cadence.alertAfter) {
+            alerts.push({
+              ...shop,
+              last_visit_date: lastVisit,
+              days_since_last_visit: daysSince,
+              typical_gap: typicalGap,
+              cadence: cadence.label,
+              overdue_by: daysSince - cadence.alertAfter,
+            });
+          }
+        });
+
+        alerts.sort((a, b) => b.overdue_by - a.overdue_by);
+        setBarberiaResumen(alerts);
+        setBarberiasAprendiendo(learning);
       } catch (err) {
         console.error("Error loading barbershop visit summary:", err);
         setBarberiaResumen([]);
+        setBarberiasAprendiendo(0);
       } finally {
         setLoadingBarberiaResumen(false);
       }
     })();
-  }, []);
+  }, [van?.id]);
 
   useEffect(() => {
     cargarClientes();
@@ -2507,7 +2589,7 @@ export default function Dashboard() {
           .order("hora_visita", { ascending: true }),
         supabase
           .from("v_barberia_visitas")
-          .select("barberia_id")
+          .select("barberia_id,barberia_nombre")
           .eq("visit_date", fecha),
       ]);
 
@@ -2517,9 +2599,16 @@ export default function Dashboard() {
       // offline sales as soon as they are synchronized to Supabase, even if
       // the legacy manual `visitada` flag was never updated.
       const soldAt = new Set((visitsResult.data || []).map((row) => row.barberia_id).filter(Boolean));
+      const soldAtNames = new Set(
+        (visitsResult.data || []).map((row) => normalizeShopKey(row.barberia_nombre)).filter(Boolean)
+      );
       const routes = (routesResult.data || []).map((route) => ({
         ...route,
-        visitada: Boolean(route.visitada || (route.barberia_id && soldAt.has(route.barberia_id))),
+        visitada: Boolean(
+          route.visitada
+          || (route.barberia_id && soldAt.has(route.barberia_id))
+          || soldAtNames.has(normalizeShopKey(route.barberia_nombre))
+        ),
       }));
       setRutasBarberias(routes);
 
@@ -3125,99 +3214,42 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Barbershop Visits — always visible, at a glance. Each shop gets a
-            traffic-light status (on track / due soon / overdue) so you can
-            see what's happening even when nothing needs urgent attention;
-            the full breakdown lives in Reports → Barbershop Visits. */}
-        <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
-          <div className="flex items-start justify-between gap-3 mb-4">
-            <div>
-              <h2 className="text-xl font-bold text-gray-800 leading-tight">Barbershop Visits</h2>
-              <p className="text-xs text-slate-500">Automatic — based on sales, not the agenda</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate("/reportes?tab=barberias")}
-              className="shrink-0 text-xs font-bold text-blue-600 hover:underline whitespace-nowrap"
-            >
-              Full report →
-            </button>
-          </div>
-
+        {/* Compact alert only. It learns cadence from visits made on or after
+            VISIT_LEARNING_START and stays out of the way when nothing is late. */}
+        <div className={`rounded-2xl border px-4 py-3 shadow-sm ${
+          barberiaResumen.length > 0 ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"
+        }`}>
           {loadingBarberiaResumen ? (
-            <div className="space-y-2">
-              {[0, 1, 2].map((i) => <div key={i} className="h-16 rounded-2xl bg-slate-100 animate-pulse" />)}
-            </div>
-          ) : barberiaResumen.length === 0 ? (
-            <div className="py-8 text-center text-sm text-slate-400">
-              No visits recorded yet — link a client's "Business" field to a barbershop to start tracking.
-            </div>
+            <div className="h-10 rounded-xl bg-slate-100 animate-pulse" />
           ) : (
-            (() => {
-              const withStatus = barberiaResumen.map((b) => {
-                const avgGap = b.avg_days_between_visits != null ? Number(b.avg_days_between_visits) : null;
-                const daysSince = b.days_since_last_visit;
-                const status = avgGap == null || daysSince == null
-                  ? "new"
-                  : daysSince > avgGap * 1.3 ? "overdue"
-                  : daysSince > avgGap ? "due"
-                  : "ok";
-                return { ...b, avgGap, daysSince, status };
-              }).sort((a, b) => (b.daysSince ?? -1) - (a.daysSince ?? -1));
-
-              const counts = {
-                overdue: withStatus.filter((b) => b.status === "overdue").length,
-                due: withStatus.filter((b) => b.status === "due").length,
-                ok: withStatus.filter((b) => b.status === "ok").length,
-              };
-              const STYLES = {
-                overdue: { card: "bg-red-50 border-red-200", dot: "bg-red-500", label: "Overdue", labelCls: "bg-red-600 text-white" },
-                due:     { card: "bg-amber-50 border-amber-200", dot: "bg-amber-400", label: "Due soon", labelCls: "bg-amber-500 text-white" },
-                ok:      { card: "bg-slate-50 border-slate-200", dot: "bg-emerald-500", label: "On track", labelCls: "bg-emerald-100 text-emerald-700" },
-                new:     { card: "bg-slate-50 border-slate-200", dot: "bg-slate-300", label: "New", labelCls: "bg-slate-200 text-slate-600" },
-              };
-
-              return (
-                <>
-                  <div className="flex items-center gap-3 text-xs font-semibold text-slate-500 mb-3">
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> {counts.overdue} overdue</span>
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" /> {counts.due} due soon</span>
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500" /> {counts.ok} on track</span>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  barberiaResumen.length > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                }`}>
+                  {barberiaResumen.length > 0 ? <AlertTriangle size={19} /> : <Check size={19} />}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-black text-slate-800">
+                    {barberiaResumen.length > 0
+                      ? `${barberiaResumen.length} visit alert${barberiaResumen.length === 1 ? "" : "s"}`
+                      : "No visit alerts"}
                   </div>
-                  <div className="space-y-2">
-                    {withStatus.map((b) => {
-                      const s = STYLES[b.status];
-                      return (
-                        <div key={b.barberia_id} className={`flex items-center justify-between gap-3 rounded-2xl border p-3.5 sm:p-4 ${s.card}`}>
-                          <div className="min-w-0 flex items-center gap-2.5">
-                            <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-slate-800 truncate">{b.barberia_nombre}</span>
-                                <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${s.labelCls}`}>
-                                  {s.label}
-                                </span>
-                              </div>
-                              <div className="text-xs text-slate-500 mt-0.5">
-                                Last visit: {b.last_visit_date ? dayjs(b.last_visit_date).format("MMM D") : "—"}
-                                {b.daysSince != null && ` · ${b.daysSince} day${b.daysSince === 1 ? "" : "s"} ago`}
-                                {b.avgGap != null && ` · usually every ~${b.avgGap}d`}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <div className="text-sm font-bold text-slate-800">
-                              ~{b.avg_estimated_minutes ? Math.round(b.avg_estimated_minutes) : "—"} min
-                            </div>
-                            <div className="text-[11px] text-slate-400">avg visit · {b.total_visits} total</div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="text-xs text-slate-500 truncate">
+                    {barberiaResumen.length > 0
+                      ? `${barberiaResumen[0].barberia_nombre}: usually ${barberiaResumen[0].cadence} · ${barberiaResumen[0].days_since_last_visit} days since last visit`
+                      : `Learning patterns from Jul 30 · ${barberiasAprendiendo} shop${barberiasAprendiendo === 1 ? "" : "s"} in learning`}
                   </div>
-                </>
-              );
-            })()
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate("/reportes?tab=barberias")}
+                className="shrink-0 text-xs font-bold text-blue-600 hover:underline whitespace-nowrap"
+              >
+                {barberiaResumen.length > 1 ? `View all (${barberiaResumen.length})` : "Details"}
+              </button>
+            </div>
           )}
         </div>
 
