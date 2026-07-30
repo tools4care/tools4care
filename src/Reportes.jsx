@@ -16,7 +16,7 @@ import { paginateRows, REPORT_PAGE_SIZES } from "./lib/pagination";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
-  CreditCard, Filter, ShieldCheck, Wallet, ReceiptText,
+  CreditCard, Filter, ShieldCheck, Wallet, ReceiptText, MapPin, Clock,
 } from "lucide-react";
 
 /* ========================= Helpers ========================= */
@@ -83,6 +83,7 @@ const TABS = [
   { id: "top_clientes",     label: "Top Clients",    icon: Users,        color: "text-blue-600", description: "Best customers, balances, purchase frequency, and inactivity signals." },
   { id: "productos",        label: "Top Products",   icon: Package,      color: "text-purple-600", description: "Product demand by units, revenue, and average selling price." },
   { id: "ganancias",        label: "Profit Report",  icon: TrendingUp,   color: "text-emerald-600", description: "Gross profit and margin when product cost data is available." },
+  { id: "barberias",        label: "Barbershop Visits", icon: MapPin,    color: "text-teal-600", description: "Automatic visit tracking by barbershop — cadence, last visit, and estimated time on site." },
 ];
 
 /* ========================= Shared UI ========================= */
@@ -3264,6 +3265,200 @@ function PaymentBreakdownReport({ van, usuario }) {
   );
 }
 
+/* ========================= Barbershop Visits ========================= */
+function BarberiaVisitsReport() {
+  const [resumen, setResumen] = useState([]);
+  const [pendientes, setPendientes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+
+  async function cargar() {
+    setLoading(true);
+    try {
+      const [{ data: resumenData }, { data: pendData }] = await Promise.all([
+        supabase.from("v_barberia_resumen").select("*").order("days_since_last_visit", { ascending: false, nullsFirst: false }),
+        supabase.from("barberias").select("id, nombre, direccion, duplicado_de").eq("revisar_duplicado", true),
+      ]);
+      setResumen(resumenData || []);
+
+      // Resolve each flagged shop's suggested match name/address for display.
+      const targetIds = [...new Set((pendData || []).map((p) => p.duplicado_de).filter(Boolean))];
+      let targetsMap = new Map();
+      if (targetIds.length) {
+        const { data: targets } = await supabase.from("barberias").select("id, nombre, direccion").in("id", targetIds);
+        targetsMap = new Map((targets || []).map((t) => [t.id, t]));
+      }
+      setPendientes((pendData || []).map((p) => ({ ...p, target: targetsMap.get(p.duplicado_de) || null })));
+    } catch (err) {
+      console.error("Error loading barbershop visits report:", err);
+      setResumen([]);
+      setPendientes([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { cargar(); }, []);
+
+  async function fusionar(flagged) {
+    if (!flagged.target) return;
+    setBusyId(flagged.id);
+    try {
+      const { error: e1 } = await supabase.from("clientes").update({ barberia_id: flagged.target.id }).eq("barberia_id", flagged.id);
+      if (e1) throw e1;
+      const { error: e2 } = await supabase.from("barberias").delete().eq("id", flagged.id);
+      if (e2) throw e2;
+      await cargar();
+    } catch (err) {
+      alert("Could not merge: " + (err?.message || err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function mantenerSeparada(flagged) {
+    setBusyId(flagged.id);
+    try {
+      const { error } = await supabase.from("barberias").update({ revisar_duplicado: false }).eq("id", flagged.id);
+      if (error) throw error;
+      await cargar();
+    } catch (err) {
+      alert("Could not update: " + (err?.message || err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const totals = useMemo(() => ({
+    shops: resumen.length,
+    visits: resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0),
+    avgMinutes: resumen.length
+      ? Math.round(resumen.reduce((s, r) => s + Number(r.avg_estimated_minutes || 0), 0) / resumen.length)
+      : 0,
+    overdue: resumen.filter((r) => {
+      const avgGap = r.avg_days_between_visits != null ? Number(r.avg_days_between_visits) : null;
+      return avgGap != null && r.days_since_last_visit != null && r.days_since_last_visit > avgGap * 1.3;
+    }).length,
+  }), [resumen]);
+
+  if (loading) {
+    return <div className="py-16 text-center text-sm text-gray-400">Loading…</div>;
+  }
+
+  return (
+    <div>
+      <p className="text-xs text-gray-500 mb-4">
+        Automatic — a visit is counted whenever a sale is recorded for any client linked to a barbershop, whether
+        or not it was on the daily route that day. New business names are matched (or created) automatically when
+        a client is saved with one.
+      </p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <SummaryCard label="Barbershops tracked" value={totals.shops} icon={MapPin} color="blue" />
+        <SummaryCard label="Total visits" value={totals.visits} icon={Users} color="purple" />
+        <SummaryCard label="Avg time per visit" value={`~${totals.avgMinutes} min`} icon={Clock} color="emerald" />
+        <SummaryCard label="Overdue" value={totals.overdue} icon={AlertTriangle} color={totals.overdue ? "red" : "green"} />
+      </div>
+
+      {pendientes.length > 0 && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <h3 className="text-sm font-bold text-amber-800 flex items-center gap-1.5 mb-1">
+            <AlertTriangle size={15} /> Possible duplicates — needs a quick look
+          </h3>
+          <p className="text-xs text-amber-700 mb-3">
+            A new business name looked similar to an existing barbershop, but the address didn't clearly match — it's
+            already being tracked as its own shop, this is just asking whether it should be merged.
+          </p>
+          <div className="space-y-2">
+            {pendientes.map((p) => (
+              <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-lg border border-amber-200 p-3">
+                <div className="text-sm">
+                  <span className="font-semibold text-gray-800">{p.nombre}</span>
+                  <span className="text-gray-400"> ({p.direccion || "no address"})</span>
+                  {p.target && (
+                    <>
+                      <span className="text-gray-400"> — might be the same as </span>
+                      <span className="font-semibold text-gray-800">{p.target.nombre}</span>
+                      <span className="text-gray-400"> ({p.target.direccion || "no address"})</span>
+                    </>
+                  )}
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={busyId === p.id || !p.target}
+                    onClick={() => fusionar(p)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    Merge into {p.target?.nombre || "—"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === p.id}
+                    onClick={() => mantenerSeparada(p)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-300 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    Keep separate
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {resumen.length === 0 ? (
+        <div className="py-12 text-center text-sm text-gray-400">
+          No visits recorded yet. Link a client's "Business" field to a barbershop and their sales will start counting automatically.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
+                <th className="py-2 pr-3">Barbershop</th>
+                <th className="py-2 pr-3">Last visit</th>
+                <th className="py-2 pr-3">Days since</th>
+                <th className="py-2 pr-3">Usual cadence</th>
+                <th className="py-2 pr-3">Avg time / visit</th>
+                <th className="py-2 pr-3">Total visits</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resumen.map((r) => {
+                const avgGap = r.avg_days_between_visits != null ? Number(r.avg_days_between_visits) : null;
+                const daysSince = r.days_since_last_visit;
+                const overdue = avgGap != null && daysSince != null && daysSince > avgGap * 1.3;
+                return (
+                  <tr key={r.barberia_id} className="border-b border-gray-100 last:border-0">
+                    <td className="py-2.5 pr-3 font-semibold text-gray-800">
+                      {r.barberia_nombre}
+                      {overdue && (
+                        <span className="ml-2 text-[10px] font-bold uppercase tracking-wide bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full">
+                          Overdue
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3 text-gray-600">{r.last_visit_date || "—"}</td>
+                    <td className={`py-2.5 pr-3 font-semibold ${overdue ? "text-red-600" : "text-gray-700"}`}>
+                      {daysSince != null ? `${daysSince}d` : "—"}
+                    </td>
+                    <td className="py-2.5 pr-3 text-gray-600">{avgGap != null ? `~${avgGap}d` : "—"}</td>
+                    <td className="py-2.5 pr-3 text-gray-600">
+                      {r.avg_estimated_minutes != null ? `~${Math.round(r.avg_estimated_minutes)} min` : "—"}
+                    </td>
+                    <td className="py-2.5 pr-3 text-gray-600">{r.total_visits}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ========================= MAIN ========================= */
 export default function Reportes() {
   const { van }     = useVan();
@@ -3341,6 +3536,7 @@ export default function Reportes() {
           {activeTab==="top_clientes"    && <TopClientesReport     van={van} usuario={usuario}/>}
           {activeTab==="productos"       && <ProductosReport       van={van} usuario={usuario}/>}
           {activeTab==="ganancias"       && <GananciasReport       van={van} usuario={usuario}/>}
+          {activeTab==="barberias"       && <BarberiaVisitsReport />}
         </div>
       </div>
     </div>
