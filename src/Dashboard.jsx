@@ -3089,61 +3089,101 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Barbershop Visits — reminder-only. The full report (all shops,
-            cadence, estimated time, duplicate review) lives in Reports;
-            this card only surfaces the ones you're falling behind on. */}
-        {(() => {
-          const overdueShops = barberiaResumen.filter((b) => {
-            const avgGap = b.avg_days_between_visits != null ? Number(b.avg_days_between_visits) : null;
-            return avgGap != null && b.days_since_last_visit != null && b.days_since_last_visit > avgGap * 1.3;
-          });
-          if (loadingBarberiaResumen || overdueShops.length > 0) {
-            return (
-              <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
-                <div className="flex items-start justify-between gap-3 mb-4">
-                  <div>
-                    <h2 className="text-xl font-bold text-gray-800 leading-tight">Barbershops you should visit</h2>
-                    <p className="text-xs text-slate-500">Falling behind your usual schedule — automatic, based on sales</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/reportes?tab=barberias")}
-                    className="shrink-0 text-xs font-bold text-blue-600 hover:underline whitespace-nowrap"
-                  >
-                    Full report →
-                  </button>
-                </div>
+        {/* Barbershop Visits — always visible, at a glance. Each shop gets a
+            traffic-light status (on track / due soon / overdue) so you can
+            see what's happening even when nothing needs urgent attention;
+            the full breakdown lives in Reports → Barbershop Visits. */}
+        <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-800 leading-tight">Barbershop Visits</h2>
+              <p className="text-xs text-slate-500">Automatic — based on sales, not the agenda</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate("/reportes?tab=barberias")}
+              className="shrink-0 text-xs font-bold text-blue-600 hover:underline whitespace-nowrap"
+            >
+              Full report →
+            </button>
+          </div>
 
-                {loadingBarberiaResumen ? (
-                  <div className="space-y-2">
-                    {[0, 1].map((i) => <div key={i} className="h-16 rounded-2xl bg-slate-100 animate-pulse" />)}
+          {loadingBarberiaResumen ? (
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => <div key={i} className="h-16 rounded-2xl bg-slate-100 animate-pulse" />)}
+            </div>
+          ) : barberiaResumen.length === 0 ? (
+            <div className="py-8 text-center text-sm text-slate-400">
+              No visits recorded yet — link a client's "Business" field to a barbershop to start tracking.
+            </div>
+          ) : (
+            (() => {
+              const withStatus = barberiaResumen.map((b) => {
+                const avgGap = b.avg_days_between_visits != null ? Number(b.avg_days_between_visits) : null;
+                const daysSince = b.days_since_last_visit;
+                const status = avgGap == null || daysSince == null
+                  ? "new"
+                  : daysSince > avgGap * 1.3 ? "overdue"
+                  : daysSince > avgGap ? "due"
+                  : "ok";
+                return { ...b, avgGap, daysSince, status };
+              }).sort((a, b) => (b.daysSince ?? -1) - (a.daysSince ?? -1));
+
+              const counts = {
+                overdue: withStatus.filter((b) => b.status === "overdue").length,
+                due: withStatus.filter((b) => b.status === "due").length,
+                ok: withStatus.filter((b) => b.status === "ok").length,
+              };
+              const STYLES = {
+                overdue: { card: "bg-red-50 border-red-200", dot: "bg-red-500", label: "Overdue", labelCls: "bg-red-600 text-white" },
+                due:     { card: "bg-amber-50 border-amber-200", dot: "bg-amber-400", label: "Due soon", labelCls: "bg-amber-500 text-white" },
+                ok:      { card: "bg-slate-50 border-slate-200", dot: "bg-emerald-500", label: "On track", labelCls: "bg-emerald-100 text-emerald-700" },
+                new:     { card: "bg-slate-50 border-slate-200", dot: "bg-slate-300", label: "New", labelCls: "bg-slate-200 text-slate-600" },
+              };
+
+              return (
+                <>
+                  <div className="flex items-center gap-3 text-xs font-semibold text-slate-500 mb-3">
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> {counts.overdue} overdue</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" /> {counts.due} due soon</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500" /> {counts.ok} on track</span>
                   </div>
-                ) : (
                   <div className="space-y-2">
-                    {overdueShops.map((b) => (
-                      <div key={b.barberia_id} className="flex items-center justify-between gap-3 rounded-2xl border bg-red-50 border-red-200 p-3.5 sm:p-4">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-800 truncate">{b.barberia_nombre}</span>
-                            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white px-2 py-0.5 rounded-full">
-                              Overdue
-                            </span>
+                    {withStatus.map((b) => {
+                      const s = STYLES[b.status];
+                      return (
+                        <div key={b.barberia_id} className={`flex items-center justify-between gap-3 rounded-2xl border p-3.5 sm:p-4 ${s.card}`}>
+                          <div className="min-w-0 flex items-center gap-2.5">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-800 truncate">{b.barberia_nombre}</span>
+                                <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${s.labelCls}`}>
+                                  {s.label}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-500 mt-0.5">
+                                Last visit: {b.last_visit_date ? dayjs(b.last_visit_date).format("MMM D") : "—"}
+                                {b.daysSince != null && ` · ${b.daysSince} day${b.daysSince === 1 ? "" : "s"} ago`}
+                                {b.avgGap != null && ` · usually every ~${b.avgGap}d`}
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-xs text-slate-500 mt-0.5">
-                            Last visit: {b.last_visit_date ? dayjs(b.last_visit_date).format("MMM D") : "—"}
-                            {b.days_since_last_visit != null && ` · ${b.days_since_last_visit} days ago`}
-                            {b.avg_days_between_visits != null && ` · usually every ~${b.avg_days_between_visits}d`}
+                          <div className="text-right shrink-0">
+                            <div className="text-sm font-bold text-slate-800">
+                              ~{b.avg_estimated_minutes ? Math.round(b.avg_estimated_minutes) : "—"} min
+                            </div>
+                            <div className="text-[11px] text-slate-400">avg visit · {b.total_visits} total</div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
-                )}
-              </div>
-            );
-          }
-          return null;
-        })()}
+                </>
+              );
+            })()
+          )}
+        </div>
 
         {/* Date range selector — controls every metric card and chart below */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-2xl border border-gray-200 shadow-sm px-4 py-3">
