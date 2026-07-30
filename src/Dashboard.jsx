@@ -2174,6 +2174,30 @@ export default function Dashboard() {
   const [showAddBarberia, setShowAddBarberia] = useState(false);
   const [loadingRutas, setLoadingRutas] = useState(false);
 
+  // Automatic visit tracking — derived from sales to clients linked to a
+  // barbershop (clientes.barberia_id), not from the daily route/agenda, so
+  // it counts visits you make outside your usual schedule too.
+  const [barberiaResumen, setBarberiaResumen] = useState([]);
+  const [loadingBarberiaResumen, setLoadingBarberiaResumen] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingBarberiaResumen(true);
+      try {
+        const { data } = await supabase
+          .from("v_barberia_resumen")
+          .select("*")
+          .order("days_since_last_visit", { ascending: false, nullsFirst: false });
+        setBarberiaResumen(data || []);
+      } catch (err) {
+        console.error("Error loading barbershop visit summary:", err);
+        setBarberiaResumen([]);
+      } finally {
+        setLoadingBarberiaResumen(false);
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     cargarClientes();
   }, []);
@@ -3061,6 +3085,66 @@ export default function Dashboard() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Barbershop Visits — automatic, sales-driven visit tracking.
+            Counts a visit whenever a sale is recorded for any client linked
+            to a barbershop, whether or not it was on the agenda that day. */}
+        <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-800 leading-tight">Barbershop Visits</h2>
+              <p className="text-xs text-slate-500">Automatic — based on sales, not the agenda</p>
+            </div>
+          </div>
+
+          {loadingBarberiaResumen ? (
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => <div key={i} className="h-16 rounded-2xl bg-slate-100 animate-pulse" />)}
+            </div>
+          ) : barberiaResumen.length === 0 ? (
+            <div className="py-8 text-center text-sm text-slate-400">
+              No visits recorded yet — link a client to a barbershop to start tracking.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {barberiaResumen.map((b) => {
+                const daysSince = b.days_since_last_visit;
+                const avgGap = b.avg_days_between_visits != null ? Number(b.avg_days_between_visits) : null;
+                const overdue = avgGap != null && daysSince != null && daysSince > avgGap * 1.3;
+                return (
+                  <div
+                    key={b.barberia_id}
+                    className={`flex items-center justify-between gap-3 rounded-2xl border p-3.5 sm:p-4 ${
+                      overdue ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-200"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-800 truncate">{b.barberia_nombre}</span>
+                        {overdue && (
+                          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white px-2 py-0.5 rounded-full">
+                            Overdue
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        Last visit: {b.last_visit_date ? dayjs(b.last_visit_date).format("MMM D") : "—"}
+                        {daysSince != null && ` · ${daysSince} day${daysSince === 1 ? "" : "s"} ago`}
+                        {avgGap != null && ` · usually every ~${avgGap}d`}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-bold text-slate-800">
+                        ~{b.avg_estimated_minutes ? Math.round(b.avg_estimated_minutes) : "—"} min
+                      </div>
+                      <div className="text-[11px] text-slate-400">avg visit · {b.total_visits} total</div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
