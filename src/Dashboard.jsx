@@ -666,6 +666,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
   const [mostrarSugerenciasNombre, setMostrarSugerenciasNombre] = useState(false);
   const [mostrarSugerenciasDireccion, setMostrarSugerenciasDireccion] = useState(false);
   const [autocompletado, setAutocompletado] = useState(false);
+  const [barberiaIdSeleccionada, setBarberiaIdSeleccionada] = useState(null);
 
   // Cargar barberías existentes cuando se abre el modal
   useEffect(() => {
@@ -685,6 +686,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
       setMostrarSugerenciasNombre(false);
       setMostrarSugerenciasDireccion(false);
       setAutocompletado(false);
+      setBarberiaIdSeleccionada(null);
     }
   }, [open, vanId]);
 
@@ -693,13 +695,13 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
       // 1. Load from rutas_barberias (previously visited barbershops)
       const { data: rutasData } = await supabase
         .from("rutas_barberias")
-        .select("barberia_nombre, direccion, telefono")
+        .select("barberia_nombre, direccion, telefono, barberia_id")
         .eq("van_id", vanId);
 
       // 2. Load from clientes (all client businesses in the system)
       const { data: clientesData } = await supabase
         .from("clientes")
-        .select("negocio, direccion, telefono")
+        .select("negocio, direccion, telefono, barberia_id")
         .not("negocio", "is", null)
         .neq("negocio", "");
 
@@ -712,6 +714,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
             barberia_nombre: item.barberia_nombre.trim(),
             direccion: item.direccion?.trim() || "",
             telefono: item.telefono?.trim() || "",
+            barberia_id: item.barberia_id || null,
             fuente: "rutas"
           });
         }
@@ -723,6 +726,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
             barberia_nombre: item.negocio.trim(),
             direccion: item.direccion?.trim() || "",
             telefono: item.telefono?.trim() || "",
+            barberia_id: item.barberia_id || null,
             fuente: "clientes"
           });
         }
@@ -749,6 +753,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
   // Filter autocomplete suggestions by name
   const handleNombreChange = (value) => {
     setBarberiaNombre(value);
+    setBarberiaIdSeleccionada(null);
     if (!value?.trim()) {
       setSugerenciasNombre([]);
       setMostrarSugerenciasNombre(false);
@@ -763,6 +768,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
   // Filter autocomplete suggestions by address
   const handleDireccionChange = (value) => {
     setDireccion(value);
+    setBarberiaIdSeleccionada(null);
     if (!value?.trim()) {
       setSugerenciasDireccion([]);
       setMostrarSugerenciasDireccion(false);
@@ -779,6 +785,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
     setBarberiaNombre(barberia.barberia_nombre || "");
     setDireccion(barberia.direccion || "");
     setTelefono(barberia.telefono || "");
+    setBarberiaIdSeleccionada(barberia.barberia_id || null);
     setMostrarSugerenciasNombre(false);
     setMostrarSugerenciasDireccion(false);
     setAutocompletado(true);
@@ -800,6 +807,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
         hora_visita: horaVisita || null,
         notas: notas.trim() || null,
         visitada: false,
+        barberia_id: barberiaIdSeleccionada,
       });
 
       if (error) throw error;
@@ -815,6 +823,7 @@ function RutaBarberiaModal({ open, onClose, vanId, fechaSeleccionada, onRefresh 
       setMostrarSugerenciasNombre(false);
       setMostrarSugerenciasDireccion(false);
       setAutocompletado(false);
+      setBarberiaIdSeleccionada(null);
 
       onRefresh();
       onClose();
@@ -2488,16 +2497,43 @@ export default function Dashboard() {
   async function cargarRutasBarberias(vanId, fecha) {
     setLoadingRutas(true);
     try {
-      const { data, error } = await supabase
-        .from("rutas_barberias")
-        .select("id,van_id,dia,barberia_nombre,telefono,direccion,orden,hora_visita,visitada,notas")
-        .eq("van_id", vanId)
-        .eq("dia", fecha)
-        .order("orden", { ascending: true })
-        .order("hora_visita", { ascending: true });
+      const [routesResult, visitsResult] = await Promise.all([
+        supabase
+          .from("rutas_barberias")
+          .select("id,van_id,dia,barberia_nombre,telefono,direccion,orden,hora_visita,visitada,notas,barberia_id")
+          .eq("van_id", vanId)
+          .eq("dia", fecha)
+          .order("orden", { ascending: true })
+          .order("hora_visita", { ascending: true }),
+        supabase
+          .from("v_barberia_visitas")
+          .select("barberia_id")
+          .eq("visit_date", fecha),
+      ]);
 
-      if (error) throw error;
-      setRutasBarberias(data || []);
+      if (routesResult.error) throw routesResult.error;
+
+      // A real sale is authoritative evidence of a visit. This also handles
+      // offline sales as soon as they are synchronized to Supabase, even if
+      // the legacy manual `visitada` flag was never updated.
+      const soldAt = new Set((visitsResult.data || []).map((row) => row.barberia_id).filter(Boolean));
+      const routes = (routesResult.data || []).map((route) => ({
+        ...route,
+        visitada: Boolean(route.visitada || (route.barberia_id && soldAt.has(route.barberia_id))),
+      }));
+      setRutasBarberias(routes);
+
+      // Keep the stored flag consistent for reports and older app versions.
+      const autoVisitedIds = routes
+        .filter((route) => !routesResult.data.find((raw) => raw.id === route.id)?.visitada && route.visitada)
+        .map((route) => route.id);
+      if (autoVisitedIds.length > 0) {
+        const { error: markError } = await supabase
+          .from("rutas_barberias")
+          .update({ visitada: true })
+          .in("id", autoVisitedIds);
+        if (markError) console.warn("Could not persist automatic route visits:", markError);
+      }
     } catch (error) {
       console.error("Error al cargar rutas:", error);
       setRutasBarberias([]);
