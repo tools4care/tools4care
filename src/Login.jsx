@@ -26,6 +26,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
   // showAlreadyLoggedModal removed — useEffect now auto-navigates to "/" when already logged in
   const { usuario, cargando } = useUsuario();
   const navigate = useNavigate();
@@ -38,10 +39,28 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (signingIn) return;
     setErrorMsg("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setErrorMsg("Incorrect email or password. Please try again.");
+    setSigningIn(true);
+    try {
+      const timeout = new Promise((_, reject) => {
+        window.setTimeout(() => reject(new Error("LOGIN_TIMEOUT")), 12000);
+      });
+      const { error } = await Promise.race([
+        supabase.auth.signInWithPassword({ email: email.trim(), password }),
+        timeout,
+      ]);
+      if (error) {
+        setErrorMsg("Incorrect email or password. Please try again.");
+      }
+    } catch (error) {
+      setErrorMsg(
+        error?.message === "LOGIN_TIMEOUT"
+          ? "The connection is taking too long. Check your internet and try again."
+          : "Could not connect. Check your internet and try again."
+      );
+    } finally {
+      setSigningIn(false);
     }
   };
 
@@ -153,10 +172,10 @@ export default function Login() {
                   </div>
                 </div>
 
-                <button type="submit" className="group flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 font-black text-white shadow-lg shadow-blue-200 transition hover:from-blue-700 hover:to-indigo-700">
-                  Sign in
-                  <svg className="h-5 w-5 transition-transform group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                <button type="submit" disabled={signingIn} className="group flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 font-black text-white shadow-lg shadow-blue-200 transition hover:from-blue-700 hover:to-indigo-700 disabled:cursor-wait disabled:opacity-70">
+                  {signingIn ? "Signing in..." : "Sign in"}
+                  <svg className={`h-5 w-5 ${signingIn ? "animate-spin" : "transition-transform group-hover:translate-x-1"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={signingIn ? "M12 3a9 9 0 109 9" : "M13 7l5 5m0 0l-5 5m5-5H6"} />
                   </svg>
                 </button>
               </div>

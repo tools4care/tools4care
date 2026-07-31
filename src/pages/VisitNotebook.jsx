@@ -10,6 +10,8 @@ import {
   ShoppingCart,
   Trash2,
   UserRound,
+  Search,
+  X,
 } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { useVan } from "../hooks/VanContext";
@@ -35,6 +37,10 @@ function groupItems(items) {
   return [...groups.values()];
 }
 
+function normalizeSearch(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
 export default function VisitNotebook() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -57,19 +63,51 @@ export default function VisitNotebook() {
   const [quantity, setQuantity] = useState("1");
   const [itemNotes, setItemNotes] = useState("");
   const [generalNotes, setGeneralNotes] = useState("");
+  const [shopSearch, setShopSearch] = useState("");
+  const [changingShop, setChangingShop] = useState(!searchParams.get("barberia"));
+  const [inventoryLoading, setInventoryLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      supabase.from("barberias").select("id,nombre,direccion").order("nombre"),
-      supabase.from("productos").select("id,nombre,codigo").order("nombre").limit(1000),
-    ]).then(([shopsResult, productsResult]) => {
+    supabase.from("barberias").select("id,nombre,direccion").order("nombre").then((shopsResult) => {
       if (!active) return;
       setBarberias(shopsResult.data || []);
-      setProducts(productsResult.data || []);
     }).finally(() => active && setLoading(false));
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadVanInventory() {
+      if (!van?.id) {
+        setProducts([]);
+        return;
+      }
+      setInventoryLoading(true);
+      const { data, error } = await supabase
+        .from("stock_van")
+        .select("producto_id,cantidad,productos:productos!inner(id,nombre,codigo,marca)")
+        .eq("van_id", van.id)
+        .gt("cantidad", 0)
+        .order("cantidad", { ascending: false });
+      if (!active) return;
+      if (error) {
+        setProducts([]);
+        toast.error("Could not load this VAN's inventory.");
+      } else {
+        setProducts((data || []).map((row) => ({
+          id: row.producto_id,
+          nombre: row.productos?.nombre || "",
+          codigo: row.productos?.codigo || "",
+          marca: row.productos?.marca || "",
+          stock: Number(row.cantidad || 0),
+        })));
+      }
+      setInventoryLoading(false);
+    }
+    loadVanInventory();
+    return () => { active = false; };
+  }, [van?.id, toast]);
 
   useEffect(() => {
     if (!barberiaId) {
@@ -120,6 +158,17 @@ export default function VisitNotebook() {
   }, [barberiaId, van?.id, visitDate, toast]);
 
   const selectedShop = barberias.find((shop) => shop.id === barberiaId);
+  const filteredShops = useMemo(() => {
+    const term = normalizeSearch(shopSearch);
+    return barberias.filter((shop) => !term || normalizeSearch(`${shop.nombre} ${shop.direccion || ""}`).includes(term)).slice(0, 8);
+  }, [barberias, shopSearch]);
+  const productMatches = useMemo(() => {
+    const term = normalizeSearch(productText);
+    if (!term) return products.slice(0, 8);
+    return products.filter((product) =>
+      normalizeSearch(`${product.nombre} ${product.codigo || ""} ${product.marca || ""}`).includes(term)
+    ).slice(0, 8);
+  }, [products, productText]);
   const grouped = useMemo(() => groupItems(items), [items]);
   const totals = useMemo(() => ({
     lines: items.length,
@@ -154,6 +203,18 @@ export default function VisitNotebook() {
     if (client) setBarberName(client.nombre || "");
   }
 
+  function chooseShop(shop) {
+    setBarberiaId(shop.id);
+    setShopSearch("");
+    setChangingShop(false);
+    setSelectedClientId("");
+    setBarberName("");
+  }
+
+  function chooseProduct(product) {
+    setProductText(product.nombre);
+  }
+
   async function addItem(event) {
     event.preventDefault();
     if (!barberName.trim() || !productText.trim()) {
@@ -163,10 +224,10 @@ export default function VisitNotebook() {
     setSaving(true);
     try {
       const current = await ensureNotebook();
-      const normalizedProduct = productText.trim().toLowerCase();
+      const normalizedProduct = normalizeSearch(productText);
       const matchedProduct = products.find((product) =>
-        product.nombre?.trim().toLowerCase() === normalizedProduct
-        || product.codigo?.trim().toLowerCase() === normalizedProduct
+        normalizeSearch(product.nombre) === normalizedProduct
+        || normalizeSearch(product.codigo) === normalizedProduct
       );
       const payload = {
         notebook_id: current.id,
@@ -260,13 +321,32 @@ export default function VisitNotebook() {
       </header>
 
       <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[1fr_auto]">
-        <label>
+        <div className="relative">
           <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Barbershop</span>
-          <select value={barberiaId} onChange={(event) => setBarberiaId(event.target.value)} disabled={loading} className="h-12 w-full rounded-xl border-2 border-slate-200 px-3 font-bold text-slate-900 outline-none focus:border-purple-500">
-            <option value="">Choose a barbershop...</option>
-            {barberias.map((shop) => <option key={shop.id} value={shop.id}>{shop.nombre}</option>)}
-          </select>
-        </label>
+          {selectedShop && !changingShop ? (
+            <div className="flex h-12 items-center justify-between gap-3 rounded-xl border-2 border-purple-200 bg-purple-50 px-3">
+              <span className="truncate font-black text-purple-950">{selectedShop.nombre}</span>
+              <button type="button" onClick={() => setChangingShop(true)} className="shrink-0 text-xs font-black text-purple-700">Change</button>
+            </div>
+          ) : (
+            <>
+              <div className="relative">
+                <Search size={17} className="pointer-events-none absolute left-3 top-3.5 text-slate-400" />
+                <input value={shopSearch} onChange={(event) => setShopSearch(event.target.value)} disabled={loading} placeholder="Type the barbershop name..." className="h-12 w-full rounded-xl border-2 border-slate-200 pl-10 pr-10 font-bold outline-none focus:border-purple-500" autoFocus />
+                {selectedShop && <button type="button" onClick={() => setChangingShop(false)} className="absolute right-3 top-3.5 text-slate-400"><X size={17} /></button>}
+              </div>
+              <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                {filteredShops.map((shop) => (
+                  <button key={shop.id} type="button" onClick={() => chooseShop(shop)} className="block w-full rounded-lg px-3 py-3 text-left hover:bg-purple-50">
+                    <span className="block font-black text-slate-900">{shop.nombre}</span>
+                    {shop.direccion && <span className="block truncate text-xs text-slate-500">{shop.direccion}</span>}
+                  </button>
+                ))}
+                {!filteredShops.length && <p className="px-3 py-4 text-sm text-slate-500">No barbershop found.</p>}
+              </div>
+            </>
+          )}
+        </div>
         <label>
           <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Visit date</span>
           <input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} className="h-12 rounded-xl border-2 border-slate-200 px-3 font-bold outline-none focus:border-purple-500" />
@@ -279,23 +359,41 @@ export default function VisitNotebook() {
           <form onSubmit={addItem} className="rounded-2xl border border-purple-200 bg-white p-4 shadow-sm">
             <div className="mb-4 flex items-center gap-2"><Plus size={18} className="text-purple-600" /><h2 className="font-black text-slate-900">Add request</h2></div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <label>
-                <span className="mb-1 block text-xs font-bold text-slate-500">Existing barber/customer</span>
-                <select value={selectedClientId} onChange={(event) => selectClient(event.target.value)} className="h-12 w-full rounded-xl border border-slate-200 px-3">
-                  <option value="">Write a name manually</option>
-                  {clients.map((client) => <option key={client.id} value={client.id}>{client.nombre}</option>)}
-                </select>
-              </label>
+              <div className="sm:col-span-2">
+                <span className="mb-2 block text-xs font-bold text-slate-500">Barbers at this barbershop</span>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {clients.map((client) => (
+                    <button key={client.id} type="button" onClick={() => selectClient(client.id)} className={`shrink-0 rounded-xl border px-3 py-2 text-sm font-black ${selectedClientId === client.id ? "border-purple-600 bg-purple-600 text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+                      {client.nombre}
+                    </button>
+                  ))}
+                  {!clients.length && <span className="text-sm text-slate-500">No saved barbers here yet; write the name below.</span>}
+                </div>
+              </div>
               <label>
                 <span className="mb-1 block text-xs font-bold text-slate-500">Barber name *</span>
                 <input value={barberName} onChange={(event) => { setBarberName(event.target.value); if (selectedClientId) setSelectedClientId(""); }} placeholder="Example: Carlos" className="h-12 w-full rounded-xl border border-slate-200 px-3" required />
               </label>
+              <div className="flex items-end">
+                <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); }} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Next / another barber</button>
+              </div>
               <label className="sm:col-span-2">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Product requested *</span>
-                <input list="visit-products" value={productText} onChange={(event) => setProductText(event.target.value)} placeholder="Start typing a product or write anything" className="h-12 w-full rounded-xl border border-slate-200 px-3" required />
-                <datalist id="visit-products">
-                  {products.map((product) => <option key={product.id} value={product.nombre}>{product.codigo || ""}</option>)}
-                </datalist>
+                <span className="mb-1 block text-xs font-bold text-slate-500">Product requested · active VAN inventory *</span>
+                <div className="relative">
+                  <Search size={17} className="pointer-events-none absolute left-3 top-3.5 text-slate-400" />
+                  <input value={productText} onChange={(event) => setProductText(event.target.value)} placeholder={inventoryLoading ? "Loading VAN inventory..." : "Type name, code or brand"} className="h-12 w-full rounded-xl border border-slate-200 pl-10 pr-3" required autoComplete="off" />
+                  {productText && (
+                    <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                      {productMatches.map((product) => (
+                        <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-left hover:bg-purple-50">
+                          <span className="min-w-0"><span className="block truncate font-black text-slate-900">{product.nombre}</span><span className="block text-xs text-slate-500">{[product.codigo, product.marca].filter(Boolean).join(" · ")}</span></span>
+                          <span className="shrink-0 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">{product.stock} available</span>
+                        </button>
+                      ))}
+                      {!productMatches.length && <p className="px-3 py-4 text-sm text-amber-700">Not found in this VAN. You may keep it as a special request.</p>}
+                    </div>
+                  )}
+                </div>
               </label>
               <label>
                 <span className="mb-1 block text-xs font-bold text-slate-500">Quantity</span>
@@ -307,7 +405,7 @@ export default function VisitNotebook() {
               </label>
             </div>
             <button type="submit" disabled={saving} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-purple-600 font-black text-white hover:bg-purple-700 disabled:opacity-50">
-              <Plus size={18} /> {saving ? "Saving..." : "Add product"}
+              <Plus size={18} /> {saving ? "Saving..." : "Add product and keep this barber"}
             </button>
           </form>
 
@@ -333,7 +431,7 @@ export default function VisitNotebook() {
                     <div className="flex min-w-0 items-center gap-2"><UserRound size={18} /><h3 className="truncate font-black">{group.name}</h3></div>
                     {group.clientId && (
                       <button type="button" onClick={() => navigate(`/ventas?client=${group.clientId}&notebook=${notebook?.id || ""}`)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-black">
-                        <ShoppingCart size={14} /> Start sale
+                        <ShoppingCart size={14} /> Open normal sale
                       </button>
                     )}
                   </div>
@@ -368,7 +466,7 @@ export default function VisitNotebook() {
             </label>
             {notebook && items.length > 0 && (
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <button type="button" onClick={() => setNotebookStatus("ready")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-amber-500 font-black text-white"><PackageCheck size={18} /> Ready to load</button>
+                <button type="button" onClick={() => setNotebookStatus("ready")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-amber-500 font-black text-white"><PackageCheck size={18} /> Requests finished</button>
                 <button type="button" onClick={() => setNotebookStatus("completed")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 font-black text-white"><CheckCircle2 size={18} /> Complete visit</button>
               </div>
             )}
