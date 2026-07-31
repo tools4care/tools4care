@@ -312,25 +312,24 @@ export default function VisitNotebook() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-3 pb-24 sm:space-y-4">
-      <header className="rounded-2xl bg-gradient-to-br from-violet-700 via-purple-700 to-fuchsia-700 p-4 text-white shadow-xl sm:rounded-3xl sm:p-5">
-        <button type="button" onClick={() => navigate(-1)} className="mb-4 inline-flex items-center gap-2 text-sm font-bold text-purple-100">
-          <ArrowLeft size={17} /> Back
-        </button>
-        <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15"><ClipboardList size={25} /></div>
-          <div>
-            <h1 className="text-xl font-black sm:text-2xl">Visit notebook</h1>
-            <p className="mt-1 text-xs text-purple-100 sm:text-sm">Tap a barber, find the product and save. Repeat.</p>
+    <div className="mx-auto w-full min-w-0 max-w-5xl space-y-3 overflow-x-hidden pb-20 sm:space-y-4 sm:pb-24">
+      <header className="rounded-2xl bg-gradient-to-br from-violet-700 via-purple-700 to-fuchsia-700 p-3 text-white shadow-lg sm:rounded-3xl sm:p-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <button type="button" onClick={() => navigate(-1)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-purple-50" aria-label="Back">
+            <ArrowLeft size={19} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-lg font-black sm:text-2xl">Visit notebook</h1>
+            <p className="truncate text-xs text-purple-100 sm:mt-1 sm:text-sm">Barber → product → save</p>
           </div>
         </div>
       </header>
 
-      <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[1fr_auto]">
-        <div className="relative">
+      <section className="grid min-w-0 gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-[1fr_auto] sm:gap-3 sm:p-4">
+        <div className="relative min-w-0">
           <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Barbershop</span>
           {selectedShop && !changingShop ? (
-            <div className="flex h-12 items-center justify-between gap-3 rounded-xl border-2 border-purple-200 bg-purple-50 px-3">
+            <div className="flex h-11 min-w-0 items-center justify-between gap-2 rounded-xl border-2 border-purple-200 bg-purple-50 px-3 sm:h-12">
               <span className="truncate font-black text-purple-950">{selectedShop.nombre}</span>
               <button type="button" onClick={() => setChangingShop(true)} className="shrink-0 text-xs font-black text-purple-700">Change</button>
             </div>
@@ -353,42 +352,41 @@ export default function VisitNotebook() {
             </>
           )}
         </div>
-        <label>
+        <label className="min-w-0">
           <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Visit date</span>
-          <input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} className="h-12 rounded-xl border-2 border-slate-200 px-3 font-bold outline-none focus:border-purple-500" />
+          <input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border-2 border-slate-200 px-3 font-bold outline-none focus:border-purple-500 sm:h-12 sm:w-auto" />
         </label>
-        {selectedShop?.direccion && <p className="text-sm text-slate-500 sm:col-span-2">{selectedShop.direccion}</p>}
+        {selectedShop?.direccion && <p className="hidden truncate text-sm text-slate-500 sm:col-span-2 sm:block">{selectedShop.direccion}</p>}
       </section>
 
       {barberiaId && (
         <>
-          <form onSubmit={addItem} className="rounded-2xl border border-purple-200 bg-white p-3 shadow-sm sm:p-4">
-            <div className="mb-4 flex items-center gap-2"><Plus size={18} className="text-purple-600" /><h2 className="font-black text-slate-900">Add request</h2></div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <span className="mb-2 block text-xs font-bold text-slate-500">Barbers at this barbershop</span>
-                <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2">
+          <form onSubmit={addItem} className="min-w-0 overflow-hidden rounded-2xl border border-purple-200 bg-white p-3 shadow-sm sm:p-4">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+              <div className="min-w-0 sm:col-span-2">
+                <span className="mb-2 block text-xs font-black uppercase tracking-wide text-purple-700">1 · Choose barber</span>
+                <div className="flex min-w-0 flex-wrap gap-2">
                   {clients.map((client) => (
-                    <button key={client.id} type="button" onClick={() => selectClient(client.id)} className={`min-h-11 shrink-0 rounded-xl border px-4 py-2 text-sm font-black ${selectedClientId === client.id ? "border-purple-600 bg-purple-600 text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
-                      {client.nombre}
+                    <button key={client.id} type="button" onClick={() => selectClient(client.id)} className={`min-h-10 max-w-full rounded-xl border px-3 py-2 text-sm font-black ${selectedClientId === client.id ? "border-purple-600 bg-purple-600 text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+                      <span className="block max-w-44 truncate">{client.nombre}</span>
                     </button>
                   ))}
                   {!clients.length && <span className="text-sm text-slate-500">No saved barbers here yet; write the name below.</span>}
                 </div>
               </div>
-              <label>
-                <span className="mb-1 block text-xs font-bold text-slate-500">Barber name *</span>
+              <label className="min-w-0">
+                <span className="mb-1 block text-xs font-bold text-slate-500">Name or new barber *</span>
                 <input value={barberName} onChange={(event) => { setBarberName(event.target.value); if (selectedClientId) setSelectedClientId(""); }} placeholder="Example: Carlos" className="h-12 w-full rounded-xl border border-slate-200 px-3" required />
               </label>
-              <div className="flex items-end">
-                <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); }} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Next / another barber</button>
+              <div className="hidden items-end sm:flex">
+                <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); }} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Clear barber</button>
               </div>
-              <label className="sm:col-span-2">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Product requested · active VAN inventory *</span>
+              <label className="min-w-0 sm:col-span-2">
+                <span className="mb-2 block text-xs font-black uppercase tracking-wide text-purple-700">2 · Choose product</span>
                 {!productText && products.length > 0 && (
-                  <div className="-mx-1 mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
+                  <div className="mb-2 grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3">
                     {products.slice(0, 6).map((product) => (
-                      <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="min-h-11 max-w-52 shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-left">
+                      <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="min-h-12 min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2 text-left">
                         <span className="block truncate text-xs font-black text-slate-800">{product.nombre}</span>
                         <span className="block text-[10px] font-bold text-emerald-700">{product.stock} available</span>
                       </button>
@@ -402,9 +400,9 @@ export default function VisitNotebook() {
                   {productText && !selectedProductId && (
                     <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
                       {productMatches.map((product) => (
-                        <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="flex min-h-14 w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-left active:bg-purple-100 hover:bg-purple-50">
+                        <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="block min-h-14 w-full min-w-0 rounded-lg px-3 py-2 text-left active:bg-purple-100 hover:bg-purple-50">
                           <span className="min-w-0"><span className="block truncate font-black text-slate-900">{product.nombre}</span><span className="block text-xs text-slate-500">{[product.codigo, product.marca].filter(Boolean).join(" · ")}</span></span>
-                          <span className="shrink-0 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">{product.stock} available</span>
+                          <span className="mt-1 inline-block rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">{product.stock} available</span>
                         </button>
                       ))}
                       {!productMatches.length && <p className="px-3 py-4 text-sm text-amber-700">Not found in this VAN. You may keep it as a special request.</p>}
@@ -412,26 +410,29 @@ export default function VisitNotebook() {
                   )}
                 </div>
               </label>
-              <label>
-                <span className="mb-1 block text-xs font-bold text-slate-500">Quantity</span>
-                <input type="number" min="0.01" step="0.01" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-12 w-full rounded-xl border border-slate-200 px-3" />
-              </label>
-              <label>
-                <span className="mb-1 block text-xs font-bold text-slate-500">Short detail</span>
-                <input value={itemNotes} onChange={(event) => setItemNotes(event.target.value)} placeholder="Size, color, pay later..." className="h-12 w-full rounded-xl border border-slate-200 px-3" />
-              </label>
+              <details className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+                <summary className="cursor-pointer text-sm font-black text-slate-600">Quantity or extra detail <span className="font-normal">(optional)</span></summary>
+                <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
+                  <label className="min-w-0">
+                    <span className="mb-1 block text-xs font-bold text-slate-500">Quantity</span>
+                    <input type="number" min="0.01" step="0.01" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border border-slate-200 px-3" />
+                  </label>
+                  <label className="min-w-0">
+                    <span className="mb-1 block text-xs font-bold text-slate-500">Short detail</span>
+                    <input value={itemNotes} onChange={(event) => setItemNotes(event.target.value)} placeholder="Size, color, pay later..." className="h-11 w-full min-w-0 rounded-xl border border-slate-200 px-3" />
+                  </label>
+                </div>
+              </details>
             </div>
-            <button type="submit" disabled={saving} className="sticky bottom-3 z-[5] mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-purple-600 font-black text-white shadow-lg shadow-purple-200 hover:bg-purple-700 disabled:opacity-50 sm:static sm:h-12">
-              <Plus size={18} /> {saving ? "Saving..." : "Add product and keep this barber"}
+            <button type="submit" disabled={saving} className="mt-3 flex h-14 w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-purple-600 px-3 font-black text-white shadow-md hover:bg-purple-700 disabled:opacity-50">
+              <Plus size={18} /> <span className="truncate">{saving ? "Saving..." : "Save request"}</span>
             </button>
           </form>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl bg-slate-50 p-3"><div className="text-2xl font-black text-slate-900">{totals.lines}</div><div className="text-[10px] font-black uppercase text-slate-500">Lines</div></div>
-              <div className="rounded-xl bg-purple-50 p-3"><div className="text-2xl font-black text-purple-700">{totals.units}</div><div className="text-[10px] font-black uppercase text-purple-600">Units</div></div>
-              <div className="rounded-xl bg-emerald-50 p-3"><div className="text-2xl font-black text-emerald-700">{totals.picked}/{totals.lines}</div><div className="text-[10px] font-black uppercase text-emerald-600">Loaded</div></div>
-            </div>
+          <section className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+            <p className="truncate text-center text-xs font-bold text-slate-600">
+              {totals.lines} requests · {totals.units} units · {totals.picked}/{totals.lines} loaded
+            </p>
           </section>
 
           {grouped.length === 0 ? (
@@ -444,10 +445,10 @@ export default function VisitNotebook() {
             <div className="space-y-4">
               {grouped.map((group) => (
                 <section key={group.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="flex items-center justify-between gap-3 bg-slate-900 px-4 py-3 text-white">
+                  <div className="flex min-w-0 flex-col items-stretch gap-2 bg-slate-900 px-3 py-3 text-white sm:flex-row sm:items-center sm:justify-between sm:px-4">
                     <div className="flex min-w-0 items-center gap-2"><UserRound size={18} /><h3 className="truncate font-black">{group.name}</h3></div>
                     {group.clientId && (
-                      <button type="button" onClick={() => navigate(`/ventas?client=${group.clientId}&notebook=${notebook?.id || ""}`)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-black">
+                      <button type="button" onClick={() => navigate(`/ventas?client=${group.clientId}&notebook=${notebook?.id || ""}`)} className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-black sm:w-auto sm:shrink-0">
                         <ShoppingCart size={14} /> Open normal sale
                       </button>
                     )}
