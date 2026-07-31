@@ -2206,6 +2206,41 @@ export default function Dashboard() {
   const [fechaRutaSeleccionada, setFechaRutaSeleccionada] = useState(dayjs().format("YYYY-MM-DD"));
   const [showAddBarberia, setShowAddBarberia] = useState(false);
   const [loadingRutas, setLoadingRutas] = useState(false);
+  const [openingNotebookId, setOpeningNotebookId] = useState(null);
+
+  const openRouteNotebook = useCallback(async (route) => {
+    setOpeningNotebookId(route.id);
+    try {
+      let shopId = route.barberia_id || null;
+      if (!shopId) {
+        const { data: shops, error } = await supabase
+          .from("barberias")
+          .select("id,nombre");
+        if (error) throw error;
+        const routeKey = normalizeShopKey(route.barberia_nombre);
+        const match = (shops || []).find((shop) => normalizeShopKey(shop.nombre) === routeKey);
+        shopId = match?.id || null;
+
+        if (shopId) {
+          // Repair old route rows once so every later opening is immediate.
+          await supabase.from("rutas_barberias").update({ barberia_id: shopId }).eq("id", route.id);
+          setRutasBarberias((current) => current.map((item) =>
+            item.id === route.id ? { ...item, barberia_id: shopId } : item
+          ));
+        }
+      }
+
+      if (!shopId) {
+        toast.warning(`"${route.barberia_nombre}" is not linked to a saved barbershop yet.`);
+        return;
+      }
+      navigate(`/visit-notes?barberia=${encodeURIComponent(shopId)}&date=${encodeURIComponent(fechaRutaSeleccionada)}`);
+    } catch {
+      toast.error("Could not open this barbershop's notebook.");
+    } finally {
+      setOpeningNotebookId(null);
+    }
+  }, [fechaRutaSeleccionada, navigate, toast]);
 
   // Automatic visit tracking — derived from sales to clients linked to a
   // barbershop (clientes.barberia_id), not from the daily route/agenda, so
@@ -3171,11 +3206,12 @@ export default function Dashboard() {
                         {/* Botones de acción */}
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => navigate(`/visit-notes${barberia.barberia_id ? `?barberia=${barberia.barberia_id}&date=${fechaRutaSeleccionada}` : ""}`)}
-                            className="p-2 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-700 transition-all"
+                            onClick={() => openRouteNotebook(barberia)}
+                            disabled={openingNotebookId === barberia.id}
+                            className="p-2 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-700 transition-all disabled:cursor-wait disabled:opacity-60"
                             title="Open visit notebook"
                           >
-                            <ClipboardList size={18} />
+                            <ClipboardList size={18} className={openingNotebookId === barberia.id ? "animate-pulse" : ""} />
                           </button>
                           <button
                             onClick={() => toggleVisitada(barberia.id, barberia.visitada)}

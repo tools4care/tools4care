@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -66,6 +66,8 @@ export default function VisitNotebook() {
   const [shopSearch, setShopSearch] = useState("");
   const [changingShop, setChangingShop] = useState(!searchParams.get("barberia"));
   const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const productInputRef = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -201,6 +203,7 @@ export default function VisitNotebook() {
     setSelectedClientId(clientId);
     const client = clients.find((candidate) => candidate.id === clientId);
     if (client) setBarberName(client.nombre || "");
+    window.setTimeout(() => productInputRef.current?.focus(), 0);
   }
 
   function chooseShop(shop) {
@@ -213,6 +216,8 @@ export default function VisitNotebook() {
 
   function chooseProduct(product) {
     setProductText(product.nombre);
+    setSelectedProductId(product.id);
+    window.setTimeout(() => productInputRef.current?.focus(), 0);
   }
 
   async function addItem(event) {
@@ -247,6 +252,7 @@ export default function VisitNotebook() {
       if (error) throw error;
       setItems((currentItems) => [...currentItems, data]);
       setProductText("");
+      setSelectedProductId("");
       setQuantity("1");
       setItemNotes("");
       toast.success("Added to the visit notebook.");
@@ -306,16 +312,16 @@ export default function VisitNotebook() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 pb-24">
-      <header className="rounded-3xl bg-gradient-to-br from-violet-700 via-purple-700 to-fuchsia-700 p-5 text-white shadow-xl">
+    <div className="mx-auto max-w-5xl space-y-3 pb-24 sm:space-y-4">
+      <header className="rounded-2xl bg-gradient-to-br from-violet-700 via-purple-700 to-fuchsia-700 p-4 text-white shadow-xl sm:rounded-3xl sm:p-5">
         <button type="button" onClick={() => navigate(-1)} className="mb-4 inline-flex items-center gap-2 text-sm font-bold text-purple-100">
           <ArrowLeft size={17} /> Back
         </button>
         <div className="flex items-start gap-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15"><ClipboardList size={25} /></div>
           <div>
-            <h1 className="text-2xl font-black">Visit notebook</h1>
-            <p className="mt-1 text-sm text-purple-100">Write each barber's requests now; prepare and sell them from the VAN later.</p>
+            <h1 className="text-xl font-black sm:text-2xl">Visit notebook</h1>
+            <p className="mt-1 text-xs text-purple-100 sm:text-sm">Tap a barber, find the product and save. Repeat.</p>
           </div>
         </div>
       </header>
@@ -356,14 +362,14 @@ export default function VisitNotebook() {
 
       {barberiaId && (
         <>
-          <form onSubmit={addItem} className="rounded-2xl border border-purple-200 bg-white p-4 shadow-sm">
+          <form onSubmit={addItem} className="rounded-2xl border border-purple-200 bg-white p-3 shadow-sm sm:p-4">
             <div className="mb-4 flex items-center gap-2"><Plus size={18} className="text-purple-600" /><h2 className="font-black text-slate-900">Add request</h2></div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <span className="mb-2 block text-xs font-bold text-slate-500">Barbers at this barbershop</span>
-                <div className="flex gap-2 overflow-x-auto pb-1">
+                <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2">
                   {clients.map((client) => (
-                    <button key={client.id} type="button" onClick={() => selectClient(client.id)} className={`shrink-0 rounded-xl border px-3 py-2 text-sm font-black ${selectedClientId === client.id ? "border-purple-600 bg-purple-600 text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+                    <button key={client.id} type="button" onClick={() => selectClient(client.id)} className={`min-h-11 shrink-0 rounded-xl border px-4 py-2 text-sm font-black ${selectedClientId === client.id ? "border-purple-600 bg-purple-600 text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
                       {client.nombre}
                     </button>
                   ))}
@@ -379,13 +385,24 @@ export default function VisitNotebook() {
               </div>
               <label className="sm:col-span-2">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Product requested · active VAN inventory *</span>
+                {!productText && products.length > 0 && (
+                  <div className="-mx-1 mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
+                    {products.slice(0, 6).map((product) => (
+                      <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="min-h-11 max-w-52 shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-left">
+                        <span className="block truncate text-xs font-black text-slate-800">{product.nombre}</span>
+                        <span className="block text-[10px] font-bold text-emerald-700">{product.stock} available</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="relative">
                   <Search size={17} className="pointer-events-none absolute left-3 top-3.5 text-slate-400" />
-                  <input value={productText} onChange={(event) => setProductText(event.target.value)} placeholder={inventoryLoading ? "Loading VAN inventory..." : "Type name, code or brand"} className="h-12 w-full rounded-xl border border-slate-200 pl-10 pr-3" required autoComplete="off" />
-                  {productText && (
+                  <input ref={productInputRef} value={productText} onChange={(event) => { setProductText(event.target.value); setSelectedProductId(""); }} placeholder={inventoryLoading ? "Loading VAN inventory..." : "Type name, code or brand"} className="h-12 w-full rounded-xl border-2 border-slate-200 pl-10 pr-10 text-base font-bold outline-none focus:border-purple-500" required autoComplete="off" />
+                  {productText && <button type="button" onClick={() => { setProductText(""); setSelectedProductId(""); productInputRef.current?.focus(); }} className="absolute right-3 top-3.5 text-slate-400"><X size={18} /></button>}
+                  {productText && !selectedProductId && (
                     <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
                       {productMatches.map((product) => (
-                        <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-left hover:bg-purple-50">
+                        <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="flex min-h-14 w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-left active:bg-purple-100 hover:bg-purple-50">
                           <span className="min-w-0"><span className="block truncate font-black text-slate-900">{product.nombre}</span><span className="block text-xs text-slate-500">{[product.codigo, product.marca].filter(Boolean).join(" · ")}</span></span>
                           <span className="shrink-0 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">{product.stock} available</span>
                         </button>
@@ -404,7 +421,7 @@ export default function VisitNotebook() {
                 <input value={itemNotes} onChange={(event) => setItemNotes(event.target.value)} placeholder="Size, color, pay later..." className="h-12 w-full rounded-xl border border-slate-200 px-3" />
               </label>
             </div>
-            <button type="submit" disabled={saving} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-purple-600 font-black text-white hover:bg-purple-700 disabled:opacity-50">
+            <button type="submit" disabled={saving} className="sticky bottom-3 z-[5] mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-purple-600 font-black text-white shadow-lg shadow-purple-200 hover:bg-purple-700 disabled:opacity-50 sm:static sm:h-12">
               <Plus size={18} /> {saving ? "Saving..." : "Add product and keep this barber"}
             </button>
           </form>
