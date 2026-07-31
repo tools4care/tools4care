@@ -3085,17 +3085,17 @@ export default function Dashboard() {
         )}
 
         {/* Daily Route */}
-        <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <div>
+        <div className="min-w-0 overflow-hidden rounded-2xl bg-white p-3 shadow-xl sm:rounded-3xl sm:p-5">
+          <div className="mb-4 min-w-0">
+            <div className="mb-3">
               <h2 className="text-xl font-bold text-gray-800 leading-tight">Daily Route</h2>
               <p className="text-xs text-gray-500">Barbershops to visit today</p>
             </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+            <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
               <button
                 onClick={() => navigate(`/visit-notes?date=${fechaRutaSeleccionada}`)}
                 title="Open visit notebook"
-                className="bg-violet-100 hover:bg-violet-200 text-violet-700 font-bold py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 text-xs whitespace-nowrap border border-violet-300"
+                className="flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-violet-300 bg-violet-100 px-2 py-2 text-xs font-bold text-violet-700 transition-all hover:bg-violet-200 sm:min-h-0 sm:px-3 sm:py-1.5"
               >
                 <ClipboardList size={15} />
                 Notebook
@@ -3104,18 +3104,18 @@ export default function Dashboard() {
                 type="date"
                 value={fechaRutaSeleccionada}
                 onChange={(e) => setFechaRutaSeleccionada(e.target.value)}
-                className="border-2 border-gray-200 focus:border-purple-500 rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors"
+                className="min-h-11 w-full min-w-0 rounded-lg border-2 border-gray-200 px-2 py-1.5 text-xs font-semibold transition-colors focus:border-purple-500 sm:min-h-0 sm:w-auto"
               />
               <button
                 onClick={copiarSemanaAnterior}
                 title="Copiar ruta de hace 7 días (visitadas se resetean)"
-                className="bg-amber-100 hover:bg-amber-200 text-amber-700 font-bold py-1.5 px-3 rounded-lg transition-all flex items-center gap-1 text-xs whitespace-nowrap border border-amber-300"
+                className="flex min-h-11 min-w-0 items-center justify-center gap-1 rounded-lg border border-amber-300 bg-amber-100 px-2 py-2 text-xs font-bold text-amber-700 transition-all hover:bg-amber-200 sm:min-h-0 sm:px-3 sm:py-1.5"
               >
-                🔄 Copiar semana ant.
+                🔄 <span className="truncate">Copy last week</span>
               </button>
               <button
                 onClick={() => setShowAddBarberia(true)}
-                className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold py-1.5 px-3 rounded-lg shadow-lg transition-all flex items-center gap-1.5 text-sm whitespace-nowrap"
+                className="flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 px-2 py-2 text-sm font-bold text-white shadow-lg transition-all hover:from-purple-700 hover:to-pink-700 sm:min-h-0 sm:px-3 sm:py-1.5"
               >
                 <IconPlus />
                 <span>Add</span>
@@ -3172,13 +3172,13 @@ export default function Dashboard() {
               {rutasBarberias.map((barberia, idx) => (
                 <div
                   key={barberia.id}
-                  className={`rounded-xl p-4 border-2 transition-all ${
+                  className={`min-w-0 rounded-xl border-2 p-3 transition-all sm:p-4 ${
                     barberia.visitada
                       ? "bg-gradient-to-r from-green-50 to-emerald-50 border-green-300 opacity-75"
                       : "bg-white border-purple-200 hover:border-purple-400 hover:shadow-lg"
                   }`}
                 >
-                  <div className="flex items-start gap-4">
+                  <div className="flex min-w-0 items-start gap-3 sm:gap-4">
                     {/* Número de orden */}
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0 ${
                       barberia.visitada
@@ -3190,9 +3190,9 @@ export default function Dashboard() {
 
                     {/* Información */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div className="flex-1">
-                          <h3 className={`font-bold text-lg ${barberia.visitada ? "line-through text-gray-500" : "text-gray-900"}`}>
+                      <div className="mb-2 min-w-0 sm:flex sm:items-start sm:justify-between sm:gap-3">
+                        <div className="min-w-0 flex-1">
+                          <h3 className={`break-words text-base font-bold sm:text-lg ${barberia.visitada ? "line-through text-gray-500" : "text-gray-900"}`}>
                             {barberia.barberia_nombre || "Sin nombre"}
                           </h3>
                           {barberia.hora_visita && (
@@ -3204,18 +3204,18 @@ export default function Dashboard() {
                         </div>
                         
                         {/* Botones de acción */}
-                        <div className="flex items-center gap-2">
+                        <div className="mt-3 grid grid-cols-3 gap-2 sm:mt-0 sm:flex sm:items-center">
                           <button
                             onClick={() => openRouteNotebook(barberia)}
                             disabled={openingNotebookId === barberia.id}
-                            className="p-2 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-700 transition-all disabled:cursor-wait disabled:opacity-60"
+                            className="flex min-h-10 min-w-0 items-center justify-center rounded-lg bg-amber-100 p-2 text-amber-700 transition-all hover:bg-amber-200 disabled:cursor-wait disabled:opacity-60"
                             title="Open visit notebook"
                           >
                             <ClipboardList size={18} className={openingNotebookId === barberia.id ? "animate-pulse" : ""} />
                           </button>
                           <button
                             onClick={() => toggleVisitada(barberia.id, barberia.visitada)}
-                            className={`p-2 rounded-lg transition-all ${
+                            className={`flex min-h-10 min-w-0 items-center justify-center rounded-lg p-2 transition-all ${
                               barberia.visitada
                                 ? "bg-green-500 hover:bg-green-600 text-white"
                                 : "bg-purple-100 hover:bg-purple-200 text-purple-700"
@@ -3226,7 +3226,7 @@ export default function Dashboard() {
                           </button>
                           <button
                             onClick={() => eliminarBarberia(barberia.id)}
-                            className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 transition-all"
+                            className="flex min-h-10 min-w-0 items-center justify-center rounded-lg bg-red-100 p-2 text-red-700 transition-all hover:bg-red-200"
                             title="Delete"
                           >
                             <IconTrash />

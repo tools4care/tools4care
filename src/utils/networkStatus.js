@@ -5,7 +5,9 @@ import { supabase } from "../supabaseClient";
 let serverReachable = typeof navigator === "undefined" ? true : navigator.onLine;
 let lastProbeAt = 0;
 let activeProbe = null;
+let consecutiveFailures = 0;
 const listeners = new Set();
+const FAILURES_BEFORE_OFFLINE = 2;
 
 function publish(online) {
   serverReachable = Boolean(online);
@@ -28,7 +30,10 @@ export function isOnline() {
 }
 
 export function reportConnectionFailure() {
-  publish(false);
+  consecutiveFailures += 1;
+  if (!navigator.onLine || consecutiveFailures >= FAILURES_BEFORE_OFFLINE) {
+    publish(false);
+  }
 }
 
 export async function checkServerReachable({ force = false, timeoutMs = 3500 } = {}) {
@@ -44,11 +49,15 @@ export async function checkServerReachable({ force = false, timeoutMs = 3500 } =
         }),
       ]);
       lastProbeAt = Date.now();
+      consecutiveFailures = 0;
       publish(true);
       return true;
     } catch {
       lastProbeAt = Date.now();
-      publish(false);
+      consecutiveFailures += 1;
+      if (!navigator.onLine || consecutiveFailures >= FAILURES_BEFORE_OFFLINE) {
+        publish(false);
+      }
       return false;
     } finally {
       activeProbe = null;
@@ -73,6 +82,7 @@ export function onConnectionChange(callback) {
   
   const handleOffline = () => {
     console.log('📵 Sin conexión');
+    consecutiveFailures = FAILURES_BEFORE_OFFLINE;
     publish(false);
   };
 

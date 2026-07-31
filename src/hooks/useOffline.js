@@ -21,8 +21,10 @@ export function useOffline() {
       });
     });
 
-    const probe = () => checkServerReachable().then((online) => setIsOffline(!online));
-    const timer = window.setInterval(probe, 15000);
+    // The shared network service publishes only stable state changes. Do not
+    // override it locally after one slow mobile request.
+    const probe = () => { checkServerReachable(); };
+    const timer = window.setInterval(probe, 30000);
     const onVisible = () => { if (!document.hidden) probe(); };
     document.addEventListener('visibilitychange', onVisible);
 
