@@ -68,6 +68,10 @@ export default function VisitNotebook() {
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState("");
   const productInputRef = useRef(null);
+  const barberSearchRef = useRef(null);
+  const barberSectionRef = useRef(null);
+  const [barberSearch, setBarberSearch] = useState("");
+  const focusedShopRef = useRef("");
 
   useEffect(() => {
     let active = true;
@@ -125,6 +129,16 @@ export default function VisitNotebook() {
   }, [barberiaId]);
 
   useEffect(() => {
+    if (!barberiaId || focusedShopRef.current === barberiaId) return;
+    focusedShopRef.current = barberiaId;
+    const frame = window.requestAnimationFrame(() => {
+      barberSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      barberSearchRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [barberiaId, clients.length]);
+
+  useEffect(() => {
     let active = true;
     async function loadNotebook() {
       setNotebook(null);
@@ -171,6 +185,12 @@ export default function VisitNotebook() {
       normalizeSearch(`${product.nombre} ${product.codigo || ""} ${product.marca || ""}`).includes(term)
     ).slice(0, 8);
   }, [products, productText]);
+  const visibleBarbers = useMemo(() => {
+    const term = normalizeSearch(barberSearch);
+    return clients.filter((client) =>
+      !term || normalizeSearch(`${client.nombre} ${client.telefono || ""}`).includes(term)
+    ).slice(0, term ? 12 : 8);
+  }, [clients, barberSearch]);
   const grouped = useMemo(() => groupItems(items), [items]);
   const totals = useMemo(() => ({
     lines: items.length,
@@ -203,6 +223,7 @@ export default function VisitNotebook() {
     setSelectedClientId(clientId);
     const client = clients.find((candidate) => candidate.id === clientId);
     if (client) setBarberName(client.nombre || "");
+    setBarberSearch(client?.nombre || "");
     window.setTimeout(() => productInputRef.current?.focus(), 0);
   }
 
@@ -212,6 +233,7 @@ export default function VisitNotebook() {
     setChangingShop(false);
     setSelectedClientId("");
     setBarberName("");
+    setBarberSearch("");
   }
 
   function chooseProduct(product) {
@@ -361,16 +383,28 @@ export default function VisitNotebook() {
 
       {barberiaId && (
         <>
-          <form onSubmit={addItem} className="min-w-0 overflow-hidden rounded-2xl border border-purple-200 bg-white p-3 shadow-sm sm:p-4">
+          <form ref={barberSectionRef} onSubmit={addItem} className="min-w-0 scroll-mt-3 overflow-hidden rounded-2xl border border-purple-200 bg-white p-3 shadow-sm sm:p-4">
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               <div className="min-w-0 sm:col-span-2">
                 <span className="mb-2 block text-xs font-black uppercase tracking-wide text-purple-700">1 · Choose barber</span>
+                <div className="relative mb-2">
+                  <Search size={17} className="pointer-events-none absolute left-3 top-3.5 text-slate-400" />
+                  <input
+                    ref={barberSearchRef}
+                    value={barberSearch}
+                    onChange={(event) => setBarberSearch(event.target.value)}
+                    placeholder="Search barber by name..."
+                    className="h-12 w-full min-w-0 rounded-xl border-2 border-purple-200 pl-10 pr-3 text-base font-bold outline-none focus:border-purple-500"
+                    autoComplete="off"
+                  />
+                </div>
                 <div className="flex min-w-0 flex-wrap gap-2">
-                  {clients.map((client) => (
+                  {visibleBarbers.map((client) => (
                     <button key={client.id} type="button" onClick={() => selectClient(client.id)} className={`min-h-10 max-w-full rounded-xl border px-3 py-2 text-sm font-black ${selectedClientId === client.id ? "border-purple-600 bg-purple-600 text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
                       <span className="block max-w-44 truncate">{client.nombre}</span>
                     </button>
                   ))}
+                  {clients.length > 0 && visibleBarbers.length === 0 && <span className="text-sm text-slate-500">No saved barber matches. Write a new name below.</span>}
                   {!clients.length && <span className="text-sm text-slate-500">No saved barbers here yet; write the name below.</span>}
                 </div>
               </div>
@@ -379,7 +413,7 @@ export default function VisitNotebook() {
                 <input value={barberName} onChange={(event) => { setBarberName(event.target.value); if (selectedClientId) setSelectedClientId(""); }} placeholder="Example: Carlos" className="h-12 w-full rounded-xl border border-slate-200 px-3" required />
               </label>
               <div className="hidden items-end sm:flex">
-                <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); }} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Clear barber</button>
+                <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); setBarberSearch(""); barberSearchRef.current?.focus(); }} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Clear barber</button>
               </div>
               <label className="min-w-0 sm:col-span-2">
                 <span className="mb-2 block text-xs font-black uppercase tracking-wide text-purple-700">2 · Choose product</span>

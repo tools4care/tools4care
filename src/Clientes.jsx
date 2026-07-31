@@ -670,6 +670,8 @@ export default function Clientes() {
   const [estadoInput, setEstadoInput] = useState("");
   const [estadoOpciones, setEstadoOpciones] = useState(estadosUSA);
   const [isLoading, setIsLoading] = useState(false);
+  const [barberias, setBarberias] = useState([]);
+  const [shopSuggestionField, setShopSuggestionField] = useState("");
 
   // Auto-refresh crédito refs
   const focusHandlerRef = useRef(null);
@@ -682,9 +684,35 @@ export default function Clientes() {
     telefono: "",
     email: "",
     negocio: "",
+    barberia_id: null,
     direccion: { calle: "", ciudad: "", estado: "", zip: "" },
     notas: "",
   });
+
+  useEffect(() => {
+    if (!mostrarEdicion) return;
+    let active = true;
+    supabase
+      .from("barberias")
+      .select("id,nombre,direccion")
+      .order("nombre")
+      .then(({ data }) => { if (active) setBarberias(data || []); });
+    return () => { active = false; };
+  }, [mostrarEdicion]);
+
+  const shopNameSuggestions = useMemo(() => {
+    const term = String(form.negocio || "").trim().toLowerCase();
+    if (!term) return barberias.slice(0, 8);
+    return barberias.filter((shop) => shop.nombre?.toLowerCase().includes(term)).slice(0, 8);
+  }, [barberias, form.negocio]);
+
+  const shopAddressSuggestions = useMemo(() => {
+    const term = String(form.direccion?.calle || "").trim().toLowerCase();
+    if (!term) return [];
+    return barberias.filter((shop) =>
+      String(shop.direccion || "").toLowerCase().includes(term)
+    ).slice(0, 8);
+  }, [barberias, form.direccion?.calle]);
 
   // Ref para buscar con atajo
   const searchRef = useRef(null);
@@ -871,6 +899,7 @@ const fetchPage = async (opts = {}) => {
       telefono: "",
       email: "",
       negocio: "",
+      barberia_id: null,
       direccion: { calle: "", ciudad: "", estado: "", zip: "" },
     });
     setEstadoInput("");
@@ -978,6 +1007,7 @@ const fetchPage = async (opts = {}) => {
       telefono: telFmt     || "",
       email:   c?.email    || "",
       negocio: c?.negocio  || "",
+      barberia_id: c?.barberia_id || null,
       direccion,
       notas,
     });
@@ -1013,7 +1043,7 @@ const fetchPage = async (opts = {}) => {
           dir.estado = v.toUpperCase().slice(0, 2);
           setEstadoInput(dir.estado);
           setEstadoOpciones(estadosUSA.filter((s) => s.startsWith(dir.estado)));
-          return { ...f, direccion: dir };
+          return { ...f, direccion: dir, barberia_id: name === "calle" ? null : f.barberia_id };
         }
 
         // ZIP: al tener 5 dígitos → fija estado/ciudad usando mapa local y lookup online
@@ -1060,13 +1090,27 @@ const fetchPage = async (opts = {}) => {
 
         // Calle / Ciudad normales
         dir[name] = v;
-        return { ...f, direccion: dir };
+        return { ...f, direccion: dir, barberia_id: name === "calle" ? null : f.barberia_id };
       });
       return;
     }
 
     // Resto de campos
-    setForm((f) => ({ ...f, [name]: value ?? "" }));
+    setForm((f) => ({ ...f, [name]: value ?? "", ...(name === "negocio" ? { barberia_id: null } : {}) }));
+  }
+
+  function selectBarbershop(shop) {
+    const address = normalizeDireccion(shop.direccion);
+    setForm((current) => ({
+      ...current,
+      negocio: shop.nombre || "",
+      barberia_id: shop.id,
+      direccion: address,
+    }));
+    const state = (address.estado || "").toUpperCase();
+    setEstadoInput(state);
+    setEstadoOpciones(estadosUSA.filter((item) => item.startsWith(state)));
+    setShopSuggestionField("");
   }
 
   async function handleGuardar(e) {
@@ -1095,6 +1139,7 @@ const fetchPage = async (opts = {}) => {
       telefono: telefonoFinal,
       email: emailFinal,
       negocio: form.negocio,
+      barberia_id: form.barberia_id || null,
       direccion: direccionFinal,
       notas: (form.notas || "").trim(),
     };
@@ -1898,18 +1943,36 @@ const fetchPage = async (opts = {}) => {
                   />
                 </div>
 
-                <div className="md:col-span-2">
+                <div className="relative md:col-span-2">
                   <label className="flex items-center gap-2 font-bold text-gray-700 mb-2">
                     <Building2 size={18} />
-                    Business
+                    Barbershop
                   </label>
                   <input
                     name="negocio"
                     className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                     value={form.negocio ?? ""}
                     onChange={handleChange}
-                    placeholder="Business name"
+                    onFocus={() => setShopSuggestionField("name")}
+                    onBlur={() => window.setTimeout(() => setShopSuggestionField(""), 150)}
+                    placeholder="Type or choose the barbershop"
+                    autoComplete="off"
                   />
+                  {form.barberia_id && (
+                    <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">
+                      <Check size={14} /> Linked to this barbershop
+                    </div>
+                  )}
+                  {shopSuggestionField === "name" && shopNameSuggestions.length > 0 && (
+                    <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-gray-200 bg-white p-1 shadow-xl">
+                      {shopNameSuggestions.map((shop) => (
+                        <button key={shop.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => selectBarbershop(shop)} className="block w-full min-w-0 rounded-lg px-3 py-3 text-left hover:bg-blue-50">
+                          <span className="block truncate font-black text-gray-900">{shop.nombre}</span>
+                          <span className="block truncate text-xs text-gray-500">{prettyAddress(shop.direccion)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Address Information */}
@@ -1921,15 +1984,28 @@ const fetchPage = async (opts = {}) => {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Street */}
-                    <div className="md:col-span-2">
+                    <div className="relative md:col-span-2">
                       <label className="font-bold text-gray-700 mb-2 block">Street</label>
                       <input
                         name="calle"
                         className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
                         value={form.direccion?.calle ?? ""}
                         onChange={handleChange}
-                        placeholder="123 Main St"
+                        onFocus={() => setShopSuggestionField("address")}
+                        onBlur={() => window.setTimeout(() => setShopSuggestionField(""), 150)}
+                        placeholder="Type an address to find the barbershop"
+                        autoComplete="off"
                       />
+                      {shopSuggestionField === "address" && shopAddressSuggestions.length > 0 && (
+                        <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-gray-200 bg-white p-1 shadow-xl">
+                          {shopAddressSuggestions.map((shop) => (
+                            <button key={shop.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => selectBarbershop(shop)} className="block w-full min-w-0 rounded-lg px-3 py-3 text-left hover:bg-blue-50">
+                              <span className="block truncate font-black text-gray-900">{prettyAddress(shop.direccion)}</span>
+                              <span className="block truncate text-xs text-gray-500">{shop.nombre}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* ZIP (al escribir 5 dígitos autollenará ciudad/estado) */}
