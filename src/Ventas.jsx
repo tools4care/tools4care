@@ -1226,6 +1226,7 @@ async function runCreditAgent(clienteId, montoVenta = 0) {
       .filter((ph) => ph._row && !cart.some((c) => c.producto_id === ph.producto_id));
   }, [productosHabituales, allProducts, cart]);
   const [notes, setNotes] = useState("");
+  const [notebookRequestSummary, setNotebookRequestSummary] = useState([]);
   const [noProductFound, setNoProductFound] = useState("");
   const [productExistsNotInVan, setProductExistsNotInVan] = useState("");
   const [pendingStockIssues, setPendingStockIssues] = useState([]); // items del pendiente con stock insuficiente
@@ -1543,9 +1544,7 @@ useEffect(() => {
           .eq("sold", false)
           .order("sort_order");
         if (requested?.length) {
-          setNotes(`Visit notebook: ${requested.map((item) =>
-            `${Number(item.quantity)} × ${item.product_text}${item.item_notes ? ` (${item.item_notes})` : ""}`
-          ).join("; ")}`);
+          setNotebookRequestSummary(requested);
         }
       }
       setSearchParams({}, { replace: true });
@@ -3453,6 +3452,7 @@ function clearSale() {
   setTopProducts([]);
   setAllProducts([]);
   setNotes("");
+  setNotebookRequestSummary([]);
   
   // Limpiar pagos
   setPayments([{ forma: "efectivo", monto: 0 }]);
@@ -3725,6 +3725,7 @@ function clearSale() {
   async function handleClientSelect(c) {
     // Reset current sale state first
     window.pendingSaleId = null;
+    setNotebookRequestSummary([]);
     setCart([]);
     setPayments([{ forma: "efectivo", monto: 0 }]);
 
@@ -6832,9 +6833,23 @@ function renderStepProducts() {
 
       {/* ── NOTES ────────────────────────────────────── */}
       <div>
+        {notebookRequestSummary.length > 0 && (
+          <div className="mb-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
+            <div className="text-xs font-black uppercase tracking-wide text-violet-700">Requests from visit notebook</div>
+            <div className="mt-2 space-y-1">
+              {notebookRequestSummary.map((item, index) => (
+                <div key={`${item.product_text}-${index}`} className="text-sm font-bold text-slate-700">
+                  {Number(item.quantity)} × {item.product_text}
+                  {item.item_notes && <span className="font-normal text-amber-700"> · {item.item_notes}</span>}
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-violet-600">Reference only. It is removed automatically after the sale.</p>
+          </div>
+        )}
         <textarea
           className="w-full border-2 border-gray-300 rounded-xl p-4 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all resize-none text-sm"
-          placeholder="📝 Invoice notes..."
+          placeholder="📝 Optional note that should remain on the invoice..."
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={3}

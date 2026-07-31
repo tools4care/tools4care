@@ -72,6 +72,8 @@ export default function VisitNotebook() {
   const barberSectionRef = useRef(null);
   const [barberSearch, setBarberSearch] = useState("");
   const focusedShopRef = useRef("");
+  const [productFocused, setProductFocused] = useState(false);
+  const [savedMessage, setSavedMessage] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -277,7 +279,9 @@ export default function VisitNotebook() {
       setSelectedProductId("");
       setQuantity("1");
       setItemNotes("");
-      toast.success("Added to the visit notebook.");
+      setSavedMessage(`Saved for ${barberName.trim()}`);
+      window.setTimeout(() => setSavedMessage(""), 1800);
+      window.requestAnimationFrame(() => productInputRef.current?.focus({ preventScroll: true }));
     } catch (error) {
       toast.error(error.message || "Could not save the request.");
     } finally {
@@ -417,7 +421,7 @@ export default function VisitNotebook() {
               </div>
               <label className="min-w-0 sm:col-span-2">
                 <span className="mb-2 block text-xs font-black uppercase tracking-wide text-purple-700">2 · Choose product</span>
-                {!productText && products.length > 0 && (
+                {!productText && !productFocused && !saving && !savedMessage && products.length > 0 && (
                   <div className="mb-2 grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3">
                     {products.slice(0, 6).map((product) => (
                       <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="min-h-12 min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2 text-left">
@@ -429,7 +433,7 @@ export default function VisitNotebook() {
                 )}
                 <div className="relative">
                   <Search size={17} className="pointer-events-none absolute left-3 top-3.5 text-slate-400" />
-                  <input ref={productInputRef} value={productText} onChange={(event) => { setProductText(event.target.value); setSelectedProductId(""); }} placeholder={inventoryLoading ? "Loading VAN inventory..." : "Type name, code or brand"} className="h-12 w-full rounded-xl border-2 border-slate-200 pl-10 pr-10 text-base font-bold outline-none focus:border-purple-500" required autoComplete="off" />
+                  <input ref={productInputRef} value={productText} onFocus={() => setProductFocused(true)} onBlur={() => setProductFocused(false)} onChange={(event) => { setProductText(event.target.value); setSelectedProductId(""); }} placeholder={inventoryLoading ? "Loading VAN inventory..." : "Type name, code or brand"} className="h-12 w-full rounded-xl border-2 border-slate-200 pl-10 pr-10 text-base font-bold outline-none focus:border-purple-500" required autoComplete="off" />
                   {productText && <button type="button" onClick={() => { setProductText(""); setSelectedProductId(""); productInputRef.current?.focus(); }} className="absolute right-3 top-3.5 text-slate-400"><X size={18} /></button>}
                   {productText && !selectedProductId && (
                     <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
@@ -461,6 +465,7 @@ export default function VisitNotebook() {
             <button type="submit" disabled={saving} className="mt-3 flex h-14 w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-purple-600 px-3 font-black text-white shadow-md hover:bg-purple-700 disabled:opacity-50">
               <Plus size={18} /> <span className="truncate">{saving ? "Saving..." : "Save request"}</span>
             </button>
+            {savedMessage && <p className="mt-2 text-center text-xs font-black text-emerald-700">{savedMessage} · Add another product</p>}
           </form>
 
           <section className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
