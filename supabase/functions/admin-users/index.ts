@@ -7,7 +7,8 @@
 //
 // Body: { action: string, payload: object }
 // Actions: create_user | delete_user | update_permissions |
-//          get_location_access | reset_password | create_tenant
+//          get_location_access | reset_password | create_tenant |
+//          list_tenants | resend_tenant_invite | set_tenant_status
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -47,13 +48,40 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // ── 3. Only admins may use any action here ──────────────────────────
-    const { data: caller } = await admin.from("usuarios").select("rol").eq("id", user.id).maybeSingle();
+    const { action, payload } = await req.json();
+
+    // Invitation acceptance is the only self-service action in this
+    // function. It may update only the caller's own tenant.
+    if (action === "complete_tenant_onboarding") {
+      const { data: member } = await admin
+        .from("usuarios")
+        .select("tenant_id")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!member?.tenant_id) return json({ error: "Tenant membership not found" }, 404);
+      const { error } = await admin
+        .from("tenants")
+        .update({
+          status: "active",
+          active: true,
+          onboarding_completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", member.tenant_id)
+        .eq("owner_user_id", user.id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true, tenantId: member.tenant_id });
+    }
+
+    // ── 3. All administrative actions require an admin profile ─────────
+    const { data: caller } = await admin
+      .from("usuarios")
+      .select("rol, tenant_id, platform_admin")
+      .eq("id", user.id)
+      .maybeSingle();
     if ((caller?.rol || "").toLowerCase() !== "admin") {
       return json({ error: "Forbidden — admin role required" }, 403);
     }
-
-    const { action, payload } = await req.json();
 
     switch (action) {
       case "create_user": {
@@ -176,36 +204,196 @@ Deno.serve(async (req) => {
 
       case "create_tenant": {
         const { businessName, ownerName, email, phone, plan } = payload || {};
-        if (!businessName || !email) return json({ error: "businessName and email are required" }, 400);
+        if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
 
-        const { data: authData, error: authError } = await admin.auth.admin.createUser({
-          email,
-          password: crypto.randomUUID().slice(0, 16),
-          email_confirm: true,
-        });
+        const cleanBusinessName = String(businessName || "").trim();
+        const cleanOwnerName = String(ownerName || "").trim();
+        const cleanEmail = String(email || "").trim().toLowerCase();
+        const cleanPhone = String(phone || "").trim();
+        const allowedPlans = new Set(["basic", "pro", "enterprise"]);
+        if (!cleanBusinessName || !cleanEmail) {
+          return json({ error: "businessName and email are required" }, 400);
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+          return json({ error: "A valid email is required" }, 400);
+        }
+        if (!allowedPlans.has(plan)) return json({ error: "Invalid plan" }, 400);
+
+        const { data: existingTenant } = await admin
+          .from("tenants")
+          .select("id")
+          .eq("email", cleanEmail)
+          .maybeSingle();
+        if (existingTenant) return json({ error: "A tenant already uses this email" }, 409);
+
+        const siteUrl = (Deno.env.get("PUBLIC_APP_URL") || Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
+        if (!siteUrl) return json({ error: "Server configuration missing PUBLIC_APP_URL" }, 500);
+        const redirectTo = `${siteUrl}/set-password`;
+        const { data: authData, error: authError } = await admin.auth.admin.inviteUserByEmail(
+          cleanEmail,
+          {
+            data: { full_name: cleanOwnerName, business_name: cleanBusinessName },
+            redirectTo,
+          },
+        );
         if (authError) return json({ error: "Auth error: " + authError.message }, 400);
 
         const userId = authData.user.id;
+        const tenantId = crypto.randomUUID();
+        const locationId = crypto.randomUUID();
+        const slugBase = cleanBusinessName
+          .toLowerCase()
+          .normalize("NFKD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+          .slice(0, 42) || "business";
+        const slug = `${slugBase}-${tenantId.slice(0, 8)}`;
+
         const { error: tenantError } = await admin.from("tenants").insert({
-          id: userId,
-          business_name: businessName,
-          owner_name: ownerName || null,
-          email,
-          phone: phone || null,
+          id: tenantId,
+          business_name: cleanBusinessName,
+          owner_name: cleanOwnerName || null,
+          email: cleanEmail,
+          phone: cleanPhone || null,
           plan,
+          slug,
+          status: "pending",
+          owner_user_id: userId,
+          invitation_sent_at: new Date().toISOString(),
           active: true,
           created_at: new Date().toISOString(),
         });
         if (tenantError) {
-          // Roll back the auth user so we don't leave an orphaned record.
           await admin.auth.admin.deleteUser(userId);
           return json({ error: "Tenant DB error: " + tenantError.message }, 400);
         }
 
-        const { error: linkError } = await admin.auth.admin.generateLink({ type: "magiclink", email });
-        if (linkError) console.warn("Magic link warning:", linkError.message);
+        const rollback = async () => {
+          await admin.from("usuarios_vans").delete().eq("usuario_id", userId);
+          await admin.from("location_settings").delete().eq("location_id", locationId);
+          await admin.from("vans").delete().eq("id", locationId);
+          await admin.from("usuarios").delete().eq("id", userId);
+          await admin.from("tenants").delete().eq("id", tenantId);
+          await admin.auth.admin.deleteUser(userId);
+        };
 
-        return json({ userId, email });
+        const { error: ownerError } = await admin.from("usuarios").insert({
+          id: userId,
+          email: cleanEmail,
+          nombre: cleanOwnerName || cleanBusinessName,
+          // Existing database policies treat rol=admin as a global operator.
+          // Tenant owners therefore start as supervisor until every legacy
+          // business table is tenant-keyed; this grants operational control
+          // without leaking platform-wide administrative access.
+          rol: "supervisor",
+          activo: true,
+          tenant_id: tenantId,
+          platform_admin: false,
+        });
+        if (ownerError) {
+          await rollback();
+          return json({ error: "Owner profile error: " + ownerError.message }, 400);
+        }
+
+        const { error: locationError } = await admin.from("vans").insert({
+          id: locationId,
+          nombre_van: cleanBusinessName,
+          placa: `STORE-${tenantId.slice(0, 6).toUpperCase()}`,
+          descripcion: "Initial Tools4Care store",
+          activo: true,
+          tipo: "store",
+          tenant_id: tenantId,
+        });
+        if (locationError) {
+          await rollback();
+          return json({ error: "Initial location error: " + locationError.message }, 400);
+        }
+
+        const { error: assignmentError } = await admin.from("usuarios_vans").insert({
+          usuario_id: userId,
+          van_id: locationId,
+          activo: true,
+        });
+        if (assignmentError) {
+          await rollback();
+          return json({ error: "Location assignment error: " + assignmentError.message }, 400);
+        }
+
+        const { error: settingsError } = await admin.from("location_settings").insert({
+          location_id: locationId,
+        });
+        if (settingsError) {
+          await rollback();
+          return json({ error: "Location settings error: " + settingsError.message }, 400);
+        }
+        await admin.from("tenants").update({ initial_location_id: locationId }).eq("id", tenantId);
+
+        // Also return a one-time setup link. The normal path is the invite
+        // email; this fallback lets the platform admin deliver it manually.
+        const { data: setupData, error: linkError } = await admin.auth.admin.generateLink({
+          type: "recovery",
+          email: cleanEmail,
+          options: { redirectTo },
+        });
+
+        return json({
+          tenantId,
+          userId,
+          locationId,
+          email: cleanEmail,
+          setupLink: linkError ? null : setupData?.properties?.action_link || null,
+          invitationSent: true,
+        });
+      }
+
+      case "list_tenants": {
+        if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
+        const { data, error } = await admin
+          .from("tenants")
+          .select("id,business_name,owner_name,email,phone,plan,status,active,created_at,invitation_sent_at,onboarding_completed_at,initial_location_id")
+          .order("created_at", { ascending: false });
+        if (error) return json({ error: error.message }, 400);
+        return json({ tenants: data || [] });
+      }
+
+      case "resend_tenant_invite": {
+        if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
+        const { tenantId } = payload || {};
+        const { data: tenant, error: tenantLookupError } = await admin
+          .from("tenants")
+          .select("id,email,business_name,owner_name")
+          .eq("id", tenantId)
+          .maybeSingle();
+        if (tenantLookupError || !tenant) return json({ error: "Tenant not found" }, 404);
+        const siteUrl = (Deno.env.get("PUBLIC_APP_URL") || Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
+        if (!siteUrl) return json({ error: "Server configuration missing PUBLIC_APP_URL" }, 500);
+        const redirectTo = `${siteUrl}/set-password`;
+        const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
+          type: "recovery",
+          email: tenant.email,
+          options: { redirectTo },
+        });
+        if (linkError) return json({ error: linkError.message }, 400);
+        await admin.from("tenants").update({ invitation_sent_at: new Date().toISOString() }).eq("id", tenantId);
+        return json({ email: tenant.email, setupLink: linkData?.properties?.action_link || null });
+      }
+
+      case "set_tenant_status": {
+        if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
+        const { tenantId, status } = payload || {};
+        if (!["active", "suspended"].includes(status)) return json({ error: "Invalid status" }, 400);
+        const { data: tenant, error: lookupError } = await admin
+          .from("tenants")
+          .select("owner_user_id")
+          .eq("id", tenantId)
+          .maybeSingle();
+        if (lookupError || !tenant) return json({ error: "Tenant not found" }, 404);
+        const active = status === "active";
+        const { error } = await admin.from("tenants").update({ status, active, updated_at: new Date().toISOString() }).eq("id", tenantId);
+        if (error) return json({ error: error.message }, 400);
+        if (tenant.owner_user_id) await admin.from("usuarios").update({ activo: active }).eq("id", tenant.owner_user_id);
+        return json({ ok: true, status });
       }
 
       default:

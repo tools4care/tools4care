@@ -73,7 +73,7 @@ export default function VanProvider({ children }) {
     let active = true;
 
     async function validateSelectedLocation() {
-      if (!usuario?.id || usuario?.rol === "admin" || !van?.id) {
+      if (!usuario?.id || usuario?.platform_admin || !van?.id) {
         return;
       }
 
@@ -101,13 +101,13 @@ export default function VanProvider({ children }) {
 
     validateSelectedLocation();
     return () => { active = false; };
-  }, [usuario?.id, usuario?.rol, van?.id]);
+  }, [usuario?.id, usuario?.rol, usuario?.platform_admin, van?.id]);
 
   const currentLocationKey = usuario?.id && van?.id ? `${usuario.id}:${van.id}` : "";
   const locationAccessChecking = Boolean(
     usuario?.id && (
       locationSessionCheckedFor !== usuario.id
-      || (usuario?.rol !== "admin" && van?.id && validatedLocationKey !== currentLocationKey)
+      || (!usuario?.platform_admin && van?.id && validatedLocationKey !== currentLocationKey)
     )
   );
 

@@ -12,6 +12,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import PageHeader from "../components/ui/PageHeader";
+import { useUsuario } from "../UsuarioContext";
 
 const ADMIN_TOOLS = [
   {
@@ -80,6 +81,11 @@ const ADMIN_TOOLS = [
 ];
 
 export default function AdminHub() {
+  const { usuario } = useUsuario();
+  const visibleTools = usuario?.platform_admin
+    ? ADMIN_TOOLS
+    : ADMIN_TOOLS.filter((tool) => tool.to !== "/admin/new-client");
+
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
@@ -90,7 +96,7 @@ export default function AdminHub() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {ADMIN_TOOLS.map(({ to, title, description, icon, tone }) => {
+        {visibleTools.map(({ to, title, description, icon, tone }) => {
           const Icon = icon;
           return (
             <Link

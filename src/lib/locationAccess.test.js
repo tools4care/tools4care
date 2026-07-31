@@ -24,9 +24,11 @@ describe("location access", () => {
     expect(restrictLocationsForUser(locations, assignments, "supervisor")).toEqual([]);
   });
 
-  it("always gives administrators all locations", () => {
+  it("limits tenant administrators but gives platform administrators all locations", () => {
     const assignments = [{ van_id: "store", activo: true }];
-    expect(restrictLocationsForUser(locations, assignments, "admin")).toEqual(locations);
-    expect(hasLocationRestriction(assignments, "admin")).toBe(false);
+    expect(restrictLocationsForUser(locations, assignments, "admin")).toEqual([locations[1]]);
+    expect(hasLocationRestriction(assignments, "admin")).toBe(true);
+    expect(restrictLocationsForUser(locations, assignments, "admin", true)).toEqual(locations);
+    expect(hasLocationRestriction(assignments, "admin", true)).toBe(false);
   });
 });

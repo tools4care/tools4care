@@ -4,6 +4,7 @@ import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
 const Login = lazy(() => import("./Login"));
+const SetPassword = lazy(() => import("./SetPassword"));
 const VanSelector = lazy(() => import("./components/VanSelector"));
 const Dashboard = lazy(() => import("./Dashboard"));
 const StoreDashboard = lazy(() => import("./store/StoreDashboard"));
@@ -125,6 +126,14 @@ function AdminRoute({ children }) {
   return children;
 }
 
+function PlatformAdminRoute({ children }) {
+  const { usuario, cargando } = useUsuario();
+  if (cargando) return null;
+  if (!usuario) return <Navigate to="/login" replace />;
+  if (usuario.rol !== "admin" || !usuario.platform_admin) return <Navigate to="/admin" replace />;
+  return children;
+}
+
 // Allows admin AND supervisor (blocks vendedor)
 function PrivilegedRoute({ children }) {
   const { usuario, cargando } = useUsuario();
@@ -189,6 +198,7 @@ export default function App() {
 
           {/* --- Público general --- */}
           <Route path="/login" element={<Login />} />
+          <Route path="/set-password" element={<SetPassword />} />
           <Route path="/customer-display" element={<PrivateRoute><CustomerDisplay /></PrivateRoute>} />
 
           {/* Selector de VAN (protegido) */}
@@ -280,7 +290,7 @@ export default function App() {
             <Route path="business-info" element={<AdminRoute><BusinessInfoAdmin /></AdminRoute>} />
 
             {/* 🏢 NUEVO TENANT (ADMIN) */}
-            <Route path="admin/new-client" element={<AdminRoute><CreateTenantManual /></AdminRoute>} />
+            <Route path="admin/new-client" element={<PlatformAdminRoute><CreateTenantManual /></PlatformAdminRoute>} />
 
             <Route path="*" element={<Navigate to="/" />} />
           </Route>

@@ -8,7 +8,15 @@ async function callAdminUsers(action, payload) {
     body: { action, payload },
   });
   if (error) {
-    const serverMessage = error.context?.body?.error;
+    let serverMessage = error.context?.body?.error;
+    if (!serverMessage && typeof error.context?.clone === "function") {
+      try {
+        const body = await error.context.clone().json();
+        serverMessage = body?.error;
+      } catch {
+        // The function may return a non-JSON gateway error.
+      }
+    }
     throw new Error(serverMessage || error.message || "Admin request failed");
   }
   if (data?.error) throw new Error(data.error);
@@ -37,4 +45,20 @@ export function resetPassword({ id, email, password }) {
 
 export function createTenant({ businessName, ownerName, email, phone, plan }) {
   return callAdminUsers("create_tenant", { businessName, ownerName, email, phone, plan });
+}
+
+export function listTenants() {
+  return callAdminUsers("list_tenants", {});
+}
+
+export function resendTenantInvite(tenantId) {
+  return callAdminUsers("resend_tenant_invite", { tenantId });
+}
+
+export function setTenantStatus(tenantId, status) {
+  return callAdminUsers("set_tenant_status", { tenantId, status });
+}
+
+export function completeTenantOnboarding() {
+  return callAdminUsers("complete_tenant_onboarding", {});
 }

@@ -56,7 +56,7 @@ export default function VanSelector({ onSelect }) {
       if (error) throw error;
 
       let assignments = [];
-      if (usuario?.id && usuario?.rol !== "admin") {
+      if (usuario?.id && !usuario?.platform_admin) {
         const assignmentResult = await supabase
           .from("usuarios_vans")
           .select("van_id, activo")
@@ -68,8 +68,8 @@ export default function VanSelector({ onSelect }) {
         }
       }
 
-      const visibleLocations = restrictLocationsForUser(data || [], assignments, usuario?.rol);
-      setRestricted(hasLocationRestriction(assignments, usuario?.rol));
+      const visibleLocations = restrictLocationsForUser(data || [], assignments, usuario?.rol, usuario?.platform_admin);
+      setRestricted(hasLocationRestriction(assignments, usuario?.rol, usuario?.platform_admin));
       setVans(visibleLocations);
       try {
         const cacheKey = `${VANS_CACHE_KEY}:${usuario?.id || "anonymous"}`;
@@ -82,7 +82,7 @@ export default function VanSelector({ onSelect }) {
     } finally {
       setLoading(false);
     }
-  }, [usuario?.id, usuario?.rol]);
+  }, [usuario?.id, usuario?.rol, usuario?.platform_admin]);
 
   useEffect(() => {
     setVans([]);
