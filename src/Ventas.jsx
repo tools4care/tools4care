@@ -1497,6 +1497,7 @@ useEffect(() => {
   // ---- CACHE DE BÚSQUEDA DE CLIENTES
   const clientCacheRef = useRef(new Map());
   const cachedClientsRef = useRef([]);
+  const notebookClientLoadedRef = useRef("");
 
   // ---- AUTO-FILL PAYMENT
   const [paymentAutoFilled, setPaymentAutoFilled] = useState(false);
@@ -1513,6 +1514,46 @@ useEffect(() => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  /* ---------- Open a barber's notebook directly as a new sale ---------- */
+  useEffect(() => {
+    const clientId = searchParams.get("client");
+    const notebookId = searchParams.get("notebook");
+    if (!clientId || notebookClientLoadedRef.current === `${clientId}:${notebookId || ""}`) return;
+    notebookClientLoadedRef.current = `${clientId}:${notebookId || ""}`;
+
+    (async () => {
+      const { data: client, error } = await supabase
+        .from(CLIENT_BALANCE_VIEW)
+        .select("*")
+        .eq("id", clientId)
+        .maybeSingle();
+      if (error || !client) {
+        toast.error("Could not open this barber in Sales.");
+        return;
+      }
+      await handleClientSelect(client);
+
+      if (notebookId) {
+        const { data: requested } = await supabase
+          .from("visit_notebook_items")
+          .select("quantity,product_text,item_notes")
+          .eq("notebook_id", notebookId)
+          .eq("cliente_id", clientId)
+          .eq("sold", false)
+          .order("sort_order");
+        if (requested?.length) {
+          setNotes(`Visit notebook: ${requested.map((item) =>
+            `${Number(item.quantity)} × ${item.product_text}${item.item_notes ? ` (${item.item_notes})` : ""}`
+          ).join("; ")}`);
+        }
+      }
+      setSearchParams({}, { replace: true });
+    })();
+    // handleClientSelect is intentionally read at execution time; including it
+    // would recreate this effect on every render in this legacy component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams, toast]);
 
   /* ---------- Debounce del buscador de cliente ---------- */
   useEffect(() => {

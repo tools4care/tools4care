@@ -65,6 +65,7 @@ const TaxConfig = lazy(() => import('./pages/TaxConfig'));
 const BusinessInfoAdmin = lazy(() => import('./pages/BusinessInfoAdmin'));
 const CreateTenantManual = lazy(() => import('./admin/CreateTenantManual'));
 const ListaEmergencia = lazy(() => import('./ListaEmergencia'));
+const VisitNotebook = lazy(() => import('./pages/VisitNotebook'));
 
 
 function PrivateRoute({ children }) {
@@ -278,6 +279,7 @@ export default function App() {
             {/* 📊 REPORTES (NUEVO) */}
             <Route path="reportes" element={<Reportes />} />
             <Route path="emergencia" element={<ListaEmergencia />} />
+            <Route path="visit-notes" element={<VisitNotebook />} />
 
             {/* 📦 SUSCRIPCIONES */}
             <Route path="suscripciones" element={<Suscripciones />} />

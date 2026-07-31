@@ -24,7 +24,7 @@ import {
 import {
   DollarSign, TrendingUp, TrendingDown, ShoppingCart, Users,
   AlertTriangle, Package, Clock, Map as MapIcon, Check, Plus, Pencil,
-  Trash2, Phone, MapPin, Search, ChevronRight, X, SendHorizonal, Wrench,
+  Trash2, Phone, MapPin, Search, ChevronRight, X, SendHorizonal, Wrench, ClipboardList,
 } from "lucide-react";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
@@ -3057,6 +3057,14 @@ export default function Dashboard() {
               <p className="text-xs text-gray-500">Barbershops to visit today</p>
             </div>
             <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+              <button
+                onClick={() => navigate(`/visit-notes?date=${fechaRutaSeleccionada}`)}
+                title="Open visit notebook"
+                className="bg-violet-100 hover:bg-violet-200 text-violet-700 font-bold py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 text-xs whitespace-nowrap border border-violet-300"
+              >
+                <ClipboardList size={15} />
+                Notebook
+              </button>
               <input
                 type="date"
                 value={fechaRutaSeleccionada}
@@ -3162,6 +3170,13 @@ export default function Dashboard() {
                         
                         {/* Botones de acción */}
                         <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => navigate(`/visit-notes${barberia.barberia_id ? `?barberia=${barberia.barberia_id}&date=${fechaRutaSeleccionada}` : ""}`)}
+                            className="p-2 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-700 transition-all"
+                            title="Open visit notebook"
+                          >
+                            <ClipboardList size={18} />
+                          </button>
                           <button
                             onClick={() => toggleVisitada(barberia.id, barberia.visitada)}
                             className={`p-2 rounded-lg transition-all ${
