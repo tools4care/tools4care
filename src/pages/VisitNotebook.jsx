@@ -75,6 +75,7 @@ export default function VisitNotebook() {
   const [linkingId, setLinkingId] = useState("");
   const focusedShopRef = useRef("");
   const [productFocused, setProductFocused] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
   const [savedMessage, setSavedMessage] = useState("");
 
   useEffect(() => {
@@ -220,12 +221,17 @@ export default function VisitNotebook() {
     const shopIds = new Set(clients.map((c) => c.id));
     return crossShopResults.filter((c) => !shopIds.has(c.id)).slice(0, 6);
   }, [crossShopResults, clients]);
-  const grouped = useMemo(() => groupItems(items), [items]);
+  // Sold items are fulfilled — clear them out of the working list instead of
+  // leaving them sitting there struck through; the notebook should always
+  // show what's still owed, not a growing log of everything ever requested.
+  const openItems = useMemo(() => items.filter((item) => !item.sold), [items]);
+  const soldCount = items.length - openItems.length;
+  const grouped = useMemo(() => groupItems(openItems), [openItems]);
   const totals = useMemo(() => ({
-    lines: items.length,
-    units: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
-    picked: items.filter((item) => item.picked).length,
-  }), [items]);
+    lines: openItems.length,
+    units: openItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+    picked: openItems.filter((item) => item.picked).length,
+  }), [openItems]);
 
   async function ensureNotebook() {
     if (notebook) return notebook;
@@ -363,6 +369,7 @@ export default function VisitNotebook() {
       setSelectedProductId("");
       setQuantity("1");
       setItemNotes("");
+      setNoteOpen(false);
       window.setTimeout(() => setSavedMessage(""), 1800);
       window.requestAnimationFrame(() => productInputRef.current?.focus({ preventScroll: true }));
     } catch (error) {
@@ -439,8 +446,8 @@ export default function VisitNotebook() {
         </div>
       </header>
 
-      <section className="grid min-w-0 gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-[1fr_auto] sm:gap-3 sm:p-4">
-        <div className="relative min-w-0">
+      <section className="flex min-w-0 items-start gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:gap-3 sm:p-4">
+        <div className="relative min-w-0 flex-1">
           <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Barbershop</span>
           {selectedShop && !changingShop ? (
             <div className="flex h-11 min-w-0 items-center justify-between gap-2 rounded-xl border-2 border-purple-200 bg-purple-50 px-3 sm:h-12">
@@ -466,11 +473,12 @@ export default function VisitNotebook() {
             </>
           )}
         </div>
-        <label className="min-w-0">
-          <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Visit date</span>
-          <input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border-2 border-slate-200 px-3 font-bold outline-none focus:border-purple-500 sm:h-12 sm:w-auto" />
+        {/* Visit date — needed rarely (backfilling a missed entry), so it's a
+            small secondary control, not equal weight with the barbershop. */}
+        <label className="shrink-0">
+          <span className="mb-1 block text-[10px] font-bold text-slate-400">Date</span>
+          <input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} className="h-8 w-[6.5rem] rounded-lg border border-slate-200 px-1.5 text-xs text-slate-500 outline-none focus:border-purple-400" />
         </label>
-        {selectedShop?.direccion && <p className="hidden truncate text-sm text-slate-500 sm:col-span-2 sm:block">{selectedShop.direccion}</p>}
       </section>
 
       {barberiaId && (
@@ -524,39 +532,32 @@ export default function VisitNotebook() {
               </div>
               <label className="min-w-0">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Name or new barber *</span>
-                <input value={barberName} onChange={(event) => { setBarberName(event.target.value); if (selectedClientId) setSelectedClientId(""); }} placeholder="Example: Carlos" className="h-12 w-full rounded-xl border border-slate-200 px-3" required />
+                <input value={barberName} onChange={(event) => { setBarberName(event.target.value); if (selectedClientId) setSelectedClientId(""); }} placeholder="Example: Carlos" className="h-11 w-full rounded-xl border border-slate-200 px-3" required />
               </label>
               <div className="hidden items-end sm:flex">
-                <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); setBarberSearch(""); barberSearchRef.current?.focus(); }} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Clear barber</button>
+                <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); setBarberSearch(""); barberSearchRef.current?.focus(); }} className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Clear barber</button>
               </div>
-              <div className="min-w-0">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Quantity</span>
-                <div className="flex h-12 items-center gap-2 rounded-xl border border-slate-200 px-2">
-                  <button type="button" onClick={() => setQuantity((q) => String(Math.max(0.01, Number(q || 1) - 1)))} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg font-black text-slate-600">−</button>
-                  <input type="number" min="0.01" step="0.01" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-full w-full min-w-0 text-center font-black outline-none" />
-                  <button type="button" onClick={() => setQuantity((q) => String(Number(q || 1) + 1))} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg font-black text-slate-600">+</button>
-                </div>
-              </div>
-              <label className="min-w-0">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Short detail (optional)</span>
-                <input value={itemNotes} onChange={(event) => setItemNotes(event.target.value)} placeholder="Size, color, pay later..." className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3" />
-              </label>
+
+              {/* Product is the whole point of this step — the biggest, most
+                  prominent control. Quantity and notes are secondary details
+                  that most requests don't even need, so they're a small
+                  optional row underneath instead of matching fields. */}
               <label className="min-w-0 sm:col-span-2">
                 <span className="mb-2 block text-xs font-black uppercase tracking-wide text-purple-700">2 · Choose product</span>
                 {!productText && !productFocused && !saving && !savedMessage && products.length > 0 && (
                   <div className="mb-2 grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3">
                     {products.slice(0, 6).map((product) => (
-                      <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="min-h-12 min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2 text-left">
-                        <span className="block truncate text-xs font-black text-slate-800">{product.nombre}</span>
+                      <button key={product.id} type="button" onClick={() => chooseProduct(product)} className="min-h-14 min-w-0 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2 text-left">
+                        <span className="block truncate text-sm font-black text-slate-800">{product.nombre}</span>
                         <span className="block text-[10px] font-bold text-emerald-700">{product.stock} available</span>
                       </button>
                     ))}
                   </div>
                 )}
                 <div className="relative">
-                  <Search size={17} className="pointer-events-none absolute left-3 top-3.5 text-slate-400" />
-                  <input ref={productInputRef} value={productText} onFocus={() => setProductFocused(true)} onBlur={() => setProductFocused(false)} onChange={(event) => { setProductText(event.target.value); setSelectedProductId(""); }} placeholder={inventoryLoading ? "Loading VAN inventory..." : "Type name, code or brand"} className="h-12 w-full rounded-xl border-2 border-slate-200 pl-10 pr-10 text-base font-bold outline-none focus:border-purple-500" required autoComplete="off" />
-                  {productText && <button type="button" onClick={() => { setProductText(""); setSelectedProductId(""); productInputRef.current?.focus(); }} className="absolute right-3 top-3.5 text-slate-400"><X size={18} /></button>}
+                  <Search size={19} className="pointer-events-none absolute left-3 top-4 text-slate-400" />
+                  <input ref={productInputRef} value={productText} onFocus={() => setProductFocused(true)} onBlur={() => setProductFocused(false)} onChange={(event) => { setProductText(event.target.value); setSelectedProductId(""); }} placeholder={inventoryLoading ? "Loading VAN inventory..." : "Type name, code or brand"} className="h-14 w-full rounded-xl border-2 border-purple-300 pl-11 pr-10 text-lg font-black outline-none focus:border-purple-500" required autoComplete="off" />
+                  {productText && <button type="button" onClick={() => { setProductText(""); setSelectedProductId(""); productInputRef.current?.focus(); }} className="absolute right-3 top-4 text-slate-400"><X size={20} /></button>}
                   {productText && !selectedProductId && (
                     <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
                       {productMatches.map((product) => (
@@ -570,6 +571,28 @@ export default function VisitNotebook() {
                   )}
                 </div>
               </label>
+
+              {/* Compact secondary row — quantity defaults to 1 and stays out
+                  of the way; the note only appears once you ask for it. */}
+              <div className="flex min-w-0 items-center gap-2 sm:col-span-2">
+                <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-1.5">
+                  <button type="button" onClick={() => setQuantity((q) => String(Math.max(0.01, Number(q || 1) - 1)))} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500">−</button>
+                  <input type="number" min="0.01" step="0.01" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-full w-9 min-w-0 bg-transparent text-center text-sm font-bold outline-none" />
+                  <button type="button" onClick={() => setQuantity((q) => String(Number(q || 1) + 1))} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500">+</button>
+                </div>
+                {itemNotes || noteOpen ? (
+                  <input
+                    autoFocus={noteOpen && !itemNotes}
+                    value={itemNotes}
+                    onChange={(event) => setItemNotes(event.target.value)}
+                    onBlur={() => { if (!itemNotes) setNoteOpen(false); }}
+                    placeholder="Size, color, pay later..."
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 px-2 text-sm"
+                  />
+                ) : (
+                  <button type="button" onClick={() => setNoteOpen(true)} className="h-9 shrink-0 text-xs font-bold text-slate-400">+ Note</button>
+                )}
+              </div>
             </div>
             <button type="submit" disabled={saving} className="mt-3 flex h-14 w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-purple-600 px-3 font-black text-white shadow-md hover:bg-purple-700 disabled:opacity-50">
               <Plus size={18} /> <span className="truncate">{saving ? "Saving..." : "Save request"}</span>
@@ -580,14 +603,19 @@ export default function VisitNotebook() {
           <section className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
             <p className="truncate text-center text-xs font-bold text-slate-600">
               {totals.lines} requests · {totals.units} units · {totals.picked}/{totals.lines} loaded
+              {soldCount > 0 && <span className="text-emerald-600"> · {soldCount} sold, cleared</span>}
             </p>
           </section>
 
           {grouped.length === 0 ? (
             <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-white p-10 text-center">
               <ClipboardList size={36} className="mx-auto text-slate-300" />
-              <p className="mt-3 font-black text-slate-700">The notebook is empty</p>
-              <p className="mt-1 text-sm text-slate-500">Add what the first barber needs.</p>
+              <p className="mt-3 font-black text-slate-700">
+                {soldCount > 0 ? "All requests sold" : "The notebook is empty"}
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                {soldCount > 0 ? "Everything requested has been fulfilled." : "Add what the first barber needs."}
+              </p>
             </div>
           ) : (
             <div className="space-y-4">

@@ -3718,12 +3718,25 @@ function clearSale() {
     if (!clientId || !van?.id) return;
     const { data } = await supabase
       .from("visit_notebook_items")
-      .select("quantity,product_text,item_notes,visit_notebooks!inner(van_id)")
+      .select("id,quantity,product_text,item_notes,visit_notebooks!inner(van_id)")
       .eq("cliente_id", clientId)
       .eq("sold", false)
       .eq("visit_notebooks.van_id", van.id)
       .order("sort_order");
     if (data?.length) setNotebookRequestSummary(data);
+  }
+
+  // Once the sale is actually completed, the shown notebook requests are
+  // considered fulfilled — mark them sold so the barber's card clears out
+  // of the Visit Notebook's running list instead of lingering there.
+  async function markNotebookRequestsSold() {
+    const ids = notebookRequestSummary.map((item) => item.id).filter(Boolean);
+    if (!ids.length) return;
+    try {
+      await supabase.from("visit_notebook_items").update({ sold: true, picked: true }).in("id", ids);
+    } catch (err) {
+      console.warn("Could not mark notebook requests as sold:", err?.message);
+    }
   }
 
   async function handleClientSelect(c) {
@@ -4320,6 +4333,7 @@ if (!saleIsOffline && selectedClient?.id && amountToCreditCheck > 0.0001) {
             removePendingFromLSById(currentPendingId);
             window.pendingSaleId = null;
           }
+          await markNotebookRequestsSold();
           clearSale();
           return;
         } catch (offlineError) {
@@ -4753,6 +4767,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       lastReceiptRef.current = payload;
       setShowPOSActions(true);
 
+      await markNotebookRequestsSold();
       clearSale();
 
     } catch (err) {

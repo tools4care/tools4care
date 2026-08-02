@@ -17,6 +17,7 @@ import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
   CreditCard, Filter, ShieldCheck, Wallet, ReceiptText, MapPin, Clock,
+  ChevronDown, CheckCircle2,
 } from "lucide-react";
 
 /* ========================= Helpers ========================= */
@@ -3329,21 +3330,50 @@ function BarberiaVisitsReport() {
     }
   }
 
-  const totals = useMemo(() => ({
-    shops: resumen.length,
-    visits: resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0),
-    avgMinutes: resumen.length
-      ? Math.round(resumen.reduce((s, r) => s + Number(r.avg_estimated_minutes || 0), 0) / resumen.length)
-      : 0,
-    overdue: resumen.filter((r) => {
+  // A shop only has a meaningful cadence once it's been visited 2+ times —
+  // a single visit gives no gap to compare against, so those shops are
+  // "not enough history yet," not overdue or on track. Splitting them out
+  // (and ranking by how far past cadence a shop is, not raw days-since)
+  // keeps the one truly-established monthly shop from being buried under a
+  // wall of one-time stops that don't need a route decision.
+  const { established, oneTime, totals } = useMemo(() => {
+    const withStatus = resumen.map((r) => {
       const avgGap = r.avg_days_between_visits != null ? Number(r.avg_days_between_visits) : null;
-      return avgGap != null && r.days_since_last_visit != null && r.days_since_last_visit > avgGap * 1.3;
-    }).length,
-  }), [resumen]);
+      const daysSince = r.days_since_last_visit;
+      const hasCadence = r.total_visits >= 2 && avgGap != null;
+      let status = "new";
+      let overdueBy = -Infinity;
+      if (hasCadence && daysSince != null) {
+        overdueBy = daysSince - avgGap;
+        status = daysSince > avgGap * 1.3 ? "overdue" : daysSince > avgGap ? "due" : "ok";
+      }
+      return { ...r, avgGap, daysSince, hasCadence, status, overdueBy };
+    });
+    const established = withStatus.filter((r) => r.hasCadence).sort((a, b) => b.overdueBy - a.overdueBy);
+    const oneTime = withStatus.filter((r) => !r.hasCadence);
+    const totals = {
+      shops: resumen.length,
+      visits: resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0),
+      avgMinutes: established.length
+        ? Math.round(established.reduce((s, r) => s + Number(r.avg_estimated_minutes || 0), 0) / established.length)
+        : 0,
+      overdue: established.filter((r) => r.status === "overdue").length,
+      due: established.filter((r) => r.status === "due").length,
+      ok: established.filter((r) => r.status === "ok").length,
+    };
+    return { established, oneTime, totals };
+  }, [resumen]);
+  const [showOneTime, setShowOneTime] = useState(false);
 
   if (loading) {
     return <div className="py-16 text-center text-sm text-gray-400">Loading…</div>;
   }
+
+  const STATUS_STYLE = {
+    overdue: { label: "Overdue", pill: "bg-red-100 text-red-700", text: "text-red-600" },
+    due: { label: "Due soon", pill: "bg-amber-100 text-amber-700", text: "text-amber-600" },
+    ok: { label: "On track", pill: "bg-emerald-100 text-emerald-700", text: "text-gray-700" },
+  };
 
   return (
     <div>
@@ -3353,12 +3383,15 @@ function BarberiaVisitsReport() {
         a client is saved with one.
       </p>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <SummaryCard label="Barbershops tracked" value={totals.shops} icon={MapPin} color="blue" />
-        <SummaryCard label="Total visits" value={totals.visits} icon={Users} color="purple" />
-        <SummaryCard label="Avg time per visit" value={`~${totals.avgMinutes} min`} icon={Clock} color="emerald" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
         <SummaryCard label="Overdue" value={totals.overdue} icon={AlertTriangle} color={totals.overdue ? "red" : "green"} />
+        <SummaryCard label="Due soon" value={totals.due} icon={Clock} color={totals.due ? "amber" : "green"} />
+        <SummaryCard label="On track" value={totals.ok} icon={CheckCircle2} color="green" />
+        <SummaryCard label="Avg time per visit" value={`~${totals.avgMinutes} min`} icon={MapPin} color="blue" />
       </div>
+      <p className="text-[11px] text-gray-400 mb-6">
+        {totals.shops} shops tracked · {totals.visits} total visits · {oneTime.length} visited only once so far (below)
+      </p>
 
       {pendientes.length > 0 && (
         <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -3412,48 +3445,77 @@ function BarberiaVisitsReport() {
           No visits recorded yet. Link a client's "Business" field to a barbershop and their sales will start counting automatically.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
-                <th className="py-2 pr-3">Barbershop</th>
-                <th className="py-2 pr-3">Last visit</th>
-                <th className="py-2 pr-3">Days since</th>
-                <th className="py-2 pr-3">Usual cadence</th>
-                <th className="py-2 pr-3">Avg time / visit</th>
-                <th className="py-2 pr-3">Total visits</th>
-              </tr>
-            </thead>
-            <tbody>
-              {resumen.map((r) => {
-                const avgGap = r.avg_days_between_visits != null ? Number(r.avg_days_between_visits) : null;
-                const daysSince = r.days_since_last_visit;
-                const overdue = avgGap != null && daysSince != null && daysSince > avgGap * 1.3;
-                return (
-                  <tr key={r.barberia_id} className="border-b border-gray-100 last:border-0">
-                    <td className="py-2.5 pr-3 font-semibold text-gray-800">
-                      {r.barberia_nombre}
-                      {overdue && (
-                        <span className="ml-2 text-[10px] font-bold uppercase tracking-wide bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full">
-                          Overdue
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 pr-3 text-gray-600">{r.last_visit_date || "—"}</td>
-                    <td className={`py-2.5 pr-3 font-semibold ${overdue ? "text-red-600" : "text-gray-700"}`}>
-                      {daysSince != null ? `${daysSince}d` : "—"}
-                    </td>
-                    <td className="py-2.5 pr-3 text-gray-600">{avgGap != null ? `~${avgGap}d` : "—"}</td>
-                    <td className="py-2.5 pr-3 text-gray-600">
-                      {r.avg_estimated_minutes != null ? `~${Math.round(r.avg_estimated_minutes)} min` : "—"}
-                    </td>
-                    <td className="py-2.5 pr-3 text-gray-600">{r.total_visits}</td>
+        <>
+          {established.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
+                    <th className="py-2 pr-3">Barbershop</th>
+                    <th className="py-2 pr-3">Status</th>
+                    <th className="py-2 pr-3">Last visit</th>
+                    <th className="py-2 pr-3">Days since</th>
+                    <th className="py-2 pr-3">Usual cadence</th>
+                    <th className="py-2 pr-3">Avg time / visit</th>
+                    <th className="py-2 pr-3">Total visits</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {established.map((r) => {
+                    const style = STATUS_STYLE[r.status];
+                    return (
+                      <tr key={r.barberia_id} className="border-b border-gray-100 last:border-0">
+                        <td className="py-2.5 pr-3 font-semibold text-gray-800">{r.barberia_nombre}</td>
+                        <td className="py-2.5 pr-3">
+                          <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${style.pill}`}>
+                            {style.label}
+                          </span>
+                        </td>
+                        <td className="py-2.5 pr-3 text-gray-600">{r.last_visit_date || "—"}</td>
+                        <td className={`py-2.5 pr-3 font-semibold ${style.text}`}>
+                          {r.daysSince != null ? `${r.daysSince}d` : "—"}
+                        </td>
+                        <td className="py-2.5 pr-3 text-gray-600">{r.avgGap != null ? `~${r.avgGap}d` : "—"}</td>
+                        <td className="py-2.5 pr-3 text-gray-600">
+                          {r.avg_estimated_minutes != null ? `~${Math.round(r.avg_estimated_minutes)} min` : "—"}
+                        </td>
+                        <td className="py-2.5 pr-3 text-gray-600">{r.total_visits}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {oneTime.length > 0 && (
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setShowOneTime((v) => !v)}
+                className="flex items-center gap-1.5 text-xs font-bold text-gray-400 hover:text-gray-600"
+              >
+                <ChevronDown size={14} className={`transition-transform ${showOneTime ? "" : "-rotate-90"}`} />
+                {oneTime.length} shop{oneTime.length === 1 ? "" : "s"} visited only once — not enough history for a cadence yet
+              </button>
+              {showOneTime && (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {oneTime.map((r) => (
+                        <tr key={r.barberia_id} className="border-b border-gray-100 last:border-0 text-gray-500">
+                          <td className="py-2 pr-3">{r.barberia_nombre}</td>
+                          <td className="py-2 pr-3">{r.last_visit_date || "—"}</td>
+                          <td className="py-2 pr-3">{r.total_visits} visit{r.total_visits === 1 ? "" : "s"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
