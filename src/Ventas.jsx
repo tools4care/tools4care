@@ -1533,20 +1533,9 @@ useEffect(() => {
         toast.error("Could not open this barber in Sales.");
         return;
       }
+      // handleClientSelect already loads any pending notebook requests for this
+      // client on this van, so no need to re-fetch scoped to just this notebookId.
       await handleClientSelect(client);
-
-      if (notebookId) {
-        const { data: requested } = await supabase
-          .from("visit_notebook_items")
-          .select("quantity,product_text,item_notes")
-          .eq("notebook_id", notebookId)
-          .eq("cliente_id", clientId)
-          .eq("sold", false)
-          .order("sort_order");
-        if (requested?.length) {
-          setNotebookRequestSummary(requested);
-        }
-      }
       setSearchParams({}, { replace: true });
     })();
     // handleClientSelect is intentionally read at execution time; including it
@@ -3722,6 +3711,21 @@ function clearSale() {
   }
 
  /* ── Client selection with pending-sale check ──────────────────── */
+  // Any un-sold visit-notebook request for this client on this van — shown as a
+  // reference panel regardless of how the client was reached (route list, search,
+  // or the notebook's own "Open normal sale" link), so requests are never invisible.
+  async function loadNotebookRequests(clientId) {
+    if (!clientId || !van?.id) return;
+    const { data } = await supabase
+      .from("visit_notebook_items")
+      .select("quantity,product_text,item_notes,visit_notebooks!inner(van_id)")
+      .eq("cliente_id", clientId)
+      .eq("sold", false)
+      .eq("visit_notebooks.van_id", van.id)
+      .order("sort_order");
+    if (data?.length) setNotebookRequestSummary(data);
+  }
+
   async function handleClientSelect(c) {
     // Reset current sale state first
     window.pendingSaleId = null;
@@ -3763,6 +3767,7 @@ function clearSale() {
 
     // No pending sale — proceed normally
     setSelectedClient(c);
+    if (c?.id) loadNotebookRequests(c.id);
     if (canUseCloud && navigator.onLine) runCreditAgent(c.id);
   }
 
@@ -6436,6 +6441,22 @@ function renderStepProducts() {
         </div>
       </div>
 
+      {/* ── VISIT NOTEBOOK REQUESTS — shown immediately, whichever way the client was reached ── */}
+      {notebookRequestSummary.length > 0 && (
+        <div className="rounded-xl border-2 border-violet-300 bg-violet-50 p-3 shadow-sm">
+          <div className="text-xs font-black uppercase tracking-wide text-violet-700">📓 Requested during the visit</div>
+          <div className="mt-2 space-y-1">
+            {notebookRequestSummary.map((item, index) => (
+              <div key={`${item.product_text}-${index}`} className="text-sm font-bold text-slate-700">
+                {Number(item.quantity)} × {item.product_text}
+                {item.item_notes && <span className="font-normal text-amber-700"> · {item.item_notes}</span>}
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-violet-600">Reference only — add the products below, then mark them sold in the Visit Notebook.</p>
+        </div>
+      )}
+
       {/* ── CART (top) ───────────────────────────────── */}
       {cartSafe.length > 0 && (
         <div className="rounded-xl shadow-lg ring-2 ring-emerald-300 bg-white border border-emerald-200 overflow-hidden">
@@ -6833,20 +6854,6 @@ function renderStepProducts() {
 
       {/* ── NOTES ────────────────────────────────────── */}
       <div>
-        {notebookRequestSummary.length > 0 && (
-          <div className="mb-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
-            <div className="text-xs font-black uppercase tracking-wide text-violet-700">Requests from visit notebook</div>
-            <div className="mt-2 space-y-1">
-              {notebookRequestSummary.map((item, index) => (
-                <div key={`${item.product_text}-${index}`} className="text-sm font-bold text-slate-700">
-                  {Number(item.quantity)} × {item.product_text}
-                  {item.item_notes && <span className="font-normal text-amber-700"> · {item.item_notes}</span>}
-                </div>
-              ))}
-            </div>
-            <p className="mt-2 text-[11px] text-violet-600">Reference only. It is removed automatically after the sale.</p>
-          </div>
-        )}
         <textarea
           className="w-full border-2 border-gray-300 rounded-xl p-4 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all resize-none text-sm"
           placeholder="📝 Optional note that should remain on the invoice..."
