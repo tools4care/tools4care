@@ -34,6 +34,7 @@ import SyncStatusWidget from "./components/SyncStatusWidget";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import { classifyArRisk, buildCollectionMessage, phoneLink, daysSince } from "./lib/arRisk";
 import { loadVanReorderRecommendations } from "./lib/reorderRecommendations";
+import { VISIT_LEARNING_START, median, cadenceForGap } from "./lib/barberCadence";
 const BackupManagerModal = lazy(() => import("./components/BackupManagerModal"));
 
 /* ---------- Helpers ---------- */
@@ -44,8 +45,6 @@ function fmtMoney(n) {
 function shortDate(iso) {
   return dayjs(iso).format("MM-DD");
 }
-const VISIT_LEARNING_START = "2026-07-30";
-
 function normalizeShopKey(value) {
   return String(value || "")
     .toUpperCase()
@@ -53,21 +52,6 @@ function normalizeShopKey(value) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
-function median(values) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2
-    ? sorted[middle]
-    : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-function cadenceForGap(gap) {
-  if (gap <= 10) return { label: "weekly", alertAfter: 14 };
-  if (gap <= 21) return { label: "every two weeks", alertAfter: 24 };
-  if (gap <= 45) return { label: "monthly", alertAfter: 45 };
-  return { label: `every ~${Math.round(gap)} days`, alertAfter: Math.round(gap * 1.5) };
-}
 function rangeDaysArray(days) {
   const arr = [];
   for (let i = days - 1; i >= 0; i--) {

@@ -41,6 +41,20 @@ function normalizeSearch(value) {
   return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
+// Mirrors the SQL side's barberia_extract_calle(): direccion is stored
+// either as JSON ({"calle": ...}) or a plain "street, city, state zip"
+// string; pull out just the street, which is what actually distinguishes
+// one shop's clients from another's.
+function extractCalle(direccion) {
+  if (!direccion) return null;
+  try {
+    const parsed = JSON.parse(direccion);
+    if (parsed && typeof parsed === "object" && parsed.calle) return String(parsed.calle).trim();
+  } catch { /* not JSON, fall through */ }
+  const first = String(direccion).split(",")[0]?.trim();
+  return first || null;
+}
+
 export default function VisitNotebook() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -72,6 +86,7 @@ export default function VisitNotebook() {
   const barberSectionRef = useRef(null);
   const [barberSearch, setBarberSearch] = useState("");
   const [crossShopResults, setCrossShopResults] = useState([]);
+  const [addressMatches, setAddressMatches] = useState([]);
   const [linkingId, setLinkingId] = useState("");
   const focusedShopRef = useRef("");
   const [productFocused, setProductFocused] = useState(false);
@@ -132,6 +147,32 @@ export default function VisitNotebook() {
       .order("nombre")
       .then(({ data }) => setClients(data || []));
   }, [barberiaId]);
+
+  // Some barbers are saved under a business name that reads nothing like
+  // this shop's, so name search alone misses them. Their street address
+  // usually still matches, though — surface those automatically as soon as
+  // the shop is picked, without waiting for anyone to type a search term.
+  useEffect(() => {
+    let active = true;
+    const shop = barberias.find((candidate) => candidate.id === barberiaId);
+    const calle = extractCalle(shop?.direccion);
+    const tokens = calle ? calle.split(/\s+/).filter((t) => t.length >= 2).slice(0, 2) : [];
+    if (!barberiaId || tokens.length === 0) {
+      setAddressMatches([]);
+      return;
+    }
+    (async () => {
+      let query = supabase
+        .from("clientes")
+        .select("id,nombre,telefono,direccion,barberia_id,barberias:barberia_id(nombre)")
+        .or(`barberia_id.is.null,barberia_id.neq.${barberiaId}`)
+        .limit(20);
+      for (const token of tokens) query = query.ilike("direccion", `%${token}%`);
+      const { data } = await query;
+      if (active) setAddressMatches(data || []);
+    })();
+    return () => { active = false; };
+  }, [barberiaId, barberias]);
 
   // A barber's client record isn't always linked to this shop yet — search
   // everyone when there's a search term, not just this shop's own clients,
@@ -202,7 +243,7 @@ export default function VisitNotebook() {
   const selectedShop = barberias.find((shop) => shop.id === barberiaId);
   const filteredShops = useMemo(() => {
     const term = normalizeSearch(shopSearch);
-    return barberias.filter((shop) => !term || normalizeSearch(`${shop.nombre} ${shop.direccion || ""}`).includes(term)).slice(0, 8);
+    return barberias.filter((shop) => !term || normalizeSearch(`${shop.nombre} ${shop.direccion || ""}`).includes(term)).slice(0, 30);
   }, [barberias, shopSearch]);
   const productMatches = useMemo(() => {
     const term = normalizeSearch(productText);
@@ -219,8 +260,13 @@ export default function VisitNotebook() {
   }, [clients, barberSearch]);
   const otherShopMatches = useMemo(() => {
     const shopIds = new Set(clients.map((c) => c.id));
-    return crossShopResults.filter((c) => !shopIds.has(c.id)).slice(0, 6);
-  }, [crossShopResults, clients]);
+    const merged = new Map();
+    // Address matches first — same street as this shop is a stronger signal
+    // than a typed name search, and shows up before you even search.
+    for (const c of addressMatches) if (!shopIds.has(c.id)) merged.set(c.id, c);
+    for (const c of crossShopResults) if (!shopIds.has(c.id)) merged.set(c.id, c);
+    return [...merged.values()].slice(0, 10);
+  }, [crossShopResults, addressMatches, clients]);
   // Sold items are fulfilled — clear them out of the working list instead of
   // leaving them sitting there struck through; the notebook should always
   // show what's still owed, not a growing log of everything ever requested.

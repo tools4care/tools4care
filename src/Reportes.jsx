@@ -13,6 +13,7 @@ import { loadPdfLibs } from "./utils/lazyPdf";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import { daysSince, classifyArRisk, buildCollectionMessage, phoneLink } from "./lib/arRisk";
 import { paginateRows, REPORT_PAGE_SIZES } from "./lib/pagination";
+import { VISIT_LEARNING_START } from "./lib/barberCadence";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
@@ -3267,8 +3268,41 @@ function PaymentBreakdownReport({ van, usuario }) {
 }
 
 /* ========================= Barbershop Visits ========================= */
+function easternDay(iso) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+}
+function mondayOfWeek(dayStr) {
+  const d = new Date(`${dayStr}T12:00:00`);
+  const diffToMonday = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - diffToMonday);
+  return d.toISOString().slice(0, 10);
+}
+async function fetchAllVentasSince(cutoffIso) {
+  const pageSize = 1000;
+  let from = 0;
+  let all = [];
+  // A year-plus of company-wide sales can exceed PostgREST's per-request
+  // row cap, so page through it instead of assuming one request covers it.
+  while (true) {
+    const { data, error } = await supabase
+      .from("ventas")
+      .select("fecha,cliente_id")
+      .gte("fecha", cutoffIso)
+      .neq("tipo", "devolucion")
+      .order("fecha", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 function BarberiaVisitsReport() {
   const [resumen, setResumen] = useState([]);
+  const [weeklySeries, setWeeklySeries] = useState([]);
+  const [pace, setPace] = useState({ perDay: 0, perWeek: 0, perMonth: 0 });
   const [pendientes, setPendientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
@@ -3276,11 +3310,75 @@ function BarberiaVisitsReport() {
   async function cargar() {
     setLoading(true);
     try {
-      const [{ data: resumenData }, { data: pendData }] = await Promise.all([
-        supabase.from("v_barberia_resumen").select("*").order("days_since_last_visit", { ascending: false, nullsFirst: false }),
+      const [{ data: clientesLinked }, ventasRows, { data: pendData }, { data: settingsRow }] = await Promise.all([
+        supabase.from("clientes").select("id,barberia_id,barberias:barberia_id(nombre)").not("barberia_id", "is", null),
+        fetchAllVentasSince(`${VISIT_LEARNING_START}T00:00:00-04:00`),
         supabase.from("barberias").select("id, nombre, direccion, duplicado_de").eq("revisar_duplicado", true),
+        supabase.from("site_settings").select("barberia_visit_buffer_minutes").eq("id", 1).maybeSingle(),
       ]);
-      setResumen(resumenData || []);
+      const bufferMinutes = Number(settingsRow?.barberia_visit_buffer_minutes ?? 12);
+      const clienteShop = new Map((clientesLinked || []).map((c) => [c.id, { barberia_id: c.barberia_id, nombre: c.barberias?.nombre || "Barbershop" }]));
+
+      // One entry per shop+day the shop was actually visited, with the
+      // earliest/latest sale timestamp that day (used for the time estimate).
+      const shopDays = new Map(); // barberia_id -> Map(day -> {min,max})
+      const shopNombre = new Map();
+      for (const row of ventasRows) {
+        const info = clienteShop.get(row.cliente_id);
+        if (!info?.barberia_id) continue;
+        const day = easternDay(row.fecha);
+        shopNombre.set(info.barberia_id, info.nombre);
+        if (!shopDays.has(info.barberia_id)) shopDays.set(info.barberia_id, new Map());
+        const days = shopDays.get(info.barberia_id);
+        const t = new Date(row.fecha).getTime();
+        const prev = days.get(day);
+        days.set(day, prev ? { min: Math.min(prev.min, t), max: Math.max(prev.max, t) } : { min: t, max: t });
+      }
+
+      const resumenData = [];
+      const weekCounts = new Map();
+      let totalVisitDays = 0;
+      for (const [barberiaId, days] of shopDays.entries()) {
+        const sortedDays = [...days.keys()].sort();
+        totalVisitDays += sortedDays.length;
+        for (const day of sortedDays) weekCounts.set(mondayOfWeek(day), (weekCounts.get(mondayOfWeek(day)) || 0) + 1);
+        const gaps = sortedDays.slice(1).map((day, i) => {
+          const prev = new Date(`${sortedDays[i]}T12:00:00`);
+          const cur = new Date(`${day}T12:00:00`);
+          return Math.round((cur - prev) / 86400000);
+        }).filter((g) => g > 0);
+        const avgGap = gaps.length ? Math.round((gaps.reduce((s, g) => s + g, 0) / gaps.length) * 10) / 10 : null;
+        const lastDay = sortedDays[sortedDays.length - 1];
+        const daysSince = Math.round((Date.now() - new Date(`${lastDay}T12:00:00`).getTime()) / 86400000);
+        const estimatedMinutesPerVisit = sortedDays.map((day) => {
+          const { min, max } = days.get(day);
+          return (max - min) / 60000 + bufferMinutes;
+        });
+        const avgMinutes = Math.round(estimatedMinutesPerVisit.reduce((s, m) => s + m, 0) / estimatedMinutesPerVisit.length);
+        resumenData.push({
+          barberia_id: barberiaId,
+          barberia_nombre: shopNombre.get(barberiaId),
+          total_visits: sortedDays.length,
+          last_visit_date: lastDay,
+          days_since_last_visit: daysSince,
+          avg_days_between_visits: avgGap,
+          avg_estimated_minutes: avgMinutes,
+        });
+      }
+      setResumen(resumenData);
+
+      const weeks = [...weekCounts.keys()].sort().slice(-12);
+      setWeeklySeries(weeks.map((week) => ({
+        week: new Date(`${week}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        visits: weekCounts.get(week),
+      })));
+
+      const daysElapsed = Math.max(1, Math.round((Date.now() - new Date(`${VISIT_LEARNING_START}T00:00:00`).getTime()) / 86400000));
+      setPace({
+        perDay: Math.round((totalVisitDays / daysElapsed) * 10) / 10,
+        perWeek: Math.round((totalVisitDays / (daysElapsed / 7)) * 10) / 10,
+        perMonth: Math.round((totalVisitDays / (daysElapsed / 30.44)) * 10) / 10,
+      });
 
       // Resolve each flagged shop's suggested match name/address for display.
       const targetIds = [...new Set((pendData || []).map((p) => p.duplicado_de).filter(Boolean))];
@@ -3293,6 +3391,7 @@ function BarberiaVisitsReport() {
     } catch (err) {
       console.error("Error loading barbershop visits report:", err);
       setResumen([]);
+      setWeeklySeries([]);
       setPendientes([]);
     } finally {
       setLoading(false);
@@ -3390,8 +3489,31 @@ function BarberiaVisitsReport() {
         <SummaryCard label="Avg time per visit" value={`~${totals.avgMinutes} min`} icon={MapPin} color="blue" />
       </div>
       <p className="text-[11px] text-gray-400 mb-6">
-        {totals.shops} shops tracked · {totals.visits} total visits · {oneTime.length} visited only once so far (below)
+        {totals.shops} shops tracked · {totals.visits} total visits since {fmtDate(VISIT_LEARNING_START)} · {oneTime.length} visited only once so far (below)
       </p>
+
+      {/* ── VISIT PACE — how often shops are actually getting visited, at a glance ── */}
+      <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h3 className="text-sm font-bold text-gray-700">Visit pace</h3>
+          <div className="flex gap-4 text-xs">
+            <span className="text-gray-500">Avg/day <b className="text-gray-800">{pace.perDay}</b></span>
+            <span className="text-gray-500">Avg/week <b className="text-gray-800">{pace.perWeek}</b></span>
+            <span className="text-gray-500">Avg/month <b className="text-gray-800">{pace.perMonth}</b></span>
+          </div>
+        </div>
+        {weeklySeries.length > 0 && (
+          <ResponsiveContainer width="100%" height={140}>
+            <BarChart data={weeklySeries} margin={{ left: -20, right: 8, top: 4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="week" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => [`${v} visits`, "Week of"]} />
+              <Bar dataKey="visits" fill="#7c3aed" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
 
       {pendientes.length > 0 && (
         <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -3454,8 +3576,8 @@ function BarberiaVisitsReport() {
                     <th className="py-2 pr-3">Barbershop</th>
                     <th className="py-2 pr-3">Status</th>
                     <th className="py-2 pr-3">Last visit</th>
-                    <th className="py-2 pr-3">Days since</th>
-                    <th className="py-2 pr-3">Usual cadence</th>
+                    <th className="py-2 pr-3" title="Calendar days since the last recorded sale at this shop">Days since last visit</th>
+                    <th className="py-2 pr-3" title="Average number of days between this shop's visits">Usual cadence</th>
                     <th className="py-2 pr-3">Avg time / visit</th>
                     <th className="py-2 pr-3">Total visits</th>
                   </tr>
