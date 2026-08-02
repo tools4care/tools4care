@@ -99,13 +99,13 @@ function SummaryCard({ label, value, sub, color = "blue", icon: Icon }) {
     emerald: "from-emerald-50 to-emerald-100 border-emerald-200 text-emerald-800",
   };
   return (
-    <div className={`bg-gradient-to-br ${cls[color]} border rounded-xl p-4 shadow-sm`}>
-      <div className="flex items-center justify-between mb-1">
-        <p className="text-sm font-medium opacity-80">{label}</p>
-        {Icon && <Icon size={18} className="opacity-60" />}
+    <div className={`min-w-0 bg-gradient-to-br ${cls[color]} border rounded-xl p-3 sm:p-4 shadow-sm`}>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <p className="truncate text-xs sm:text-sm font-medium opacity-80">{label}</p>
+        {Icon && <Icon size={18} className="shrink-0 opacity-60" />}
       </div>
-      <p className="text-2xl font-bold">{value}</p>
-      {sub && <p className="text-xs opacity-60 mt-1">{sub}</p>}
+      <p className="truncate text-lg sm:text-2xl font-bold" title={String(value)}>{value}</p>
+      {sub && <p className="truncate text-xs opacity-60 mt-1">{sub}</p>}
     </div>
   );
 }
@@ -690,6 +690,33 @@ function CierreDiarioReport({ van }) {
           <SummaryCard label="New A/R"     value={fmtCurrency(totals.pendiente)}    color="amber"   icon={AlertTriangle}
             sub="from sales only" />
         </div>
+
+        {totals.cobrado > 0 && (
+          <ChartPanel title="How Money Came In" subtitle="Collected amount by payment method" className="mb-5">
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: "Cash", value: totals.total_efectivo },
+                    { name: "Card", value: totals.total_tarjeta },
+                    { name: "Transfer", value: totals.total_transferencia },
+                    { name: "Other", value: totals.total_otro },
+                  ].filter((r) => r.value > 0)}
+                  cx="50%" cy="50%" innerRadius={44} outerRadius={76} dataKey="value"
+                  label={({ name, percent }) => `${name} ${Math.round(percent * 100)}%`}
+                >
+                  {[
+                    { name: "Cash", color: "#10b981" },
+                    { name: "Card", color: "#a855f7" },
+                    { name: "Transfer", color: "#3b82f6" },
+                    { name: "Other", color: "#f59e0b" },
+                  ].map((row) => <Cell key={row.name} fill={row.color} />)}
+                </Pie>
+                <Tooltip formatter={(v) => fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
+              </PieChart>
+            </ResponsiveContainer>
+          </ChartPanel>
+        )}
 
         <div className="bg-slate-50 border border-indigo-200 rounded-xl p-4 mb-5">
           <h3 className="font-bold text-indigo-900 mb-1">Accounts Receivable Movement</h3>
@@ -1641,6 +1668,19 @@ function DevolucionesReport({ van, usuario }) {
   const moneyRefunded = useMemo(() => data.filter(r => r.isMoneyRefund).reduce((s, r) => s + r.monto, 0), [data]);
   const arReduced = useMemo(() => data.filter(r => !r.isMoneyRefund).reduce((s, r) => s + r.monto, 0), [data]);
   const totalItems = useMemo(() => data.length, [data]);
+  const byDayChart = useMemo(() => {
+    const map = new Map();
+    for (const r of data) {
+      const day = String(r.created_at).slice(0, 10);
+      map.set(day, (map.get(day) || 0) + r.monto);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, monto]) => ({ day: fmtDate(day), monto }));
+  }, [data]);
+  const reasonChart = useMemo(() => {
+    const map = new Map();
+    for (const r of data) map.set(r.motivo, (map.get(r.motivo) || 0) + r.monto);
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([motivo, monto]) => ({ motivo: motivo.length > 20 ? `${motivo.slice(0, 20)}…` : motivo, monto }));
+  }, [data]);
 
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -1681,6 +1721,33 @@ function DevolucionesReport({ van, usuario }) {
           <SummaryCard label="A/R Reduced" value={fmtCurrency(arReduced)} sub="does not reduce closeout" color="blue" icon={FileText} />
           <SummaryCard label="# of Returns"    value={totalItems}         sub={`${fmtDate(from)} – ${fmtDate(to)}`}           color="amber" icon={FileText}   />
         </div>
+
+        {totalItems > 0 && (
+          <div className="grid md:grid-cols-2 gap-4 mb-6">
+            <ChartPanel title="Returns by Day" subtitle="Refunded amount trend for the selected period">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={byDayChart}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={v => `$${v}`} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={v => fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
+                  <Bar dataKey="monto" fill="#ef4444" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartPanel>
+            <ChartPanel title="Top Return Reasons" subtitle="Refunded amount by stated reason">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={reasonChart} layout="vertical" margin={{ left: 20, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" tickFormatter={v => `$${v}`} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="motivo" tick={{ fontSize: 11 }} width={100} />
+                  <Tooltip formatter={v => fmtCurrency(v)} {...CHART_TOOLTIP_STYLE} />
+                  <Bar dataKey="monto" fill="#f97316" radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartPanel>
+          </div>
+        )}
 
         {/* Header row */}
         <div className="flex justify-between items-center mb-3">
