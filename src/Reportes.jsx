@@ -693,8 +693,8 @@ function CierreDiarioReport({ van }) {
 
         {totals.cobrado > 0 && (
           <ChartPanel title="How Money Came In" subtitle="Collected amount by payment method" className="mb-5">
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
+            <ResponsiveContainer width="100%" height={280}>
+              <PieChart margin={{ top: 20, bottom: 20, left: 20, right: 20 }}>
                 <Pie
                   data={[
                     { name: "Cash", value: totals.total_efectivo },
@@ -702,7 +702,7 @@ function CierreDiarioReport({ van }) {
                     { name: "Transfer", value: totals.total_transferencia },
                     { name: "Other", value: totals.total_otro },
                   ].filter((r) => r.value > 0)}
-                  cx="50%" cy="50%" innerRadius={44} outerRadius={76} dataKey="value"
+                  cx="50%" cy="50%" innerRadius={44} outerRadius={68} dataKey="value"
                   label={({ name, percent }) => `${name} ${Math.round(percent * 100)}%`}
                 >
                   {[
