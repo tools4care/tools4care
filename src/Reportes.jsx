@@ -827,6 +827,9 @@ function VentasReport({ van, usuario }) {
   const [searched, setSearched] = useState(false);
   const [usuarios, setUsuarios] = useState([]);
   const [filtroUsuario, setFiltroUsuario] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  useEffect(() => { setPage(1); }, [data]);
 
   useEffect(() => {
     if (!isAdmin || !van?.id) return;
@@ -912,6 +915,8 @@ function VentasReport({ van, usuario }) {
     data.forEach((r) => { const day = String(r.created_at || "").slice(0, 10); map[day] = (map[day] || 0) + Number(r.total_venta || 0); });
     return Object.entries(map).sort(([a],[b]) => a.localeCompare(b)).map(([day, total]) => ({ day: fmtDate(day), total }));
   }, [data]);
+
+  const pagination = useMemo(() => paginateRows(data, page, pageSize), [data, page, pageSize]);
 
   const salesInsights = useMemo(() => {
     if (!data.length) return [];
@@ -1060,34 +1065,41 @@ function VentasReport({ van, usuario }) {
             <Download size={14}/> Export PDF
           </button>
         </div>
-        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
-          <table className="min-w-full text-sm divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>{["Date/Time","Invoice","Client","Seller","Method","Total","Paid","Pending","Status"].map(h=>(
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {data.length===0 ? (
-                <tr><td colSpan={9} className="text-center py-10 text-gray-400">No sales found for this period</td></tr>
-              ) : data.map(r=>{
-                const pend=Math.max(0,Number(r.total_venta||0)-Number(r.total_pagado||0));
-                return (<tr key={r.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 whitespace-nowrap text-gray-600 text-xs">{fmtDateTime(r.created_at)}</td>
-                  <td className="px-4 py-2 text-gray-600 text-xs font-semibold">{r.numero_factura || "—"}</td>
-                  <td className="px-4 py-2 font-medium text-gray-900">{r.clientes?.nombre||"—"}</td>
-                  <td className="px-4 py-2 text-gray-600">{r.usuarios?.nombre||"—"}</td>
-                  <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${metodoTag(normMetodoDisplay(r.metodo_pago))}`}>{normMetodoDisplay(r.metodo_pago)}</span></td>
-                  <td className="px-4 py-2 font-semibold text-gray-900">{fmtCurrency(r.total_venta)}</td>
-                  <td className="px-4 py-2 text-green-700 font-medium">{fmtCurrency(r.total_pagado)}</td>
-                  <td className="px-4 py-2 text-amber-700 font-medium">{fmtCurrency(pend)}</td>
-                  <td className="px-4 py-2">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusPillClass(r.estado_pago)}`}>{paymentStatusLabel(r.estado_pago)}</span>
-                  </td>
-                </tr>);
-              })}
-            </tbody>
-          </table>
+        <div className="overflow-hidden bg-white border border-gray-200 rounded-xl">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>{["Date/Time","Invoice","Client","Seller","Method","Total","Paid","Pending","Status"].map(h=>(
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pagination.total===0 ? (
+                  <tr><td colSpan={9} className="text-center py-10 text-gray-400">No sales found for this period</td></tr>
+                ) : pagination.rows.map(r=>{
+                  const pend=Math.max(0,Number(r.total_venta||0)-Number(r.total_pagado||0));
+                  return (<tr key={r.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-2 whitespace-nowrap text-gray-600 text-xs">{fmtDateTime(r.created_at)}</td>
+                    <td className="px-4 py-2 text-gray-600 text-xs font-semibold">{r.numero_factura || "—"}</td>
+                    <td className="px-4 py-2 font-medium text-gray-900">{r.clientes?.nombre||"—"}</td>
+                    <td className="px-4 py-2 text-gray-600">{r.usuarios?.nombre||"—"}</td>
+                    <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${metodoTag(normMetodoDisplay(r.metodo_pago))}`}>{normMetodoDisplay(r.metodo_pago)}</span></td>
+                    <td className="px-4 py-2 font-semibold text-gray-900">{fmtCurrency(r.total_venta)}</td>
+                    <td className="px-4 py-2 text-green-700 font-medium">{fmtCurrency(r.total_pagado)}</td>
+                    <td className="px-4 py-2 text-amber-700 font-medium">{fmtCurrency(pend)}</td>
+                    <td className="px-4 py-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusPillClass(r.estado_pago)}`}>{paymentStatusLabel(r.estado_pago)}</span>
+                    </td>
+                  </tr>);
+                })}
+              </tbody>
+            </table>
+          </div>
+          <TablePagination
+            pagination={pagination}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          />
         </div>
       </>)}
     </div>
@@ -1377,6 +1389,9 @@ function DiscountAuditReport({ van, usuario }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [searched, setSearched] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  useEffect(() => { setPage(1); }, [rows]);
 
   const search = async () => {
     if (!van?.id) return;
@@ -1488,6 +1503,8 @@ function DiscountAuditReport({ van, usuario }) {
     return Object.values(map).sort((a, b) => b.discount - a.discount).slice(0, 8);
   }, [rows]);
 
+  const pagination = useMemo(() => paginateRows(rows, page, pageSize), [rows, page, pageSize]);
+
   const insights = useMemo(() => {
     if (!rows.length) return [];
     const largest = [...rows].sort((a, b) => b.discountAmount - a.discountAmount)[0];
@@ -1565,32 +1582,39 @@ function DiscountAuditReport({ van, usuario }) {
             </ChartPanel>
           </div>
         )}
-        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
-          <table className="min-w-full text-sm divide-y divide-gray-200">
-            <thead className="bg-orange-50">
-              <tr>{["Date","Invoice","Customer","Seller","Product","Qty","Regular","Charged","Discount","Discount %"].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-bold text-orange-700 uppercase tracking-wide">{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {rows.length === 0 ? (
-                <tr><td colSpan={10} className="text-center py-10 text-gray-400">No discounts or price overrides found</td></tr>
-              ) : rows.map((r) => (
-                <tr key={r.id} className="hover:bg-orange-50">
-                  <td className="px-4 py-2.5 text-gray-600 text-xs whitespace-nowrap">{fmtDateTime(r.date)}</td>
-                  <td className="px-4 py-2.5 font-semibold text-gray-700">{r.invoice || "—"}</td>
-                  <td className="px-4 py-2.5 font-semibold text-gray-900">{r.customer}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{r.seller}</td>
-                  <td className="px-4 py-2.5 text-gray-900">{r.product}</td>
-                  <td className="px-4 py-2.5 text-center">{r.qty}</td>
-                  <td className="px-4 py-2.5 text-blue-700">{fmtCurrency(r.regularUnit)}</td>
-                  <td className="px-4 py-2.5 text-green-700">{fmtCurrency(r.chargedUnit)}</td>
-                  <td className="px-4 py-2.5 font-bold text-red-700">{fmtCurrency(r.discountAmount)}</td>
-                  <td className="px-4 py-2.5 font-semibold text-orange-700">{fmtPercent(r.discountPct)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="overflow-hidden bg-white border border-gray-200 rounded-xl">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm divide-y divide-gray-200">
+              <thead className="bg-orange-50">
+                <tr>{["Date","Invoice","Customer","Seller","Product","Qty","Regular","Charged","Discount","Discount %"].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-bold text-orange-700 uppercase tracking-wide">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pagination.total === 0 ? (
+                  <tr><td colSpan={10} className="text-center py-10 text-gray-400">No discounts or price overrides found</td></tr>
+                ) : pagination.rows.map((r) => (
+                  <tr key={r.id} className="hover:bg-orange-50">
+                    <td className="px-4 py-2.5 text-gray-600 text-xs whitespace-nowrap">{fmtDateTime(r.date)}</td>
+                    <td className="px-4 py-2.5 font-semibold text-gray-700">{r.invoice || "—"}</td>
+                    <td className="px-4 py-2.5 font-semibold text-gray-900">{r.customer}</td>
+                    <td className="px-4 py-2.5 text-gray-600">{r.seller}</td>
+                    <td className="px-4 py-2.5 text-gray-900">{r.product}</td>
+                    <td className="px-4 py-2.5 text-center">{r.qty}</td>
+                    <td className="px-4 py-2.5 text-blue-700">{fmtCurrency(r.regularUnit)}</td>
+                    <td className="px-4 py-2.5 text-green-700">{fmtCurrency(r.chargedUnit)}</td>
+                    <td className="px-4 py-2.5 font-bold text-red-700">{fmtCurrency(r.discountAmount)}</td>
+                    <td className="px-4 py-2.5 font-semibold text-orange-700">{fmtPercent(r.discountPct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <TablePagination
+            pagination={pagination}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          />
         </div>
       </>)}
     </div>
