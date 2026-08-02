@@ -3078,34 +3078,42 @@ function PaymentBreakdownReport({ van, usuario }) {
   return (
     <div className="space-y-5">
 
-      {/* ── Date Presets ── */}
-      <div>
-        <p className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1.5"><Filter size={12}/> Quick Date Range</p>
-        <div className="flex flex-wrap gap-1.5">
-          {PRESETS.map(p => (
-            <button key={p.value} onClick={() => pickPreset(p.value)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                preset === p.value
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "bg-white border border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700"
-              }`}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Date inputs (shown when custom or for reference) ── */}
+      {/* ── Filters — one compact row of selects instead of stacked pill rows ── */}
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
-          <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPreset("custom"); }}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+          <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1"><Filter size={12}/> Date Range</label>
+          <select value={preset} onChange={e => pickPreset(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+            {PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
         </div>
+
+        {preset === "custom" && (<>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+            <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+            <input type="date" value={to} onChange={e => setTo(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+          </div>
+        </>)}
+
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
-          <input type="date" value={to} onChange={e => { setTo(e.target.value); setPreset("custom"); }}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+          <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1"><CreditCard size={12}/> Payment Method</label>
+          <select value={metodo} onChange={e => setMetodo(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+            {METODO_OPTIONS.filter(m => m.group === "main").map(m => (
+              <option key={m.value} value={m.value}>{m.emoji} {m.label}</option>
+            ))}
+            <optgroup label="Transfer">
+              {METODO_OPTIONS.filter(m => m.group === "transfer").map(m => (
+                <option key={m.value} value={m.value}>{m.emoji} {m.label}</option>
+              ))}
+            </optgroup>
+          </select>
         </div>
 
         {/* Van filter (admin) */}
@@ -3131,40 +3139,6 @@ function PaymentBreakdownReport({ van, usuario }) {
             </select>
           </div>
         )}
-      </div>
-
-      {/* ── Payment Method Filter ── */}
-      <div>
-        <p className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1.5"><CreditCard size={12}/> Payment Method</p>
-
-        {/* Main methods row */}
-        <div className="flex flex-wrap gap-2 mb-2">
-          {METODO_OPTIONS.filter(m => m.group === "main").map(m => (
-            <button key={m.value} onClick={() => setMetodo(m.value)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-all ${
-                metodo === m.value
-                  ? "bg-blue-600 border-blue-600 text-white shadow-md scale-[1.02]"
-                  : "bg-white border-gray-200 text-gray-700 hover:border-blue-300"
-              }`}>
-              <span>{m.emoji}</span>{m.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Transfer sub-types row */}
-        <div className="flex flex-wrap gap-2 pl-2 border-l-2 border-blue-100">
-          <span className="text-[11px] font-bold text-gray-400 flex items-center">🏦 Transfer:</span>
-          {METODO_OPTIONS.filter(m => m.group === "transfer").map(m => (
-            <button key={m.value} onClick={() => setMetodo(m.value)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border-2 transition-all ${
-                metodo === m.value
-                  ? "bg-blue-600 border-blue-600 text-white shadow-md"
-                  : "bg-white border-gray-200 text-gray-600 hover:border-blue-300"
-              }`}>
-              <span>{m.emoji}</span>{m.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* ── Action bar ── */}
