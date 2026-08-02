@@ -71,6 +71,8 @@ export default function VisitNotebook() {
   const barberSearchRef = useRef(null);
   const barberSectionRef = useRef(null);
   const [barberSearch, setBarberSearch] = useState("");
+  const [crossShopResults, setCrossShopResults] = useState([]);
+  const [linkingId, setLinkingId] = useState("");
   const focusedShopRef = useRef("");
   const [productFocused, setProductFocused] = useState(false);
   const [savedMessage, setSavedMessage] = useState("");
@@ -129,6 +131,27 @@ export default function VisitNotebook() {
       .order("nombre")
       .then(({ data }) => setClients(data || []));
   }, [barberiaId]);
+
+  // A barber's client record isn't always linked to this shop yet — search
+  // everyone when there's a search term, not just this shop's own clients,
+  // so typing a real name finds them instead of forcing a new duplicate entry.
+  useEffect(() => {
+    const term = barberSearch.trim();
+    if (!term) {
+      setCrossShopResults([]);
+      return;
+    }
+    let active = true;
+    const handle = window.setTimeout(async () => {
+      const { data } = await supabase
+        .from("clientes")
+        .select("id,nombre,telefono,barberia_id,barberias:barberia_id(nombre)")
+        .or(`nombre.ilike.%${term}%,telefono.ilike.%${term}%`)
+        .limit(15);
+      if (active) setCrossShopResults(data || []);
+    }, 250);
+    return () => { active = false; window.clearTimeout(handle); };
+  }, [barberSearch]);
 
   useEffect(() => {
     if (!barberiaId || focusedShopRef.current === barberiaId) return;
@@ -193,6 +216,10 @@ export default function VisitNotebook() {
       !term || normalizeSearch(`${client.nombre} ${client.telefono || ""}`).includes(term)
     ).slice(0, term ? 12 : 8);
   }, [clients, barberSearch]);
+  const otherShopMatches = useMemo(() => {
+    const shopIds = new Set(clients.map((c) => c.id));
+    return crossShopResults.filter((c) => !shopIds.has(c.id)).slice(0, 6);
+  }, [crossShopResults, clients]);
   const grouped = useMemo(() => groupItems(items), [items]);
   const totals = useMemo(() => ({
     lines: items.length,
@@ -221,12 +248,31 @@ export default function VisitNotebook() {
     return data;
   }
 
-  function selectClient(clientId) {
+  function selectClient(clientId, fallbackName) {
     setSelectedClientId(clientId);
     const client = clients.find((candidate) => candidate.id === clientId);
-    if (client) setBarberName(client.nombre || "");
-    setBarberSearch(client?.nombre || "");
+    const name = client?.nombre || fallbackName || "";
+    setBarberName(name);
+    setBarberSearch(name);
+    setCrossShopResults([]);
     window.setTimeout(() => productInputRef.current?.focus(), 0);
+  }
+
+  // Found while searching, but linked to a different shop (or no shop) —
+  // one tap fixes the data and selects them, instead of typing a duplicate.
+  async function linkBarberToShop(client) {
+    setLinkingId(client.id);
+    try {
+      const { error } = await supabase.from("clientes").update({ barberia_id: barberiaId }).eq("id", client.id);
+      if (error) throw error;
+      setClients((prev) => [...prev, { id: client.id, nombre: client.nombre, telefono: client.telefono }].sort((a, b) => a.nombre.localeCompare(b.nombre)));
+      selectClient(client.id, client.nombre);
+      toast.success(`${client.nombre} linked to ${selectedShop?.nombre || "this barbershop"}.`);
+    } catch (error) {
+      toast.error(error.message || "Could not link this client.");
+    } finally {
+      setLinkingId("");
+    }
   }
 
   function chooseShop(shop) {
@@ -238,48 +284,85 @@ export default function VisitNotebook() {
     setBarberSearch("");
   }
 
-  function chooseProduct(product) {
-    setProductText(product.nombre);
-    setSelectedProductId(product.id);
-    window.setTimeout(() => productInputRef.current?.focus(), 0);
+  // Jump back to a barber who already has items — one tap, no re-searching,
+  // since orders don't come in one barber at a time.
+  function quickReselectBarber(group) {
+    if (group.clientId) {
+      selectClient(group.clientId);
+    } else {
+      setSelectedClientId("");
+      setBarberName(group.name);
+      setBarberSearch(group.name);
+    }
+    barberSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    window.setTimeout(() => productInputRef.current?.focus(), 250);
   }
 
-  async function addItem(event) {
-    event.preventDefault();
-    if (!barberName.trim() || !productText.trim()) {
+  // Tapping a matched product commits immediately — no separate "Save" tap
+  // needed for the common case. Typing a custom request (not in inventory)
+  // still goes through the form's Save button since there's nothing to tap.
+  async function chooseProduct(product) {
+    await commitItem({ producto_id: product.id, productText: product.nombre });
+  }
+
+  async function commitItem({ producto_id, productText: text }) {
+    const finalText = (text ?? productText).trim();
+    if (!barberName.trim() || !finalText) {
       toast.warning("Enter the barber and requested product.");
       return;
     }
     setSaving(true);
     try {
       const current = await ensureNotebook();
-      const normalizedProduct = normalizeSearch(productText);
-      const matchedProduct = products.find((product) =>
-        normalizeSearch(product.nombre) === normalizedProduct
-        || normalizeSearch(product.codigo) === normalizedProduct
+      let finalProductId = producto_id ?? null;
+      if (!finalProductId) {
+        const normalizedProduct = normalizeSearch(finalText);
+        const matchedProduct = products.find((product) =>
+          normalizeSearch(product.nombre) === normalizedProduct
+          || normalizeSearch(product.codigo) === normalizedProduct
+        );
+        finalProductId = matchedProduct?.id || null;
+      }
+      const qty = Math.max(0.01, Number(quantity || 1));
+
+      // Same barber + same product, not sold yet — bump the quantity
+      // instead of adding a second line for it.
+      const existing = items.find((item) =>
+        !item.sold
+        && (selectedClientId ? item.cliente_id === selectedClientId : normalizeSearch(item.barber_name) === normalizeSearch(barberName))
+        && (finalProductId ? item.producto_id === finalProductId : normalizeSearch(item.product_text) === normalizeSearch(finalText))
       );
-      const payload = {
-        notebook_id: current.id,
-        cliente_id: selectedClientId || null,
-        barber_name: barberName.trim(),
-        producto_id: matchedProduct?.id || null,
-        product_text: productText.trim(),
-        quantity: Math.max(0.01, Number(quantity || 1)),
-        item_notes: itemNotes.trim() || null,
-        sort_order: items.length,
-      };
-      const { data, error } = await supabase
-        .from("visit_notebook_items")
-        .insert(payload)
-        .select()
-        .single();
-      if (error) throw error;
-      setItems((currentItems) => [...currentItems, data]);
+
+      if (existing) {
+        const newQty = Number(existing.quantity || 0) + qty;
+        setItems((current2) => current2.map((it) => it.id === existing.id ? { ...it, quantity: newQty } : it));
+        const { error } = await supabase.from("visit_notebook_items").update({ quantity: newQty, updated_at: new Date().toISOString() }).eq("id", existing.id);
+        if (error) throw error;
+        setSavedMessage(`${barberName.trim()}: ${finalText} → ${newQty}`);
+      } else {
+        const payload = {
+          notebook_id: current.id,
+          cliente_id: selectedClientId || null,
+          barber_name: barberName.trim(),
+          producto_id: finalProductId,
+          product_text: finalText,
+          quantity: qty,
+          item_notes: itemNotes.trim() || null,
+          sort_order: items.length,
+        };
+        const { data, error } = await supabase
+          .from("visit_notebook_items")
+          .insert(payload)
+          .select()
+          .single();
+        if (error) throw error;
+        setItems((currentItems) => [...currentItems, data]);
+        setSavedMessage(`Saved for ${barberName.trim()}`);
+      }
       setProductText("");
       setSelectedProductId("");
       setQuantity("1");
       setItemNotes("");
-      setSavedMessage(`Saved for ${barberName.trim()}`);
       window.setTimeout(() => setSavedMessage(""), 1800);
       window.requestAnimationFrame(() => productInputRef.current?.focus({ preventScroll: true }));
     } catch (error) {
@@ -287,6 +370,11 @@ export default function VisitNotebook() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function addItem(event) {
+    event.preventDefault();
+    await commitItem({ producto_id: null, productText });
   }
 
   async function patchItem(itemId, patch) {
@@ -408,9 +496,31 @@ export default function VisitNotebook() {
                       <span className="block max-w-44 truncate">{client.nombre}</span>
                     </button>
                   ))}
-                  {clients.length > 0 && visibleBarbers.length === 0 && <span className="text-sm text-slate-500">No saved barber matches. Write a new name below.</span>}
-                  {!clients.length && <span className="text-sm text-slate-500">No saved barbers here yet; write the name below.</span>}
+                  {clients.length > 0 && visibleBarbers.length === 0 && !otherShopMatches.length && <span className="text-sm text-slate-500">No saved barber matches. Write a new name below.</span>}
+                  {!clients.length && !otherShopMatches.length && <span className="text-sm text-slate-500">No saved barbers here yet; write the name below.</span>}
                 </div>
+
+                {otherShopMatches.length > 0 && (
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2.5">
+                    <p className="mb-1.5 text-xs font-bold text-amber-800">Found under another barbershop — tap to link here:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {otherShopMatches.map((client) => (
+                        <button
+                          key={client.id}
+                          type="button"
+                          disabled={linkingId === client.id}
+                          onClick={() => linkBarberToShop(client)}
+                          className="flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-bold text-amber-800 disabled:opacity-50"
+                        >
+                          <span className="max-w-32 truncate">{client.nombre}</span>
+                          <span className="text-[10px] font-semibold text-amber-500">
+                            {linkingId === client.id ? "Linking…" : client.barberias?.nombre ? `(${client.barberias.nombre})` : "(no shop)"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <label className="min-w-0">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Name or new barber *</span>
@@ -419,6 +529,18 @@ export default function VisitNotebook() {
               <div className="hidden items-end sm:flex">
                 <button type="button" onClick={() => { setSelectedClientId(""); setBarberName(""); setBarberSearch(""); barberSearchRef.current?.focus(); }} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-600">Clear barber</button>
               </div>
+              <div className="min-w-0">
+                <span className="mb-1 block text-xs font-bold text-slate-500">Quantity</span>
+                <div className="flex h-12 items-center gap-2 rounded-xl border border-slate-200 px-2">
+                  <button type="button" onClick={() => setQuantity((q) => String(Math.max(0.01, Number(q || 1) - 1)))} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg font-black text-slate-600">−</button>
+                  <input type="number" min="0.01" step="0.01" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-full w-full min-w-0 text-center font-black outline-none" />
+                  <button type="button" onClick={() => setQuantity((q) => String(Number(q || 1) + 1))} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg font-black text-slate-600">+</button>
+                </div>
+              </div>
+              <label className="min-w-0">
+                <span className="mb-1 block text-xs font-bold text-slate-500">Short detail (optional)</span>
+                <input value={itemNotes} onChange={(event) => setItemNotes(event.target.value)} placeholder="Size, color, pay later..." className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3" />
+              </label>
               <label className="min-w-0 sm:col-span-2">
                 <span className="mb-2 block text-xs font-black uppercase tracking-wide text-purple-700">2 · Choose product</span>
                 {!productText && !productFocused && !saving && !savedMessage && products.length > 0 && (
@@ -448,19 +570,6 @@ export default function VisitNotebook() {
                   )}
                 </div>
               </label>
-              <details className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
-                <summary className="cursor-pointer text-sm font-black text-slate-600">Quantity or extra detail <span className="font-normal">(optional)</span></summary>
-                <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
-                  <label className="min-w-0">
-                    <span className="mb-1 block text-xs font-bold text-slate-500">Quantity</span>
-                    <input type="number" min="0.01" step="0.01" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border border-slate-200 px-3" />
-                  </label>
-                  <label className="min-w-0">
-                    <span className="mb-1 block text-xs font-bold text-slate-500">Short detail</span>
-                    <input value={itemNotes} onChange={(event) => setItemNotes(event.target.value)} placeholder="Size, color, pay later..." className="h-11 w-full min-w-0 rounded-xl border border-slate-200 px-3" />
-                  </label>
-                </div>
-              </details>
             </div>
             <button type="submit" disabled={saving} className="mt-3 flex h-14 w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-purple-600 px-3 font-black text-white shadow-md hover:bg-purple-700 disabled:opacity-50">
               <Plus size={18} /> <span className="truncate">{saving ? "Saving..." : "Save request"}</span>
@@ -486,11 +595,16 @@ export default function VisitNotebook() {
                 <section key={group.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <div className="flex min-w-0 flex-col items-stretch gap-2 bg-slate-900 px-3 py-3 text-white sm:flex-row sm:items-center sm:justify-between sm:px-4">
                     <div className="flex min-w-0 items-center gap-2"><UserRound size={18} /><h3 className="truncate font-black">{group.name}</h3></div>
-                    {group.clientId && (
-                      <button type="button" onClick={() => navigate(`/ventas?client=${group.clientId}&notebook=${notebook?.id || ""}`)} className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-black sm:w-auto sm:shrink-0">
-                        <ShoppingCart size={14} /> Open normal sale
+                    <div className="flex min-w-0 gap-2">
+                      <button type="button" onClick={() => quickReselectBarber(group)} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-white/15 px-3 py-2 text-xs font-black sm:flex-none">
+                        <Plus size={14} /> Add more
                       </button>
-                    )}
+                      {group.clientId && (
+                        <button type="button" onClick={() => navigate(`/ventas?client=${group.clientId}&notebook=${notebook?.id || ""}`)} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-black sm:flex-none">
+                          <ShoppingCart size={14} /> Open normal sale
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="divide-y divide-slate-100">
                     {group.items.map((item) => (
