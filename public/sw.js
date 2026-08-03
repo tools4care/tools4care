@@ -1,7 +1,7 @@
 // public/sw.js — cache ligero tipo "app shell"
 // No cachea llamadas a Supabase para que los datos siempre estén frescos.
 
-const VERSION = "t4c-sw-v5";
+const VERSION = "t4c-sw-v6";
 const APP_SHELL = [
   "/",
   "/storefront",
@@ -9,11 +9,37 @@ const APP_SHELL = [
   "/manifest-ventas.json"
 ];
 
-// Instalar: precache básico
+// Screens used physically at a stop with no signal (Ventas, Productos,
+// Facturas, Visit Notebook) are lazy chunks with a hashed filename that
+// changes every deploy — without this, the service worker only ever learns
+// a chunk's URL once someone's browser happens to request it, so a screen
+// nobody has opened since the latest deploy has nothing to fall back to
+// offline. offline-precache.json is generated at build time by
+// scripts/generate-offline-manifest.mjs from the real Vite build manifest,
+// so this list is never hand-maintained and can't drift from what those
+// screens actually need.
+async function precacheOfflineCriticalScreens(cache) {
+  try {
+    const res = await fetch("/offline-precache.json");
+    if (!res.ok) return;
+    const files = await res.json();
+    if (Array.isArray(files) && files.length) {
+      await cache.addAll(files);
+    }
+  } catch {
+    // Missing/stale manifest must never block install — the app shell above
+    // is still enough to boot, and opportunistic cache-first fills the rest.
+  }
+}
+
+// Instalar: precache básico + pantallas críticas offline
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(VERSION)
-      .then((cache) => cache.addAll(APP_SHELL))
+      .then(async (cache) => {
+        await cache.addAll(APP_SHELL);
+        await precacheOfflineCriticalScreens(cache);
+      })
       .then(() => self.skipWaiting())
   );
 });

@@ -19,6 +19,10 @@ export default defineConfig({
     },
   },
   build: {
+    // Used by scripts/generate-offline-manifest.mjs (postbuild) to resolve
+    // exactly which built chunk files the offline-critical screens need,
+    // so the service worker can precache them by name instead of guessing.
+    manifest: true,
     rollupOptions: {
       output: {
         manualChunks(id) {

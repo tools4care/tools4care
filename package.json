@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/generate-offline-manifest.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
