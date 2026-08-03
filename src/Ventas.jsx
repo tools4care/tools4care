@@ -112,6 +112,19 @@ async function withTimeout(run, ms = 15000) {
   }
 }
 
+// supabase-js queries have no built-in timeout — on a dead connection (bars
+// but no data, common at real stops) the browser can leave a fetch pending
+// for a very long time instead of failing fast. Racing every network call
+// on the offline-critical paths (client search, product load) against this
+// guarantees they fail fast into their existing cache-fallback / error
+// handling instead of leaving the screen stuck with a spinner forever.
+function withNetworkTimeout(promise, ms = 5000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("network-timeout")), ms)),
+  ]);
+}
+
 async function createStripeCheckoutSession(amount, description = "Pago de venta") {
   const num = Number(amount);
   if (!Number.isFinite(num)) throw new Error("Amount inválido");
@@ -1824,6 +1837,7 @@ useEffect(() => {
 
       setClientLoading(true);
       try {
+        await withNetworkTimeout((async () => {
         const safe = term.replace(/[(),%]/g, "").slice(0, 80);
         const phoneLike = isPhoneLikeSearch(safe);
         const phoneVariants = phoneSearchVariants(safe);
@@ -1961,15 +1975,18 @@ useEffect(() => {
         }
 
         setClients(Array.isArray(enriched) ? enriched : []);
-
+        })(), 6000);
       } catch (err) {
         if (searchId !== clientSearchSeqRef.current) return;
         console.error("Error searching clients:", err);
+        reportConnectionFailure();
         const cachedResults = await searchClientsInOfflineCache(term);
         if (searchId !== clientSearchSeqRef.current) return;
         setClients(cachedResults);
         if (cachedResults.length > 0) {
           toast.info("Sin conexión estable. Mostrando clientes guardados offline.", 4000);
+        } else {
+          toast.warning("Sin conexión y sin clientes guardados offline para esta búsqueda.", 4000);
         }
       } finally {
         if (searchId === clientSearchSeqRef.current) setClientLoading(false);
@@ -2311,11 +2328,11 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
     }
 
     try {
-      const { data, error } = await supabase.rpc("productos_mas_vendidos_por_van", {
+      const { data, error } = await withNetworkTimeout(supabase.rpc("productos_mas_vendidos_por_van", {
         van_id_param: van.id,
         dias: 30,
         limite: 10,
-      });
+      }), 5000);
       if (error) throw error;
 
       if (Array.isArray(data) && data.length > 0) {
@@ -2339,7 +2356,7 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
     }
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await withNetworkTimeout(supabase
         .from("stock_van")
         .select(
           "producto_id,cantidad, productos:productos!inner(id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price)"
@@ -2347,7 +2364,7 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
         .eq("van_id", van.id)
         .gt("cantidad", 0)
         .order("cantidad", { ascending: false })
-        .limit(10);
+        .limit(10), 5000);
 
       if (error) throw error;
 
@@ -2385,13 +2402,13 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
     }
 
     try {
-      const { data: stock, error: e1 } = await supabase
+      const { data: stock, error: e1 } = await withNetworkTimeout(supabase
         .from("stock_van")
         .select("producto_id,cantidad")
         .eq("van_id", van.id)
         .gt("cantidad", 0)
         .order("cantidad", { ascending: false })
-        .limit(10);
+        .limit(10), 5000);
       if (e1) throw e1;
 
       const ids = (stock || []).map((r) => r.producto_id);
@@ -2401,10 +2418,10 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
         return;
       }
 
-      const { data: prods, error: e2 } = await supabase
+      const { data: prods, error: e2 } = await withNetworkTimeout(supabase
         .from("productos")
         .select("id,nombre,precio,codigo,marca,descuento_pct,bulk_min_qty,bulk_unit_price")
-        .in("id", ids);
+        .in("id", ids), 5000);
       if (e2) throw e2;
 
       const m = new Map((prods || []).map((p) => [p.id, p]));
@@ -2436,6 +2453,7 @@ sub = subscribeClienteLimiteManual(selectedClient.id, refreshCxC);
       await guardarTopProductos(van.id, rows);
     } catch (err) {
       console.error("Todos los fallbacks de TOP fallaron:", err?.message || err);
+      reportConnectionFailure();
       const cachedInventory = await obtenerInventarioVan(van.id);
       if (cachedInventory.length > 0) {
         setAllProducts(cachedInventory);
