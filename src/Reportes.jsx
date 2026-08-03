@@ -3040,26 +3040,29 @@ function PaymentBreakdownReport({ van, usuario }) {
      header, KPI summary, insights, then the daily breakdown ── */
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
-    const doc = new jsPDF({ orientation: "landscape" });
-    const PAGE_W = 297, MARGIN = 14, USABLE_W = PAGE_W - MARGIN * 2;
+    const doc = new jsPDF({ orientation: "portrait" });
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const MARGIN = 14, USABLE_W = PAGE_W - MARGIN * 2;
     const label = METODO_OPTIONS.find(m => m.value === metodo)?.label || "All";
     const vanLabel = vans.find(v => v.id === effectiveVanId)?.nombre_van || van?.nombre_van || van?.nombre || "All Vans";
     const driverLabel = driverFiltro ? (drivers.find(d => d.id === driverFiltro)?.nombre || "—") : "All Drivers";
 
     doc.setProperties({ title: `Tools4Care Payment Breakdown ${from} to ${to}` });
 
-    // ── Header banner ──
-    doc.setFillColor(37, 99, 235); doc.rect(0, 0, PAGE_W, 24, "F");
+    // ── Header banner — 3 short lines instead of 2 long ones, so it stays
+    // readable on portrait's narrower width regardless of van/driver name length ──
+    doc.setFillColor(37, 99, 235); doc.rect(0, 0, PAGE_W, 30, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(15); doc.setFont(undefined, "bold");
     doc.text("Tools4Care — Payment Breakdown Report", MARGIN, 11);
     doc.setFontSize(9); doc.setFont(undefined, "normal");
-    doc.text(`${label} · ${fmtDate(from)} – ${fmtDate(to)} · Van: ${vanLabel} · Driver: ${driverLabel}`, MARGIN, 18);
+    doc.text(`${label} · ${fmtDate(from)} – ${fmtDate(to)}`, MARGIN, 18);
     doc.setFontSize(8);
-    doc.text(`Generated ${new Date().toLocaleString()}`, PAGE_W - MARGIN, 18, { align: "right" });
+    doc.text(`Van: ${vanLabel} · Driver: ${driverLabel}`, MARGIN, 24);
+    doc.text(`Generated ${new Date().toLocaleString()}`, PAGE_W - MARGIN, 24, { align: "right" });
 
     // ── Total Collected bar ──
-    let y = 32;
+    let y = 38;
     doc.setFillColor(236, 253, 245); doc.setDrawColor(167, 243, 208);
     doc.roundedRect(MARGIN, y, USABLE_W, 18, 2, 2, "FD");
     doc.setTextColor(6, 95, 70);
@@ -3083,19 +3086,26 @@ function PaymentBreakdownReport({ van, usuario }) {
       { label: "Other Transfer", value: totals.transfer_other, fill: [219, 234, 254], text: [30, 64, 175] },
     ].filter((m) => m.value > 0);
     if (methodBoxes.length > 0) {
-      const gap = 3;
-      const boxW = (USABLE_W - gap * (methodBoxes.length - 1)) / methodBoxes.length;
+      const gap = 3, minBoxW = 40, boxH = 16;
+      // Portrait is narrower than the old landscape layout, so wrap into
+      // multiple rows instead of squeezing every box into one — each box
+      // keeps a minimum width wide enough for "Other Transfer" plus a value.
+      const perRow = Math.max(1, Math.min(methodBoxes.length, Math.floor((USABLE_W + gap) / (minBoxW + gap))));
+      const boxW = (USABLE_W - gap * (perRow - 1)) / perRow;
       methodBoxes.forEach((box, i) => {
-        const x = MARGIN + i * (boxW + gap);
+        const col = i % perRow, row = Math.floor(i / perRow);
+        const x = MARGIN + col * (boxW + gap);
+        const boxY = y + row * (boxH + gap);
         doc.setFillColor(...box.fill);
-        doc.roundedRect(x, y, boxW, 16, 2, 2, "F");
+        doc.roundedRect(x, boxY, boxW, boxH, 2, 2, "F");
         doc.setTextColor(...box.text);
         doc.setFontSize(7.5); doc.setFont(undefined, "bold");
-        doc.text(box.label.toUpperCase(), x + 3, y + 6);
+        doc.text(box.label.toUpperCase(), x + 3, boxY + 6);
         doc.setFontSize(10.5);
-        doc.text(fmtCurrency(box.value), x + 3, y + 12.5);
+        doc.text(fmtCurrency(box.value), x + 3, boxY + 12.5);
       });
-      y += 16;
+      const rows = Math.ceil(methodBoxes.length / perRow);
+      y += rows * boxH + (rows - 1) * gap;
     }
 
     // ── Insights ──
@@ -3123,7 +3133,7 @@ function PaymentBreakdownReport({ van, usuario }) {
     autoTable(doc, {
       startY: y + 4,
       margin: { left: MARGIN, right: MARGIN },
-      head: [["Date","# Trans","Cash","Card","Checks","Zelle","Cash App","Venmo","Apple Pay","Other Transfer","Total"]],
+      head: [["Date","# Trans","Cash","Card","Checks","Zelle","Cash App","Venmo","Apple Pay","Other","Total"]],
       body: dayRows.map(r => [
         fmtDate(r.fecha), r.count,
         r.cash     > 0 ? fmtCurrency(r.cash)     : "—",
@@ -3142,7 +3152,7 @@ function PaymentBreakdownReport({ van, usuario }) {
         fmtCurrency(totals.zelle), fmtCurrency(totals.cashapp),
         fmtCurrency(totals.venmo), fmtCurrency(totals.applepay),
         fmtCurrency(totals.transfer_other), fmtCurrency(totals.total)]],
-      styles: { fontSize: 8, textColor: [30, 41, 59] },
+      styles: { fontSize: 7, cellPadding: 1.5, textColor: [30, 41, 59] },
       headStyles: { fillColor: [37,99,235], textColor: 255, fontStyle: "bold" },
       footStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: "bold" },
       didDrawPage: () => {
