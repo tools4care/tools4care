@@ -28,6 +28,7 @@ import {
 import { useProductosHabituales } from "./hooks/useProductosHabituales";
 import { useSyncGlobal } from "./hooks/SyncContext";
 import { checkServerReachable, reportConnectionFailure } from "./utils/networkStatus";
+import { sendInvoiceEmailForVenta } from "./lib/invoiceEmail";
 import { fetchAllCustomersForOffline } from "./utils/offlinePreparation";
 import {
   barcodeVariants,
@@ -1474,6 +1475,37 @@ useEffect(() => {
   // ---- POS ACTIONS (shown after sale saved: print, SMS, email, drawer)
   const [showPOSActions, setShowPOSActions] = useState(false);
   const lastReceiptRef = useRef(null); // stores last receipt payload for reprint
+
+  // ---- Invoice email — auto-sent when the client has an email on file;
+  // otherwise the POS Actions screen asks for one (walk-in or missing email).
+  const [invoiceEmailStatus, setInvoiceEmailStatus] = useState("idle"); // idle | sending | sent | error
+  const [invoiceEmailAddress, setInvoiceEmailAddress] = useState("");
+  const [manualInvoiceEmail, setManualInvoiceEmail] = useState("");
+  const invoiceEmailAttemptedRef = useRef(false);
+
+  // Fires once per completed sale: if the client already has an email on
+  // file, send the invoice in the background with no extra tap needed. A
+  // sale saved offline has no synced row in facturas_ext yet, so this only
+  // runs once back online. The POS Actions screen below covers the other
+  // case (walk-in or a client with no email saved) with a manual field.
+  useEffect(() => {
+    if (!showPOSActions || isOffline || invoiceEmailAttemptedRef.current) return;
+    const receipt = lastReceiptRef.current;
+    const email = (receipt?.clientEmail || "").trim();
+    if (!receipt?.saleId || !email) return;
+    invoiceEmailAttemptedRef.current = true;
+    setInvoiceEmailStatus("sending");
+    setInvoiceEmailAddress(email);
+    sendInvoiceEmailForVenta(receipt.saleId, email).then((result) => {
+      if (result.ok) {
+        setInvoiceEmailStatus("sent");
+        toast.success(`Invoice emailed to ${email}`, 4000);
+      } else {
+        setInvoiceEmailStatus("error");
+        console.warn("Auto invoice email failed:", result.error);
+      }
+    });
+  }, [showPOSActions, isOffline, toast]);
 
   // Caches the resolved store cash register session for this van+user so
   // saveSale() doesn't make a network round trip to re-look it up on every
@@ -3460,7 +3492,11 @@ function clearSale() {
   setAllProducts([]);
   setNotes("");
   setNotebookRequestSummary([]);
-  
+  setInvoiceEmailStatus("idle");
+  setInvoiceEmailAddress("");
+  setManualInvoiceEmail("");
+  invoiceEmailAttemptedRef.current = false;
+
   // Limpiar pagos
   setPayments([{ forma: "efectivo", monto: 0 }]);
   setPaymentError("");
@@ -4673,6 +4709,8 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       const payload = {
         saleId: ventaId,
         clientName: selectedClient?.nombre || "",
+        clientEmail: selectedClient?.email || "",
+        clientPhone: selectedClient?.telefono || "",
         creditNumber: getCreditNumber(selectedClient),
         dateStr: new Date().toLocaleString(),
         pointOfSaleName: van?.nombre || van?.alias || `Van ${van?.id || ""}`,
@@ -8136,33 +8174,88 @@ function renderStepPayment() {
               )}
 
               {/* Send SMS */}
-              {lastReceiptRef.current && (selectedClient?.telefono) && (
+              {lastReceiptRef.current?.clientPhone && (
                 <button
                   onClick={async () => {
                     const text = composeReceiptMessageEN(lastReceiptRef.current);
-                    await sendSmsIfPossible({ phone: selectedClient.telefono, text });
+                    await sendSmsIfPossible({ phone: lastReceiptRef.current.clientPhone, text });
                   }}
                   className="flex flex-col items-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
                 >
                   <span className="text-3xl">💬</span>
                   <span className="font-bold text-sm">Send SMS</span>
-                  <span className="text-green-100 text-[10px] truncate max-w-full">{selectedClient?.telefono}</span>
+                  <span className="text-green-100 text-[10px] truncate max-w-full">{lastReceiptRef.current.clientPhone}</span>
                 </button>
               )}
 
-              {/* Send Email */}
-              {lastReceiptRef.current && (selectedClient?.email) && (
-                <button
-                  onClick={async () => {
-                    const text = composeReceiptMessageEN(lastReceiptRef.current);
-                    await sendEmailSmart({ to: selectedClient.email, subject: `${COMPANY_NAME} — Receipt`, text });
-                  }}
-                  className="flex flex-col items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl px-4 py-4 active:scale-95 transition-all"
-                >
-                  <span className="text-3xl">📧</span>
-                  <span className="font-bold text-sm">Send Email</span>
-                  <span className="text-blue-100 text-[10px] truncate max-w-full">{selectedClient?.email}</span>
-                </button>
+              {/* Invoice email — auto-sent above when the client has one on
+                  file; this shows that result, or (walk-in / no email saved)
+                  lets the driver type one in on the spot. */}
+              {!isOffline && lastReceiptRef.current?.saleId && (
+                lastReceiptRef.current?.clientEmail ? (
+                  <div className="col-span-2 sm:col-span-1 flex flex-col items-center justify-center gap-1 bg-blue-50 border-2 border-blue-200 rounded-2xl px-4 py-4 text-center">
+                    <span className="text-3xl">
+                      {invoiceEmailStatus === "sent" ? "✅" : invoiceEmailStatus === "error" ? "⚠️" : "📧"}
+                    </span>
+                    <span className="font-bold text-sm text-blue-900">
+                      {invoiceEmailStatus === "sending" ? "Emailing invoice…"
+                        : invoiceEmailStatus === "sent" ? "Invoice emailed"
+                        : invoiceEmailStatus === "error" ? "Email failed"
+                        : "Invoice email"}
+                    </span>
+                    <span className="text-blue-700 text-[10px] truncate max-w-full">{invoiceEmailAddress}</span>
+                    {invoiceEmailStatus === "error" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInvoiceEmailStatus("sending");
+                          sendInvoiceEmailForVenta(lastReceiptRef.current.saleId, invoiceEmailAddress).then((result) => {
+                            if (result.ok) { setInvoiceEmailStatus("sent"); toast.success(`Invoice emailed to ${invoiceEmailAddress}`, 4000); }
+                            else { setInvoiceEmailStatus("error"); toast.error(result.error || "Could not send invoice email"); }
+                          });
+                        }}
+                        className="mt-1 text-[11px] font-bold text-blue-700 underline"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="col-span-2 sm:col-span-1 flex flex-col gap-2 bg-blue-50 border-2 border-blue-200 rounded-2xl px-3 py-3">
+                    <span className="text-xs font-bold text-blue-900">
+                      {invoiceEmailStatus === "sent" ? "✅ Invoice emailed" : "📧 Email invoice? (optional)"}
+                    </span>
+                    {invoiceEmailStatus === "sent" ? (
+                      <span className="text-blue-700 text-[11px] truncate">{invoiceEmailAddress}</span>
+                    ) : (
+                      <>
+                        <input
+                          type="email"
+                          value={manualInvoiceEmail}
+                          onChange={(e) => setManualInvoiceEmail(e.target.value)}
+                          placeholder="client@email.com"
+                          className="h-9 rounded-lg border border-blue-300 px-2 text-sm outline-none focus:border-blue-500"
+                        />
+                        <button
+                          type="button"
+                          disabled={!manualInvoiceEmail.trim() || invoiceEmailStatus === "sending"}
+                          onClick={() => {
+                            const email = manualInvoiceEmail.trim();
+                            setInvoiceEmailStatus("sending");
+                            setInvoiceEmailAddress(email);
+                            sendInvoiceEmailForVenta(lastReceiptRef.current.saleId, email).then((result) => {
+                              if (result.ok) { setInvoiceEmailStatus("sent"); toast.success(`Invoice emailed to ${email}`, 4000); }
+                              else { setInvoiceEmailStatus("error"); toast.error(result.error || "Could not send invoice email"); }
+                            });
+                          }}
+                          className="h-9 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-bold"
+                        >
+                          {invoiceEmailStatus === "sending" ? "Sending…" : invoiceEmailStatus === "error" ? "Retry" : "Send Invoice"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )
               )}
 
               {/* New Sale — spans full width */}
