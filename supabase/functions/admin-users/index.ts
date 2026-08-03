@@ -278,7 +278,13 @@ Deno.serve(async (req) => {
           await admin.auth.admin.deleteUser(userId);
         };
 
-        const { error: ownerError } = await admin.from("usuarios").insert({
+        // A DB trigger auto-provisions a bare "vendedor" usuarios row the
+        // instant inviteUserByEmail() creates the auth.users row above (same
+        // reason create_user uses upsert instead of insert, further up) — a
+        // plain insert here always collides with that row, for every email,
+        // not just ones already in use. upsert replaces it with the real
+        // tenant-owner profile instead of erroring on the guaranteed conflict.
+        const { error: ownerError } = await admin.from("usuarios").upsert({
           id: userId,
           email: cleanEmail,
           nombre: cleanOwnerName || cleanBusinessName,
@@ -290,7 +296,7 @@ Deno.serve(async (req) => {
           activo: true,
           tenant_id: tenantId,
           platform_admin: false,
-        });
+        }, { onConflict: "id" });
         if (ownerError) {
           await rollback();
           return json({ error: "Owner profile error: " + ownerError.message }, 400);
