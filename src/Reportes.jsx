@@ -3036,17 +3036,93 @@ function PaymentBreakdownReport({ van, usuario }) {
     Transfer:  r.transfer_other,
   })), [dayRows]);
 
-  /* ── Export PDF ── */
+  /* ── Export PDF — a self-contained statement, not just a raw table:
+     header, KPI summary, insights, then the daily breakdown ── */
   const exportPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF({ orientation: "landscape" });
+    const PAGE_W = 297, MARGIN = 14, USABLE_W = PAGE_W - MARGIN * 2;
     const label = METODO_OPTIONS.find(m => m.value === metodo)?.label || "All";
-    doc.setFillColor(37, 99, 235); doc.rect(0, 0, 297, 22, "F");
-    doc.setTextColor(255,255,255); doc.setFontSize(13);
-    doc.text(`Tools4Care — Payment Breakdown · ${label} · ${fmtDate(from)} – ${fmtDate(to)}`, 14, 15);
-    doc.setTextColor(0,0,0);
+    const vanLabel = vans.find(v => v.id === effectiveVanId)?.nombre_van || van?.nombre_van || van?.nombre || "All Vans";
+    const driverLabel = driverFiltro ? (drivers.find(d => d.id === driverFiltro)?.nombre || "—") : "All Drivers";
+
+    doc.setProperties({ title: `Tools4Care Payment Breakdown ${from} to ${to}` });
+
+    // ── Header banner ──
+    doc.setFillColor(37, 99, 235); doc.rect(0, 0, PAGE_W, 24, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(15); doc.setFont(undefined, "bold");
+    doc.text("Tools4Care — Payment Breakdown Report", MARGIN, 11);
+    doc.setFontSize(9); doc.setFont(undefined, "normal");
+    doc.text(`${label} · ${fmtDate(from)} – ${fmtDate(to)} · Van: ${vanLabel} · Driver: ${driverLabel}`, MARGIN, 18);
+    doc.setFontSize(8);
+    doc.text(`Generated ${new Date().toLocaleString()}`, PAGE_W - MARGIN, 18, { align: "right" });
+
+    // ── Total Collected bar ──
+    let y = 32;
+    doc.setFillColor(236, 253, 245); doc.setDrawColor(167, 243, 208);
+    doc.roundedRect(MARGIN, y, USABLE_W, 18, 2, 2, "FD");
+    doc.setTextColor(6, 95, 70);
+    doc.setFontSize(9); doc.setFont(undefined, "bold");
+    doc.text("TOTAL COLLECTED", MARGIN + 5, y + 7);
+    doc.setFontSize(17);
+    doc.text(fmtCurrency(totals.total), MARGIN + 5, y + 15);
+    doc.setFontSize(9); doc.setFont(undefined, "normal");
+    doc.text(`${totals.count} transaction${totals.count === 1 ? "" : "s"}`, PAGE_W - MARGIN - 5, y + 11, { align: "right" });
+
+    // ── Per-method KPI boxes (only methods with activity) ──
+    y += 24;
+    const methodBoxes = [
+      { label: "Cash", value: totals.cash, fill: [220, 252, 231], text: [22, 101, 52] },
+      { label: "Card", value: totals.card, fill: [243, 232, 255], text: [107, 33, 168] },
+      { label: "Checks", value: totals.checks, fill: [254, 243, 199], text: [146, 64, 14] },
+      { label: "Zelle", value: totals.zelle, fill: [237, 233, 254], text: [91, 33, 182] },
+      { label: "Cash App", value: totals.cashapp, fill: [220, 252, 231], text: [22, 101, 52] },
+      { label: "Venmo", value: totals.venmo, fill: [219, 234, 254], text: [30, 64, 175] },
+      { label: "Apple Pay", value: totals.applepay, fill: [241, 245, 249], text: [51, 65, 85] },
+      { label: "Other Transfer", value: totals.transfer_other, fill: [219, 234, 254], text: [30, 64, 175] },
+    ].filter((m) => m.value > 0);
+    if (methodBoxes.length > 0) {
+      const gap = 3;
+      const boxW = (USABLE_W - gap * (methodBoxes.length - 1)) / methodBoxes.length;
+      methodBoxes.forEach((box, i) => {
+        const x = MARGIN + i * (boxW + gap);
+        doc.setFillColor(...box.fill);
+        doc.roundedRect(x, y, boxW, 16, 2, 2, "F");
+        doc.setTextColor(...box.text);
+        doc.setFontSize(7.5); doc.setFont(undefined, "bold");
+        doc.text(box.label.toUpperCase(), x + 3, y + 6);
+        doc.setFontSize(10.5);
+        doc.text(fmtCurrency(box.value), x + 3, y + 12.5);
+      });
+      y += 16;
+    }
+
+    // ── Insights ──
+    const activeInsights = paymentInsights.filter(Boolean);
+    if (activeInsights.length > 0) {
+      y += 9;
+      doc.setTextColor(30, 41, 59);
+      doc.setFontSize(11); doc.setFont(undefined, "bold");
+      doc.text("Insights", MARGIN, y);
+      y += 6;
+      doc.setFontSize(9);
+      activeInsights.forEach((insight) => {
+        doc.setFont(undefined, "bold");
+        doc.setTextColor(30, 41, 59);
+        doc.text(`•  ${insight.title}: ${insight.value}`, MARGIN, y);
+        y += 4.5;
+        doc.setFont(undefined, "normal");
+        doc.setTextColor(100, 116, 139);
+        doc.text(insight.body, MARGIN + 4, y);
+        y += 6;
+      });
+    }
+
+    // ── Daily breakdown table ──
     autoTable(doc, {
-      startY: 28,
+      startY: y + 4,
+      margin: { left: MARGIN, right: MARGIN },
       head: [["Date","# Trans","Cash","Card","Checks","Zelle","Cash App","Venmo","Apple Pay","Other Transfer","Total"]],
       body: dayRows.map(r => [
         fmtDate(r.fecha), r.count,
@@ -3066,9 +3142,18 @@ function PaymentBreakdownReport({ van, usuario }) {
         fmtCurrency(totals.zelle), fmtCurrency(totals.cashapp),
         fmtCurrency(totals.venmo), fmtCurrency(totals.applepay),
         fmtCurrency(totals.transfer_other), fmtCurrency(totals.total)]],
-      styles: { fontSize: 8 },
+      styles: { fontSize: 8, textColor: [30, 41, 59] },
       headStyles: { fillColor: [37,99,235], textColor: 255, fontStyle: "bold" },
-      footStyles: { fillColor: [239,246,255], fontStyle: "bold" },
+      footStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: "bold" },
+      didDrawPage: () => {
+        doc.setFontSize(7.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          "Tools4Care — automatically generated payment report. Reflects sales recorded for the selected period.",
+          MARGIN,
+          doc.internal.pageSize.getHeight() - 8
+        );
+      },
     });
     doc.save(`Payments_${metodo}_${from}_${to}.pdf`);
   };
