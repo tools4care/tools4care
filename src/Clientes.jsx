@@ -1618,7 +1618,12 @@ const fetchPage = async (opts = {}) => {
                             <User size={18} />
                           </div>
                           <div className="min-w-0">
-                            <h3 className="truncate text-sm font-black text-slate-900">{c.nombre}</h3>
+                            <div className="flex items-center gap-1.5">
+                              <h3 className="truncate text-sm font-black text-slate-900">{c.nombre}</h3>
+                              {c.client_number != null && (
+                                <span className="shrink-0 text-[11px] font-bold text-slate-400">#{c.client_number}</span>
+                              )}
+                            </div>
                             {c.negocio && (
                               <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-slate-500">
                                 <Building2 size={12} />
@@ -1717,7 +1722,12 @@ const fetchPage = async (opts = {}) => {
                             <div className="flex items-center">
                               <Avatar name={c.nombre || "?"} className="mr-3" />
                               <div>
-                                <div className="text-sm font-bold text-gray-900 dark:text-slate-100">{c.nombre}</div>
+                                <div className="text-sm font-bold text-gray-900 dark:text-slate-100 flex items-center gap-1.5">
+                                  {c.nombre}
+                                  {c.client_number != null && (
+                                    <span className="text-xs font-bold text-gray-400">#{c.client_number}</span>
+                                  )}
+                                </div>
                                 {c.negocio && (
                                   <div className="text-sm text-gray-600 dark:text-slate-400 flex items-center gap-1 mt-0.5">
                                     <Building2 size={12} />
@@ -2250,7 +2260,12 @@ function ClienteStatsModal({
                 <User size={20} />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="text-xl font-bold truncate">{cliente.nombre}</h3>
+                <h3 className="text-xl font-bold truncate">
+                  {cliente.nombre}
+                  {cliente.client_number != null && (
+                    <span className="ml-2 text-sm font-semibold text-blue-100">#{cliente.client_number}</span>
+                  )}
+                </h3>
                 {resumen?.cxc?.limite_manual_aplicado && (
                   <div className="text-xs uppercase tracking-wide text-yellow-200 font-bold">⚠️ Manual limit</div>
                 )}
