@@ -432,61 +432,76 @@ Deno.serve(async (req) => {
         }
 
         const ids = async (table: string, column: string) => {
-          const { data: rows } = await admin.from(table).select("id").eq(column, tenantId);
+          const { data: rows, error } = await admin.from(table).select("id").eq(column, tenantId);
+          if (error) throw new Error(`Reading ${table}: ${error.message}`);
           return (rows || []).map((r: { id: string }) => r.id);
+        };
+
+        const orFilter = (parts: Array<string | null>) => parts.filter(Boolean).join(",");
+        const del = async (table: string, apply: (q: any) => any) => {
+          const { error } = await apply(admin.from(table).delete());
+          if (error) throw new Error(`Deleting from ${table}: ${error.message}`);
         };
 
         const ventaIds = await ids("ventas", "tenant_id");
         const clienteIds = await ids("clientes", "tenant_id");
         const vanIds = await ids("vans", "tenant_id");
         const productoIds = await ids("productos", "tenant_id");
-        const { data: usuarioRows } = await admin.from("usuarios").select("id").eq("tenant_id", tenantId);
+        const { data: usuarioRows, error: usuariosError } = await admin.from("usuarios").select("id").eq("tenant_id", tenantId);
+        if (usuariosError) return json({ error: `Reading usuarios: ${usuariosError.message}` }, 400);
         const usuarioIds = (usuarioRows || []).map((r: { id: string }) => r.id);
 
-        if (ventaIds.length) await admin.from("detalle_ventas").delete().in("venta_id", ventaIds);
-        if (ventaIds.length || clienteIds.length || vanIds.length) {
-          await admin.from("pagos").delete().or(
-            [
+        try {
+          if (ventaIds.length) await del("detalle_ventas", (q) => q.in("venta_id", ventaIds));
+
+          if (ventaIds.length || clienteIds.length || vanIds.length) {
+            await del("pagos", (q) => q.or(orFilter([
               ventaIds.length ? `venta_id.in.(${ventaIds.join(",")})` : null,
               clienteIds.length ? `cliente_id.in.(${clienteIds.join(",")})` : null,
               vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
-            ].filter(Boolean).join(","),
-          );
-        }
-        if (clienteIds.length || vanIds.length) {
-          await admin.from("cxc_movimientos").delete().or(
-            [
+            ])));
+          }
+
+          if (clienteIds.length || vanIds.length) {
+            await del("cxc_movimientos", (q) => q.or(orFilter([
               clienteIds.length ? `cliente_id.in.(${clienteIds.join(",")})` : null,
               vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
-            ].filter(Boolean).join(","),
-          );
-        }
-        if (ventaIds.length) await admin.from("ventas").delete().eq("tenant_id", tenantId);
-        if (vanIds.length || productoIds.length) {
-          await admin.from("stock_van").delete().or(
-            [
+            ])));
+          }
+
+          if (ventaIds.length) await del("ventas", (q) => q.eq("tenant_id", tenantId));
+
+          if (vanIds.length || productoIds.length) {
+            await del("stock_van", (q) => q.or(orFilter([
               vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
               productoIds.length ? `producto_id.in.(${productoIds.join(",")})` : null,
-            ].filter(Boolean).join(","),
-          );
-        }
-        await admin.from("productos").delete().eq("tenant_id", tenantId);
-        await admin.from("clientes").delete().eq("tenant_id", tenantId);
-        if (usuarioIds.length || vanIds.length) {
-          await admin.from("usuarios_vans").delete().or(
-            [
+            ])));
+          }
+
+          await del("productos", (q) => q.eq("tenant_id", tenantId));
+          await del("clientes", (q) => q.eq("tenant_id", tenantId));
+
+          if (usuarioIds.length || vanIds.length) {
+            await del("usuarios_vans", (q) => q.or(orFilter([
               usuarioIds.length ? `usuario_id.in.(${usuarioIds.join(",")})` : null,
               vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
-            ].filter(Boolean).join(","),
-          );
+            ])));
+          }
+
+          if (vanIds.length) await del("location_settings", (q) => q.in("location_id", vanIds));
+
+          await del("vans", (q) => q.eq("tenant_id", tenantId));
+
+          for (const uid of usuarioIds) {
+            await del("usuarios", (q) => q.eq("id", uid));
+            const { error: authDeleteError } = await admin.auth.admin.deleteUser(uid);
+            if (authDeleteError) throw new Error(`Deleting auth user ${uid}: ${authDeleteError.message}`);
+          }
+
+          await del("tenants", (q) => q.eq("id", tenantId));
+        } catch (cascadeError) {
+          return json({ error: (cascadeError as Error).message }, 400);
         }
-        if (vanIds.length) await admin.from("location_settings").delete().in("location_id", vanIds);
-        await admin.from("vans").delete().eq("tenant_id", tenantId);
-        for (const uid of usuarioIds) {
-          await admin.from("usuarios").delete().eq("id", uid);
-          await admin.auth.admin.deleteUser(uid);
-        }
-        await admin.from("tenants").delete().eq("id", tenantId);
 
         return json({ ok: true });
       }
