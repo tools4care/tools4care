@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Copy, Loader2, RefreshCw, Send, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Copy, Loader2, Pencil, RefreshCw, Send, ShieldCheck, Trash2, Users2 } from "lucide-react";
 import { createTenant } from "./useCreateTenant";
-import { listTenants, resendTenantInvite, setTenantStatus } from "../lib/adminApi";
+import { deleteTenant, listTenants, resendTenantInvite, setTenantStatus, updateTenant } from "../lib/adminApi";
 
 const PLANS = [
   { value: "basic", label: "Basic" },
@@ -31,6 +31,14 @@ export default function CreateTenantManual() {
   const [loadingTenants, setLoadingTenants] = useState(true);
   const [rowBusy, setRowBusy] = useState("");
   const [notice, setNotice] = useState("");
+  const [editingTenant, setEditingTenant] = useState(null);
+  const [editForm, setEditForm] = useState(EMPTY_FORM);
+  const [editStatus, setEditStatus] = useState("idle");
+  const [editError, setEditError] = useState("");
+  const [deletingTenant, setDeletingTenant] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteStatus, setDeleteStatus] = useState("idle");
+  const [deleteError, setDeleteError] = useState("");
 
   const loadTenants = useCallback(async () => {
     setLoadingTenants(true);
@@ -103,6 +111,66 @@ export default function CreateTenantManual() {
       setError(statusError.message || "Status could not be changed.");
     } finally {
       setRowBusy("");
+    }
+  }
+
+  function openEdit(tenant) {
+    setEditingTenant(tenant);
+    setEditForm({
+      businessName: tenant.business_name || "",
+      ownerName: tenant.owner_name || "",
+      email: tenant.email || "",
+      phone: tenant.phone || "",
+      plan: tenant.plan || "basic",
+    });
+    setEditError("");
+    setEditStatus("idle");
+  }
+
+  function handleEditChange(event) {
+    setEditForm((previous) => ({ ...previous, [event.target.name]: event.target.value }));
+  }
+
+  async function submitEdit(event) {
+    event.preventDefault();
+    setEditStatus("loading");
+    setEditError("");
+    try {
+      await updateTenant(editingTenant.id, {
+        businessName: editForm.businessName.trim(),
+        ownerName: editForm.ownerName.trim(),
+        phone: editForm.phone.trim(),
+        plan: editForm.plan,
+      });
+      setEditingTenant(null);
+      setNotice(`${editForm.businessName.trim()} updated.`);
+      await loadTenants();
+    } catch (submitError) {
+      setEditError(submitError.message || "Could not update tenant.");
+    } finally {
+      setEditStatus("idle");
+    }
+  }
+
+  function openDelete(tenant) {
+    setDeletingTenant(tenant);
+    setDeleteConfirmText("");
+    setDeleteError("");
+    setDeleteStatus("idle");
+  }
+
+  async function confirmDelete() {
+    setDeleteStatus("loading");
+    setDeleteError("");
+    try {
+      await deleteTenant(deletingTenant.id, deleteConfirmText.trim());
+      setNotice(`${deletingTenant.business_name} was permanently deleted.`);
+      setDeletingTenant(null);
+      await loadTenants();
+    } catch (deleteErr) {
+      setDeleteError(deleteErr.message || "Could not delete tenant.");
+    } finally {
+      setDeleteStatus("idle");
     }
   }
 
@@ -194,6 +262,15 @@ export default function CreateTenantManual() {
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-black uppercase text-slate-600">{tenant.plan}</span>
                   </div>
                   <p className="mt-1 text-sm text-slate-600">{tenant.owner_name || "Owner"} · {tenant.email}</p>
+                  {tenant.stats && (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold text-slate-500">
+                      <span className="inline-flex items-center gap-1"><Users2 size={12} /> {tenant.stats.usuarios} users</span>
+                      <span>{tenant.stats.clientes} clients</span>
+                      <span>{tenant.stats.productos} products</span>
+                      <span>{tenant.stats.ventas} sales</span>
+                      <span>Last login: {tenant.stats.lastSignInAt ? fmtDate(tenant.stats.lastSignInAt) : "never"}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="text-xs leading-5 text-slate-500">
                   <div>Created: {fmtDate(tenant.created_at)}</div>
@@ -203,8 +280,14 @@ export default function CreateTenantManual() {
                   <button type="button" onClick={() => resendInvite(tenant.id)} disabled={rowBusy === tenant.id} className="inline-flex items-center gap-2 rounded-xl border border-blue-200 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-50 disabled:opacity-50">
                     <Send size={14} /> New setup link
                   </button>
+                  <button type="button" onClick={() => openEdit(tenant)} disabled={rowBusy === tenant.id} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                    <Pencil size={14} /> Edit
+                  </button>
                   <button type="button" onClick={() => toggleStatus(tenant)} disabled={rowBusy === tenant.id} className={`rounded-xl px-3 py-2 text-xs font-black text-white disabled:opacity-50 ${tenant.status === "suspended" ? "bg-emerald-600" : "bg-red-600"}`}>
                     {tenant.status === "suspended" ? "Reactivate" : "Suspend"}
+                  </button>
+                  <button type="button" onClick={() => openDelete(tenant)} disabled={rowBusy === tenant.id} className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50 disabled:opacity-50">
+                    <Trash2 size={14} /> Delete
                   </button>
                 </div>
               </article>
@@ -212,6 +295,80 @@ export default function CreateTenantManual() {
           </div>
         )}
       </section>
+
+      {editingTenant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <form onSubmit={submitEdit} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+            <h2 className="text-lg font-black text-slate-950">Edit {editingTenant.business_name}</h2>
+            <p className="mt-1 text-xs text-slate-500">Email can't be changed here — it's the owner's login identity.</p>
+            <div className="mt-4 grid gap-4">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-slate-700">Business name *</span>
+                <input name="businessName" value={editForm.businessName} onChange={handleEditChange} required disabled={editStatus === "loading"} className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-slate-700">Owner name *</span>
+                <input name="ownerName" value={editForm.ownerName} onChange={handleEditChange} required disabled={editStatus === "loading"} className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-slate-700">Phone</span>
+                <input name="phone" type="tel" value={editForm.phone} onChange={handleEditChange} disabled={editStatus === "loading"} className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-slate-700">Plan</span>
+                <select name="plan" value={editForm.plan} onChange={handleEditChange} disabled={editStatus === "loading"} className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500">
+                  {PLANS.map((plan) => <option key={plan.value} value={plan.value}>{plan.label}</option>)}
+                </select>
+              </label>
+            </div>
+            {editError && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{editError}</div>}
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setEditingTenant(null)} disabled={editStatus === "loading"} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={editStatus === "loading" || !editForm.businessName.trim() || !editForm.ownerName.trim()} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50">
+                {editStatus === "loading" ? <><Loader2 size={16} className="animate-spin" /> Saving...</> : "Save changes"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {deletingTenant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+            <h2 className="text-lg font-black text-red-700">Delete {deletingTenant.business_name}?</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              This permanently deletes the tenant's workspace and every client, product, sale, and user it owns. This cannot be undone.
+            </p>
+            <label className="mt-4 block">
+              <span className="mb-1.5 block text-sm font-bold text-slate-700">
+                Type <span className="font-mono text-red-700">{deletingTenant.business_name}</span> to confirm
+              </span>
+              <input
+                value={deleteConfirmText}
+                onChange={(event) => setDeleteConfirmText(event.target.value)}
+                disabled={deleteStatus === "loading"}
+                className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-red-500"
+              />
+            </label>
+            {deleteError && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{deleteError}</div>}
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setDeletingTenant(null)} disabled={deleteStatus === "loading"} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleteStatus === "loading" || deleteConfirmText.trim() !== deletingTenant.business_name}
+                className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleteStatus === "loading" ? <><Loader2 size={16} className="animate-spin" /> Deleting...</> : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

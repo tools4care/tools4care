@@ -8,7 +8,8 @@
 // Body: { action: string, payload: object }
 // Actions: create_user | delete_user | update_permissions |
 //          get_location_access | reset_password | create_tenant |
-//          list_tenants | resend_tenant_invite | set_tenant_status
+//          list_tenants | resend_tenant_invite | set_tenant_status |
+//          update_tenant | delete_tenant
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -357,10 +358,137 @@ Deno.serve(async (req) => {
         if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
         const { data, error } = await admin
           .from("tenants")
-          .select("id,business_name,owner_name,email,phone,plan,status,active,created_at,invitation_sent_at,onboarding_completed_at,initial_location_id")
+          .select("id,business_name,owner_name,email,phone,plan,status,active,created_at,invitation_sent_at,onboarding_completed_at,initial_location_id,owner_user_id")
           .order("created_at", { ascending: false });
         if (error) return json({ error: error.message }, 400);
-        return json({ tenants: data || [] });
+
+        const tenants = await Promise.all((data || []).map(async (tenant) => {
+          const countOf = async (table: string) => {
+            const { count } = await admin.from(table).select("*", { count: "exact", head: true }).eq("tenant_id", tenant.id);
+            return count || 0;
+          };
+          const [clientes, productos, ventas, usuarios] = await Promise.all([
+            countOf("clientes"),
+            countOf("productos"),
+            countOf("ventas"),
+            countOf("usuarios"),
+          ]);
+          let lastSignInAt: string | null = null;
+          if (tenant.owner_user_id) {
+            const { data: authUser } = await admin.auth.admin.getUserById(tenant.owner_user_id);
+            lastSignInAt = authUser?.user?.last_sign_in_at || null;
+          }
+          return {
+            ...tenant,
+            stats: { clientes, productos, ventas, usuarios, lastSignInAt },
+          };
+        }));
+
+        return json({ tenants });
+      }
+
+      case "update_tenant": {
+        if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
+        const { tenantId, businessName, ownerName, phone, plan } = payload || {};
+        if (!tenantId) return json({ error: "tenantId is required" }, 400);
+        const cleanBusinessName = (businessName || "").trim();
+        const cleanOwnerName = (ownerName || "").trim();
+        if (!cleanBusinessName || !cleanOwnerName) return json({ error: "businessName and ownerName are required" }, 400);
+        const { data: tenant, error: lookupError } = await admin
+          .from("tenants")
+          .select("owner_user_id")
+          .eq("id", tenantId)
+          .maybeSingle();
+        if (lookupError || !tenant) return json({ error: "Tenant not found" }, 404);
+        const { error: updateError } = await admin
+          .from("tenants")
+          .update({
+            business_name: cleanBusinessName,
+            owner_name: cleanOwnerName,
+            phone: (phone || "").trim(),
+            plan: plan || "basic",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", tenantId);
+        if (updateError) return json({ error: updateError.message }, 400);
+        if (tenant.owner_user_id) {
+          await admin.from("usuarios").update({ nombre: cleanOwnerName }).eq("id", tenant.owner_user_id);
+        }
+        return json({ ok: true });
+      }
+
+      case "delete_tenant": {
+        if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
+        const { tenantId, confirmBusinessName } = payload || {};
+        if (!tenantId) return json({ error: "tenantId is required" }, 400);
+        const { data: tenant, error: lookupError } = await admin
+          .from("tenants")
+          .select("id,business_name")
+          .eq("id", tenantId)
+          .maybeSingle();
+        if (lookupError || !tenant) return json({ error: "Tenant not found" }, 404);
+        if ((confirmBusinessName || "").trim() !== tenant.business_name) {
+          return json({ error: "Business name confirmation does not match" }, 400);
+        }
+
+        const ids = async (table: string, column: string) => {
+          const { data: rows } = await admin.from(table).select("id").eq(column, tenantId);
+          return (rows || []).map((r: { id: string }) => r.id);
+        };
+
+        const ventaIds = await ids("ventas", "tenant_id");
+        const clienteIds = await ids("clientes", "tenant_id");
+        const vanIds = await ids("vans", "tenant_id");
+        const productoIds = await ids("productos", "tenant_id");
+        const { data: usuarioRows } = await admin.from("usuarios").select("id").eq("tenant_id", tenantId);
+        const usuarioIds = (usuarioRows || []).map((r: { id: string }) => r.id);
+
+        if (ventaIds.length) await admin.from("detalle_ventas").delete().in("venta_id", ventaIds);
+        if (ventaIds.length || clienteIds.length || vanIds.length) {
+          await admin.from("pagos").delete().or(
+            [
+              ventaIds.length ? `venta_id.in.(${ventaIds.join(",")})` : null,
+              clienteIds.length ? `cliente_id.in.(${clienteIds.join(",")})` : null,
+              vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
+            ].filter(Boolean).join(","),
+          );
+        }
+        if (clienteIds.length || vanIds.length) {
+          await admin.from("cxc_movimientos").delete().or(
+            [
+              clienteIds.length ? `cliente_id.in.(${clienteIds.join(",")})` : null,
+              vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
+            ].filter(Boolean).join(","),
+          );
+        }
+        if (ventaIds.length) await admin.from("ventas").delete().eq("tenant_id", tenantId);
+        if (vanIds.length || productoIds.length) {
+          await admin.from("stock_van").delete().or(
+            [
+              vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
+              productoIds.length ? `producto_id.in.(${productoIds.join(",")})` : null,
+            ].filter(Boolean).join(","),
+          );
+        }
+        await admin.from("productos").delete().eq("tenant_id", tenantId);
+        await admin.from("clientes").delete().eq("tenant_id", tenantId);
+        if (usuarioIds.length || vanIds.length) {
+          await admin.from("usuarios_vans").delete().or(
+            [
+              usuarioIds.length ? `usuario_id.in.(${usuarioIds.join(",")})` : null,
+              vanIds.length ? `van_id.in.(${vanIds.join(",")})` : null,
+            ].filter(Boolean).join(","),
+          );
+        }
+        if (vanIds.length) await admin.from("location_settings").delete().in("location_id", vanIds);
+        await admin.from("vans").delete().eq("tenant_id", tenantId);
+        for (const uid of usuarioIds) {
+          await admin.from("usuarios").delete().eq("id", uid);
+          await admin.auth.admin.deleteUser(uid);
+        }
+        await admin.from("tenants").delete().eq("id", tenantId);
+
+        return json({ ok: true });
       }
 
       case "resend_tenant_invite": {

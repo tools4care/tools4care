@@ -62,3 +62,11 @@ export function setTenantStatus(tenantId, status) {
 export function completeTenantOnboarding() {
   return callAdminUsers("complete_tenant_onboarding", {});
 }
+
+export function updateTenant(tenantId, { businessName, ownerName, phone, plan }) {
+  return callAdminUsers("update_tenant", { tenantId, businessName, ownerName, phone, plan });
+}
+
+export function deleteTenant(tenantId, confirmBusinessName) {
+  return callAdminUsers("delete_tenant", { tenantId, confirmBusinessName });
+}
