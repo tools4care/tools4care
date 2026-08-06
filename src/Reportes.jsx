@@ -2881,11 +2881,14 @@ function PaymentBreakdownReport({ van, usuario }) {
       {
         let pq = supabase
           .from("pagos")
-          .select("id,monto,metodo_pago,fecha_pago,cliente_id,clientes:cliente_id(nombre),idem_key")
+          .select("id,monto,metodo_pago,fecha_pago,cliente_id,clientes:cliente_id(nombre),idem_key,usuario_id,usuarios:usuario_id(nombre)")
           .eq("van_id", effectiveVanId)
           .is("idem_key", null)
           .gte("fecha_pago", start)
           .lte("fecha_pago", end);
+
+        if (!isAdmin)          pq = pq.eq("usuario_id", usuario.id);
+        else if (driverFiltro) pq = pq.eq("usuario_id", driverFiltro);
 
         // For sub-type: only include matching ones
         if (isSubType) pq = pq.ilike("metodo_pago", `%${subTypeLabel[metodo]}%`);
@@ -2933,7 +2936,7 @@ function PaymentBreakdownReport({ van, usuario }) {
             cliente: p.clientes?.nombre || "—",
             metodo_display: disp,
             amount: monto,
-            driver: "—",
+            driver: p.usuarios?.nombre || "—",
           });
         });
       }
