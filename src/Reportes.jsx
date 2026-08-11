@@ -29,15 +29,6 @@ const fmtCurrency = (n) =>
 const fmtPercent = (value, digits = 1) =>
   `${Number(value || 0).toFixed(digits)}%`;
 
-// Rough filter for "this barberias.nombre reads like an actual shop, not a
-// person's name." A historical bug auto-created a barberia from whatever a
-// client's "negocio" field held before that field's purpose was clarified —
-// a production audit found ~78% of all barberia rows were really a client's
-// own name entered there by habit. Those aren't visit-worthy destinations,
-// so growth/opportunity lists should exclude them even though the fix
-// (6dac2d2) only stops new ones from being created, not the old rows.
-const BUSINESS_NAME_PATTERN = /barber|salon|cuts?|studio|shop|shave|fade|styles?|hair|beauty|spa|blendz|kutz/i;
-
 const percentOf = (value, total) =>
   Number(total || 0) > 0 ? (Number(value || 0) / Number(total || 0)) * 100 : 0;
 
@@ -3486,14 +3477,22 @@ function BarberiaVisitsReport() {
     setLoading(true);
     try {
       const [{ data: clientesLinked }, ventasRows, { data: pendData }, { data: settingsRow }, { data: allShops }] = await Promise.all([
-        supabase.from("clientes").select("id,barberia_id,barberias:barberia_id(nombre)").not("barberia_id", "is", null),
+        supabase.from("clientes").select("id,barberia_id,barberias:barberia_id(nombre,es_negocio)").not("barberia_id", "is", null),
         fetchAllVentasSince(`${VISIT_LEARNING_START}T00:00:00-04:00`),
         supabase.from("barberias").select("id, nombre, direccion, duplicado_de").eq("revisar_duplicado", true),
         supabase.from("site_settings").select("barberia_visit_buffer_minutes").eq("id", 1).maybeSingle(),
-        supabase.from("barberias").select("id,nombre,direccion,latitude,longitude"),
+        supabase.from("barberias").select("id,nombre,direccion,latitude,longitude,es_negocio"),
       ]);
       const bufferMinutes = Number(settingsRow?.barberia_visit_buffer_minutes ?? 12);
-      const clienteShop = new Map((clientesLinked || []).map((c) => [c.id, { barberia_id: c.barberia_id, nombre: c.barberias?.nombre || "Barbershop" }]));
+      // Only count shops flagged as real businesses (persisted in
+      // barberias.es_negocio — see 202608112) toward cadence/pace/growth
+      // reporting. A lot of "barberia" rows are actually a client's own
+      // name saved into that field by habit; those aren't route stops.
+      const clienteShop = new Map(
+        (clientesLinked || [])
+          .filter((c) => c.barberias?.es_negocio !== false)
+          .map((c) => [c.id, { barberia_id: c.barberia_id, nombre: c.barberias?.nombre || "Barbershop" }])
+      );
 
       // How many linked barbers (= clients) each shop has, used as a rough
       // revenue-potential proxy for shops with no sales history yet.
@@ -3584,7 +3583,7 @@ function BarberiaVisitsReport() {
           !visitedIds.has(s.id)
           && s.latitude != null && s.longitude != null
           && (shopClientCount.get(s.id) || 0) > 0
-          && BUSINESS_NAME_PATTERN.test(s.nombre || "")
+          && s.es_negocio !== false
         )
         .map((s) => {
           let nearest = null;
