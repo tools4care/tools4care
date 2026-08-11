@@ -3441,6 +3441,10 @@ function mondayOfWeek(dayStr) {
   d.setDate(d.getDate() - diffToMonday);
   return d.toISOString().slice(0, 10);
 }
+const WEEKDAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+function weekdayName(dayStr) {
+  return new Date(`${dayStr}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" });
+}
 async function fetchAllVentasSince(cutoffIso) {
   const pageSize = 1000;
   let from = 0;
@@ -3507,6 +3511,7 @@ function BarberiaVisitsReport() {
       const shopDays = new Map(); // barberia_id -> Map(day -> {min,max})
       const shopNombre = new Map();
       const shopRevenue = new Map(); // barberia_id -> total $ sold since VISIT_LEARNING_START
+      const shopWeekdayCounts = new Map(); // barberia_id -> Map(weekday -> count) — which day this shop usually gets visited on
       for (const row of ventasRows) {
         const info = clienteShop.get(row.cliente_id);
         if (!info?.barberia_id) continue;
@@ -3518,6 +3523,18 @@ function BarberiaVisitsReport() {
         const prev = days.get(day);
         days.set(day, prev ? { min: Math.min(prev.min, t), max: Math.max(prev.max, t) } : { min: t, max: t });
         shopRevenue.set(info.barberia_id, (shopRevenue.get(info.barberia_id) || 0) + Number(row.total_venta || 0));
+        if (!prev) {
+          // Only count each shop+day once toward the weekday tally, not once per sale that day.
+          const wd = weekdayName(day);
+          if (!shopWeekdayCounts.has(info.barberia_id)) shopWeekdayCounts.set(info.barberia_id, new Map());
+          const wdMap = shopWeekdayCounts.get(info.barberia_id);
+          wdMap.set(wd, (wdMap.get(wd) || 0) + 1);
+        }
+      }
+      function dominantWeekday(barberiaId) {
+        const wdMap = shopWeekdayCounts.get(barberiaId);
+        if (!wdMap || wdMap.size === 0) return null;
+        return [...wdMap.entries()].sort((a, b) => b[1] - a[1])[0][0];
       }
 
       const resumenData = [];
@@ -3553,6 +3570,7 @@ function BarberiaVisitsReport() {
           total_revenue: totalRevenue,
           avg_revenue_per_visit: avgRevenuePerVisit,
           revenue_per_minute: avgMinutes > 0 ? avgRevenuePerVisit / avgMinutes : null,
+          dominant_weekday: dominantWeekday(barberiaId),
         });
       }
       setResumen(resumenData);
@@ -3574,7 +3592,10 @@ function BarberiaVisitsReport() {
       // visits in the tracked window, ranked by distance to the nearest
       // shop that IS already on the route — the closer that distance, the
       // more it's basically a free stop to bolt onto an existing day.
+      // Only shops visited 2+ times count as "on the route" here — a single
+      // visit doesn't prove it's a real recurring stop worth anchoring to.
       const routeRefs = resumenData
+        .filter((r) => r.total_visits >= 2)
         .map((r) => ({ ...r, coords: shopCoords.get(r.barberia_id) }))
         .filter((r) => r.coords?.latitude != null && r.coords?.longitude != null);
       const visitedIds = new Set(shopDays.keys());
@@ -3589,7 +3610,7 @@ function BarberiaVisitsReport() {
           let nearest = null;
           for (const ref of routeRefs) {
             const km = haversineKm(s.latitude, s.longitude, ref.coords.latitude, ref.coords.longitude);
-            if (km != null && (nearest == null || km < nearest.km)) nearest = { km, name: ref.barberia_nombre };
+            if (km != null && (nearest == null || km < nearest.km)) nearest = { km, name: ref.barberia_nombre, weekday: ref.dominant_weekday };
           }
           return {
             id: s.id,
@@ -3598,6 +3619,7 @@ function BarberiaVisitsReport() {
             barberCount: shopClientCount.get(s.id) || 0,
             nearestKm: nearest?.km ?? null,
             nearestName: nearest?.name ?? null,
+            nearestWeekday: nearest?.weekday ?? null,
           };
         })
         .filter((c) => c.nearestKm != null)
@@ -3708,6 +3730,49 @@ function BarberiaVisitsReport() {
     return list;
   }, [established, sortMode]);
 
+  // Suggested stops: one ranked list instead of two tables to cross-reference
+  // by hand, grouped by the weekday you actually tend to run that part of
+  // the route (from real visit history — see dominant_weekday). Proven
+  // shops that are overdue/due come first within each day (money already
+  // being left on the table), then the closest never-visited real shops to
+  // bolt onto that same day's trip. Not turn-by-turn — there's no live van
+  // location to sequence against — just which day to add each stop to.
+  const suggestedStopsByDay = useMemo(() => {
+    const dueItems = established
+      .filter((r) => r.status === "overdue" || r.status === "due")
+      .map((r) => ({
+        key: `due-${r.barberia_id}`,
+        nombre: r.barberia_nombre,
+        why: r.status === "overdue"
+          ? `Overdue by ${Math.round(r.overdueBy)}d (usual cadence ~${r.avgGap}d)`
+          : `Due soon (usual cadence ~${r.avgGap}d)`,
+        valueLabel: `~${fmtCurrency(r.avg_revenue_per_visit)}/visit`,
+        kind: "proven",
+        weekday: r.dominant_weekday,
+      }));
+    const growthItems = growthCandidates.slice(0, 20).map((c) => ({
+      key: `growth-${c.id}`,
+      nombre: c.nombre,
+      why: `Never visited — ${kmToMiles(c.nearestKm).toFixed(1)} mi from ${c.nearestName}`,
+      valueLabel: `${c.barberCount} barber${c.barberCount === 1 ? "" : "s"} linked`,
+      kind: "new",
+      weekday: c.nearestWeekday,
+    }));
+    const byDay = new Map();
+    for (const item of [...dueItems, ...growthItems]) {
+      const day = item.weekday || "Unscheduled";
+      if (!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day).push(item);
+    }
+    for (const items of byDay.values()) {
+      items.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "proven" ? -1 : 1));
+    }
+    const order = [...WEEKDAY_ORDER, "Unscheduled"];
+    return order
+      .filter((day) => byDay.has(day))
+      .map((day) => ({ day, items: byDay.get(day) }));
+  }, [established, growthCandidates]);
+
   if (loading) {
     return <div className="py-16 text-center text-sm text-gray-400">Loading…</div>;
   }
@@ -3720,6 +3785,48 @@ function BarberiaVisitsReport() {
 
   return (
     <div>
+      {/* ── SUGGESTED STOPS — grouped by the weekday you actually tend to
+          run that part of the route, from real visit history. Proven shops
+          falling behind cadence first within each day, then the closest
+          never-visited real shops to bolt onto that day's trip. Not
+          turn-by-turn (no live van location to sequence against) — pick
+          from the top of each day's list. ── */}
+      {suggestedStopsByDay.length > 0 && (
+        <div className="mb-6 rounded-xl border-2 border-teal-200 bg-teal-50/50 p-4">
+          <h3 className="text-sm font-bold text-teal-900 mb-1">Suggested stops by day</h3>
+          <p className="text-xs text-teal-800/80 mb-3">
+            Grouped by the weekday you already run near that spot. Overdue/due shops first in each day
+            (proven money you're leaving on the table), then the closest never-visited real shops to add on
+            the same trip. "Unscheduled" means not enough history yet to tell which day fits best.
+          </p>
+          <div className="space-y-4">
+            {suggestedStopsByDay.map(({ day, items }) => (
+              <div key={day}>
+                <h4 className="text-xs font-black uppercase tracking-wide text-teal-800 mb-1.5">
+                  {day} <span className="font-semibold text-teal-700/60 normal-case">({items.length})</span>
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {items.map((s, i) => (
+                        <tr key={s.key} className="border-b border-teal-100 last:border-0">
+                          <td className="py-2 pr-3 text-teal-700/60 font-semibold w-6">{i + 1}</td>
+                          <td className="py-2 pr-3 font-semibold text-gray-800">{s.nombre}</td>
+                          <td className="py-2 pr-3 text-gray-600 text-xs">{s.why}</td>
+                          <td className={`py-2 pr-3 font-semibold text-xs whitespace-nowrap ${s.kind === "proven" ? "text-emerald-700" : "text-teal-700"}`}>
+                            {s.valueLabel}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-gray-500 mb-4">
         Automatic — a visit is counted whenever a sale is recorded for any client linked to a barbershop, whether
         or not it was on the daily route that day. New business names are matched (or created) automatically when
