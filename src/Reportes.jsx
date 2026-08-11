@@ -3475,7 +3475,6 @@ function BarberiaVisitsReport() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [growthCandidates, setGrowthCandidates] = useState([]);
-  const [geocodedCount, setGeocodedCount] = useState(0);
 
   async function cargar() {
     setLoading(true);
@@ -3626,7 +3625,6 @@ function BarberiaVisitsReport() {
         .sort((a, b) => a.nearestKm - b.nearestKm)
         .slice(0, 30);
       setGrowthCandidates(candidates);
-      setGeocodedCount(routeRefs.length + candidates.length);
 
       // Resolve each flagged shop's suggested match name/address for display.
       const targetIds = [...new Set((pendData || []).map((p) => p.duplicado_de).filter(Boolean))];
@@ -4022,54 +4020,6 @@ function BarberiaVisitsReport() {
             </div>
           )}
 
-          {/* ── GROWTH CANDIDATES — shops with barbers already in the system
-              but zero recorded visits, ranked by how close they sit to a
-              shop already on the route. Closest ones are near-free stops. ── */}
-          <div className="mt-8 rounded-xl border border-gray-200 bg-white p-4">
-            <h3 className="text-sm font-bold text-gray-700 mb-1">Growth candidates near your route</h3>
-            {geocodedCount === 0 ? (
-              <p className="text-xs text-gray-500">
-                No shops are geocoded yet. Run <code className="bg-gray-100 px-1 rounded">scripts/geocode-barberias.mjs</code> once
-                to unlock this list.
-              </p>
-            ) : growthCandidates.length === 0 ? (
-              <p className="text-xs text-gray-500">No unvisited-but-linked shops found within range of your current route.</p>
-            ) : (
-              <>
-                <p className="text-xs text-gray-500 mb-3">
-                  Linked to barbers already in the system, but no sale recorded since {fmtDate(VISIT_LEARNING_START)}.
-                  Sorted by distance to the nearest shop you already visit — the closest ones cost almost no extra driving to add.
-                  Filtered to names that read like an actual shop — most "barberia" rows in this system are really a
-                  client's personal name saved from before that field's purpose was clarified, and those aren't real
-                  destinations to route to.
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
-                        <th className="py-2 pr-3">Barbershop</th>
-                        <th className="py-2 pr-3">Address</th>
-                        <th className="py-2 pr-3">Barbers linked</th>
-                        <th className="py-2 pr-3">Distance to your route</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {growthCandidates.map((c) => (
-                        <tr key={c.id} className="border-b border-gray-100 last:border-0">
-                          <td className="py-2.5 pr-3 font-semibold text-gray-800">{c.nombre}</td>
-                          <td className="py-2.5 pr-3 text-gray-500 text-xs">{c.direccion || "—"}</td>
-                          <td className="py-2.5 pr-3 text-gray-600">{c.barberCount}</td>
-                          <td className="py-2.5 pr-3 font-semibold text-teal-700">
-                            {kmToMiles(c.nearestKm).toFixed(1)} mi from {c.nearestName}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
         </>
       )}
     </div>
