@@ -172,7 +172,21 @@ export function UsuarioProvider({ children }) {
       }
 
       // ─── Usuario NO encontrado (userRow === null, sin error) ───
-      // Solo aquí es legítimo crear usuario nuevo
+      // Portal identities must never be auto-provisioned as staff.
+      const { data: portalLink } = await supabase
+        .from("cliente_usuarios")
+        .select("cliente_id")
+        .eq("user_id", userAuth.id)
+        .maybeSingle();
+      if (portalLink) {
+        setUsuario(null);
+        guardarUsuarioCache(null);
+        setCargando(false);
+        loadingRef.current = false;
+        return;
+      }
+
+      // Only non-portal identities continue through the legacy staff flow.
 
       // 2. Verificar si el email ya existe con otro ID
       const { data: usuarioConEmail, error: errEmail } = await supabase

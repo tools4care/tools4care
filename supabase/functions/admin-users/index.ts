@@ -9,7 +9,8 @@
 // Actions: create_user | delete_user | update_permissions |
 //          get_location_access | reset_password | create_tenant |
 //          list_tenants | resend_tenant_invite | set_tenant_status |
-//          update_tenant | delete_tenant
+//          update_tenant | delete_tenant | get_customer_portal_status |
+//          activate_customer_portal
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -85,6 +86,129 @@ Deno.serve(async (req) => {
     }
 
     switch (action) {
+      case "get_customer_portal_status": {
+        const { clienteId } = payload || {};
+        if (!clienteId) return json({ error: "clienteId is required" }, 400);
+
+        const { data: customer, error: customerError } = await admin
+          .from("clientes")
+          .select("id,email,tenant_id")
+          .eq("id", clienteId)
+          .maybeSingle();
+        if (customerError || !customer) return json({ error: "Customer not found" }, 404);
+        if (!caller.platform_admin && (customer.tenant_id || null) !== (caller.tenant_id || null)) {
+          return json({ error: "Customer is outside your tenant" }, 403);
+        }
+
+        const { data: link } = await admin
+          .from("cliente_usuarios")
+          .select("user_id,created_at")
+          .eq("cliente_id", clienteId)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (!link) return json({ active: false, email: customer.email || null });
+
+        const { data: authUser } = await admin.auth.admin.getUserById(link.user_id);
+        return json({
+          active: true,
+          email: authUser?.user?.email || customer.email || null,
+          userId: link.user_id,
+          linkedAt: link.created_at,
+          lastSignInAt: authUser?.user?.last_sign_in_at || null,
+        });
+      }
+
+      case "activate_customer_portal": {
+        const { clienteId } = payload || {};
+        if (!clienteId) return json({ error: "clienteId is required" }, 400);
+
+        const { data: customer, error: customerError } = await admin
+          .from("clientes")
+          .select("id,nombre,negocio,email,tenant_id")
+          .eq("id", clienteId)
+          .maybeSingle();
+        if (customerError || !customer) return json({ error: "Customer not found" }, 404);
+        if (!caller.platform_admin && (customer.tenant_id || null) !== (caller.tenant_id || null)) {
+          return json({ error: "Customer is outside your tenant" }, 403);
+        }
+
+        const cleanEmail = String(customer.email || "").trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+          return json({ error: "Save a valid email in the customer profile first" }, 400);
+        }
+
+        let authUser: any = null;
+        for (let page = 1; page <= 10 && !authUser; page += 1) {
+          const { data: usersPage, error: usersError } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+          if (usersError) return json({ error: "Could not look up the portal login" }, 400);
+          authUser = (usersPage?.users || []).find((entry: any) =>
+            String(entry.email || "").trim().toLowerCase() === cleanEmail
+          );
+          if ((usersPage?.users || []).length < 1000) break;
+        }
+
+        let created = false;
+        if (!authUser) {
+          const { data: createdUser, error: createError } = await admin.auth.admin.createUser({
+            email: cleanEmail,
+            email_confirm: true,
+            user_metadata: {
+              account_type: "portal_customer",
+              full_name: customer.nombre || "",
+              business_name: customer.negocio || "",
+            },
+          });
+          if (createError || !createdUser?.user) {
+            return json({ error: "Could not create portal login: " + (createError?.message || "Unknown error") }, 400);
+          }
+          authUser = createdUser.user;
+          created = true;
+        }
+
+        const { data: staffIdentity } = await admin
+          .from("usuarios")
+          .select("id")
+          .eq("id", authUser.id)
+          .maybeSingle();
+        if (staffIdentity) return json({ error: "This email belongs to a staff account and cannot be linked to a customer" }, 409);
+
+        const { data: existingLink } = await admin
+          .from("cliente_usuarios")
+          .select("cliente_id")
+          .eq("user_id", authUser.id)
+          .maybeSingle();
+        if (existingLink && existingLink.cliente_id !== clienteId) {
+          return json({ error: "This email is already linked to another customer" }, 409);
+        }
+
+        const { error: linkError } = await admin.from("cliente_usuarios").upsert(
+          { user_id: authUser.id, cliente_id: clienteId },
+          { onConflict: "user_id" },
+        );
+        if (linkError) return json({ error: "Could not link customer: " + linkError.message }, 400);
+
+        const publicAppUrl = (Deno.env.get("PUBLIC_APP_URL") || Deno.env.get("SITE_URL") || "https://tools4care.vercel.app").replace(/\/$/, "");
+        const mailer = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
+        const { error: emailError } = await mailer.auth.signInWithOtp({
+          email: cleanEmail,
+          options: {
+            shouldCreateUser: false,
+            emailRedirectTo: `${publicAppUrl}/portal`,
+          },
+        });
+
+        return json({
+          active: true,
+          created,
+          email: cleanEmail,
+          userId: authUser.id,
+          emailSent: !emailError,
+          emailError: emailError?.message || null,
+          portalUrl: `${publicAppUrl}/portal`,
+        });
+      }
+
       case "create_user": {
         const { email, password, nombre, rol } = payload || {};
         if (!email || !password) return json({ error: "email and password are required" }, 400);

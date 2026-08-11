@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import { useToast } from "./hooks/useToast";
 import { useVan } from "./hooks/VanContext";
@@ -10,6 +10,7 @@ import { loadPdfLibs } from "./utils/lazyPdf";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useStoreMode } from "./hooks/useStoreMode";
 import { useUsuario } from "./UsuarioContext";
+import { activateCustomerPortal, getCustomerPortalStatus } from "./lib/adminApi";
 import {
   getStoredStoreCashSessionIdForDevice,
   getStoreDeviceId,
@@ -21,7 +22,7 @@ import {
   Search, Plus, Edit, DollarSign, FileText, User, Phone, Mail,
   MapPin, Building2, Calendar, TrendingUp, X, Check, ChevronsLeft,
   ChevronLeft, ChevronRight, ChevronsRight, BarChart3, RefreshCcw,
-  ChevronDown, ChevronUp, Trash2, Download
+  ChevronDown, ChevronUp, Trash2, Download, Link2, Send, ShieldCheck, Copy
 } from "lucide-react";
 
 /* === CxC centralizado === */
@@ -644,6 +645,7 @@ function paymentMethodLabel(method, transferMethod, reference) {
 /* -------------------- COMPONENTE PRINCIPAL -------------------- */
 export default function Clientes() {
   const { puedeEliminarClientes } = usePermisos();
+  const { usuario } = useUsuario();
   const { toast, confirm } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -1883,6 +1885,7 @@ const fetchPage = async (opts = {}) => {
           onEdit={() => { setMostrarStats(false); handleEditCliente(clienteSeleccionado); }}
           onDelete={puedeEliminarClientes ? handleEliminar : null}
           generatePDF={generatePDF}
+          canManagePortal={(usuario?.rol || "").toLowerCase() === "admin"}
           onRefreshCredito={async () => {
             const info = await safeGetCxc(clienteSeleccionado.id);
             if (info) setResumen(r => ({ ...r, balance: info.saldo, cxc: info }));
@@ -2173,8 +2176,88 @@ function resolveStatsRange(preset, customFrom, customTo) {
   return { start: null, end: null, label: "Lifetime" };
 }
 
+function PortalAccessPanel({ cliente }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activating, setActivating] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const actionRef = useRef(false);
+
+  const loadStatus = useCallback(async () => {
+    if (!cliente?.id) return;
+    setLoading(true);
+    setError("");
+    try {
+      setStatus(await getCustomerPortalStatus(cliente.id));
+    } catch (statusError) {
+      setError(statusError.message || "Could not load portal access.");
+    } finally {
+      setLoading(false);
+    }
+  }, [cliente?.id]);
+
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  async function activatePortal() {
+    if (actionRef.current) return;
+    actionRef.current = true;
+    setActivating(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await activateCustomerPortal(cliente.id);
+      setStatus(result);
+      setMessage(result.emailSent
+        ? `Access email sent to ${result.email}.`
+        : `Portal activated, but the email could not be sent: ${result.emailError || "unknown error"}`);
+    } catch (activationError) {
+      setError(activationError.message || "Could not activate the customer portal.");
+    } finally {
+      actionRef.current = false;
+      setActivating(false);
+    }
+  }
+
+  async function copyPortalLink() {
+    await navigator.clipboard.writeText("https://tools4care.vercel.app/portal");
+    setMessage("Portal link copied.");
+  }
+
+  return (
+    <section className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="rounded-xl bg-blue-600 p-2 text-white"><ShieldCheck size={19} /></span>
+          <div><h4 className="font-black text-slate-900">Customer portal access</h4><p className="text-xs text-slate-600">Securely connect this customer record to their email login.</p></div>
+        </div>
+        {status?.active && <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">Portal active</span>}
+      </div>
+
+      {loading ? <p className="mt-4 text-sm text-slate-500">Checking portal access…</p> : (
+        <div className="mt-4">
+          <div className="rounded-xl bg-white p-3 text-sm">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Login email</p>
+            <p className="mt-1 font-bold text-slate-900">{status?.email || cliente.email || "No email saved"}</p>
+            {status?.lastSignInAt && <p className="mt-1 text-xs text-slate-500">Last sign-in: {new Date(status.lastSignInAt).toLocaleString("en-US")}</p>}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={activatePortal} disabled={activating || !cliente.email} className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
+              {activating ? <><RefreshCcw className="animate-spin" size={16} /> Activating…</> : status?.active ? <><Send size={16} /> Send new access link</> : <><Link2 size={16} /> Activate portal</>}
+            </button>
+            <button type="button" onClick={copyPortalLink} className="flex items-center justify-center gap-2 rounded-xl border border-blue-300 bg-white px-4 py-3 text-sm font-bold text-blue-800"><Copy size={16} /> Copy portal link</button>
+          </div>
+          {!cliente.email && <p className="mt-3 rounded-lg bg-amber-100 p-2 text-xs font-semibold text-amber-900">Save a valid email in the customer profile before activating the portal.</p>}
+          {message && <p className="mt-3 rounded-lg bg-emerald-100 p-2 text-xs font-semibold text-emerald-900">{message}</p>}
+          {error && <p className="mt-3 rounded-lg bg-red-100 p-2 text-xs font-semibold text-red-800">{error}</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ClienteStatsModal({
-  open, cliente, resumen, onClose, onEdit, onDelete, generatePDF, onRefreshCredito
+  open, cliente, resumen, onClose, onEdit, onDelete, generatePDF, onRefreshCredito, canManagePortal
 }) {
   const [rangePreset, setRangePreset] = useState("lifetime");
   const [customFrom, setCustomFrom] = useState("");
@@ -2360,6 +2443,7 @@ function ClienteStatsModal({
           }}
         >
           <div className="p-6">
+            {canManagePortal && <PortalAccessPanel cliente={cliente} />}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-5 shadow-lg">
                 <div className="flex items-center justify-between">

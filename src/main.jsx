@@ -20,6 +20,7 @@ const AuthCallback      = lazy(() => import("./storefront/AuthCallback.jsx"));
 const PaymentSuccess    = lazy(() => import("./PaymentSuccess.jsx"));
 const PaymentCancelled  = lazy(() => import("./PaymentCancelled.jsx"));
 const BusinessInfo      = lazy(() => import("./storefront/BusinessInfo.jsx"));
+const PortalPage        = lazy(() => import("./portal/PortalPage.jsx").then((module) => ({ default: module.PortalPage })));
 
 // ── App del POS (con todos los providers) ───────────────────────────────
 const App = lazy(() => import("./App.jsx"));
@@ -107,6 +108,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               <PaymentCancelled />
             </Suspense>
           }
+        />
+        <Route
+          path="/portal"
+          element={<Suspense fallback={<StorefrontFallback />}><PortalPage /></Suspense>}
         />
         <Route
           path="/info"

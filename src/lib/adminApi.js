@@ -70,3 +70,11 @@ export function updateTenant(tenantId, { businessName, ownerName, phone, plan })
 export function deleteTenant(tenantId, confirmBusinessName) {
   return callAdminUsers("delete_tenant", { tenantId, confirmBusinessName });
 }
+
+export function getCustomerPortalStatus(clienteId) {
+  return callAdminUsers("get_customer_portal_status", { clienteId });
+}
+
+export function activateCustomerPortal(clienteId) {
+  return callAdminUsers("activate_customer_portal", { clienteId });
+}
