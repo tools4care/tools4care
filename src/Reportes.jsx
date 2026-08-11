@@ -3574,7 +3574,10 @@ function BarberiaVisitsReport() {
       // visits in the tracked window, ranked by distance to the nearest
       // shop that IS already on the route — the closer that distance, the
       // more it's basically a free stop to bolt onto an existing day.
+      // Only shops visited 2+ times count as "on the route" here — a single
+      // visit doesn't prove it's a real recurring stop worth anchoring to.
       const routeRefs = resumenData
+        .filter((r) => r.total_visits >= 2)
         .map((r) => ({ ...r, coords: shopCoords.get(r.barberia_id) }))
         .filter((r) => r.coords?.latitude != null && r.coords?.longitude != null);
       const visitedIds = new Set(shopDays.keys());
@@ -3708,6 +3711,36 @@ function BarberiaVisitsReport() {
     return list;
   }, [established, sortMode]);
 
+  // Suggested stops: one ranked list instead of two tables to cross-reference
+  // by hand. Proven shops that are overdue/due come first (that's money
+  // you're already leaving on the table), then the closest never-visited
+  // real shops to bolt onto the same trip. Not a turn-by-turn route — there's
+  // no live van location to sequence against — just a priority order for
+  // picking today's/this week's stops.
+  const suggestedStops = useMemo(() => {
+    const dueList = established
+      .filter((r) => r.status === "overdue" || r.status === "due")
+      .map((r) => ({
+        key: `due-${r.barberia_id}`,
+        nombre: r.barberia_nombre,
+        why: r.status === "overdue"
+          ? `Overdue by ${Math.round(r.overdueBy)}d (usual cadence ~${r.avgGap}d)`
+          : `Due soon (usual cadence ~${r.avgGap}d)`,
+        value: r.avg_revenue_per_visit,
+        valueLabel: `~${fmtCurrency(r.avg_revenue_per_visit)}/visit`,
+        kind: "proven",
+      }));
+    const growthList = growthCandidates.slice(0, 15).map((c) => ({
+      key: `growth-${c.id}`,
+      nombre: c.nombre,
+      why: `Never visited — ${kmToMiles(c.nearestKm).toFixed(1)} mi from ${c.nearestName}`,
+      value: null,
+      valueLabel: `${c.barberCount} barber${c.barberCount === 1 ? "" : "s"} linked`,
+      kind: "new",
+    }));
+    return [...dueList, ...growthList];
+  }, [established, growthCandidates]);
+
   if (loading) {
     return <div className="py-16 text-center text-sm text-gray-400">Loading…</div>;
   }
@@ -3720,6 +3753,44 @@ function BarberiaVisitsReport() {
 
   return (
     <div>
+      {/* ── SUGGESTED STOPS — one ranked list: proven shops falling behind
+          cadence first, then the closest never-visited real shops to add.
+          Not turn-by-turn (no live van location to sequence against), just
+          "pick from the top of this list" for today/this week. ── */}
+      {suggestedStops.length > 0 && (
+        <div className="mb-6 rounded-xl border-2 border-teal-200 bg-teal-50/50 p-4">
+          <h3 className="text-sm font-bold text-teal-900 mb-1">Suggested stops</h3>
+          <p className="text-xs text-teal-800/80 mb-3">
+            Overdue/due shops first (proven money you're already leaving on the table), then the closest
+            never-visited real shops to add on the same trip. Pick from the top.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs font-bold uppercase tracking-wide text-teal-700/70 border-b border-teal-200">
+                  <th className="py-1.5 pr-3">#</th>
+                  <th className="py-1.5 pr-3">Barbershop</th>
+                  <th className="py-1.5 pr-3">Why</th>
+                  <th className="py-1.5 pr-3">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {suggestedStops.slice(0, 20).map((s, i) => (
+                  <tr key={s.key} className="border-b border-teal-100 last:border-0">
+                    <td className="py-2 pr-3 text-teal-700/60 font-semibold">{i + 1}</td>
+                    <td className="py-2 pr-3 font-semibold text-gray-800">{s.nombre}</td>
+                    <td className="py-2 pr-3 text-gray-600 text-xs">{s.why}</td>
+                    <td className={`py-2 pr-3 font-semibold text-xs whitespace-nowrap ${s.kind === "proven" ? "text-emerald-700" : "text-teal-700"}`}>
+                      {s.valueLabel}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-gray-500 mb-4">
         Automatic — a visit is counted whenever a sale is recorded for any client linked to a barbershop, whether
         or not it was on the daily route that day. New business names are matched (or created) automatically when
