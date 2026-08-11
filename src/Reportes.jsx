@@ -3449,7 +3449,7 @@ async function fetchAllVentasSince(cutoffIso) {
   while (true) {
     const { data, error } = await supabase
       .from("ventas")
-      .select("fecha,cliente_id")
+      .select("fecha,cliente_id,total_venta")
       .gte("fecha", cutoffIso)
       .neq("tipo", "devolucion")
       .order("fecha", { ascending: true })
@@ -3486,6 +3486,7 @@ function BarberiaVisitsReport() {
       // earliest/latest sale timestamp that day (used for the time estimate).
       const shopDays = new Map(); // barberia_id -> Map(day -> {min,max})
       const shopNombre = new Map();
+      const shopRevenue = new Map(); // barberia_id -> total $ sold since VISIT_LEARNING_START
       for (const row of ventasRows) {
         const info = clienteShop.get(row.cliente_id);
         if (!info?.barberia_id) continue;
@@ -3496,6 +3497,7 @@ function BarberiaVisitsReport() {
         const t = new Date(row.fecha).getTime();
         const prev = days.get(day);
         days.set(day, prev ? { min: Math.min(prev.min, t), max: Math.max(prev.max, t) } : { min: t, max: t });
+        shopRevenue.set(info.barberia_id, (shopRevenue.get(info.barberia_id) || 0) + Number(row.total_venta || 0));
       }
 
       const resumenData = [];
@@ -3518,6 +3520,8 @@ function BarberiaVisitsReport() {
           return (max - min) / 60000 + bufferMinutes;
         });
         const avgMinutes = Math.round(estimatedMinutesPerVisit.reduce((s, m) => s + m, 0) / estimatedMinutesPerVisit.length);
+        const totalRevenue = shopRevenue.get(barberiaId) || 0;
+        const avgRevenuePerVisit = totalRevenue / sortedDays.length;
         resumenData.push({
           barberia_id: barberiaId,
           barberia_nombre: shopNombre.get(barberiaId),
@@ -3526,6 +3530,9 @@ function BarberiaVisitsReport() {
           days_since_last_visit: daysSince,
           avg_days_between_visits: avgGap,
           avg_estimated_minutes: avgMinutes,
+          total_revenue: totalRevenue,
+          avg_revenue_per_visit: avgRevenuePerVisit,
+          revenue_per_minute: avgMinutes > 0 ? avgRevenuePerVisit / avgMinutes : null,
         });
       }
       setResumen(resumenData);
@@ -3613,6 +3620,7 @@ function BarberiaVisitsReport() {
     });
     const established = withStatus.filter((r) => r.hasCadence).sort((a, b) => b.overdueBy - a.overdueBy);
     const oneTime = withStatus.filter((r) => !r.hasCadence);
+    const totalRevenueAll = resumen.reduce((s, r) => s + Number(r.total_revenue || 0), 0);
     const totals = {
       shops: resumen.length,
       visits: resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0),
@@ -3622,10 +3630,27 @@ function BarberiaVisitsReport() {
       overdue: established.filter((r) => r.status === "overdue").length,
       due: established.filter((r) => r.status === "due").length,
       ok: established.filter((r) => r.status === "ok").length,
+      totalRevenue: totalRevenueAll,
+      avgRevenuePerVisit: resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0)
+        ? totalRevenueAll / resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0)
+        : 0,
     };
     return { established, oneTime, totals };
   }, [resumen]);
   const [showOneTime, setShowOneTime] = useState(false);
+  const [sortMode, setSortMode] = useState("overdue"); // overdue | revenuePerMinute | revenuePerVisit
+
+  const sortedEstablished = useMemo(() => {
+    const list = [...established];
+    if (sortMode === "revenuePerMinute") {
+      list.sort((a, b) => Number(b.revenue_per_minute || 0) - Number(a.revenue_per_minute || 0));
+    } else if (sortMode === "revenuePerVisit") {
+      list.sort((a, b) => Number(b.avg_revenue_per_visit || 0) - Number(a.avg_revenue_per_visit || 0));
+    } else {
+      list.sort((a, b) => b.overdueBy - a.overdueBy);
+    }
+    return list;
+  }, [established, sortMode]);
 
   if (loading) {
     return <div className="py-16 text-center text-sm text-gray-400">Loading…</div>;
@@ -3650,6 +3675,10 @@ function BarberiaVisitsReport() {
         <SummaryCard label="Due soon" value={totals.due} icon={Clock} color={totals.due ? "amber" : "green"} />
         <SummaryCard label="On track" value={totals.ok} icon={CheckCircle2} color="green" />
         <SummaryCard label="Avg time per visit" value={`~${totals.avgMinutes} min`} icon={MapPin} color="blue" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 mb-2">
+        <SummaryCard label="Revenue tracked" value={fmtCurrency(totals.totalRevenue)} icon={DollarSign} color="green" />
+        <SummaryCard label="Avg $ / visit" value={fmtCurrency(totals.avgRevenuePerVisit)} icon={TrendingUp} color="blue" />
       </div>
       <p className="text-[11px] text-gray-400 mb-6">
         {totals.shops} shops tracked · {totals.visits} total visits since {fmtDate(VISIT_LEARNING_START)} · {oneTime.length} visited only once so far (below)
@@ -3732,44 +3761,73 @@ function BarberiaVisitsReport() {
       ) : (
         <>
           {established.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
-                    <th className="py-2 pr-3">Barbershop</th>
-                    <th className="py-2 pr-3">Status</th>
-                    <th className="py-2 pr-3">Last visit</th>
-                    <th className="py-2 pr-3" title="Calendar days since the last recorded sale at this shop">Days since last visit</th>
-                    <th className="py-2 pr-3" title="Average number of days between this shop's visits">Usual cadence</th>
-                    <th className="py-2 pr-3">Avg time / visit</th>
-                    <th className="py-2 pr-3">Total visits</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {established.map((r) => {
-                    const style = STATUS_STYLE[r.status];
-                    return (
-                      <tr key={r.barberia_id} className="border-b border-gray-100 last:border-0">
-                        <td className="py-2.5 pr-3 font-semibold text-gray-800">{r.barberia_nombre}</td>
-                        <td className="py-2.5 pr-3">
-                          <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${style.pill}`}>
-                            {style.label}
-                          </span>
-                        </td>
-                        <td className="py-2.5 pr-3 text-gray-600">{r.last_visit_date || "—"}</td>
-                        <td className={`py-2.5 pr-3 font-semibold ${style.text}`}>
-                          {r.daysSince != null ? `${r.daysSince}d` : "—"}
-                        </td>
-                        <td className="py-2.5 pr-3 text-gray-600">{r.avgGap != null ? `~${r.avgGap}d` : "—"}</td>
-                        <td className="py-2.5 pr-3 text-gray-600">
-                          {r.avg_estimated_minutes != null ? `~${Math.round(r.avg_estimated_minutes)} min` : "—"}
-                        </td>
-                        <td className="py-2.5 pr-3 text-gray-600">{r.total_visits}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <span className="text-xs font-bold text-gray-500">Sort by:</span>
+                {[
+                  { id: "overdue", label: "Most overdue" },
+                  { id: "revenuePerMinute", label: "Best $ / minute" },
+                  { id: "revenuePerVisit", label: "Best $ / visit" },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setSortMode(opt.id)}
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
+                      sortMode === opt.id
+                        ? "bg-teal-600 border-teal-600 text-white"
+                        : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
+                      <th className="py-2 pr-3">Barbershop</th>
+                      <th className="py-2 pr-3">Status</th>
+                      <th className="py-2 pr-3">Last visit</th>
+                      <th className="py-2 pr-3" title="Calendar days since the last recorded sale at this shop">Days since last visit</th>
+                      <th className="py-2 pr-3" title="Average number of days between this shop's visits">Usual cadence</th>
+                      <th className="py-2 pr-3">Avg time / visit</th>
+                      <th className="py-2 pr-3">Total visits</th>
+                      <th className="py-2 pr-3" title="Average revenue on a visit day at this shop">Avg $ / visit</th>
+                      <th className="py-2 pr-3" title="Avg $ per visit divided by time spent on site — the real yield of a stop here">$ / minute</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedEstablished.map((r) => {
+                      const style = STATUS_STYLE[r.status];
+                      return (
+                        <tr key={r.barberia_id} className="border-b border-gray-100 last:border-0">
+                          <td className="py-2.5 pr-3 font-semibold text-gray-800">{r.barberia_nombre}</td>
+                          <td className="py-2.5 pr-3">
+                            <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${style.pill}`}>
+                              {style.label}
+                            </span>
+                          </td>
+                          <td className="py-2.5 pr-3 text-gray-600">{r.last_visit_date || "—"}</td>
+                          <td className={`py-2.5 pr-3 font-semibold ${style.text}`}>
+                            {r.daysSince != null ? `${r.daysSince}d` : "—"}
+                          </td>
+                          <td className="py-2.5 pr-3 text-gray-600">{r.avgGap != null ? `~${r.avgGap}d` : "—"}</td>
+                          <td className="py-2.5 pr-3 text-gray-600">
+                            {r.avg_estimated_minutes != null ? `~${Math.round(r.avg_estimated_minutes)} min` : "—"}
+                          </td>
+                          <td className="py-2.5 pr-3 text-gray-600">{r.total_visits}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-gray-700">{fmtCurrency(r.avg_revenue_per_visit)}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-teal-700">
+                            {r.revenue_per_minute != null ? `${fmtCurrency(r.revenue_per_minute)}/min` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
