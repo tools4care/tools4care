@@ -29,6 +29,15 @@ const fmtCurrency = (n) =>
 const fmtPercent = (value, digits = 1) =>
   `${Number(value || 0).toFixed(digits)}%`;
 
+// Rough filter for "this barberias.nombre reads like an actual shop, not a
+// person's name." A historical bug auto-created a barberia from whatever a
+// client's "negocio" field held before that field's purpose was clarified —
+// a production audit found ~78% of all barberia rows were really a client's
+// own name entered there by habit. Those aren't visit-worthy destinations,
+// so growth/opportunity lists should exclude them even though the fix
+// (6dac2d2) only stops new ones from being created, not the old rows.
+const BUSINESS_NAME_PATTERN = /barber|salon|cuts?|studio|shop|shave|fade|styles?|hair|beauty|spa|blendz|kutz/i;
+
 const percentOf = (value, total) =>
   Number(total || 0) > 0 ? (Number(value || 0) / Number(total || 0)) * 100 : 0;
 
@@ -3571,7 +3580,12 @@ function BarberiaVisitsReport() {
         .filter((r) => r.coords?.latitude != null && r.coords?.longitude != null);
       const visitedIds = new Set(shopDays.keys());
       const candidates = (allShops || [])
-        .filter((s) => !visitedIds.has(s.id) && s.latitude != null && s.longitude != null && (shopClientCount.get(s.id) || 0) > 0)
+        .filter((s) =>
+          !visitedIds.has(s.id)
+          && s.latitude != null && s.longitude != null
+          && (shopClientCount.get(s.id) || 0) > 0
+          && BUSINESS_NAME_PATTERN.test(s.nombre || "")
+        )
         .map((s) => {
           let nearest = null;
           for (const ref of routeRefs) {
@@ -3919,6 +3933,9 @@ function BarberiaVisitsReport() {
                 <p className="text-xs text-gray-500 mb-3">
                   Linked to barbers already in the system, but no sale recorded since {fmtDate(VISIT_LEARNING_START)}.
                   Sorted by distance to the nearest shop you already visit — the closest ones cost almost no extra driving to add.
+                  Filtered to names that read like an actual shop — most "barberia" rows in this system are really a
+                  client's personal name saved from before that field's purpose was clarified, and those aren't real
+                  destinations to route to.
                 </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
