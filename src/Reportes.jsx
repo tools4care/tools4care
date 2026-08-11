@@ -14,6 +14,7 @@ import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import { daysSince, classifyArRisk, buildCollectionMessage, phoneLink } from "./lib/arRisk";
 import { paginateRows, REPORT_PAGE_SIZES } from "./lib/pagination";
 import { VISIT_LEARNING_START } from "./lib/barberCadence";
+import { haversineKm, kmToMiles } from "./lib/geo";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
@@ -3469,18 +3470,29 @@ function BarberiaVisitsReport() {
   const [pendientes, setPendientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
+  const [growthCandidates, setGrowthCandidates] = useState([]);
+  const [geocodedCount, setGeocodedCount] = useState(0);
 
   async function cargar() {
     setLoading(true);
     try {
-      const [{ data: clientesLinked }, ventasRows, { data: pendData }, { data: settingsRow }] = await Promise.all([
+      const [{ data: clientesLinked }, ventasRows, { data: pendData }, { data: settingsRow }, { data: allShops }] = await Promise.all([
         supabase.from("clientes").select("id,barberia_id,barberias:barberia_id(nombre)").not("barberia_id", "is", null),
         fetchAllVentasSince(`${VISIT_LEARNING_START}T00:00:00-04:00`),
         supabase.from("barberias").select("id, nombre, direccion, duplicado_de").eq("revisar_duplicado", true),
         supabase.from("site_settings").select("barberia_visit_buffer_minutes").eq("id", 1).maybeSingle(),
+        supabase.from("barberias").select("id,nombre,direccion,latitude,longitude"),
       ]);
       const bufferMinutes = Number(settingsRow?.barberia_visit_buffer_minutes ?? 12);
       const clienteShop = new Map((clientesLinked || []).map((c) => [c.id, { barberia_id: c.barberia_id, nombre: c.barberias?.nombre || "Barbershop" }]));
+
+      // How many linked barbers (= clients) each shop has, used as a rough
+      // revenue-potential proxy for shops with no sales history yet.
+      const shopClientCount = new Map();
+      for (const c of clientesLinked || []) {
+        shopClientCount.set(c.barberia_id, (shopClientCount.get(c.barberia_id) || 0) + 1);
+      }
+      const shopCoords = new Map((allShops || []).map((s) => [s.id, s]));
 
       // One entry per shop+day the shop was actually visited, with the
       // earliest/latest sale timestamp that day (used for the time estimate).
@@ -3549,6 +3561,37 @@ function BarberiaVisitsReport() {
         perWeek: Math.round((totalVisitDays / (daysElapsed / 7)) * 10) / 10,
         perMonth: Math.round((totalVisitDays / (daysElapsed / 30.44)) * 10) / 10,
       });
+
+      // Growth candidates: shops with linked barbers but zero recorded
+      // visits in the tracked window, ranked by distance to the nearest
+      // shop that IS already on the route — the closer that distance, the
+      // more it's basically a free stop to bolt onto an existing day.
+      const routeRefs = resumenData
+        .map((r) => ({ ...r, coords: shopCoords.get(r.barberia_id) }))
+        .filter((r) => r.coords?.latitude != null && r.coords?.longitude != null);
+      const visitedIds = new Set(shopDays.keys());
+      const candidates = (allShops || [])
+        .filter((s) => !visitedIds.has(s.id) && s.latitude != null && s.longitude != null && (shopClientCount.get(s.id) || 0) > 0)
+        .map((s) => {
+          let nearest = null;
+          for (const ref of routeRefs) {
+            const km = haversineKm(s.latitude, s.longitude, ref.coords.latitude, ref.coords.longitude);
+            if (km != null && (nearest == null || km < nearest.km)) nearest = { km, name: ref.barberia_nombre };
+          }
+          return {
+            id: s.id,
+            nombre: s.nombre,
+            direccion: s.direccion,
+            barberCount: shopClientCount.get(s.id) || 0,
+            nearestKm: nearest?.km ?? null,
+            nearestName: nearest?.name ?? null,
+          };
+        })
+        .filter((c) => c.nearestKm != null)
+        .sort((a, b) => a.nearestKm - b.nearestKm)
+        .slice(0, 30);
+      setGrowthCandidates(candidates);
+      setGeocodedCount(routeRefs.length + candidates.length);
 
       // Resolve each flagged shop's suggested match name/address for display.
       const targetIds = [...new Set((pendData || []).map((p) => p.duplicado_de).filter(Boolean))];
@@ -3858,6 +3901,52 @@ function BarberiaVisitsReport() {
               )}
             </div>
           )}
+
+          {/* ── GROWTH CANDIDATES — shops with barbers already in the system
+              but zero recorded visits, ranked by how close they sit to a
+              shop already on the route. Closest ones are near-free stops. ── */}
+          <div className="mt-8 rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="text-sm font-bold text-gray-700 mb-1">Growth candidates near your route</h3>
+            {geocodedCount === 0 ? (
+              <p className="text-xs text-gray-500">
+                No shops are geocoded yet. Run <code className="bg-gray-100 px-1 rounded">scripts/geocode-barberias.mjs</code> once
+                to unlock this list.
+              </p>
+            ) : growthCandidates.length === 0 ? (
+              <p className="text-xs text-gray-500">No unvisited-but-linked shops found within range of your current route.</p>
+            ) : (
+              <>
+                <p className="text-xs text-gray-500 mb-3">
+                  Linked to barbers already in the system, but no sale recorded since {fmtDate(VISIT_LEARNING_START)}.
+                  Sorted by distance to the nearest shop you already visit — the closest ones cost almost no extra driving to add.
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
+                        <th className="py-2 pr-3">Barbershop</th>
+                        <th className="py-2 pr-3">Address</th>
+                        <th className="py-2 pr-3">Barbers linked</th>
+                        <th className="py-2 pr-3">Distance to your route</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {growthCandidates.map((c) => (
+                        <tr key={c.id} className="border-b border-gray-100 last:border-0">
+                          <td className="py-2.5 pr-3 font-semibold text-gray-800">{c.nombre}</td>
+                          <td className="py-2.5 pr-3 text-gray-500 text-xs">{c.direccion || "—"}</td>
+                          <td className="py-2.5 pr-3 text-gray-600">{c.barberCount}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-teal-700">
+                            {kmToMiles(c.nearestKm).toFixed(1)} mi from {c.nearestName}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
         </>
       )}
     </div>
