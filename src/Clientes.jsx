@@ -2706,6 +2706,11 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [qrAmount, setQRAmount] = useState(0);
   const [qrPollingActive, setQRPollingActive] = useState(false);
   const qrPollingIntervalRef = useRef(null);
+  // Once Stripe confirms a charge, that amount is real money already moved —
+  // lock it so it can't be edited/overwritten by accident. Cash/other split
+  // parts (extraPayments) stay editable so a customer can still cover the
+  // rest of the balance a different way in the same payment.
+  const [stripeAmountLocked, setStripeAmountLocked] = useState(false);
 
   // 🆕 ESTADOS PARA FEE DE TARJETA
   const [applyCardFee, setApplyCardFee] = useState(false);
@@ -2971,12 +2976,17 @@ let restante = pago;
           setQRPollingActive(false);
 
           const paidAmount = Number(res.amount || 0) / 100;
-          
+
           // Si hay fee, actualizar el monto base (sin fee)
           const amountToSet = hasFee ? baseAmount : paidAmount;
-          
+
           if (Number.isFinite(amountToSet) && amountToSet > 0) {
             setMonto(Number(amountToSet.toFixed(2)));
+            setMetodo("Card");
+            // Money already moved on Stripe's side — lock this amount so it
+            // can't be edited out from under the charge. Extra split parts
+            // (cash, transfer, etc.) stay open below for the remainder.
+            setStripeAmountLocked(true);
           }
 
           setShowQRModal(false);
@@ -3121,6 +3131,7 @@ let restante = pago;
         setSaldoBase(saldoDespues);
         setMonto("");
         setExtraPayments([]);
+        setStripeAmountLocked(false);
         paymentBatchRef.current = null;
         setMensaje(`💾 Payment of $${pagoAplicado.toFixed(2)} saved locally — will sync when connected.`);
         setTimeout(() => { if (typeof onClose === "function") onClose(); }, 2000);
@@ -3152,6 +3163,7 @@ let restante = pago;
       setCheckReference("");
       setExtraPayments([]);
       setApplyCardFee(false);
+      setStripeAmountLocked(false);
 
       // refrescar CxC/tabla + cuotas
       const info = await safeGetCxc(cliente.id);
@@ -3241,7 +3253,8 @@ let restante = pago;
                       <label className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Payment method</label>
                       <select
                         aria-label="Payment method"
-                        className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 font-bold text-slate-800 outline-none transition-all focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                        disabled={stripeAmountLocked}
+                        className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 font-bold text-slate-800 outline-none transition-all focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                         value={metodo}
                         onChange={e => {
                           setMetodo(e.target.value);
@@ -3260,22 +3273,27 @@ let restante = pago;
                     <div>
                       <div className="mb-1.5 flex items-center justify-between gap-2">
                         <label className="text-xs font-black uppercase tracking-wide text-slate-500">Amount</label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMonto(String(round2(Math.max(0, saldoActual - extraPayments.reduce((sum, part) => sum + Number(part.amount || 0), 0)))));
-                            setMensaje("");
-                          }}
-                          className="text-xs font-black text-emerald-700 hover:text-emerald-900"
-                        >
-                          Pay full
-                        </button>
+                        {stripeAmountLocked ? (
+                          <span className="text-xs font-black text-emerald-700">🔒 Confirmed via Stripe</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMonto(String(round2(Math.max(0, saldoActual - extraPayments.reduce((sum, part) => sum + Number(part.amount || 0), 0)))));
+                              setMensaje("");
+                            }}
+                            className="text-xs font-black text-emerald-700 hover:text-emerald-900"
+                          >
+                            Pay full
+                          </button>
+                        )}
                       </div>
                       <div className="relative">
                         <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg font-black text-slate-400">$</span>
                         <input
                           aria-label="Payment amount"
-                          className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white py-3 pl-9 pr-4 text-right text-2xl font-black text-slate-950 outline-none transition-all focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                          disabled={stripeAmountLocked}
+                          className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white py-3 pl-9 pr-4 text-right text-2xl font-black text-slate-950 outline-none transition-all focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-emerald-50 disabled:text-emerald-800 disabled:border-emerald-300"
                           placeholder="0.00"
                           type="number"
                           min="0.01"
@@ -3349,10 +3367,10 @@ let restante = pago;
                       <button
                         type="button"
                         onClick={handleGenerateQR}
-                        disabled={!Number(monto)}
+                        disabled={!Number(monto) || stripeAmountLocked}
                         className="mt-3 min-h-11 w-full rounded-xl border border-purple-300 bg-white px-4 text-sm font-black text-purple-700 transition-colors hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        Generate Stripe QR
+                        {stripeAmountLocked ? "🔒 Stripe charge confirmed" : "Generate Stripe QR"}
                       </button>
                     </div>
                   )}
