@@ -1,4 +1,4 @@
-import { supabase } from "../supabaseClient";
+import { supabase, supabaseAnonKey, supabaseUrl } from "../supabaseClient";
 
 const DEVICE_STORAGE_KEY = "tools4care-terminal-device-id";
 const PENDING_SALE_PAYMENT_KEY = "tools4care-pending-card-sale-v1";
@@ -18,9 +18,13 @@ export async function callTerminalPayments(action, payload = {}) {
     throw new Error("Your Tools4Care session expired. Sign in again before starting Tap to Pay.");
   }
 
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/terminal-payments`;
+  // Use the same resolved configuration as the Supabase client. Production
+  // builds may intentionally rely on its checked-in public fallback values;
+  // reading import.meta.env directly here previously produced a relative
+  // `/undefined/functions/...` request that Vercel rejected with HTTP 405.
+  const url = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/terminal-payments`;
   const headers = {
-    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+    apikey: supabaseAnonKey,
     Authorization: `Bearer ${sessionData.session.access_token}`,
     "Content-Type": "application/json",
   };
