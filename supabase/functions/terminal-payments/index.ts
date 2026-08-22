@@ -207,6 +207,7 @@ Deno.serve(async (req) => {
       const contextType = cleanText(payload.context_type, 30);
       const contextId = cleanText(payload.context_id, 40) || null;
       const amountCents = Math.round(Number(payload.amount_cents || 0));
+      const sendEmail = payload.send_email === true;
       const idempotencyKey = cleanText(payload.idempotency_key, 180);
       if (!clienteId || !idempotencyKey || !["sale", "ar_payment"].includes(contextType)) {
         return json({ error: "Missing or invalid manual payment fields" }, 400);
@@ -277,8 +278,27 @@ Deno.serve(async (req) => {
         stripe_payment_intent_id: typeof checkout.payment_intent === "string" ? checkout.payment_intent : null,
         updated_at: new Date().toISOString(),
       }).eq("id", audit.id);
+
+      const cleanEmail = String(cliente.email || "").trim().toLowerCase();
+      let emailQueued = false;
+      if (sendEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        const shortUrl = `${appUrl}/pay/${checkout.id}`;
+        const customerName = cliente.negocio || cliente.nombre || "Customer";
+        const safeName = String(customerName).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+        const emailPromise = admin.functions.invoke("send-order-email", { body: {
+          to: cleanEmail,
+          subject: `Secure Tools4Care payment link — $${(amountCents / 100).toFixed(2)}`,
+          html: `<p>Hello ${safeName},</p><p>Tools4Care sent you a secure payment link for <strong>$${(amountCents / 100).toFixed(2)}</strong>.</p><p><a href="${shortUrl}">Pay securely with Stripe</a></p><p>This link is for this payment only.</p>`,
+        }}).then(({ data, error }) => {
+          if (error || data?.ok === false) console.error("terminal-payments: payment-link email failed", error || data?.error);
+        }).catch((error) => console.error("terminal-payments: payment-link email failed", error));
+        const edgeRuntime = (globalThis as any).EdgeRuntime;
+        if (edgeRuntime?.waitUntil) edgeRuntime.waitUntil(emailPromise);
+        else await emailPromise;
+        emailQueued = true;
+      }
       return json({ ok: true, checkout_session_id: checkout.id, terminal_session_id: audit.id,
-        url: checkout.url, short_url: `${appUrl}/pay/${checkout.id}` });
+        url: checkout.url, short_url: `${appUrl}/pay/${checkout.id}`, email_queued: emailQueued });
     }
 
     if (action === "manual_checkout_status") {
@@ -605,6 +625,7 @@ Deno.serve(async (req) => {
             intent_client_secret: stripeIntent.client_secret,
             intent_type: session.context_type === "card_setup" ? "setup" : "payment",
             stripe_location_id: terminalLocationId,
+            return_url: `${(Deno.env.get("PUBLIC_APP_URL") || "https://tools4care.vercel.app").replace(/\/$/, "")}/clientes?terminal_return=${session.id}`,
             expires_at: session.companion_token_expires_at,
           },
         });

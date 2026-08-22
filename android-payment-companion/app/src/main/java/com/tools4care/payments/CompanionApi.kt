@@ -13,6 +13,7 @@ data class PaymentBootstrap(
     val clientSecret: String,
     val intentType: String,
     val stripeLocationId: String,
+    val returnUrl: String,
 )
 
 class CompanionApi(private val companionToken: String) {
@@ -50,6 +51,7 @@ class CompanionApi(private val companionToken: String) {
             clientSecret = session.getString("intent_client_secret"),
             intentType = session.getString("intent_type"),
             stripeLocationId = session.getString("stripe_location_id"),
+            returnUrl = session.getString("return_url"),
         )
     }
 

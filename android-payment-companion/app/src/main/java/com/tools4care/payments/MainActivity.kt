@@ -1,6 +1,7 @@
 package com.tools4care.payments
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
@@ -127,7 +128,7 @@ class MainActivity : AppCompatActivity() {
                         // Android then reveals the exact Tools4Care screen that
                         // launched it, where the approved amount is recovered
                         // from the server and locked.
-                        binding.payButton.postDelayed({ finishAndRemoveTask() }, 900L)
+                        binding.payButton.postDelayed({ returnToTools4Care() }, 900L)
                     } else {
                         binding.payButton.text = "Try again"
                         binding.payButton.isEnabled = true
@@ -136,6 +137,18 @@ class MainActivity : AppCompatActivity() {
             },
           ).also { it.start() }
         }
+    }
+
+    private fun returnToTools4Care() {
+        val returnUrl = bootstrap?.returnUrl
+        if (!returnUrl.isNullOrBlank()) {
+            runCatching {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(returnUrl)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                })
+            }
+        }
+        finishAndRemoveTask()
     }
 
     private fun cancelAndFinish() {

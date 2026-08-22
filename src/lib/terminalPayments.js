@@ -120,10 +120,11 @@ export async function createTerminalPaymentSession({
   });
 }
 
-export async function createManualCardCheckout({ clienteId, vanId, contextType, contextId, amountCents }) {
+export async function createManualCardCheckout({ clienteId, vanId, contextType, contextId, amountCents, sendEmail = false }) {
   return callTerminalPayments("create_manual_checkout", {
     cliente_id: clienteId, van_id: vanId || null, context_type: contextType,
     context_id: contextId || null, amount_cents: amountCents,
+    send_email: sendEmail === true,
     idempotency_key: `t4c-manual-${contextType}-${contextId || "new"}-${crypto.randomUUID()}`,
   });
 }

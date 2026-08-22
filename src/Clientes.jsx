@@ -3042,10 +3042,12 @@ let restante = pago;
       const created = await createManualCardCheckout({
         clienteId: cliente.id, vanId: van.id, contextType: "ar_payment", contextId,
         amountCents: Math.round(amount * 100),
+        sendEmail: shareLink,
       });
       if (shareLink) {
         const mode = await shareManualCardCheckout(created.url, cliente.negocio || cliente.nombre, created.short_url, amount);
-        setMensaje(mode === "copied" ? "Secure Stripe link copied. Waiting for payment…" : "Secure Stripe link shared. Waiting for payment…");
+        const emailNote = created.email_queued ? " Email delivery was also queued." : "";
+        setMensaje((mode === "copied" ? "Secure Stripe link copied. Waiting for payment…" : "Secure Stripe link shared. Waiting for payment…") + emailNote);
       } else {
         openManualCardCheckout(created.url);
         setMensaje("Complete the card payment in Stripe. Tools4Care is waiting for confirmation…");
