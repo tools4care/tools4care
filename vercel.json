@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/pay/:checkoutId", "destination": "https://gvloygqbavibmpakzdma.supabase.co/functions/v1/terminal-payments?redirect_session=:checkoutId" },
     { "source": "/(.*)", "destination": "/" }
   ]
 }

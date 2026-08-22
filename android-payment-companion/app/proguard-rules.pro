@@ -1,0 +1,2 @@
+-keep class com.stripe.terminal.** { *; }
+-dontwarn com.stripe.terminal.**

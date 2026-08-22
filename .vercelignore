@@ -1,0 +1,8 @@
+android-payment-companion/.gradle/
+android-payment-companion/.kotlin/
+android-payment-companion/app/build/
+android-payment-companion/*.jks
+android-payment-companion/*.keystore
+test-db/
+tmp/
+.backups/

@@ -159,9 +159,21 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (refreshed) return;
       refreshed = true;
-      window.dispatchEvent(new CustomEvent("tools4care:update-ready"));
+      // Android standalone PWAs can keep the previous JS bundle alive after
+      // a deploy. Reload exactly once when the new worker takes control.
+      const reloadKey = "tools4care-pwa-controller-reload";
+      const lastReload = Number(sessionStorage.getItem(reloadKey) || 0);
+      if (Date.now() - lastReload > 30_000) {
+        sessionStorage.setItem(reloadKey, String(Date.now()));
+        window.location.reload();
+      }
     });
 
-    navigator.serviceWorker.register("/sw.js").catch(console.warn);
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((registration) => {
+      registration.update().catch(() => {});
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") registration.update().catch(() => {});
+      });
+    }).catch(console.warn);
   });
 }

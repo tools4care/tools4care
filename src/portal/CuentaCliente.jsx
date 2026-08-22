@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
+  CreditCard,
   Download,
   FileText,
   Headphones,
@@ -18,6 +19,7 @@ import { fmtDateEt, fmtMoney, safeAmount } from "./portalUtils";
 import { useComprasCliente, usePagosCliente } from "./usePortalHistory";
 import { usePortalCliente } from "./usePortalCliente";
 import { usePortalPaymentOptions } from "./usePortalPaymentOptions";
+import { PortalCardPayment } from "./PortalCardPayment";
 
 function HistoryCard({ icon, title, subtitle, rows, loading, error, hasMore, loadMore, renderRow, emptyText }) {
   return (
@@ -97,6 +99,11 @@ export function CuentaCliente({ session }) {
   const paymentOptions = usePortalPaymentOptions();
   const [refreshing, setRefreshing] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [cardAmountStep, setCardAmountStep] = useState(false);
+  const [cardAmountInput, setCardAmountInput] = useState("");
+  const [cardAmount, setCardAmount] = useState(0);
+  const [cardPaymentActive, setCardPaymentActive] = useState(false);
+  const [cardPaymentDone, setCardPaymentDone] = useState(false);
   const refreshRef = useRef(false);
 
   useEffect(() => {
@@ -124,6 +131,32 @@ export function CuentaCliente({ session }) {
     setRefreshing(false);
   }
 
+  function closePaymentModal() {
+    setPaymentModalOpen(false);
+    setCardAmountStep(false);
+    setCardPaymentActive(false);
+    setCardPaymentDone(false);
+  }
+
+  function openCardAmountStep(defaultAmount) {
+    setCardAmountInput(defaultAmount.toFixed(2));
+    setCardAmountStep(true);
+  }
+
+  function confirmCardAmount(maxAmount) {
+    const parsed = Math.round((Number(cardAmountInput) || 0) * 100) / 100;
+    const clamped = Math.min(Math.max(parsed, 0.5), maxAmount);
+    setCardAmount(clamped);
+    setCardAmountStep(false);
+    setCardPaymentActive(true);
+  }
+
+  async function handleCardPaymentSuccess() {
+    setCardPaymentActive(false);
+    setCardPaymentDone(true);
+    await refreshAll();
+  }
+
   if (loading && !cliente) return <main className="min-h-screen bg-slate-50 p-6 text-center text-slate-600">Loading your account…</main>;
   if (unlinked) return (
     <main className="min-h-screen bg-slate-50 p-4">
@@ -141,6 +174,7 @@ export function CuentaCliente({ session }) {
   const balance = safeAmount(resumen?.saldo);
   const creditLimit = cliente?.limite_manual != null ? safeAmount(cliente.limite_manual) : safeAmount(resumen?.limite_politica);
   const availableCredit = Math.max(0, Number((creditLimit - balance).toFixed(2)));
+  const creditScore = Math.max(300, Math.min(850, Number(resumen?.score_base || 600)));
   const creditStatus = getCreditStatus(balance, availableCredit);
   const loadedPurchaseTotal = compras.rows.reduce((sum, row) => sum + safeAmount(row.total_venta ?? row.total), 0);
   const creditUsedPercent = creditLimit > 0 ? Math.min(100, Math.max(0, Math.round((balance / creditLimit) * 100))) : 0;
@@ -164,7 +198,8 @@ export function CuentaCliente({ session }) {
             <p className="text-sm font-semibold text-blue-100">Outstanding balance</p>
             <p className="mt-1 text-4xl font-black tracking-tight sm:text-5xl">{fmtMoney(balance)}</p>
           </div>
-          <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+          <div className="mt-5 grid grid-cols-3 gap-2 text-sm sm:gap-3">
+            <div className="rounded-xl bg-white/10 p-3 backdrop-blur"><p className="text-blue-100">Credit score</p><p className="mt-1 text-lg font-black">{creditScore}</p></div>
             <div className="rounded-xl bg-white/10 p-3 backdrop-blur"><p className="text-blue-100">Credit limit</p><p className="mt-1 text-lg font-black">{fmtMoney(creditLimit)}</p></div>
             <div className="rounded-xl bg-white/10 p-3 backdrop-blur"><p className="text-blue-100">Available credit</p><p className="mt-1 text-lg font-black text-emerald-300">{fmtMoney(availableCredit)}</p></div>
           </div>
@@ -209,34 +244,75 @@ export function CuentaCliente({ session }) {
       </div>
 
       {paymentModalOpen && balance > 0 && (
-        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPaymentModalOpen(false); }}>
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closePaymentModal(); }}>
           <section className="max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
                 <span className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700"><Landmark size={21} /></span>
-                <div><h2 id="payment-modal-title" className="text-xl font-black text-slate-950">Choose how to pay</h2><p className="mt-1 text-sm text-slate-500">Outstanding balance</p><p className="text-2xl font-black text-slate-950">{fmtMoney(balance)}</p></div>
+                <div><h2 id="payment-modal-title" className="text-xl font-black text-slate-950">{cardPaymentActive ? "Pay with card" : cardAmountStep ? "How much to pay?" : cardPaymentDone ? "Payment received" : "Choose how to pay"}</h2><p className="mt-1 text-sm text-slate-500">{cardPaymentActive ? "Amount to charge" : "Outstanding balance"}</p><p className="text-2xl font-black text-slate-950">{fmtMoney(cardPaymentActive ? cardAmount : balance)}</p></div>
               </div>
-              <button className="rounded-full bg-slate-100 p-2 text-slate-600 hover:bg-slate-200" aria-label="Close payment options" onClick={() => setPaymentModalOpen(false)}><X size={20} /></button>
+              <button className="rounded-full bg-slate-100 p-2 text-slate-600 hover:bg-slate-200" aria-label="Close payment options" onClick={closePaymentModal}><X size={20} /></button>
             </div>
 
-            <div className="mt-5 grid gap-3">
-              {paymentOptions.cashApp.map((option) => (
-                <a key={option.handle} href={option.url} target="_blank" rel="noreferrer" className="flex min-h-16 items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 transition active:scale-[0.99] hover:bg-emerald-100">
-                  <span><span className="block font-black text-emerald-950">Pay with Cash App</span><span className="text-sm text-emerald-700">{option.handle}</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-xl font-black text-white">$</span>
-                </a>
-              ))}
-              {paymentOptions.venmo && (
-                <a href={paymentOptions.venmo.url} target="_blank" rel="noreferrer" className="flex min-h-16 items-center justify-between rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 transition active:scale-[0.99] hover:bg-blue-100">
-                  <span><span className="block font-black text-blue-950">Pay with Venmo</span><span className="text-sm text-blue-700">{paymentOptions.venmo.handle}</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-xl font-black text-white">V</span>
-                </a>
-              )}
-              <div className="flex min-h-16 items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 opacity-75">
-                <span><span className="block font-black text-slate-800">Credit or debit card</span><span className="text-sm text-slate-500">Stripe secure checkout</span></span><span className="rounded-full bg-slate-200 px-2.5 py-1 text-[10px] font-black uppercase text-slate-600">Coming soon</span>
+            {cardPaymentDone ? (
+              <div className="mt-5 space-y-4">
+                <div className="flex items-center gap-3 rounded-2xl bg-emerald-50 p-4 text-emerald-900">
+                  <CheckCircle2 size={22} />
+                  <p className="text-sm font-bold">Your card payment was applied to your account.</p>
+                </div>
+                <button className="w-full rounded-xl bg-slate-900 py-3 text-sm font-black text-white" onClick={closePaymentModal}>Done</button>
               </div>
-            </div>
+            ) : cardPaymentActive ? (
+              <div className="mt-5">
+                <PortalCardPayment amount={cardAmount} onSuccess={handleCardPaymentSuccess} onCancel={() => setCardPaymentActive(false)} />
+              </div>
+            ) : cardAmountStep ? (
+              <div className="mt-5 space-y-4">
+                <div>
+                  <label htmlFor="card-amount" className="block text-xs font-black uppercase tracking-wide text-slate-500">Amount to pay</label>
+                  <div className="mt-1.5 flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 focus-within:border-slate-900">
+                    <span className="text-lg font-black text-slate-500">$</span>
+                    <input
+                      id="card-amount"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0.50"
+                      max={balance}
+                      value={cardAmountInput}
+                      onChange={(event) => setCardAmountInput(event.target.value)}
+                      className="w-full border-0 p-0 text-xl font-black text-slate-950 outline-none"
+                    />
+                  </div>
+                  <p className="mt-1.5 text-xs text-slate-500">Between $0.50 and {fmtMoney(balance)}. You can pay part of your balance if you prefer.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setCardAmountStep(false)} className="flex-1 rounded-xl border border-slate-300 py-3 text-sm font-black text-slate-700">Back</button>
+                  <button onClick={() => confirmCardAmount(balance)} className="flex-1 rounded-xl bg-slate-900 py-3 text-sm font-black text-white">Continue</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="mt-5 grid gap-3">
+                  <button onClick={() => openCardAmountStep(balance)} className="flex min-h-16 items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition active:scale-[0.99] hover:bg-slate-100">
+                    <span><span className="block font-black text-slate-900">Pay with card</span><span className="text-sm text-slate-500">Instant — applied automatically</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white"><CreditCard size={18} /></span>
+                  </button>
+                  {paymentOptions.cashApp.map((option) => (
+                    <a key={option.handle} href={option.url} target="_blank" rel="noreferrer" className="flex min-h-16 items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 transition active:scale-[0.99] hover:bg-emerald-100">
+                      <span><span className="block font-black text-emerald-950">Pay with Cash App</span><span className="text-sm text-emerald-700">{option.handle}</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-xl font-black text-white">$</span>
+                    </a>
+                  ))}
+                  {paymentOptions.venmo && (
+                    <a href={paymentOptions.venmo.url} target="_blank" rel="noreferrer" className="flex min-h-16 items-center justify-between rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 transition active:scale-[0.99] hover:bg-blue-100">
+                      <span><span className="block font-black text-blue-950">Pay with Venmo</span><span className="text-sm text-blue-700">{paymentOptions.venmo.handle}</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-xl font-black text-white">V</span>
+                    </a>
+                  )}
+                </div>
 
-            <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-xs leading-5 text-amber-950"><strong>Before sending:</strong> Enter exactly {fmtMoney(balance)} and include your business name or invoice number in the payment note. Cash App and Venmo payments appear here after Tools4Care confirms them.</div>
-            <button className="mt-4 w-full rounded-xl border border-slate-300 py-3 text-sm font-black text-slate-700" onClick={() => setPaymentModalOpen(false)}>Cancel</button>
+                <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-xs leading-5 text-amber-950"><strong>Before sending:</strong> Enter exactly {fmtMoney(balance)} and include your business name or invoice number in the payment note. Cash App and Venmo payments appear here after Tools4Care confirms them.</div>
+                <button className="mt-4 w-full rounded-xl border border-slate-300 py-3 text-sm font-black text-slate-700" onClick={closePaymentModal}>Cancel</button>
+              </>
+            )}
           </section>
         </div>
       )}

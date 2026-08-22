@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.Tools4CarePayments" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#2563EB</item>
+        <item name="android:navigationBarColor">#020617</item>
+        <item name="android:statusBarColor">#020617</item>
+    </style>
+</resources>

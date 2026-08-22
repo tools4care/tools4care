@@ -28,6 +28,17 @@ import {
 /* === CxC centralizado === */
 import { getCxcCliente, subscribeClienteLimiteManual } from "./lib/cxc";
 import { getSaleTaxParts } from "./lib/saleTax";
+import {
+  createTerminalPaymentSession,
+  createManualCardCheckout,
+  chargeSavedPaymentMethod,
+  getSavedPaymentMethods,
+  openManualCardCheckout,
+  openTerminalCompanion,
+  shareManualCardCheckout,
+  waitForManualCardCheckout,
+  waitForTerminalPayment,
+} from "./lib/terminalPayments";
 
 /* === Offline === */
 import { guardarPagoOffline, obtenerClientesCache, guardarClientesCache } from "./utils/offlineDB";
@@ -357,13 +368,14 @@ async function safeGetCxc(clienteId) {
         limite: Number(info.limite ?? 0),
         disponible: Number(info.disponible ?? 0),
         limite_manual_aplicado: Boolean(info.limite_manual_aplicado ?? false),
+        score: Number(info.score ?? 600),
       };
     }
   } catch (_) {
     if (!clienteId) return null;
     const { data, error } = await supabase
       .from("v_cxc_cliente_detalle")
-      .select("saldo, limite_politica, credito_disponible")
+      .select("saldo, limite_politica, credito_disponible, score_base")
       .eq("cliente_id", clienteId)
       .maybeSingle();
     if (error || !data) return null;
@@ -372,6 +384,7 @@ async function safeGetCxc(clienteId) {
       limite: Number(data.limite_politica ?? 0),
       disponible: Number(data.credito_disponible ?? 0),
       limite_manual_aplicado: false,
+      score: Number(data.score_base ?? 600),
     };
   }
   return null;
@@ -450,7 +463,13 @@ async function createStripeCheckoutSession(amount, description = "Pago de client
     throw new Error("Respuesta inválida de create_checkout_session (faltan url/sessionId)");
   }
 
-  return { url: data.url, sessionId: data.sessionId };
+  return {
+    url: data.url,
+    sessionId: data.sessionId,
+    // Use the branded redirect for QR/share surfaces; Stripe still hosts the
+    // secure card form after the redirect.
+    shortUrl: `${window.location.origin}/pay/${data.sessionId}`,
+  };
 }
 
 async function checkStripeCheckoutStatus(sessionId) {
@@ -587,7 +606,7 @@ async function askChannel({ hasPhone, hasEmail, confirmFn }) {
   const ok = await confirmFn("Send receipt via SMS?", { confirmLabel: "Send SMS", cancelLabel: "Skip" });
   return ok ? "sms" : null;
 }
-function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, prevBalance, newBalance, pointOfSaleName, payments = [] }) {
+function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, prevBalance, newBalance, pointOfSaleName, payments = [], creditScore, creditLimit, availableCredit }) {
   const lines = [];
   lines.push(`${COMPANY_NAME} — Payment Receipt`);
   lines.push(`Date: ${dateStr}`);
@@ -600,6 +619,12 @@ function composePaymentMessageEN({ clientName, creditNumber, dateStr, amount, pr
   }
   lines.push(`Previous balance: ${fmtCurrency(prevBalance)}`);
   lines.push(`*** New balance: ${fmtCurrency(newBalance)} ***`);
+  if (Number.isFinite(Number(creditScore))) {
+    lines.push("");
+    lines.push(`Credit score: ${Number(creditScore)}`);
+    lines.push(`Credit limit: ${fmtCurrency(creditLimit)}`);
+    lines.push(`Available credit: ${fmtCurrency(availableCredit)}`);
+  }
   lines.push("");
   lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
   return lines.join("\n");
@@ -2699,6 +2724,16 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const [receiptData, setReceiptData] = useState(null);
   const [mensaje, setMensaje] = useState("");
   const [showCustomerPaymentSummary, setShowCustomerPaymentSummary] = useState(false);
+  const [terminalPaymentBusy, setTerminalPaymentBusy] = useState(false);
+  const [terminalPaymentResult, setTerminalPaymentResult] = useState(null);
+  const [savedPaymentMethods, setSavedPaymentMethods] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    getSavedPaymentMethods(cliente.id).then((methods) => { if (active) setSavedPaymentMethods(methods); })
+      .catch(() => { if (active) setSavedPaymentMethods([]); });
+    return () => { active = false; };
+  }, [cliente.id]);
 
   // 🆕 ESTADOS PARA STRIPE QR
   const [showQRModal, setShowQRModal] = useState(false);
@@ -2866,9 +2901,22 @@ let restante = pago;
       return;
     }
 
-    // Aplicar fee si está activado
-    const feeAmount = applyCardFee ? amount * (cardFeePercentage / 100) : 0;
-    const totalAmount = amount + feeAmount;
+    // A direct A/R payment must reduce the customer's balance by exactly the
+    // amount Stripe collects. Until processing fees have their own ledger
+    // column, charging a surcharge here would incorrectly reduce principal by
+    // the fee as well.
+    if (applyCardFee) {
+      setMensaje("Turn off the card fee before creating an A/R payment link. The payment and balance reduction must match exactly.");
+      return;
+    }
+
+    const feeAmount = 0;
+    const totalAmount = amount;
+
+    if (totalAmount > saldoActual + 0.005) {
+      setMensaje("⚠️ El total con cargo de tarjeta no puede superar el balance pendiente.");
+      return;
+    }
 
     setQRAmount(totalAmount);
 
@@ -2884,36 +2932,172 @@ let restante = pago;
       if (!confirmed) return;
     }
 
-    // Crear sesión de pago
-    let checkoutUrl, sessionId;
+    // Crear sesión de pago reconciliable con CxC
+    let checkoutUrl;
     try {
-      const created = await createStripeCheckoutSession(
-        totalAmount,
-        `Pago ${cliente?.nombre || "Cliente"} - ${van?.nombre || "Van"}` +
-        (applyCardFee ? ` (incluye ${cardFeePercentage}% fee)` : "")
-      );
+      setTerminalPaymentBusy(true);
+      setMensaje("Preparando enlace seguro de pago…");
+      const contextId = globalThis.crypto?.randomUUID?.() || makeUUID();
+      const created = await createManualCardCheckout({
+        clienteId: cliente.id,
+        vanId: van?.id || null,
+        contextType: "ar_payment",
+        contextId,
+        amountCents: Math.round(totalAmount * 100),
+      });
 
-      checkoutUrl = created.url;
-      sessionId = created.sessionId;
+      checkoutUrl = created.short_url || created.url;
+      const qrData = await generateQRCode(checkoutUrl);
+      if (!qrData) throw new Error("Error generando código QR");
+      setQRCodeData(qrData);
+      setShowQRModal(true);
+      setQRPollingActive(true);
+      startTerminalCheckoutPolling(created.checkout_session_id, applyCardFee, amount, feeAmount);
     } catch (e) {
       setMensaje(`❌ Error generando checkout: ${e.message || e}`);
       setTimeout(() => setMensaje(""), 3000);
+      setTerminalPaymentBusy(false);
+      return;
+    }
+  }
+
+  async function handleCxCTapToPay() {
+    const amount = round2(Number(monto || 0));
+    if (!amount || amount <= 0) {
+      setMensaje("Enter a valid amount before starting Tap to Pay.");
+      return;
+    }
+    if (amount > saldoActual + 0.005) {
+      setMensaje("Tap to Pay cannot exceed the customer's current balance.");
+      return;
+    }
+    if (!van?.id) {
+      setMensaje("Select a VAN before starting Tap to Pay.");
       return;
     }
 
-    // Generar código QR
-    const qrData = await generateQRCode(checkoutUrl);
-    if (!qrData) {
-      setMensaje("❌ Error generando código QR");
-      setTimeout(() => setMensaje(""), 3000);
-      return;
-    }
+    setTerminalPaymentBusy(true);
+    setMensaje("Preparing secure Tap to Pay…");
+    try {
+      const contextId = globalThis.crypto?.randomUUID?.() || makeUUID();
+      const created = await createTerminalPaymentSession({
+        clienteId: cliente.id,
+        vanId: van.id,
+        contextType: "ar_payment",
+        contextId,
+        amountCents: Math.round(amount * 100),
+        offerSaveCard: true,
+      });
+      openTerminalCompanion(created.companion_url);
+      const result = await waitForTerminalPayment(created.session_id);
+      if (result.status !== "reconciled") {
+        throw new Error("Stripe approved the payment, but account reconciliation is still pending.");
+      }
 
-    // Mostrar modal y comenzar polling
-    setQRCodeData(qrData);
-    setShowQRModal(true);
-    setQRPollingActive(true);
-    startCheckoutPolling(sessionId, applyCardFee, amount, feeAmount);
+      setMetodo("Card");
+      setMonto(String(amount));
+      setTerminalPaymentResult({ sessionId: created.session_id, amount, cardSaved: result.card_saved });
+      setMensaje(
+        `✅ Tap to Pay approved and recorded — ${fmtSafe(amount)}.` +
+        (result.card_saved ? " Card saved with customer authorization." : ""),
+      );
+      await aplicarCuotasDirect(cliente.id, amount);
+      const info = await safeGetCxc(cliente.id);
+      if (info) {
+        setSaldoBase(Number(info.saldo || 0));
+        setResumen?.((current) => ({ ...current, balance: info.saldo, cxc: info }));
+      }
+      const newBalance = round2(Number(info?.saldo ?? Math.max(0, saldoActual - amount)));
+      setReceiptData({
+        clientName: cliente?.nombre || cliente?.negocio || "", creditNumber: getCreditNumber(cliente),
+        dateStr: new Date().toLocaleString(), pointOfSaleName: van?.nombre || van?.alias || "",
+        amount, prevBalance: saldoActual, newBalance, creditScore: info?.score,
+        creditLimit: info?.limite, availableCredit: info?.disponible, cambioDevuelto: 0,
+        payments: [{ method: "Tap to Pay", amount }],
+      });
+      setPaymentDone(true);
+      await cargarCuotasRef.current?.();
+      await refresh?.();
+    } catch (error) {
+      setMensaje(`❌ ${error?.message || "Tap to Pay could not be completed."}`);
+    } finally {
+      setTerminalPaymentBusy(false);
+    }
+  }
+
+  async function handleCxCManualCard(shareLink = false) {
+    const amount = round2(Number(monto || 0));
+    if (!amount || amount <= 0) return setMensaje("Enter a valid amount first.");
+    if (amount > saldoActual + 0.005) return setMensaje("Card payment cannot exceed the customer's current balance.");
+    if (!van?.id) return setMensaje("Select a VAN before starting the card payment.");
+    setTerminalPaymentBusy(true);
+    setMensaje("Preparing Stripe secure card form…");
+    try {
+      const contextId = globalThis.crypto?.randomUUID?.() || makeUUID();
+      const created = await createManualCardCheckout({
+        clienteId: cliente.id, vanId: van.id, contextType: "ar_payment", contextId,
+        amountCents: Math.round(amount * 100),
+      });
+      if (shareLink) {
+        const mode = await shareManualCardCheckout(created.url, cliente.negocio || cliente.nombre, created.short_url, amount);
+        setMensaje(mode === "copied" ? "Secure Stripe link copied. Waiting for payment…" : "Secure Stripe link shared. Waiting for payment…");
+      } else {
+        openManualCardCheckout(created.url);
+        setMensaje("Complete the card payment in Stripe. Tools4Care is waiting for confirmation…");
+      }
+      const result = await waitForManualCardCheckout(created.checkout_session_id);
+      if (result.status !== "reconciled") throw new Error("Stripe approved the payment, but account reconciliation is still pending.");
+      setMetodo("Card"); setMonto(String(amount));
+      setTerminalPaymentResult({ sessionId: result.terminal_session_id, amount, cardSaved: result.card_saved });
+      setMensaje(`✅ Card payment approved and recorded — ${fmtSafe(amount)}.${result.card_saved ? " Card saved with customer authorization." : ""}`);
+      await aplicarCuotasDirect(cliente.id, amount);
+      const info = await safeGetCxc(cliente.id);
+      if (info) { setSaldoBase(Number(info.saldo || 0)); setResumen?.((current) => ({ ...current, balance: info.saldo, cxc: info })); }
+      const newBalance = round2(Number(info?.saldo ?? Math.max(0, saldoActual - amount)));
+      setReceiptData({
+        clientName: cliente?.nombre || cliente?.negocio || "", creditNumber: getCreditNumber(cliente),
+        dateStr: new Date().toLocaleString(), pointOfSaleName: van?.nombre || van?.alias || "",
+        amount, prevBalance: saldoActual, newBalance, creditScore: info?.score,
+        creditLimit: info?.limite, availableCredit: info?.disponible, cambioDevuelto: 0,
+        payments: [{ method: "Stripe card", amount }],
+      });
+      setPaymentDone(true);
+      await cargarCuotasRef.current?.(); await refresh?.();
+    } catch (error) {
+      setMensaje(`❌ ${error?.message || "The manual card payment could not be completed."}`);
+    } finally { setTerminalPaymentBusy(false); }
+  }
+
+  async function handleCxCSavedCard(method) {
+    const amount = round2(Number(monto || 0));
+    if (!amount || amount <= 0) return setMensaje("Enter a valid amount first.");
+    if (amount > saldoActual + 0.005) return setMensaje("Card payment cannot exceed the customer's current balance.");
+    const approved = window.confirm(`Charge ${(method.brand || "card").toUpperCase()} •••• ${method.last4} for ${fmtSafe(amount)}? Confirm the customer authorized this payment now.`);
+    if (!approved) return;
+    setTerminalPaymentBusy(true); setMensaje("Charging saved card securely…");
+    try {
+      const contextId = globalThis.crypto?.randomUUID?.() || makeUUID();
+      const result = await chargeSavedPaymentMethod({
+        clienteId: cliente.id, paymentMethodId: method.id, vanId: van?.id,
+        contextType: "ar_payment", contextId, amountCents: Math.round(amount * 100),
+      });
+      if (result.status !== "reconciled") throw new Error("Stripe approved the charge, but balance reconciliation is pending.");
+      setTerminalPaymentResult({ sessionId: result.terminal_session_id, amount, cardSaved: true });
+      await aplicarCuotasDirect(cliente.id, amount);
+      const info = await safeGetCxc(cliente.id);
+      const newBalance = round2(Number(info?.saldo ?? Math.max(0, saldoActual - amount)));
+      setSaldoBase(newBalance); setResumen?.((current) => ({ ...current, balance: newBalance, cxc: info }));
+      setReceiptData({
+        clientName: cliente?.nombre || cliente?.negocio || "", creditNumber: getCreditNumber(cliente),
+        dateStr: new Date().toLocaleString(), pointOfSaleName: van?.nombre || van?.alias || "",
+        amount, prevBalance: saldoActual, newBalance, creditScore: info?.score,
+        creditLimit: info?.limite, availableCredit: info?.disponible, cambioDevuelto: 0,
+        payments: [{ method: `${method.brand || "Card"} •••• ${method.last4}`, amount }],
+      });
+      setMensaje(`✅ Saved card charged and balance updated — ${fmtSafe(amount)}.`); setPaymentDone(true);
+      await cargarCuotasRef.current?.(); await refresh?.();
+    } catch (error) { setMensaje(`❌ ${error?.message || "Saved card could not be charged."}`); }
+    finally { setTerminalPaymentBusy(false); }
   }
 
   // 🆕 FUNCIÓN DE POLLING
@@ -3016,6 +3200,49 @@ let restante = pago;
     }, 3000);
   }
 
+  async function startTerminalCheckoutPolling(checkoutSessionId, hasFee, baseAmount, feeAmount) {
+    try {
+      const result = await waitForManualCardCheckout(checkoutSessionId, {
+        timeoutMs: 15 * 60 * 1000,
+        intervalMs: 2000,
+      });
+      if (result.status !== "reconciled") {
+        throw new Error("Stripe aprobó el pago, pero la conciliación de Tools4Care sigue pendiente.");
+      }
+
+      const paidAmount = hasFee ? round2(baseAmount + feeAmount) : round2(baseAmount);
+      setQRPollingActive(false);
+      setShowQRModal(false);
+      setTerminalPaymentResult({ sessionId: result.terminal_session_id, amount: baseAmount, cardSaved: result.card_saved });
+      setMetodo("Card");
+      setMonto(String(baseAmount));
+      setMensaje(`✅ Pago por enlace confirmado y aplicado — ${fmtSafe(baseAmount)}.` + (result.card_saved ? " Tarjeta guardada con autorización." : ""));
+      await aplicarCuotasDirect(cliente.id, baseAmount);
+      const info = await safeGetCxc(cliente.id);
+      if (info) {
+        setSaldoBase(Number(info.saldo || 0));
+        setResumen?.((current) => ({ ...current, balance: info.saldo, cxc: info }));
+      }
+      const newBalance = round2(Number(info?.saldo ?? Math.max(0, saldoActual - baseAmount)));
+      setReceiptData({
+        clientName: cliente?.nombre || cliente?.negocio || "", creditNumber: getCreditNumber(cliente),
+        dateStr: new Date().toLocaleString(), pointOfSaleName: van?.nombre || van?.alias || "",
+        amount: paidAmount, prevBalance: saldoActual, newBalance, creditScore: info?.score,
+        creditLimit: info?.limite, availableCredit: info?.disponible, cambioDevuelto: 0,
+        payments: [{ method: "Stripe payment link", amount: paidAmount }],
+      });
+      setPaymentDone(true);
+      await cargarCuotasRef.current?.();
+      await refresh?.();
+    } catch (error) {
+      setQRPollingActive(false);
+      setShowQRModal(false);
+      setMensaje(`❌ ${error?.message || "El pago por enlace no pudo completarse."}`);
+    } finally {
+      setTerminalPaymentBusy(false);
+    }
+  }
+
   // 🆕 CERRAR MODAL QR
   function handleCloseQRModal() {
     if (qrPollingIntervalRef.current) {
@@ -3051,25 +3278,36 @@ let restante = pago;
       const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
       const saldoActualUI = round2(Number(saldoBase ?? resumen?.balance ?? cliente?.balance ?? 0));
-      const rawPaymentParts = [
-        {
-          amount: round2(Number(monto || 0)),
-          method: paymentMethodLabel(metodo, subMetodo, checkReference),
-          reference: metodo === "Check" ? checkReference.trim() : null,
-          baseMethod: metodo,
-        },
-        ...extraPayments.map((part) => ({
+      const additionalPaymentParts = extraPayments.map((part) => ({
           amount: round2(Number(part.amount || 0)),
           method: paymentMethodLabel(part.method, part.subMethod, part.reference),
           reference: part.method === "Check" ? String(part.reference || "").trim() : null,
           baseMethod: part.method,
-        })),
-      ];
+        }));
+      const rawPaymentParts = terminalPaymentResult
+        ? additionalPaymentParts
+        : [
+            {
+              amount: round2(Number(monto || 0)),
+              method: paymentMethodLabel(metodo, subMetodo, checkReference),
+              reference: metodo === "Check" ? checkReference.trim() : null,
+              baseMethod: metodo,
+              subMethod: subMetodo,
+            },
+            ...additionalPaymentParts,
+          ];
+      if (terminalPaymentResult && rawPaymentParts.length === 0) {
+        setMensaje("El pago con tarjeta ya fue registrado. Agrega efectivo, transferencia o cheque solo si el cliente pagará una parte adicional.");
+        return;
+      }
       if (rawPaymentParts.some((part) => !part.amount || part.amount <= 0)) {
         throw new Error("Every payment source must have an amount greater than 0.");
       }
       if (rawPaymentParts.some((part) => part.baseMethod === "Check" && !part.reference)) {
         throw new Error("Enter the check number or reference for every check payment.");
+      }
+      if (rawPaymentParts.some((part) => part.baseMethod === "Transfer" && !part.subMethod)) {
+        throw new Error("Select the transfer type: Zelle, Cash App, Venmo, or Apple Pay.");
       }
       const montoIngresado = round2(rawPaymentParts.reduce((sum, part) => sum + part.amount, 0));
       if (!montoIngresado || montoIngresado <= 0) throw new Error("Invalid amount. Must be greater than 0.");
@@ -3168,6 +3406,9 @@ let restante = pago;
         amount: pagoAplicado,
         prevBalance: saldoActualUI,
         newBalance: saldoDespues,
+        creditScore: info?.score,
+        creditLimit: info?.limite,
+        availableCredit: info?.disponible,
         cambioDevuelto,
         payments: appliedPaymentParts.map((part) => ({ method: part.method, amount: part.amount })),
       };
@@ -3243,6 +3484,7 @@ let restante = pago;
                         aria-label="Payment method"
                         className="min-h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 font-bold text-slate-800 outline-none transition-all focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
                         value={metodo}
+                        disabled={terminalPaymentBusy || Boolean(terminalPaymentResult)}
                         onChange={e => {
                           setMetodo(e.target.value);
                           setSubMetodo(null);
@@ -3266,6 +3508,7 @@ let restante = pago;
                             setMonto(String(round2(Math.max(0, saldoActual - extraPayments.reduce((sum, part) => sum + Number(part.amount || 0), 0)))));
                             setMensaje("");
                           }}
+                          disabled={terminalPaymentBusy || Boolean(terminalPaymentResult)}
                           className="text-xs font-black text-emerald-700 hover:text-emerald-900"
                         >
                           Pay full
@@ -3281,6 +3524,7 @@ let restante = pago;
                           min="0.01"
                           step="0.01"
                           value={monto}
+                          disabled={terminalPaymentBusy || Boolean(terminalPaymentResult)}
                           onChange={e => {
                             setMonto(e.target.value);
                             setMensaje("");
@@ -3328,7 +3572,7 @@ let restante = pago;
                   {metodo === "Card" && (
                     <div className="mt-3 rounded-xl border border-purple-200 bg-purple-50 p-3">
                       <label className="flex items-center gap-3 cursor-pointer">
-                        <input type="checkbox" checked={applyCardFee} onChange={(e) => setApplyCardFee(e.target.checked)}
+                        <input type="checkbox" checked={applyCardFee} disabled={terminalPaymentBusy || Boolean(terminalPaymentResult)} onChange={(e) => setApplyCardFee(e.target.checked)}
                           className="w-5 h-5 text-purple-600 rounded focus:ring-2 focus:ring-purple-500" />
                         <span className="text-gray-700 font-semibold">
                           💳 Apply card fee ({cardFeePercentage}%)
@@ -3340,7 +3584,7 @@ let restante = pago;
                       {applyCardFee && (
                         <div className="mt-3 flex items-center gap-3 bg-purple-50 rounded-xl p-3 border-2 border-purple-200">
                           <label className="text-sm text-purple-700 font-bold">Fee %:</label>
-                          <input type="number" min="0" max="10" step="0.1" value={cardFeePercentage}
+                          <input type="number" min="0" max="10" step="0.1" value={cardFeePercentage} disabled={terminalPaymentBusy || Boolean(terminalPaymentResult)}
                             onChange={(e) => setCardFeePercentage(Math.max(0, Math.min(10, Number(e.target.value))))}
                             className="w-20 border-2 border-purple-300 rounded-lg px-3 py-2 text-sm font-bold" />
                           <span className="text-sm text-purple-600 font-semibold">(Fee: {fmtSafe(Number(monto) * (cardFeePercentage / 100))})</span>
@@ -3349,11 +3593,48 @@ let restante = pago;
                       <button
                         type="button"
                         onClick={handleGenerateQR}
-                        disabled={!Number(monto)}
+                        disabled={!Number(monto) || terminalPaymentBusy || Boolean(terminalPaymentResult)}
                         className="mt-3 min-h-11 w-full rounded-xl border border-purple-300 bg-white px-4 text-sm font-black text-purple-700 transition-colors hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Generate Stripe QR
                       </button>
+                      <button
+                        type="button"
+                        onClick={handleCxCTapToPay}
+                        disabled={!Number(monto) || terminalPaymentBusy || Boolean(terminalPaymentResult)}
+                        className="mt-2 min-h-12 w-full rounded-xl bg-gradient-to-r from-blue-700 to-indigo-700 px-4 text-sm font-black text-white shadow-md transition-all hover:from-blue-800 hover:to-indigo-800 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {terminalPaymentBusy ? "Waiting for secure payment…" : terminalPaymentResult ? "✓ Tap to Pay recorded" : "Tap to Pay balance"}
+                      </button>
+                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <button type="button" onClick={() => handleCxCManualCard(false)}
+                          disabled={!Number(monto) || terminalPaymentBusy || Boolean(terminalPaymentResult)}
+                          className="min-h-11 rounded-xl bg-slate-800 px-4 text-sm font-black text-white hover:bg-slate-900 disabled:opacity-40">
+                          Enter card securely
+                        </button>
+                        <button type="button" onClick={() => handleCxCManualCard(true)}
+                          disabled={!Number(monto) || terminalPaymentBusy || Boolean(terminalPaymentResult)}
+                          className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-100 disabled:opacity-40">
+                          Send payment link
+                        </button>
+                      </div>
+                      {savedPaymentMethods.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-blue-200 bg-white p-3">
+                          <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Cards on file · tap to charge</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {savedPaymentMethods.map((method) => (
+                              <button type="button" key={method.id} onClick={() => handleCxCSavedCard(method)}
+                                disabled={terminalPaymentBusy || Boolean(terminalPaymentResult)}
+                                className="rounded-full border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800 hover:bg-blue-100 disabled:opacity-40">
+                                {(method.brand || "Card").toUpperCase()} •••• {method.last4} · Charge
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <p className="mt-2 text-xs text-slate-500">
+                        Opens Tools4Care Pay. The customer can optionally authorize saving the card, and an approved payment is recorded to CxC automatically.
+                      </p>
                     </div>
                   )}
 
@@ -3682,10 +3963,14 @@ let restante = pago;
                 </button>
                 <button
                   type="submit"
-                  disabled={guardando || cargandoSaldo || saldoActual <= 0 || totalPaymentAmount <= 0}
+                  disabled={guardando || cargandoSaldo || saldoActual <= 0 || totalPaymentAmount <= 0 || (Boolean(terminalPaymentResult) && extraPayments.length === 0)}
                   className="flex min-h-14 flex-[2] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-5 text-base font-black text-white shadow-lg transition-all hover:from-emerald-700 hover:to-green-700 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-400"
                 >
-                  {guardando ? (
+                  {terminalPaymentResult && extraPayments.length === 0 ? (
+                    <><ShieldCheck size={20} />Card payment already recorded</>
+                  ) : terminalPaymentResult ? (
+                    <><Check size={20} />Record additional payment</>
+                  ) : guardando ? (
                     <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>Processing...</>
                   ) : (
                     <><Check size={20} />Record Payment</>
@@ -3793,6 +4078,13 @@ let restante = pago;
                   </div>
                 </div>
               </div>
+              {Number.isFinite(Number(receiptData.creditScore)) && (
+                <div className="grid grid-cols-3 gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-center">
+                  <div><div className="text-[10px] font-bold uppercase text-blue-500">Score</div><div className="font-black text-blue-900">{receiptData.creditScore}</div></div>
+                  <div><div className="text-[10px] font-bold uppercase text-blue-500">Limit</div><div className="font-black text-blue-900">{fmtCurrency(receiptData.creditLimit)}</div></div>
+                  <div><div className="text-[10px] font-bold uppercase text-blue-500">Available</div><div className="font-black text-emerald-700">{fmtCurrency(receiptData.availableCredit)}</div></div>
+                </div>
+              )}
               {receiptData.cambioDevuelto > 0 && (
                 <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-3 text-center">
                   <span className="font-bold text-orange-700">⚠️ Return ${receiptData.cambioDevuelto.toFixed(2)} to customer</span>

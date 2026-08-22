@@ -31,6 +31,21 @@ import { checkServerReachable, reportConnectionFailure } from "./utils/networkSt
 import { sendInvoiceEmailForVenta } from "./lib/invoiceEmail";
 import { fetchAllCustomersForOffline } from "./utils/offlinePreparation";
 import {
+  createTerminalPaymentSession,
+  createManualCardCheckout,
+  chargeSavedPaymentMethod,
+  clearPendingSaleCardPayment,
+  getTerminalFeatureStatus,
+  getSavedPaymentMethods,
+  getPendingSaleCardPayment,
+  openManualCardCheckout,
+  openTerminalCompanion,
+  savePendingSaleCardPayment,
+  shareManualCardCheckout,
+  waitForManualCardCheckout,
+  waitForTerminalPayment,
+} from "./lib/terminalPayments";
+import {
   barcodeVariants,
   compactSearchTerm,
   filterProductRowsLocal,
@@ -755,6 +770,7 @@ function composeReceiptMessageEN(payload) {
     creditLimit,
     availableBefore,
     availableAfter,
+    creditScore,
   } = payload;
 
   const remainingThisSale = Number.isFinite(Number(saleRemaining))
@@ -782,6 +798,9 @@ function composeReceiptMessageEN(payload) {
     lines.push(`Credit limit:       ${fmt(creditLimit)}`);
     lines.push(`Available before:   ${fmt(availableBefore)}`);
     lines.push(`*** Available now:  ${fmt(availableAfter)} ***`);
+  }
+  if (Number.isFinite(Number(creditScore))) {
+    lines.push(`Credit score:       ${Number(creditScore)}`);
   }
   lines.push("");
   lines.push(`Msg&data rates may apply. Reply STOP to opt out. HELP for help.`);
@@ -1445,6 +1464,69 @@ useEffect(() => {
   // 🆕 ESTADOS PARA FEE DE TARJETA
   const [applyCardFee, setApplyCardFee] = useState({});
   const [cardFeePercentage, setCardFeePercentage] = useState(3);
+  const [terminalFeatures, setTerminalFeatures] = useState({
+    android_tap_to_pay_enabled: false,
+    saved_cards_enabled: false,
+  });
+  const [terminalPaymentIndex, setTerminalPaymentIndex] = useState(null);
+  const [savedPaymentMethods, setSavedPaymentMethods] = useState([]);
+
+  useEffect(() => {
+    if (isOffline) return;
+    let active = true;
+    getTerminalFeatureStatus().then((status) => {
+      if (active) setTerminalFeatures(status);
+    });
+    return () => { active = false; };
+  }, [isOffline]);
+
+  const refreshSavedPaymentMethods = useCallback(async () => {
+    if (!selectedClient?.id || isOffline) {
+      setSavedPaymentMethods([]);
+      return;
+    }
+    try {
+      setSavedPaymentMethods(await getSavedPaymentMethods(selectedClient.id));
+    } catch (error) {
+      console.warn("Could not load saved payment methods", error);
+      setSavedPaymentMethods([]);
+    }
+  }, [selectedClient?.id, isOffline]);
+
+  useEffect(() => {
+    refreshSavedPaymentMethods();
+  }, [refreshSavedPaymentMethods]);
+
+  useEffect(() => {
+    if (isOffline) return;
+    const pending = getPendingSaleCardPayment();
+    if (!pending || (pending.clienteId && selectedClient?.id && pending.clienteId !== selectedClient.id)) return;
+    let active = true;
+    setTerminalPaymentIndex(pending.paymentIndex ?? 0);
+    waitForTerminalPayment(pending.sessionId, { timeoutMs: 90_000 }).then((result) => {
+      if (!active) return;
+      const index = Number.isInteger(pending.paymentIndex) ? pending.paymentIndex : 0;
+      setPayments((current) => current.map((payment, i) => i === index ? {
+        ...payment, forma: "tarjeta", monto: Number(pending.baseAmount || payment.monto || 0),
+        referencia: pending.sessionId, terminalSessionId: pending.sessionId, terminalStatus: result.status,
+      } : payment));
+      clearPendingSaleCardPayment();
+      toast.success(`Tap to Pay confirmed — ${fmt(Number(pending.chargedAmount || pending.baseAmount || 0))}. Amount locked; save the sale to finish.`);
+    }).catch((error) => {
+      if (!active) return;
+      const message = error?.message || "Could not restore the Tap to Pay result.";
+      // A cancelled/failed session is terminal. Remove the recovery marker so
+      // reopening Sales does not replay the same notification forever. Keep
+      // the marker for timeouts/reconciliation errors so a later visit can
+      // still recover a payment that may have succeeded at Stripe.
+      if (/cancelled|canceled|failed/i.test(message)) clearPendingSaleCardPayment();
+      toast.error(message);
+    }).finally(() => { if (active) setTerminalPaymentIndex(null); });
+    return () => { active = false; };
+  // `toast` is an object recreated by the ToastProvider on every render. It
+  // must not be a dependency here or each polling state update starts another
+  // recovery loop and duplicates the same cancellation toast.
+  }, [isOffline, selectedClient?.id]);
 
   // ---- ACUERDOS DE PAGO
 const [acuerdosResumen, setAcuerdosResumen] = useState(null);
@@ -2226,6 +2308,9 @@ if (appMode === 'devolucion') {
       setCxcAvailable(info.disponible);
       setCxcBalance(info.saldo);
       setClientStoreCredit(Math.max(0, Number(info.saldo_favor || 0)));
+      setSelectedClient((current) => current?.id === id
+        ? { ...current, score_credito: Number(info.score ?? current.score_credito ?? 600) }
+        : current);
     }
 
     function onFocus() { refreshCxC(); }
@@ -3373,6 +3458,130 @@ useEffect(() => {
     startCheckoutPolling(sessionId, paymentIndex, shouldApplyFee, amount, feeAmount);
   }
 
+  async function handleTapToPay(paymentIndex) {
+    if (!selectedClient) {
+      toast.warning("Select a customer or start a Walk-in Sale before using Tap to Pay.");
+      return;
+    }
+
+    const baseAmount = Number(payments[paymentIndex]?.monto || 0);
+    if (baseAmount <= 0) {
+      toast.warning("Enter a valid amount before starting Tap to Pay.");
+      return;
+    }
+
+    const shouldApplyFee = applyCardFee[paymentIndex] || false;
+    const feeAmount = shouldApplyFee ? baseAmount * (cardFeePercentage / 100) : 0;
+    const chargedAmount = Math.round((baseAmount + feeAmount) * 100) / 100;
+    if (shouldApplyFee) {
+      const confirmed = await confirmDialog(
+        `Card fee of ${cardFeePercentage}% will be applied.\n` +
+        `Base: ${fmt(baseAmount)} + Fee: ${fmt(feeAmount)} = Total: ${fmt(chargedAmount)}`,
+        { confirmLabel: "Continue", detail: "The customer will confirm the card and saving preference on this phone." },
+      );
+      if (!confirmed) return;
+    }
+
+    setTerminalPaymentIndex(paymentIndex);
+    try {
+      const contextId = globalThis.crypto?.randomUUID?.() || `sale-${Date.now()}`;
+      const created = await createTerminalPaymentSession({
+        // Walk-in sales intentionally have no customer account. The terminal
+        // session remains sale-scoped and cannot save a card or affect CxC.
+        clienteId: selectedClient.id || null,
+        vanId: van?.id,
+        contextType: "sale",
+        contextId,
+        amountCents: Math.round(chargedAmount * 100),
+        offerSaveCard: Boolean(selectedClient.id && terminalFeatures.saved_cards_enabled),
+      });
+
+      savePendingSaleCardPayment({
+        sessionId: created.session_id, paymentIndex, clienteId: selectedClient.id,
+        baseAmount, chargedAmount,
+      });
+      openTerminalCompanion(created.companion_url);
+      toast.info("Complete the Tap to Pay steps. Tools4Care will verify the result automatically.");
+      const result = await waitForTerminalPayment(created.session_id);
+      setPayments((current) => current.map((payment, index) => index === paymentIndex ? {
+        ...payment,
+        monto: baseAmount,
+        referencia: created.session_id,
+        terminalSessionId: created.session_id,
+        terminalStatus: result.status,
+      } : payment));
+      if (result.card_saved) await refreshSavedPaymentMethods();
+      clearPendingSaleCardPayment();
+      toast.success(
+        `Tap to Pay confirmed — ${fmt(chargedAmount)} charged${result.card_saved ? " · card saved with customer authorization" : ""}. Click 'Save Sale' to complete.`,
+      );
+    } catch (error) {
+      toast.error(error?.message || "Tap to Pay could not be completed.");
+    } finally {
+      setTerminalPaymentIndex(null);
+    }
+  }
+
+  async function handleSavedCard(paymentIndex, method) {
+    const baseAmount = Number(payments[paymentIndex]?.monto || 0);
+    if (!selectedClient?.id || baseAmount <= 0) return toast.warning("Select a customer and enter a valid amount first.");
+    const feeAmount = applyCardFee[paymentIndex] ? baseAmount * (cardFeePercentage / 100) : 0;
+    const chargedAmount = Math.round((baseAmount + feeAmount) * 100) / 100;
+    const approved = await confirmDialog(
+      `Charge ${(method.brand || "card").toUpperCase()} •••• ${method.last4} for ${fmt(chargedAmount)}?`,
+      { confirmLabel: "Charge saved card", detail: "Confirm that the customer authorized this payment now." },
+    );
+    if (!approved) return;
+    setTerminalPaymentIndex(paymentIndex);
+    try {
+      const contextId = globalThis.crypto?.randomUUID?.() || `sale-${Date.now()}`;
+      const result = await chargeSavedPaymentMethod({
+        clienteId: selectedClient.id, paymentMethodId: method.id, vanId: van?.id,
+        contextType: "sale", contextId, amountCents: Math.round(chargedAmount * 100),
+      });
+      setPayments((current) => current.map((payment, index) => index === paymentIndex ? {
+        ...payment, monto: baseAmount, referencia: result.terminal_session_id,
+        terminalSessionId: result.terminal_session_id, terminalStatus: result.status,
+      } : payment));
+      toast.success(`Saved card •••• ${method.last4} approved. Amount locked; save the sale to finish.`);
+    } catch (error) { toast.error(error?.message || "Saved card could not be charged."); }
+    finally { setTerminalPaymentIndex(null); }
+  }
+
+  async function handleManualCard(paymentIndex, shareLink = false) {
+    if (!selectedClient?.id) return toast.warning("Select a customer before collecting a card payment.");
+    const baseAmount = Number(payments[paymentIndex]?.monto || 0);
+    if (baseAmount <= 0) return toast.warning("Enter a valid amount first.");
+    const feeAmount = applyCardFee[paymentIndex] ? baseAmount * (cardFeePercentage / 100) : 0;
+    const chargedAmount = Math.round((baseAmount + feeAmount) * 100) / 100;
+    setTerminalPaymentIndex(paymentIndex);
+    try {
+      const contextId = globalThis.crypto?.randomUUID?.() || `sale-${Date.now()}`;
+      const created = await createManualCardCheckout({
+        clienteId: selectedClient.id, vanId: van?.id, contextType: "sale", contextId,
+        amountCents: Math.round(chargedAmount * 100),
+      });
+      if (shareLink) {
+        const mode = await shareManualCardCheckout(created.url, selectedClient.negocio || selectedClient.nombre, created.short_url, chargedAmount);
+        toast.info(mode === "copied" ? "Secure Stripe link copied. Waiting for payment…" : "Secure Stripe link shared. Waiting for payment…");
+      } else {
+        openManualCardCheckout(created.url);
+        toast.info("Stripe opened securely. Complete the card payment; Tools4Care will verify it automatically.");
+      }
+      const result = await waitForManualCardCheckout(created.checkout_session_id);
+      setPayments((current) => current.map((payment, index) => index === paymentIndex ? {
+        ...payment, monto: baseAmount, referencia: result.terminal_session_id,
+        terminalSessionId: result.terminal_session_id, terminalStatus: result.status,
+      } : payment));
+      if (result.card_saved) await refreshSavedPaymentMethods();
+      toast.success(`Card payment confirmed — ${fmt(chargedAmount)} charged. Click 'Save Sale' to complete.`);
+    } catch (error) {
+      toast.error(error?.message || "The manual card payment could not be completed.");
+    } finally {
+      setTerminalPaymentIndex(null);
+    }
+  }
+
   // ⏱️ Polling de la Checkout Session (🆕 CON FEE)
   function startCheckoutPolling(sessionId, paymentIndex, hasFee, baseAmount, feeAmount) {
     if (qrPollingIntervalRef.current) {
@@ -3608,6 +3817,7 @@ function clearSale() {
     const meta = extractPricingFromRow(p);
     const unit = computeUnitPriceFromRow(p, 1);
     const safeName = p.productos?.nombre ?? p.nombre ?? "—";
+    const safeBrand = p.productos?.marca ?? p.marca ?? p.brand ?? "";
     // Functional updater: evita capturar cartSafe stale
     setCart((prevCart) => {
       const safe = Array.isArray(prevCart) ? prevCart : [];
@@ -3615,6 +3825,7 @@ function clearSale() {
       return [...safe, {
         producto_id: p.producto_id,
         nombre: safeName,
+        marca: safeBrand,
         _pricing: { ...meta, base: meta.base || unit || 0 },
         precio_unitario: unit,
         cantidad: 1,
@@ -3685,6 +3896,9 @@ function clearSale() {
   const handleChangePayment = useCallback((index, field, value) => {
     setPayments((arr) => arr.map((p, i) => {
       if (i !== index) return p;
+      if (p.terminalSessionId && ["succeeded", "reconciliation_pending", "reconciled"].includes(p.terminalStatus)) {
+        return p;
+      }
       if (field === "monto") {
         if (value === '' || value === '.' || value === '0' || value === 0) {
           return { ...p, [field]: 0 };
@@ -3710,7 +3924,13 @@ function clearSale() {
   }, [saleTotal, totalAPagar]); // saleTotal ya es memoized; totalAPagar depende de él
 
   const handleRemovePayment = useCallback((index) => {
-    setPayments((ps) => (ps.length === 1 ? ps : ps.filter((_, i) => i !== index)));
+    setPayments((ps) => {
+      const payment = ps[index];
+      if (payment?.terminalSessionId && ["succeeded", "reconciliation_pending", "reconciled"].includes(payment.terminalStatus)) {
+        return ps;
+      }
+      return ps.length === 1 ? ps : ps.filter((_, i) => i !== index);
+    });
   }, []); // functional updater — no captura estado externo
 
   const handleBarcodeScanned = useCallback((code) => {
@@ -4705,6 +4925,9 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
       const prevDue = Math.max(0, balanceBefore);
       const balancePost = balanceBefore + saleTotalWithTax - (totalSettledForSaleNow + payOldDebtNow + creditToOldDebtNow);
       const newDue = Math.max(0, balancePost);
+      const refreshedCredit = selectedClient?.id && !isOffline
+        ? await getCxcCliente(selectedClient.id)
+        : null;
 
       const payload = {
         saleId: ventaId,
@@ -4727,9 +4950,10 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
         prevBalance: prevDue,
         saleRemaining: pendingFromThisSale,
         newDue,
-        creditLimit,
+        creditScore: refreshedCredit?.score ?? selectedClient?.score_credito,
+        creditLimit: refreshedCredit?.limite ?? creditLimit,
         availableBefore: creditAvailable,
-        availableAfter: Math.max(0, creditLimit - Math.max(0, balancePost)),
+        availableAfter: refreshedCredit?.disponible ?? Math.max(0, creditLimit - Math.max(0, balancePost)),
         // Payment method breakdown for receipt
         paymentMethod: metodoPrincipal,
         pagoEfectivo,
@@ -4744,7 +4968,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
           const cuotasSeleccionadas = resolvedAgreementData?.plan?.num_cuotas || null;
           
           const resultAcuerdo = await crearAcuerdo({
-            clienteId: selectedClient.id,
+        clienteId: selectedClient.id || null,
             ventaId: ventaId,
             vanId: van.id,
             usuarioId: usuario.id,
@@ -6560,7 +6784,14 @@ function renderStepProducts() {
               return (
                 <div key={p.producto_id} className={`flex items-center gap-3 px-4 ${storeMode ? "py-4" : "py-3"}`}>
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-gray-900 truncate text-sm">{p.nombre}</div>
+                    <div className="flex min-w-0 items-baseline gap-1.5">
+                      <div className="min-w-0 truncate text-sm font-semibold text-gray-900">{p.nombre}</div>
+                      {p.marca && (
+                        <span className="max-w-[35%] shrink-0 truncate text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                          {p.marca}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
                       {hasDiscount ? (
                         <>
@@ -7188,7 +7419,8 @@ function renderStepPayment() {
                       aria-label={`Payment method ${i + 1}`}
                       value={p.forma}
                       onChange={(e) => handleChangePayment(i, "forma", e.target.value)}
-                      className="w-full border border-gray-300 bg-white rounded-xl px-3 py-3 font-medium text-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all"
+                      disabled={Boolean(p.terminalSessionId && ["succeeded", "reconciliation_pending", "reconciled"].includes(p.terminalStatus))}
+                      className="w-full border border-gray-300 bg-white rounded-xl px-3 py-3 font-medium text-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all disabled:bg-emerald-50 disabled:border-emerald-300 disabled:text-emerald-800"
                     >
                       {PAYMENT_METHODS.map((fp) => (
                         <option key={fp.key} value={fp.key}>{fp.label}</option>
@@ -7201,6 +7433,7 @@ function renderStepPayment() {
                         aria-label={`Payment amount ${i + 1}`}
                         inputMode="decimal"
                         type="text"
+                        disabled={Boolean(p.terminalSessionId && ["succeeded", "reconciliation_pending", "reconciled"].includes(p.terminalStatus))}
                         value={p.monto === 0 ? "" : p.monto}
                         onChange={(e) => handleChangePayment(i, "monto", e.target.value.trim() || 0)}
                         onFocus={(e) => { if (p.monto === 0) e.target.value = ""; }}
@@ -7218,7 +7451,7 @@ function renderStepPayment() {
                             handleChangePayment(i, "monto", !isNaN(num) && num > 0 ? Number(num.toFixed(2)) : 0);
                           }
                         }}
-                        className="w-full border border-gray-300 rounded-xl pl-7 pr-3 py-3 text-right text-lg font-bold text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                        className="w-full border border-gray-300 rounded-xl pl-7 pr-3 py-3 text-right text-lg font-bold text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none disabled:bg-emerald-50 disabled:border-emerald-300 disabled:text-emerald-800 disabled:cursor-not-allowed"
                         placeholder="0.00"
                       />
                     </div>
@@ -7226,7 +7459,8 @@ function renderStepPayment() {
                     {payments.length > 1 ? (
                       <button
                         onClick={() => handleRemovePayment(i)}
-                        className="h-11 w-11 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        disabled={Boolean(p.terminalSessionId && ["succeeded", "reconciliation_pending", "reconciled"].includes(p.terminalStatus))}
+                        className="h-11 w-11 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                         aria-label={`Remove payment method ${i + 1}`}
                       >
                         ✕
@@ -7235,6 +7469,12 @@ function renderStepPayment() {
                   </>
                 )}
               </div>
+
+              {p.terminalSessionId && ["succeeded", "reconciliation_pending", "reconciled"].includes(p.terminalStatus) && (
+                <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800">
+                  🔒 Tap to Pay approved · amount locked
+                </div>
+              )}
 
               {p.forma === "transferencia" && !p?.toAR && (
                 <div className={`mt-2 rounded-xl px-3 py-2.5 ${p.subMetodo ? "bg-gray-50" : "bg-amber-50 border border-amber-200"}`}>
@@ -7273,17 +7513,57 @@ function renderStepPayment() {
               )}
 
               {p.forma === "tarjeta" && !p?.toAR && (
-                <details className="mt-2 group">
+                <details className="mt-2 group" open>
                   <summary className="list-none cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700 inline-flex items-center gap-1">
-                    <span className="group-open:rotate-90 transition-transform">›</span> Card options
+                    <span className="group-open:rotate-90 transition-transform">›</span> Card options · Tap to Pay / QR
                   </summary>
                   <div className="mt-2 bg-gray-50 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center gap-3">
                     <button
+                      type="button"
+                      onClick={() => handleTapToPay(i)}
+                      disabled={terminalPaymentIndex !== null || isOffline || !selectedClient}
+                      title={isOffline
+                        ? "Connect to the internet to use Tap to Pay"
+                        : !selectedClient
+                          ? "Start a Walk-in Sale or select a customer before starting Tap to Pay"
+                          : !selectedClient.id
+                            ? "Walk-in Tap to Pay: card will not be saved and no customer balance will be created"
+                          : terminalFeatures.android_tap_to_pay_enabled
+                            ? "Collect this card payment with the Tools4Care Android companion"
+                            : "Tap to Pay pilot; availability is verified securely when started"}
+                      className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {terminalPaymentIndex === i ? "Waiting for phone…" : "Tap to Pay"}
+                    </button>
+                    {(!selectedClient || isOffline) && (
+                      <span className="text-xs text-slate-500">
+                        {!selectedClient ? "Start a Walk-in Sale or select a customer" : "Internet connection required"}
+                      </span>
+                    )}
+                    {selectedClient && !selectedClient.id && !isOffline && (
+                      <span className="text-xs text-slate-500">Walk-in: in-person card only; no saved card or customer balance</span>
+                    )}
+                    <button
+                      type="button"
                       onClick={() => handleGenerateQR(i)}
-                      className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"
+                      disabled={!selectedClient?.id || terminalPaymentIndex !== null}
+                      title={!selectedClient?.id ? "QR payments require a customer account" : "Send a secure QR payment link"}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Generate QR payment
                     </button>
+                    {!isOffline && selectedClient?.id && (
+                      <>
+                        <button type="button" onClick={() => handleManualCard(i, false)} disabled={terminalPaymentIndex !== null}
+                          className="px-3 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-50">
+                          Enter card securely
+                        </button>
+                        <button type="button" onClick={() => handleManualCard(i, true)} disabled={terminalPaymentIndex !== null}
+                          className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-100 disabled:opacity-50">
+                          Send payment link
+                        </button>
+                      </>
+                    )}
                     <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                       <input
                         type="checkbox"
@@ -7303,6 +7583,26 @@ function renderStepPayment() {
                       />
                     )}
                   </div>
+                  {(terminalFeatures.saved_cards_enabled || savedPaymentMethods.length > 0) && (
+                    <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Cards on file</div>
+                      {savedPaymentMethods.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-2">
+                          {savedPaymentMethods.map((method) => (
+                            <button type="button" key={method.id} onClick={() => handleSavedCard(i, method)}
+                              disabled={terminalPaymentIndex !== null}
+                              className="rounded-full border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-800 hover:bg-blue-100 disabled:opacity-50">
+                              {(method.brand || "Card").toUpperCase()} •••• {method.last4 || "—"}
+                              {method.exp_month && method.exp_year ? ` · ${String(method.exp_month).padStart(2, "0")}/${String(method.exp_year).slice(-2)}` : ""}
+                              <span className="ml-1 text-blue-600">· Charge</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-xs text-slate-500">No saved card. The customer can authorize saving this card in Tools4Care Pay during the next tap.</div>
+                      )}
+                    </div>
+                  )}
                 </details>
               )}
             </div>

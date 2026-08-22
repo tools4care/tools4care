@@ -1,0 +1,3 @@
+sdk.dir=/Users/YOUR_USER/Library/Android/sdk
+tools4care.supabaseUrl=https://YOUR_PROJECT.supabase.co
+tools4care.supabaseAnonKey=YOUR_PUBLIC_ANON_KEY
