@@ -116,7 +116,7 @@ export function BarcodeScanner({ onScan, onClose, isActive }) {
     const startQuagga = async (onDetected) => {
       if (!scannerRef.current) throw new Error("Scanner unavailable");
       setEngine("Compatible scan");
-      const { default: Quagga } = await import("quagga");
+      const { default: Quagga } = await import("@ericblade/quagga2");
       quaggaRef.current = Quagga;
       Quagga.onDetected(onDetected);
       return new Promise((resolve, reject) => Quagga.init({
