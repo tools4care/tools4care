@@ -80,12 +80,16 @@ serve(async (req) => {
         batch.map(async ({ id, score }) => {
           if (!id || typeof score !== "number") { skipped++; return; }
 
-          // The view exposes COALESCE(score_credito, 600) AS score_base
-          // so we must write to score_credito, not score_base
-          const { error: upErr } = await supabaseAdmin
-            .from("clientes")
-            .update({ score_credito: score })
-            .eq("id", id);
+          // The database is the scoring source of truth. The client-provided
+          // score is retained only for backwards-compatible request validation;
+          // the RPC recalculates from real sales/payments and records history.
+          const { error: upErr } = await supabaseAdmin.rpc("refresh_customer_credit_score", {
+            p_cliente_id: id,
+            p_source_table: "recalcular-scores",
+            p_source_operation: "MANUAL_BATCH",
+            p_source_id: null,
+            p_reason: "Manual batch refresh requested from CxC",
+          });
 
           if (upErr) {
             console.error(`Score update failed for ${id}:`, upErr.message);

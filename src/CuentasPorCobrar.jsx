@@ -27,6 +27,7 @@ import {
   BarChart,
   Bar,
   ReferenceLine,
+  ReferenceArea,
   ComposedChart,
   Cell,
 } from "recharts";
@@ -369,6 +370,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
     monthlyBalance: [],
     monthlyPurchases: [],
     scoreHistory: [],
+    scoreEvents: [],
     paymentHistory: [],
   });
   const [activeTab, setActiveTab] = useState("balance");
@@ -413,7 +415,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
       const sixMonthsAgo = dayjs().subtract(6, 'month').format('YYYY-MM-DD');
 
       // ── Fetch ventas AND direct pagos in parallel ──────────────────────────
-      const [ventasRes, pagosRes] = await Promise.all([
+      const [ventasRes, pagosRes, scoreEventsRes] = await Promise.all([
         supabase
           .from('ventas')
           .select('id, fecha, created_at, total, total_venta, estado_pago, total_pagado, metodo_pago')
@@ -426,6 +428,12 @@ function CustomerHistoryModal({ cliente, onClose }) {
           .eq('cliente_id', cliente.cliente_id)
           .gte('fecha_pago', sixMonthsAgo)
           .order('fecha_pago', { ascending: true }),
+        supabase
+          .from('credit_score_history')
+          .select('id,calculated_at,previous_score,new_score,score_delta,effective_limit,balance,source_table,reason,factors,metrics')
+          .eq('cliente_id', cliente.cliente_id)
+          .order('calculated_at', { ascending: false })
+          .limit(25),
       ]);
 
       const ventas = ventasRes.data || [];
@@ -628,6 +636,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
         monthlyPurchases: monthlyBalance,
         scoreFactors,
         scoreHistory,
+        scoreEvents: scoreEventsRes.data || [],
         paymentHistory: allPayments.slice(0, 20),
         stats: {
           totalPurchases: totalPurchases6m,
@@ -1060,94 +1069,112 @@ function CustomerHistoryModal({ cliente, onClose }) {
                 {activeTab === 'score' && (
                   <div className="space-y-5">
 
-                    {/* ── Gráfica de comportamiento mensual ── */}
-                    {historyData.scoreHistory?.length > 0 && (
+                    {/* ── Historial real del score registrado ── */}
+                    {historyData.scoreEvents?.length > 0 && (() => {
+                      const rawEvents = [...historyData.scoreEvents].reverse();
+                      const groupedEvents = rawEvents.reduce((groups, event) => {
+                        const prior = groups[groups.length - 1];
+                        const eventTime = dayjs(event.calculated_at);
+                        const sameProcess = prior && Math.abs(eventTime.diff(dayjs(prior.calculated_at))) <= 2500;
+                        if (sameProcess) {
+                          groups[groups.length - 1] = {
+                            ...event,
+                            previous_score: prior.previous_score,
+                            score_delta: Number(event.new_score || 0) - Number(prior.previous_score || 0),
+                            reason: event.source_table === prior.source_table
+                              ? event.reason
+                              : `Automatic update from ${prior.source_table || 'account'} and ${event.source_table || 'account'}`,
+                          };
+                        } else groups.push(event);
+                        return groups;
+                      }, []);
+                      const recorded = groupedEvents.map((event) => ({
+                        ...event,
+                        dateLabel: dayjs(event.calculated_at).format(groupedEvents.length > 8 ? 'MMM D' : 'MMM D, h:mm A'),
+                        fullDate: dayjs(event.calculated_at).format('MMM D, YYYY · h:mm A'),
+                        score: Number(event.new_score || 0),
+                      }));
+                      const first = recorded[0];
+                      const last = recorded[recorded.length - 1];
+                      const totalChange = Number(last?.score || 0) - Number(first?.score || 0);
+                      const highest = Math.max(...recorded.map((event) => event.score));
+                      const lowest = Math.min(...recorded.map((event) => event.score));
+                      return (
                       <div className="bg-white border-2 border-gray-200 rounded-2xl p-4">
                         <div className="flex items-center justify-between mb-1">
-                          <h3 className="font-bold text-gray-900 text-sm">Comportamiento Crediticio (6 meses)</h3>
-                          {/* Leyenda de zonas */}
+                          <h3 className="font-bold text-gray-900 text-sm">Recorded Credit Score History</h3>
                           <div className="flex items-center gap-3 text-xs text-gray-400">
-                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" />Bueno</span>
-                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />Alerta</span>
-                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />Crítico</span>
+                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />750+</span>
+                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />650+</span>
+                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />&lt;500</span>
                           </div>
                         </div>
-                        <p className="text-xs text-gray-400 mb-3">Health Score mensual (0–100) basado en PPR y consistencia de pagos</p>
+                        <p className="text-xs text-gray-400 mb-3">Actual automatic score events (300–850), including payments, sales and limit changes.</p>
                         <div className="h-52">
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={historyData.scoreHistory} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                            <LineChart data={recorded} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                              <XAxis dataKey="month" style={{ fontSize: '11px' }} tick={{ fill: '#6b7280' }} />
-                              <YAxis domain={[0, 100]} style={{ fontSize: '11px' }} tick={{ fill: '#6b7280' }} />
+                              <XAxis dataKey="dateLabel" style={{ fontSize: '10px' }} tick={{ fill: '#6b7280' }} minTickGap={24} />
+                              <YAxis domain={[300, 850]} ticks={[300, 400, 500, 600, 700, 800, 850]} style={{ fontSize: '10px' }} tick={{ fill: '#6b7280' }} />
                               <Tooltip
                                 content={({ active, payload }) => {
                                   if (!active || !payload?.length) return null;
                                   const d = payload[0].payload;
-                                  const color = d.health >= 65 ? '#16a34a' : d.health >= 50 ? '#d97706' : '#dc2626';
+                                  const color = d.score >= 750 ? '#16a34a' : d.score >= 650 ? '#2563eb' : d.score >= 500 ? '#d97706' : '#dc2626';
                                   return (
-                                    <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs min-w-[140px]">
-                                      <div className="font-bold text-gray-800 mb-2">{d.month}</div>
+                                    <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs min-w-[190px]">
+                                      <div className="font-bold text-gray-800 mb-2">{d.fullDate}</div>
                                       <div className="flex items-center justify-between gap-3 mb-1">
-                                        <span className="text-gray-500">Health</span>
-                                        <span className="font-bold text-base" style={{ color }}>{d.health}/100</span>
-                                      </div>
-                                      <div className="flex items-center justify-between gap-3 mb-1">
-                                        <span className="text-gray-500">Estado</span>
-                                        <span className="font-semibold" style={{ color }}>{d.label}</span>
+                                        <span className="text-gray-500">Score</span>
+                                        <span className="font-bold text-base" style={{ color }}>{d.previous_score} → {d.new_score}</span>
                                       </div>
                                       <div className="border-t border-gray-100 mt-2 pt-2 space-y-1">
-                                        <div className="flex justify-between"><span className="text-gray-400">PPR mes</span><span className="font-medium">{d.ppr}x</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-400">Compras</span><span className="font-medium">${d.compras.toFixed(0)}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-400">Pagos</span><span className="font-medium text-green-600">${d.pagos.toFixed(0)}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-400">Change</span><span className="font-medium">{d.score_delta > 0 ? '+' : ''}{d.score_delta} pts</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-400">Limit</span><span className="font-medium">{fmt(d.effective_limit)}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-400">Balance</span><span className="font-medium">{fmt(d.balance)}</span></div>
+                                        <div className="mt-1 max-w-[230px] text-gray-500">{d.reason}</div>
                                       </div>
                                     </div>
                                   );
                                 }}
                               />
-                              {/* Zonas de referencia */}
-                              <ReferenceLine y={80} stroke="#16a34a" strokeDasharray="4 4" strokeOpacity={0.5} label={{ value: 'Excelente', position: 'right', fontSize: 9, fill: '#16a34a' }} />
-                              <ReferenceLine y={65} stroke="#d97706" strokeDasharray="4 4" strokeOpacity={0.5} label={{ value: 'Bueno', position: 'right', fontSize: 9, fill: '#d97706' }} />
-                              <ReferenceLine y={35} stroke="#dc2626" strokeDasharray="4 4" strokeOpacity={0.5} label={{ value: 'Crítico', position: 'right', fontSize: 9, fill: '#dc2626' }} />
-                              {/* Línea con color dinámico por punto */}
+                              <ReferenceArea y1={300} y2={499} fill="#fee2e2" fillOpacity={0.32} />
+                              <ReferenceArea y1={500} y2={649} fill="#fef3c7" fillOpacity={0.28} />
+                              <ReferenceArea y1={650} y2={749} fill="#dbeafe" fillOpacity={0.28} />
+                              <ReferenceArea y1={750} y2={850} fill="#dcfce7" fillOpacity={0.3} />
+                              <ReferenceLine y={750} stroke="#16a34a" strokeDasharray="4 4" strokeOpacity={0.45} />
+                              <ReferenceLine y={650} stroke="#2563eb" strokeDasharray="4 4" strokeOpacity={0.45} />
+                              <ReferenceLine y={500} stroke="#dc2626" strokeDasharray="4 4" strokeOpacity={0.45} />
                               <Line
-                                type="monotone"
-                                dataKey="health"
+                                type="stepAfter"
+                                dataKey="score"
                                 stroke="#8b5cf6"
                                 strokeWidth={2.5}
                                 dot={(props) => {
                                   const { cx, cy, payload } = props;
-                                  const color = payload.health >= 65 ? '#16a34a' : payload.health >= 35 ? '#d97706' : '#dc2626';
+                                  const color = payload.score >= 750 ? '#16a34a' : payload.score >= 650 ? '#2563eb' : payload.score >= 500 ? '#d97706' : '#dc2626';
                                   return <circle key={`dot-${cx}-${cy}`} cx={cx} cy={cy} r={5} fill={color} stroke="#fff" strokeWidth={2} />;
                                 }}
                                 activeDot={{ r: 7, stroke: '#8b5cf6', strokeWidth: 2 }}
-                                name="Health Score"
+                                name="Credit Score"
                               />
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
-
-                        {/* Resumen tendencia */}
-                        {(() => {
-                          const hist = historyData.scoreHistory;
-                          if (hist.length < 2) return null;
-                          const ultimo = hist[hist.length - 1].health;
-                          const penultimo = hist[hist.length - 2].health;
-                          const diff = ultimo - penultimo;
-                          const avg = Math.round(hist.reduce((s, d) => s + d.health, 0) / hist.length);
-                          return (
-                            <div className="mt-3 flex items-center justify-between text-xs px-1">
-                              <span className="text-gray-400">Promedio 6m: <span className="font-bold text-gray-700">{avg}/100</span></span>
-                              {diff > 0
-                                ? <span className="text-green-600 font-semibold">↑ Mejorando +{diff} pts vs mes anterior</span>
-                                : diff < 0
-                                ? <span className="text-red-500 font-semibold">↓ Empeorando {diff} pts vs mes anterior</span>
-                                : <span className="text-gray-400">→ Sin cambio vs mes anterior</span>
-                              }
-                            </div>
-                          );
-                        })()}
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                          <div className="rounded-lg bg-violet-50 px-2 py-2"><div className="text-[10px] font-bold uppercase text-violet-500">Current</div><div className="font-black text-violet-900">{last?.score}</div></div>
+                          <div className="rounded-lg bg-emerald-50 px-2 py-2"><div className="text-[10px] font-bold uppercase text-emerald-600">Highest</div><div className="font-black text-emerald-900">{highest}</div></div>
+                          <div className="rounded-lg bg-red-50 px-2 py-2"><div className="text-[10px] font-bold uppercase text-red-500">Lowest</div><div className="font-black text-red-900">{lowest}</div></div>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between px-1 text-xs">
+                          <span className="text-gray-400">{recorded.length} recorded event{recorded.length !== 1 ? 's' : ''}</span>
+                          <span className={`font-semibold ${totalChange > 0 ? 'text-green-600' : totalChange < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                            {totalChange > 0 ? '↑ +' : totalChange < 0 ? '↓ ' : '→ '}{totalChange} pts since first record
+                          </span>
+                        </div>
                       </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Score badge */}
                     {(() => { const sc = scoreColor(cliente?.score_base); return (
@@ -1178,6 +1205,29 @@ function CustomerHistoryModal({ cliente, onClose }) {
                       </div>
                     </div>
                     ); })()}
+
+                    {historyData.scoreEvents?.length > 0 && (
+                      <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                        <div className="mb-3 flex items-center justify-between">
+                          <h3 className="font-bold text-gray-900">Recorded Score Changes</h3>
+                          <span className="text-xs text-gray-400">Automatic audit</span>
+                        </div>
+                        <div className="max-h-64 divide-y divide-gray-100 overflow-y-auto">
+                          {historyData.scoreEvents.map((event) => (
+                            <div key={event.id} className="flex items-center gap-3 py-3 text-sm">
+                              <div className={`min-w-14 rounded-lg px-2 py-1 text-center font-black ${event.score_delta > 0 ? 'bg-emerald-100 text-emerald-700' : event.score_delta < 0 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
+                                {event.score_delta > 0 ? '+' : ''}{event.score_delta}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-semibold text-gray-800">{event.previous_score} → {event.new_score} points · {fmt(event.effective_limit)} limit</div>
+                                <div className="truncate text-xs text-gray-500">{event.reason || event.source_table || 'Automatic recalculation'}</div>
+                              </div>
+                              <div className="shrink-0 text-right text-xs text-gray-400">{dayjs(event.calculated_at).format('MMM D, h:mm A')}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Score Factors — 100% real */}
                     <div className="bg-white border border-gray-200 rounded-2xl p-5">
@@ -1452,6 +1502,7 @@ function CustomerHistoryModal({ cliente, onClose }) {
 
 /* ====================== Reminder Modal ====================== */
 function DetalleClienteModal({ cliente, onClose }) {
+  const toast = useToast();
   const [mensaje, setMensaje] = useState("");
   const [tel, setTel] = useState("");
   const [clienteInfo, setClienteInfo] = useState(null);

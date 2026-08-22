@@ -17,7 +17,7 @@ export async function getCxcCliente(clienteId) {
   // 1) Vista canónica (política base)
   const { data: det, error: errDet } = await supabase
     .from("v_cxc_cliente_detalle")
-    .select("saldo, limite_politica, credito_disponible")
+    .select("saldo, limite_politica, credito_disponible, score_base")
     .eq("cliente_id", clienteId)
     .maybeSingle();
 
@@ -40,6 +40,7 @@ export async function getCxcCliente(clienteId) {
       saldo,
       limite: limitePolitica,
       disponible: disponibleVista,
+      score: Number(det.score_base ?? 600),
       limite_manual_aplicado: false,
       saldo_favor: 0,
     };
@@ -56,6 +57,7 @@ export async function getCxcCliente(clienteId) {
     saldo,
     limite: limiteEfectivo,
     disponible,
+    score: Number(det.score_base ?? 600),
     limite_manual_aplicado: Boolean(hayManual),
     saldo_favor: Math.max(0, Number(cli?.saldo_a_favor || 0)),
   };
