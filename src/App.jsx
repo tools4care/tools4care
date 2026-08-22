@@ -1,35 +1,36 @@
 // React JSX transform handled by @vitejs/plugin-react — no explicit import needed here
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
-const Login = lazy(() => import("./Login"));
-const SetPassword = lazy(() => import("./SetPassword"));
-const VanSelector = lazy(() => import("./components/VanSelector"));
-const Dashboard = lazy(() => import("./Dashboard"));
-const StoreDashboard = lazy(() => import("./store/StoreDashboard"));
-const StoreRegister = lazy(() => import("./store/StoreRegister"));
-const StoreShiftGate = lazy(() => import("./store/StoreShiftGate"));
-const CustomerDisplay = lazy(() => import("./store/CustomerDisplay"));
-const Clientes = lazy(() => import("./Clientes"));
-const Productos = lazy(() => import("./Productos"));
-const Inventario = lazy(() => import("./Inventario"));
-const Ventas = lazy(() => import("./Ventas"));
-const CierreVan = lazy(() => import("./CierreVan"));
-const PreCierreVan = lazy(() => import("./PreCierreVan"));
-const Facturas = lazy(() => import("./Facturas"));
-const CuentasPorCobrar = lazy(() => import("./CuentasPorCobrar.jsx"));
-const CreditoSimulador = lazy(() => import("./CreditoSimulador"));
-const FinanceHub = lazy(() => import("./pages/FinanceHub"));
-const OperationsHub = lazy(() => import("./pages/OperationsHub"));
-const ServicesHub = lazy(() => import("./pages/ServicesHub"));
+import { lazyRetry } from "./lib/lazyRetry";
+const Login = lazyRetry(() => import("./Login"), "Login");
+const SetPassword = lazyRetry(() => import("./SetPassword"), "SetPassword");
+const VanSelector = lazyRetry(() => import("./components/VanSelector"), "VanSelector");
+const Dashboard = lazyRetry(() => import("./Dashboard"), "Dashboard");
+const StoreDashboard = lazyRetry(() => import("./store/StoreDashboard"), "StoreDashboard");
+const StoreRegister = lazyRetry(() => import("./store/StoreRegister"), "StoreRegister");
+const StoreShiftGate = lazyRetry(() => import("./store/StoreShiftGate"), "StoreShiftGate");
+const CustomerDisplay = lazyRetry(() => import("./store/CustomerDisplay"), "CustomerDisplay");
+const Clientes = lazyRetry(() => import("./Clientes"), "Clientes");
+const Productos = lazyRetry(() => import("./Productos"), "Productos");
+const Inventario = lazyRetry(() => import("./Inventario"), "Inventario");
+const Ventas = lazyRetry(() => import("./Ventas"), "Ventas");
+const CierreVan = lazyRetry(() => import("./CierreVan"), "CierreVan");
+const PreCierreVan = lazyRetry(() => import("./PreCierreVan"), "PreCierreVan");
+const Facturas = lazyRetry(() => import("./Facturas"), "Facturas");
+const CuentasPorCobrar = lazyRetry(() => import("./CuentasPorCobrar.jsx"), "CuentasPorCobrar");
+const CreditoSimulador = lazyRetry(() => import("./CreditoSimulador"), "CreditoSimulador");
+const FinanceHub = lazyRetry(() => import("./pages/FinanceHub"), "FinanceHub");
+const OperationsHub = lazyRetry(() => import("./pages/OperationsHub"), "OperationsHub");
+const ServicesHub = lazyRetry(() => import("./pages/ServicesHub"), "ServicesHub");
 
 // === Online ===
-const OnlineLayout = lazy(() => import("./online/OnlineLayout"));
-const OnlineDashboard = lazy(() => import("./online/OnlineDashboard"));
-const Orders = lazy(() => import("./admin/Orders"));
-const OnlineCatalog = lazy(() => import("./online/OnlineCatalog"));
-const OnlineDiscounts = lazy(() => import("./online/Discounts"));
+const OnlineLayout = lazyRetry(() => import("./online/OnlineLayout"), "OnlineLayout");
+const OnlineDashboard = lazyRetry(() => import("./online/OnlineDashboard"), "OnlineDashboard");
+const Orders = lazyRetry(() => import("./admin/Orders"), "Orders");
+const OnlineCatalog = lazyRetry(() => import("./online/OnlineCatalog"), "OnlineCatalog");
+const OnlineDiscounts = lazyRetry(() => import("./online/Discounts"), "OnlineDiscounts");
 
 import { NetworkIndicator } from "./components/NetworkIndicator";
 import { SyncProvider, useSyncGlobal } from "./hooks/SyncContext";
@@ -40,32 +41,32 @@ import { useVan } from "./hooks/VanContext";
 import { isOnlineLocation, isStoreLocation } from "./lib/locationTypes";
 
 
-const Suplidores = lazy(() => import("./Suplidores"));
+const Suplidores = lazyRetry(() => import("./Suplidores"), "Suplidores");
 
 // 💰 Comisiones (NUEVO)
-const ComisionesPage = lazy(() => import('./pages/ComisionesPage'));
-const AdminHub = lazy(() => import("./pages/AdminHub"));
-const DriverExpensesAdmin = lazy(() => import("./pages/DriverExpensesAdmin"));
-const UsuariosAdmin = lazy(() => import("./pages/UsuariosAdmin"));
-const AuditoriaLog = lazy(() => import("./pages/AuditoriaLog"));
-const SystemHealth = lazy(() => import("./pages/SystemHealth"));
+const ComisionesPage = lazyRetry(() => import('./pages/ComisionesPage'), "ComisionesPage");
+const AdminHub = lazyRetry(() => import("./pages/AdminHub"), "AdminHub");
+const DriverExpensesAdmin = lazyRetry(() => import("./pages/DriverExpensesAdmin"), "DriverExpensesAdmin");
+const UsuariosAdmin = lazyRetry(() => import("./pages/UsuariosAdmin"), "UsuariosAdmin");
+const AuditoriaLog = lazyRetry(() => import("./pages/AuditoriaLog"), "AuditoriaLog");
+const SystemHealth = lazyRetry(() => import("./pages/SystemHealth"), "SystemHealth");
 
 // 📊 Reportes (NUEVO)
-const Reportes = lazy(() => import('./Reportes'));
+const Reportes = lazyRetry(() => import('./Reportes'), "Reportes");
 
 // 📦 Suscripciones
-const Suscripciones = lazy(() => import('./Suscripciones'));
+const Suscripciones = lazyRetry(() => import('./Suscripciones'), "Suscripciones");
 
 // 🛠 Alquileres (equipment rentals)
-const Alquileres = lazy(() => import('./Alquileres'));
-const GlobalSearch = lazy(() => import('./components/GlobalSearch'));
+const Alquileres = lazyRetry(() => import('./Alquileres'), "Alquileres");
+const GlobalSearch = lazyRetry(() => import('./components/GlobalSearch'), "GlobalSearch");
 
 // 🧾 Tax / Impuestos
-const TaxConfig = lazy(() => import('./pages/TaxConfig'));
-const BusinessInfoAdmin = lazy(() => import('./pages/BusinessInfoAdmin'));
-const CreateTenantManual = lazy(() => import('./admin/CreateTenantManual'));
-const ListaEmergencia = lazy(() => import('./ListaEmergencia'));
-const VisitNotebook = lazy(() => import('./pages/VisitNotebook'));
+const TaxConfig = lazyRetry(() => import('./pages/TaxConfig'), "TaxConfig");
+const BusinessInfoAdmin = lazyRetry(() => import('./pages/BusinessInfoAdmin'), "BusinessInfoAdmin");
+const CreateTenantManual = lazyRetry(() => import('./admin/CreateTenantManual'), "CreateTenantManual");
+const ListaEmergencia = lazyRetry(() => import('./ListaEmergencia'), "ListaEmergencia");
+const VisitNotebook = lazyRetry(() => import('./pages/VisitNotebook'), "VisitNotebook");
 
 
 function PrivateRoute({ children }) {

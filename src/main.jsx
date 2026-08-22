@@ -1,9 +1,10 @@
-import React, { Suspense, lazy } from "react";
+import React, { Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import { initSentry, SentryErrorBoundary } from "./sentry";
+import { lazyRetry } from "./lib/lazyRetry";
 
 import { UsuarioProvider } from "./UsuarioContext";
 import VanProvider from "./hooks/VanContext";
@@ -14,16 +15,16 @@ import "./index.css";
 initSentry();
 
 // ── Storefront público (sin providers del POS) ──────────────────────────
-const Storefront        = lazy(() => import("./storefront/Storefront.jsx"));
-const Checkout          = lazy(() => import("./storefront/Checkout.jsx"));
-const AuthCallback      = lazy(() => import("./storefront/AuthCallback.jsx"));
-const PaymentSuccess    = lazy(() => import("./PaymentSuccess.jsx"));
-const PaymentCancelled  = lazy(() => import("./PaymentCancelled.jsx"));
-const BusinessInfo      = lazy(() => import("./storefront/BusinessInfo.jsx"));
-const PortalPage        = lazy(() => import("./portal/PortalPage.jsx").then((module) => ({ default: module.PortalPage })));
+const Storefront        = lazyRetry(() => import("./storefront/Storefront.jsx"), "Storefront");
+const Checkout          = lazyRetry(() => import("./storefront/Checkout.jsx"), "Checkout");
+const AuthCallback      = lazyRetry(() => import("./storefront/AuthCallback.jsx"), "AuthCallback");
+const PaymentSuccess    = lazyRetry(() => import("./PaymentSuccess.jsx"), "PaymentSuccess");
+const PaymentCancelled  = lazyRetry(() => import("./PaymentCancelled.jsx"), "PaymentCancelled");
+const BusinessInfo      = lazyRetry(() => import("./storefront/BusinessInfo.jsx"), "BusinessInfo");
+const PortalPage        = lazyRetry(() => import("./portal/PortalPage.jsx").then((module) => ({ default: module.PortalPage })), "PortalPage");
 
 // ── App del POS (con todos los providers) ───────────────────────────────
-const App = lazy(() => import("./App.jsx"));
+const App = lazyRetry(() => import("./App.jsx"), "App");
 
 // Loading mínimo para storefront (no menciona "sistema de ventas")
 const StorefrontFallback = () => (

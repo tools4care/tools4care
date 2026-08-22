@@ -1105,7 +1105,6 @@ useEffect(() => {
       // Crear un cierre por cada fecha seleccionada
       const cierresPromises = fechasSeleccionadas.map(async (fecha) => {
         const r = resumenPorFecha[fecha] || {};
-        
         // Usar los totales del RPC (sin duplicación)
         const totalEfectivo = Number(r.cash || 0);
         const totalTarjeta = Number(r.card || 0);
@@ -1630,8 +1629,64 @@ useEffect(() => {
     }
   };
 
+  /* ========================= Transfer Sub-type Breakdown ========================= */
+
+  // Helper: parse metodo_pago string (e.g. "Transfer - Zelle") to a known sub-key
+  function parsearSubTipoTransfer(raw) {
+    const s = String(raw || "").toLowerCase();
+    if (s.includes("zelle")) return "zelle";
+    if (s.includes("cashapp") || s.includes("cash app")) return "cashapp";
+    if (s.includes("venmo")) return "venmo";
+    if (s.includes("applepay") || s.includes("apple pay") || s.includes("apple")) return "applepay";
+    return "other";
+  }
+
+  // Desglose de transfers: ventas + abonos CxC — ambos fusionados por sub-tipo.
+  // Fuente única de verdad: el "System amount" de arriba (en `totales`) se
+  // deriva de este mismo objeto en vez de recalcularse aparte, para que
+  // nunca puedan mostrar dos números distintos para "lo mismo" — que era
+  // justo el bug (los abonos sueltos de CxC aparecían en este desglose pero
+  // no en el total de arriba).
+  const transferDesgloseSistema = useMemo(() => {
+    const result = { zelle: 0, cashapp: 0, venmo: 0, applepay: 0, other: 0 };
+
+    // 1) Desde ventas (pago.transferencia_detalle o pago.metodos)
+    Object.values(ventasPorFecha).flat().forEach((venta) => {
+      const pago = venta.pago;
+      if (!pago) return;
+      const detalle = pago.transferencia_detalle;
+      if (detalle) {
+        result.zelle    += Number(detalle.zelle    || 0);
+        result.cashapp  += Number(detalle.cashapp  || 0);
+        result.venmo    += Number(detalle.venmo    || 0);
+        result.applepay += Number(detalle.applepay || 0);
+        result.other    += Number(detalle.other    || 0);
+      } else if (pago.metodos) {
+        pago.metodos.forEach((m) => {
+          if (m.forma === "transferencia") {
+            result[parsearSubTipoTransfer(m.subMetodo)] += Number(m.monto || 0);
+          }
+        });
+      }
+    });
+
+    // 2) Desde abonos CxC (venta_id IS NULL) — "Transfer - Zelle", "Transfer - Cash App", etc.
+    //    Estos nunca están dentro de una venta (idem_key IS NULL los filtra
+    //    ya desde la consulta), así que sumarlos aquí no duplica nada de (1).
+    abonosCxC.forEach((t) => {
+      const m = String(t.metodo_pago || "").toLowerCase();
+      const isTransfer = m.includes("transfer") || m.includes("zelle") ||
+                         m.includes("cashapp")  || m.includes("cash app") ||
+                         m.includes("venmo")    || m.includes("applepay") || m.includes("apple");
+      if (!isTransfer) return;
+      result[parsearSubTipoTransfer(t.metodo_pago)] += Number(t.monto || 0);
+    });
+
+    return result;
+  }, [ventasPorFecha, abonosCxC]);
+
   /* ========================= Calculated Totals ========================= */
-  
+
   // ✅ CORRECCIÓN PRINCIPAL: Usar SOLO resumenPorFecha del RPC
   const totales = useMemo(() => {
     // Total de ventas (solo para display)
@@ -1756,54 +1811,6 @@ useEffect(() => {
     );
   }, [ventasPorFecha, transacciones]);
 
-  /* ========================= Transfer Sub-type Breakdown ========================= */
-
-  // Helper: parse metodo_pago string (e.g. "Transfer - Zelle") to a known sub-key
-  function parsearSubTipoTransfer(raw) {
-    const s = String(raw || "").toLowerCase();
-    if (s.includes("zelle")) return "zelle";
-    if (s.includes("cashapp") || s.includes("cash app")) return "cashapp";
-    if (s.includes("venmo")) return "venmo";
-    if (s.includes("applepay") || s.includes("apple pay") || s.includes("apple")) return "applepay";
-    return "other";
-  }
-
-  // Desglose de transfers: ventas + abonos CxC — ambos fusionados por sub-tipo
-  const transferDesgloseSistema = useMemo(() => {
-    const result = { zelle: 0, cashapp: 0, venmo: 0, applepay: 0, other: 0 };
-
-    // 1) Desde ventas (pago.transferencia_detalle o pago.metodos)
-    Object.values(ventasPorFecha).flat().forEach((venta) => {
-      const pago = venta.pago;
-      if (!pago) return;
-      const detalle = pago.transferencia_detalle;
-      if (detalle) {
-        result.zelle    += Number(detalle.zelle    || 0);
-        result.cashapp  += Number(detalle.cashapp  || 0);
-        result.venmo    += Number(detalle.venmo    || 0);
-        result.applepay += Number(detalle.applepay || 0);
-        result.other    += Number(detalle.other    || 0);
-      } else if (pago.metodos) {
-        pago.metodos.forEach((m) => {
-          if (m.forma === "transferencia") {
-            result[parsearSubTipoTransfer(m.subMetodo)] += Number(m.monto || 0);
-          }
-        });
-      }
-    });
-
-    // 2) Desde abonos CxC (venta_id IS NULL) — "Transfer - Zelle", "Transfer - Cash App", etc.
-    abonosCxC.forEach((t) => {
-      const m = String(t.metodo_pago || "").toLowerCase();
-      const isTransfer = m.includes("transfer") || m.includes("zelle") ||
-                         m.includes("cashapp")  || m.includes("cash app") ||
-                         m.includes("venmo")    || m.includes("applepay") || m.includes("apple");
-      if (!isTransfer) return;
-      result[parsearSubTipoTransfer(t.metodo_pago)] += Number(t.monto || 0);
-    });
-
-    return result;
-  }, [ventasPorFecha, abonosCxC]);
 
   const checkTotalSistema = useMemo(() => {
     const fromSales = Object.values(ventasPorFecha).flat().reduce((total, venta) => {
