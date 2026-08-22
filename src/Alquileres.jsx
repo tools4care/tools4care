@@ -1253,6 +1253,17 @@ export default function Alquileres() {
     const metodo = ["efectivo", "tarjeta", "transferencia", "otro"].includes(methodRaw.trim().toLowerCase())
       ? methodRaw.trim().toLowerCase()
       : defaultMethod;
+    let transferSubMetodo = null;
+    if (metodo === "transferencia") {
+      const transferType = prompt("Transfer type: zelle, cashapp, venmo, or applepay", "zelle");
+      if (transferType === null) return;
+      const normalizedTransferType = transferType.trim().toLowerCase().replace(/[\s_-]+/g, "");
+      if (!["zelle", "cashapp", "venmo", "applepay"].includes(normalizedTransferType)) {
+        toast.error("Select a valid transfer type: Zelle, Cash App, Venmo, or Apple Pay.");
+        return;
+      }
+      transferSubMetodo = normalizedTransferType;
+    }
 
     try {
       let chargeRef = null;
@@ -1269,6 +1280,15 @@ export default function Alquileres() {
         tarjeta: metodo === "tarjeta" ? amount : 0,
         transferencia: metodo === "transferencia" ? amount : 0,
         otro: metodo === "otro" ? amount : 0,
+        ...(transferSubMetodo ? {
+          transferencia_detalle: {
+            zelle: transferSubMetodo === "zelle" ? amount : 0,
+            cashapp: transferSubMetodo === "cashapp" ? amount : 0,
+            venmo: transferSubMetodo === "venmo" ? amount : 0,
+            applepay: transferSubMetodo === "applepay" ? amount : 0,
+            other: 0,
+          },
+        } : {}),
       };
 
       const { data: venta, error: ventaError } = await supabase.from("ventas").insert({

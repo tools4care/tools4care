@@ -208,9 +208,9 @@ function usePrecloseRows(vanId, diasAtras = 21) {
         // and are already represented by ventas.pago_*; direct CxC payments do
         // not, so add them by method here.
         try {
-          const [{ data: otherSales }, { data: directPayments }] = await Promise.all([
+          const [{ data: salePayments }, { data: directPayments }] = await Promise.all([
             supabase.from("ventas")
-              .select("fecha, created_at, pago_otro")
+              .select("fecha, created_at, pago_efectivo, pago_tarjeta, pago_transferencia, pago_otro")
               .eq("van_id", vanId).neq("tipo", "devolucion")
               .gte("fecha", p_from + "T00:00:00").lte("fecha", p_to + "T23:59:59"),
             supabase.from("pagos")
@@ -218,7 +218,10 @@ function usePrecloseRows(vanId, diasAtras = 21) {
               .eq("van_id", vanId).is("idem_key", null)
               .gte("fecha_pago", p_from + "T00:00:00").lte("fecha_pago", p_to + "T23:59:59"),
           ]);
-          (otherSales || []).forEach((sale) => {
+          // Replace the potentially version-dependent RPC amounts with the
+          // canonical per-method values stored on each sale.
+          if (salePayments) normalized.splice(0, normalized.length);
+          (salePayments || []).forEach((sale) => {
             const iso = String(sale.fecha || sale.created_at || "").slice(0, 10);
             if (!iso) return;
             let row = normalized.find((r) => r.dia === iso);
@@ -226,6 +229,9 @@ function usePrecloseRows(vanId, diasAtras = 21) {
               row = { dia: iso, cash_expected: 0, card_expected: 0, transfer_expected: 0, mix_unallocated: 0, other_expected: 0 };
               normalized.push(row);
             }
+            row.cash_expected += Number(sale.pago_efectivo || 0);
+            row.card_expected += Number(sale.pago_tarjeta || 0);
+            row.transfer_expected += Number(sale.pago_transferencia || 0);
             row.other_expected += Number(sale.pago_otro || 0);
           });
           (directPayments || []).forEach((p) => {
@@ -238,10 +244,10 @@ function usePrecloseRows(vanId, diasAtras = 21) {
             }
             const amount = Number(p.monto || 0);
             const method = normalizeCloseoutMethod(p.metodo_pago);
-            // The RPC already includes direct CxC cash/card. Supplement
-            // transfer sub-methods and checks/other that the RPC misses.
-            if (method === "other") row.other_expected += amount;
+            if (method === "cash") row.cash_expected += amount;
+            else if (method === "card") row.card_expected += amount;
             else if (method === "transfer") row.transfer_expected += amount;
+            else row.other_expected += amount;
           });
         } catch (_) { /* pagos table unavailable */ }
 

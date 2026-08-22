@@ -59,6 +59,31 @@ const EXPENSE_CATEGORIES_VAN = [
   { value: "otro",            label: "Other",            icon: "💸" },
 ];
 
+const MAX_RECEIPT_BYTES = 12 * 1024 * 1024;
+const RECEIPT_MAX_EDGE = 1600;
+
+async function optimizeReceiptImage(file) {
+  if (!file?.type?.startsWith("image/") || file.size <= 900 * 1024) return file;
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, RECEIPT_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d", { alpha: false }).drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "receipt"}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  } catch {
+    return file;
+  }
+}
+
 /* ========================= Constants ========================= */
 const PAYMENT_METHODS = {
   efectivo: { label: "Cash", color: "#4CAF50", icon: "💵" },
@@ -286,7 +311,7 @@ function CountByDenominationModal({
   const tone = modalAccent[accent] || modalAccent.emerald;
   return (
     <div className={closeoutModalClasses.overlay}>
-      <div className={closeoutModalClasses.panel}>
+      <div className={`${closeoutModalClasses.panel} -translate-y-8 sm:translate-y-0`}>
         <div className={closeoutModalClasses.header}>
           <div>
             <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${tone.eyebrow}`}>{eyebrow}</p>
@@ -588,18 +613,51 @@ export default function CierreVan() {
 
   async function uploadGastoFactura(key, file) {
     if (!file || !van?.id) return;
+    if (!file.type?.startsWith("image/")) {
+      toast.error("Please select an image receipt.");
+      return;
+    }
+    if (file.size > MAX_RECEIPT_BYTES) {
+      toast.error("Receipt image is too large. Maximum size is 12 MB.");
+      return;
+    }
+
     setGastoUploading(key);
+    updateGasto(key, "_receiptState", "uploading");
     try {
-      const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+      const uploadFile = await optimizeReceiptImage(file);
+      const ext = uploadFile.type === "image/jpeg"
+        ? "jpg"
+        : uploadFile.name.split(".").pop()?.toLowerCase() || "jpg";
       const path = `${van.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
       const { error } = await supabase.storage
         .from("expense-receipts")
-        .upload(path, file, { upsert: false, contentType: file.type });
+        .upload(path, uploadFile, {
+          upsert: false,
+          contentType: uploadFile.type || "image/jpeg",
+          cacheControl: "31536000",
+        });
       if (error) throw error;
       const { data } = supabase.storage.from("expense-receipts").getPublicUrl(path);
-      updateGasto(key, "factura_url", data.publicUrl);
-      toast.success("Receipt photo attached");
+      if (!data?.publicUrl) throw new Error("Storage did not return the receipt URL");
+
+      const expense = gastos.find((g) => g._key === key);
+      if (expense?._saved && expense.id) {
+        const { error: linkError } = await supabase
+          .from("gastos_conductor")
+          .update({ factura_url: data.publicUrl })
+          .eq("id", expense.id);
+        if (linkError) throw linkError;
+      }
+
+      setGastos((prev) => prev.map((g) => g._key === key
+        ? { ...g, factura_url: data.publicUrl, _receiptState: expense?._saved ? "saved" : "ready" }
+        : g));
+      toast.success(expense?._saved
+        ? "Receipt uploaded and saved"
+        : "Receipt uploaded; it will be linked when you confirm the closeout");
     } catch (error) {
+      updateGasto(key, "_receiptState", "error");
       toast.error(`Could not upload receipt: ${error.message}`);
     } finally {
       setGastoUploading(null);
@@ -701,7 +759,7 @@ export default function CierreVan() {
         const [
           { data: cierresPrevios, error: cierresPreviosError },
           rpcResult,
-          { data: otherSales },
+          { data: salesPayments },
           { data: pagosData },
           { data: devData },
           arSummary,
@@ -713,15 +771,18 @@ export default function CierreVan() {
             .in("fecha", fechasSeleccionadas),
           // 🎯 CLAVE: Este RPC calcula correctamente sin duplicar
           supabase.rpc("closeout_pre_resumen_filtrado", { p_van_id: van.id, p_from, p_to }),
-          // The legacy RPC does not expose pago_otro. Add it explicitly so
-          // checks/other payment methods are not silently omitted.
+          // Read the canonical per-method sale columns directly. The legacy
+          // closeout RPC has changed over time and some deployed versions
+          // include standalone CxC payments while others do not. Building the
+          // sale subtotal here keeps direct payments from being missed or
+          // counted twice.
           safe(supabase
             .from("ventas")
-            .select("fecha, created_at, pago_otro")
+            .select("fecha, created_at, pago_efectivo, pago_tarjeta, pago_transferencia, pago_otro")
             .eq("van_id", van.id)
             .neq("tipo", "devolucion")
             .gte("fecha", p_from + "T00:00:00")
-            .lte("fecha", p_to + "T23:59:59"), { data: [] }),
+            .lte("fecha", p_to + "T23:59:59"), { data: null }),
           // Pagos CxC standalone desde pantalla Clientes. Los pagos aplicados
           // dentro de una venta usan `idem_key` y ya están incluidos en los
           // totales de la venta; los directos no tienen `idem_key`.
@@ -783,13 +844,13 @@ export default function CierreVan() {
           throw error;
         }
 
-        const map = {};
+        const rpcMap = {};
         (data || []).forEach((r) => {
           const iso = (r.dia ?? r.fecha ?? r.day ?? r.f ?? "").slice(0, 10);
           if (!iso || !fechasSeleccionadas.includes(iso)) return;
 
           // ✅ Estos son los totales CORRECTOS (sin duplicación)
-          map[iso] = {
+          rpcMap[iso] = {
             cash: Number(r.cash_expected ?? 0),
             card: Number(r.card_expected ?? 0),
             transfer: Number(r.transfer_expected ?? 0),
@@ -798,12 +859,20 @@ export default function CierreVan() {
 
         });
 
-        (otherSales || []).forEach((sale) => {
+        const map = {};
+        (salesPayments || []).forEach((sale) => {
           const iso = String(sale.fecha || sale.created_at || "").slice(0, 10);
           if (!iso || !fechasSeleccionadas.includes(iso)) return;
           if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
-          map[iso].other = Number(map[iso].other || 0) + Number(sale.pago_otro || 0);
+          map[iso].cash += Number(sale.pago_efectivo || 0);
+          map[iso].card += Number(sale.pago_tarjeta || 0);
+          map[iso].transfer += Number(sale.pago_transferencia || 0);
+          map[iso].other += Number(sale.pago_otro || 0);
         });
+
+        // If the direct sales query is unavailable, retain the legacy RPC as
+        // a read-only fallback instead of showing an empty closeout.
+        if (!salesPayments) Object.assign(map, rpcMap);
 
         (pagosData || []).forEach((p) => {
           const iso = String(p.fecha_pago || "").slice(0, 10);
@@ -811,11 +880,7 @@ export default function CierreVan() {
           if (!map[iso]) map[iso] = { cash: 0, card: 0, transfer: 0, other: 0 };
           const amount = Number(p.monto || 0);
           const method = normalizeCloseoutMethod(p.metodo_pago);
-          // The RPC already includes direct CxC cash/card, but misses transfer
-          // sub-method strings like "Transfer - Zelle". Keep checks/other too.
-          if (method === "transfer" || method === "other") {
-            map[iso][method] = Number(map[iso][method] || 0) + amount;
-          }
+          map[iso][method] = Number(map[iso][method] || 0) + amount;
         });
         setAbonosCxC(pagosData || []);
 
@@ -971,6 +1036,12 @@ useEffect(() => {
       return;
     }
 
+    if (gastoUploading) {
+      setMensaje("Wait for the receipt upload to finish before closing.");
+      setTipoMensaje("warning");
+      return;
+    }
+
     if (Math.abs(totales.diferencia) >= NOTE_REQUIRED_DISCREPANCY && !observaciones.trim()) {
       setMensaje("You must provide a note for the discrepancy");
       setTipoMensaje("warning");
@@ -1009,14 +1080,15 @@ useEffect(() => {
 
       // Guardar gastos del conductor
       const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
-      await supabase
+      const { error: deleteExpensesError } = await supabase
         .from("gastos_conductor")
         .delete()
         .eq("van_id", van.id)
         .in("fecha", fechasSeleccionadas)
         .is("cierre_id", null);
+      if (deleteExpensesError) throw deleteExpensesError;
       if (gastosValidos.length) {
-        await supabase.from("gastos_conductor").insert(
+        const { error: insertExpensesError } = await supabase.from("gastos_conductor").insert(
           gastosValidos.map((g) => ({
             van_id: van.id,
             usuario_id: usuario.id,
@@ -1027,6 +1099,7 @@ useEffect(() => {
             factura_url: g.factura_url || null,
           }))
         );
+        if (insertExpensesError) throw insertExpensesError;
       }
 
       // Crear un cierre por cada fecha seleccionada
@@ -1986,13 +2059,32 @@ useEffect(() => {
                     {gastoUploading === g._key ? "Uploading…" : g.factura_url ? "Replace receipt photo" : "Attach receipt photo"}
                     <input type="file" accept="image/*" capture="environment" className="hidden"
                       disabled={gastoUploading === g._key}
-                      onChange={(e) => uploadGastoFactura(g._key, e.target.files?.[0])} />
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        uploadGastoFactura(g._key, file);
+                      }} />
                   </label>
                   {g.factura_url && (
                     <a href={g.factura_url} target="_blank" rel="noreferrer"
                       className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">
                       <ExternalLink size={13} /> View receipt
                     </a>
+                  )}
+                  {g._receiptState === "ready" && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                      <CheckCircle size={14} /> Uploaded · saves with closeout
+                    </span>
+                  )}
+                  {g._receiptState === "saved" && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                      <CheckCircle size={14} /> Uploaded and saved
+                    </span>
+                  )}
+                  {g._receiptState === "error" && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600">
+                      <AlertCircle size={14} /> Upload failed · try again
+                    </span>
                   )}
                 </div>
               </div>
@@ -2180,7 +2272,7 @@ useEffect(() => {
                       <div className="flex items-center justify-between text-xs">
                         <span className="flex items-center gap-1 text-gray-600">
                           <span className="w-2 h-2 rounded-full inline-block flex-shrink-0 bg-gray-400" />
-                          Other
+                          Transfer without subtype
                         </span>
                         <span className="font-semibold text-purple-700">{fmtCurrency(transferDesgloseSistema.other)}</span>
                       </div>
@@ -2962,7 +3054,7 @@ useEffect(() => {
                     <div className="flex items-center justify-between rounded-xl bg-white/70 px-3 py-2 text-sm">
                       <span className="flex items-center gap-2 font-medium text-slate-700">
                         <span className="inline-block h-3 w-3 rounded-full bg-slate-400 shadow-sm" />
-                        Other
+                        Transfer without subtype
                       </span>
                       <span className="font-bold text-violet-700">{fmtCurrency(transferDesgloseSistema.other)}</span>
                     </div>
