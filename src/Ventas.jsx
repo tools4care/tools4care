@@ -4831,7 +4831,7 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
 
       const montoParaCxC = Number(payOldDebtNow.toFixed(2));
       const { data: transactionResult, error: transactionError } = await supabase.rpc(
-        "guardar_venta_transaccional",
+        "guardar_venta_con_cuotas_transaccional",
         {
           p_transaction_id: transactionId,
           p_cliente_id: selectedClient?.id ?? null,
@@ -4858,6 +4858,9 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
           p_pago_deuda_anterior: montoParaCxC,
           p_credito_favor_aplicado: Number(storeCreditApplied.toFixed(2)),
           p_credito_favor_a_deuda: Number(creditToOldDebtNow.toFixed(2)),
+          p_acuerdo_aplicacion: agreementAllocationMode === "selected" ? "selected" : "auto",
+          p_acuerdo_cuota_ids:
+            agreementAllocationMode === "selected" ? selectedAgreementInstallmentIds : [],
         }
       );
       if (transactionError) throw transactionError;
@@ -4896,53 +4899,6 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
           extra: { lines: manualDiscountLines },
           nota: selectedClient?.nombre || null,
         });
-      }
-
-      // APLICAR PAGO A CUOTAS — directo, sin el caché RPC que puede silenciar el error
-      if (montoParaCxC > 0) {
-        try {
-          try {
-            const rpcCache = JSON.parse(localStorage.getItem('rpc-availability-v1') || '{}');
-            if (rpcCache['aplicar_pago_a_cuotas'] === false) {
-              delete rpcCache['aplicar_pago_a_cuotas'];
-              localStorage.setItem('rpc-availability-v1', JSON.stringify(rpcCache));
-            }
-          } catch (_) {}
-          const sbUrl = import.meta?.env?.VITE_SUPABASE_URL || 'https://gvloygqbavibmpakzdma.supabase.co';
-          const sbKey = import.meta?.env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bG95Z3FiYXZpYm1wYWt6ZG1hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTY3MTAsImV4cCI6MjA2NjUzMjcxMH0.YgDh6Gi-6jDYHP3fkOavIs6aJ9zlb_LEjEg5sLsdb7o';
-          const session = supabase.auth.session ? supabase.auth.session() : (await supabase.auth.getSession())?.data?.session;
-          const authHeader = session?.access_token ? `Bearer ${session.access_token}` : `Bearer ${sbKey}`;
-          const useSelectedInstallments =
-            agreementAllocationMode === "selected" &&
-            selectedAgreementInstallmentIds.length > 0;
-          const endpoint = useSelectedInstallments
-            ? "aplicar_pago_a_cuotas_seleccionadas"
-            : "aplicar_pago_a_cuotas";
-          const response = await fetch(`${sbUrl}/rest/v1/rpc/${endpoint}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': sbKey, 'Authorization': authHeader },
-            body: JSON.stringify({
-              p_cliente_id: selectedClient.id,
-              p_monto: montoParaCxC,
-              ...(useSelectedInstallments
-                ? { p_cuota_ids: selectedAgreementInstallmentIds }
-                : {}),
-            }),
-          });
-          const agreementResult = await response.json().catch(() => null);
-          if (!response.ok || agreementResult?.ok === false) {
-            throw new Error(
-              agreementResult?.error ||
-              `Could not apply payment to installments (${response.status})`
-            );
-          }
-        } catch (e) {
-          console.warn('⚠️ Error cuotas desde venta:', e.message);
-          toast.warning(
-            "Sale saved, but the payment-agreement allocation needs review: " + e.message,
-            8000
-          );
-        }
       }
 
       const prevDue = Math.max(0, balanceBefore);
