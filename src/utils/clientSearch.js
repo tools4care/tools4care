@@ -93,7 +93,17 @@ export function phoneIdFilter(column, ids) {
 
 export function addressText(direccion) {
   if (!direccion) return "";
-  if (typeof direccion === "string") return direccion;
+  if (typeof direccion === "string") {
+    const trimmed = direccion.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        return addressText(JSON.parse(trimmed));
+      } catch {
+        return direccion;
+      }
+    }
+    return direccion;
+  }
   return [
     direccion.calle,
     direccion.ciudad,
@@ -127,7 +137,13 @@ export function clientSearchScore(client, term) {
   const name = normalizeText(client?.nombre);
   const business = normalizeText(client?.negocio || client?.nombre_negocio);
   const email = normalizeText(client?.email);
-  const address = normalizeText(addressText(client?.direccion));
+  const address = normalizeText([
+    addressText(client?.direccion),
+    client?.dir_calle,
+    client?.dir_ciudad,
+    client?.dir_estado,
+    client?.dir_zip,
+  ].filter(Boolean).join(" "));
   const credit = normalizeText(client?.credito_numero || client?.cliente_id || client?.id);
   const combined = [name, business, email, address, credit].filter(Boolean).join(" ");
   const tokens = tokensOf(safe);

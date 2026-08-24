@@ -1322,7 +1322,6 @@ useEffect(() => {
   lastSaleDate: null, // 🆕 NUEVO
 });
 
-  const [addrSpec, setAddrSpec] = useState({ type: "unknown", fields: [] });
 
   // ---- CxC de cliente actual
   const [cxcLimit, setCxcLimit] = useState(null);
@@ -1804,66 +1803,6 @@ useEffect(() => {
     loadTodayStats();
   }, [van?.id, isOffline]);
 
-  useEffect(() => {
-    async function probeAddressShape() {
-      if (isOffline) return;
-      try {
-        const { data } = await supabase
-          .from(CLIENT_BALANCE_VIEW)
-          .select("direccion")
-          .limit(5);
-
-        if (!data || data.length === 0) return;
-
-        let jsonCount = 0;
-        let textCount = 0;
-        const keys = new Set();
-
-        for (const row of data) {
-          const v = row?.direccion;
-          if (v == null) continue;
-
-          if (typeof v === "object") {
-            jsonCount++;
-            ["calle", "ciudad", "estado", "zip"].forEach(k => {
-              if (v[k] != null) keys.add(k);
-            });
-            continue;
-          }
-
-          if (typeof v === "string") {
-            const s = v.trim();
-            if (s.startsWith("{") && s.endsWith("}")) {
-              try {
-                const obj = JSON.parse(s);
-                if (obj && typeof obj === "object") {
-                  jsonCount++;
-                  ["calle", "ciudad", "estado", "zip"].forEach(k => {
-                    if (obj[k] != null) keys.add(k);
-                  });
-                  continue;
-                }
-              } catch {}
-            }
-            textCount++;
-          }
-        }
-
-        if (jsonCount > textCount) {
-          setAddrSpec({ type: "json", fields: Array.from(keys) });
-        } else if (textCount > 0) {
-          setAddrSpec({ type: "text", fields: [] });
-        } else {
-          setAddrSpec({ type: "unknown", fields: [] });
-        }
-      } catch (e) {
-        console.warn("No se pudo sondear `direccion`:", e?.message || e);
-        setAddrSpec({ type: "unknown", fields: [] });
-      }
-    }
-
-    probeAddressShape();
-  }, [isOffline]);
 // Verificar si el sistema de acuerdos está disponible
   useEffect(() => {
     if (isOffline) {
@@ -1961,12 +1900,12 @@ useEffect(() => {
           : [];
         const normalizedPhoneFilter = phoneIdFilter("id", normalizedPhoneIds);
 
-        let primaryFields = ["nombre", "negocio", "telefono", "email"];
-        let primaryCols = "id,nombre,negocio,telefono,email,direccion,balance";
-        
-        if (addrSpec.type === "text") {
-          primaryFields.push("direccion");
-        }
+        const searchableFields = [
+          "nombre", "negocio", "telefono", "email", "direccion",
+          "dir_calle", "dir_ciudad", "dir_estado", "dir_zip",
+        ];
+        const primaryCols =
+          "id,nombre,negocio,telefono,email,direccion,dir_calle,dir_ciudad,dir_estado,dir_zip,balance";
         
         const phoneFilters = phoneVariants.map((v) => `telefono.ilike.%${v}%`);
         const primaryOr = phoneLike
@@ -1974,11 +1913,9 @@ useEffect(() => {
               ...phoneFilters,
               `telefono.ilike.${phoneDigits}%`,
               normalizedPhoneFilter,
-              `nombre.ilike.%${safe}%`,
-              `negocio.ilike.%${safe}%`,
-              `email.ilike.%${safe}%`,
+              ...searchableFields.map((field) => `${field}.ilike.%${safe}%`),
             ].filter(Boolean).join(",")
-          : primaryFields.map(f => `${f}.ilike.%${safe}%`).join(",");
+          : searchableFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
         let baseData = [];
         let needFallbackNoApellido = false;
@@ -2003,20 +1940,14 @@ useEffect(() => {
         }
 
         if (needFallbackNoApellido || baseData.length === 0) {
-          let fbFields = ["nombre", "negocio", "telefono", "email"];
-          if (addrSpec.type === "text") {
-            fbFields.push("direccion");
-          }
-          
+          const fbFields = ["nombre", "negocio", "telefono", "email", "direccion"];
           const fbCols = "id,nombre,negocio,telefono,email,direccion,balance";
           const fbOr = phoneLike
             ? [
                 ...phoneFilters,
                 `telefono.ilike.${phoneDigits}%`,
                 normalizedPhoneFilter,
-                `nombre.ilike.%${safe}%`,
-                `negocio.ilike.%${safe}%`,
-                `email.ilike.%${safe}%`,
+                ...fbFields.map((field) => `${field}.ilike.%${safe}%`),
               ].filter(Boolean).join(",")
             : fbFields.map(f => `${f}.ilike.%${safe}%`).join(",");
 
@@ -2038,7 +1969,7 @@ useEffect(() => {
         if (baseData.length === 0 && tokens.length >= 2) {
           const { data: dAnd, error: eAnd } = await supabase
             .from(CLIENT_BALANCE_VIEW)
-            .select("id,nombre,negocio,telefono,email,direccion,balance")
+            .select(primaryCols)
             .ilike("nombre", `%${tokens[0]}%`)
             .or(`negocio.ilike.%${tokens.slice(1).join(" ")}%,telefono.ilike.%${tokens.slice(1).join(" ")}%,email.ilike.%${tokens.slice(1).join(" ")}%`)
             .limit(50);
@@ -2056,16 +1987,14 @@ useEffect(() => {
             .slice(0, 4)
             .flatMap((token) => {
               const cleaned = token.replace(/[(),%]/g, "").slice(0, 40);
-              const fields = ["nombre", "negocio", "telefono", "email"];
-              if (addrSpec.type === "text") fields.push("direccion");
-              return fields.map((field) => `${field}.ilike.%${cleaned}%`);
+              return searchableFields.map((field) => `${field}.ilike.%${cleaned}%`);
             })
             .join(",");
 
           if (tokenFilters) {
             const { data: dTokens, error: eTokens } = await supabase
               .from(CLIENT_BALANCE_VIEW)
-              .select("id,nombre,negocio,telefono,email,direccion,balance")
+              .select(primaryCols)
               .or(tokenFilters)
               .limit(120);
             if (searchId !== clientSearchSeqRef.current) return;
@@ -2108,7 +2037,7 @@ useEffect(() => {
     }
 
     loadClients();
-  }, [debouncedClientSearch, addrSpec.type, isOffline, recentClients, searchClientsInOfflineCache, toast]);
+  }, [debouncedClientSearch, isOffline, recentClients, searchClientsInOfflineCache, toast]);
 
 /* ---------- Historial al seleccionar cliente ---------- */
 useEffect(() => {

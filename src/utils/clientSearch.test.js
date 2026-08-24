@@ -49,4 +49,14 @@ describe("client phone search normalization", () => {
       "not-an-id",
     ])).toBe("cliente_id.in.(87299a6e-d046-4ad6-8097-124640b4159d)");
   });
+
+  it.each([
+    [{ direccion: "18 Main Street, Lawrence MA 01840" }, "lawrence"],
+    [{ direccion: JSON.stringify({ calle: "18 Main Street", ciudad: "Lawrence", estado: "MA", zip: "01840" }) }, "01840"],
+    [{ direccion: { calle: "18 Main Street", ciudad: "Lawrence", estado: "MA", zip: "01840" } }, "main street"],
+    [{ direccion: null, dir_calle: "18 Main Street", dir_ciudad: "Lawrence", dir_estado: "MA", dir_zip: "01840" }, "lawrence ma"],
+  ])("finds clients across legacy and structured address formats", (addressFields, term) => {
+    const client = { id: "address-client", nombre: "Test Customer", ...addressFields };
+    expect(filterClientsLocal([client], term)).toEqual([client]);
+  });
 });
