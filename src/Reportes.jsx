@@ -15,6 +15,7 @@ import { daysSince, classifyArRisk, buildCollectionMessage, phoneLink } from "./
 import { paginateRows, REPORT_PAGE_SIZES } from "./lib/pagination";
 import { VISIT_LEARNING_START } from "./lib/barberCadence";
 import { haversineKm, kmToMiles } from "./lib/geo";
+import { aggregateLedgerByWeek, ledgerPeriodPreset } from "./lib/cashFlowReport";
 import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
@@ -309,6 +310,29 @@ function FinancialLedgerReport({ van }) {
     entries: a.entries + Number(d.cash_entries || 0),
   }), { moneyIn: 0, refunds: 0, expenses: 0, net: 0, ar: 0, entries: 0 }), [days]);
 
+  const weeks = useMemo(() => aggregateLedgerByWeek(days), [days]);
+
+  const applyPreset = (preset) => {
+    const range = ledgerPeriodPreset(preset, getToday());
+    setFrom(range.from);
+    setTo(range.to);
+  };
+
+  const exportCsv = () => {
+    const header = ["Week starting", "Money in", "Refunds", "Expenses", "Net movement", "Net A/R change", "Entries"];
+    const rows = weeks.map((week) => [
+      week.week_start, week.money_in, week.refunds, week.expenses,
+      week.net_cash_movement, week.net_ar_change, week.cash_entries,
+    ]);
+    const csv = [header, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `cash-flow-${from}-to-${to}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const typeLabel = (type) => ({
     sale_payment: "Sale payment",
     ar_payment: "Direct A/R payment",
@@ -322,6 +346,22 @@ function FinancialLedgerReport({ van }) {
 
   return (
     <div>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <span className="mr-1 text-xs font-bold uppercase tracking-wide text-slate-500">Quick period</span>
+        {[
+          ["this_week", "This week"], ["last_week", "Last week"],
+          ["30_days", "Last 30 days"], ["90_days", "Last 90 days"],
+        ].map(([value, label]) => (
+          <button key={value} type="button" onClick={() => applyPreset(value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-emerald-300 hover:bg-emerald-50">
+            {label}
+          </button>
+        ))}
+        <button type="button" onClick={exportCsv} disabled={!weeks.length}
+          className="ml-auto flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
+          <Download size={14}/> Export weekly CSV
+        </button>
+      </div>
       <DateFilterBar from={from} to={to} onFrom={setFrom} onTo={setTo} onSearch={search} loading={loading} />
       <ErrorBox msg={error} />
 
@@ -340,6 +380,30 @@ function FinancialLedgerReport({ van }) {
           <SummaryCard label="Expenses" value={fmtCurrency(totals.expenses)} color="amber" icon={ReceiptText} />
           <SummaryCard label="Net Cash Movement" value={fmtCurrency(totals.net)} color={totals.net >= 0 ? "emerald" : "red"} icon={Wallet} />
           <SummaryCard label="Net A/R Change" value={`${totals.ar > 0 ? "+" : ""}${fmtCurrency(totals.ar)}`} color={totals.ar > 0 ? "red" : "blue"} icon={CreditCard} />
+        </div>
+
+        <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl mb-6">
+          <div className="border-b bg-slate-50 px-4 py-3">
+            <h3 className="font-bold text-slate-800">Weekly income and expenses</h3>
+            <p className="text-xs text-slate-500">Weeks begin Monday. Net movement = money received − refunds − expenses.</p>
+          </div>
+          <table className="min-w-full text-sm divide-y divide-gray-200">
+            <thead className="bg-emerald-50"><tr>{["Week starting", "Income", "Refunds", "Expenses", "Net", "Net A/R", "Entries"].map((heading) =>
+              <th key={heading} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-emerald-800">{heading}</th>)}</tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {weeks.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-gray-400">No weekly activity found</td></tr> : weeks.map((week) => (
+                <tr key={week.week_start} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 font-semibold">{fmtDate(week.week_start)}</td>
+                  <td className="px-4 py-3 font-semibold text-green-700">{fmtCurrency(week.money_in)}</td>
+                  <td className="px-4 py-3 text-red-600">{fmtCurrency(week.refunds)}</td>
+                  <td className="px-4 py-3 text-amber-700">{fmtCurrency(week.expenses)}</td>
+                  <td className={`px-4 py-3 font-bold ${week.net_cash_movement >= 0 ? "text-emerald-700" : "text-red-700"}`}>{fmtCurrency(week.net_cash_movement)}</td>
+                  <td className="px-4 py-3">{fmtCurrency(week.net_ar_change)}</td>
+                  <td className="px-4 py-3">{week.cash_entries}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
         <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl mb-6">
