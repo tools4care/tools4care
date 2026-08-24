@@ -4208,20 +4208,25 @@ export default function Reportes() {
         </div>
 
         {/* Tab Bar */}
-        <div className="flex gap-1 sm:gap-2 flex-wrap mb-6 bg-white rounded-xl border border-gray-200 p-2 shadow-sm">
+        <div
+          role="tablist"
+          aria-label="Business report sections"
+          className="mb-6 flex snap-x snap-mandatory flex-nowrap gap-2 overflow-x-auto rounded-xl border border-gray-200 bg-white p-2 shadow-sm"
+        >
           {TABS.map(({ id, label, icon: Icon, color }) => (
-            <button key={id} onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 border ${
+            <button key={id} onClick={() => setActiveTab(id)} type="button" role="tab"
+              aria-selected={activeTab === id} aria-controls={`report-panel-${id}`} title={label}
+              className={`flex min-h-11 shrink-0 snap-start items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition-all duration-200 ${
                 activeTab===id ? "bg-slate-900 border-slate-900 text-white shadow-md" : "border-transparent text-gray-600 hover:bg-gray-100 hover:border-gray-200"
               }`}>
               <Icon size={15} className={activeTab===id ? "text-white" : color} />
-              <span className="hidden sm:inline">{label}</span>
+              <span>{label}</span>
             </button>
           ))}
         </div>
 
         {/* Tab Content */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
+        <div id={`report-panel-${activeTab}`} role="tabpanel" className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm sm:p-6">
           <div className="flex items-start gap-2 mb-5 pb-4 border-b border-gray-100">
             {(() => {
               const t=TABS.find(x=>x.id===activeTab);
