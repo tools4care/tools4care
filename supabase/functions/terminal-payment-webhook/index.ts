@@ -1,5 +1,6 @@
 import Stripe from "npm:stripe@^17.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildPaymentReceiptEmail } from "../_shared/paymentReceiptEmail.ts";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -89,11 +90,20 @@ Deno.serve(async (req) => {
     const [{ data: customer }, operatorAuth, { data: balance }] = await Promise.all([
       admin.from("clientes").select("nombre,negocio,email").eq("id", session.cliente_id).maybeSingle(),
       admin.auth.admin.getUserById(session.operator_id),
-      admin.from("v_cxc_cliente_detalle_ext").select("saldo").eq("cliente_id", session.cliente_id).maybeSingle(),
+      admin.from("v_cxc_cliente_detalle_ext").select("saldo,score_base,limite_politica,credito_disponible").eq("cliente_id", session.cliente_id).maybeSingle(),
     ]);
     const customerName = customer?.negocio || customer?.nombre || "Customer";
     const subject = `Tools4Care payment received — ${customerName} — ${money(session.amount_cents)}`;
-    const html = `<p><b>${customerName}</b> paid <b>${money(session.amount_cents)}</b> using the secure Stripe link.</p><p>The payment was applied automatically. Remaining balance: <b>$${Number(balance?.saldo || 0).toFixed(2)}</b>.</p><p>Stripe reference: ${intentId}</p>`;
+    const html = buildPaymentReceiptEmail({
+      customerName,
+      amount: Number(session.amount_cents) / 100,
+      balanceAfter: Number(balance?.saldo || 0),
+      reference: intentId,
+      paymentChannel: "Secure payment link · Card",
+      creditScore: Number(balance?.score_base || 600),
+      creditLimit: Number(balance?.limite_politica || 0),
+      availableCredit: Number(balance?.credito_disponible || 0),
+    });
     const recipients = [...new Set([
       customer?.email,
       checkout.customer_details?.email,

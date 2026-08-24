@@ -16,6 +16,7 @@
 
 import Stripe from "npm:stripe@^17.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildPaymentReceiptEmail } from "../_shared/paymentReceiptEmail.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -41,44 +42,6 @@ async function resolveClienteId(admin: any, userId: string) {
 
 function money(n: number) {
   return `$${Number(n || 0).toFixed(2)}`;
-}
-
-function buildPaymentReceiptEmail({ name, amount, balanceAfter, reference, creditScore, creditLimit, availableCredit }: {
-  name: string;
-  amount: number;
-  balanceAfter: number;
-  reference: string;
-  creditScore: number;
-  creditLimit: number;
-  availableCredit: number;
-}) {
-  const dateStr = new Date().toLocaleString("en-US", {
-    timeZone: "America/New_York",
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-  return `
-  <div style="font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 480px; margin: 0 auto; color: #0f172a;">
-    <div style="background: linear-gradient(135deg, #020617, #172554, #1d4ed8); border-radius: 20px; padding: 28px 24px; color: #ffffff;">
-      <p style="margin: 0; font-size: 12px; font-weight: 800; letter-spacing: 0.1em; color: #bfdbfe;">TOOLS4CARE</p>
-      <h1 style="margin: 6px 0 0; font-size: 22px;">Payment received</h1>
-      <p style="margin: 18px 0 0; font-size: 13px; color: #bfdbfe;">Amount paid</p>
-      <p style="margin: 2px 0 0; font-size: 34px; font-weight: 800;">${money(amount)}</p>
-    </div>
-    <div style="padding: 20px 4px;">
-      <p style="margin: 0 0 12px;">Hi ${name || "there"},</p>
-      <p style="margin: 0 0 16px; line-height: 1.5;">We received your card payment and it's already applied to your Tools4Care account.</p>
-      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-        <tr><td style="padding: 8px 0; color: #64748b;">Date</td><td style="padding: 8px 0; text-align: right; font-weight: 700;">${dateStr} ET</td></tr>
-        <tr><td style="padding: 8px 0; color: #64748b; border-top: 1px solid #e2e8f0;">Reference</td><td style="padding: 8px 0; text-align: right; font-weight: 700; border-top: 1px solid #e2e8f0;">${reference}</td></tr>
-        <tr><td style="padding: 8px 0; color: #64748b; border-top: 1px solid #e2e8f0;">Remaining balance</td><td style="padding: 8px 0; text-align: right; font-weight: 700; border-top: 1px solid #e2e8f0;">${money(balanceAfter)}</td></tr>
-        <tr><td style="padding: 8px 0; color: #64748b; border-top: 1px solid #e2e8f0;">Credit score</td><td style="padding: 8px 0; text-align: right; font-weight: 700; border-top: 1px solid #e2e8f0;">${creditScore}</td></tr>
-        <tr><td style="padding: 8px 0; color: #64748b; border-top: 1px solid #e2e8f0;">Credit limit</td><td style="padding: 8px 0; text-align: right; font-weight: 700; border-top: 1px solid #e2e8f0;">${money(creditLimit)}</td></tr>
-        <tr><td style="padding: 8px 0; color: #64748b; border-top: 1px solid #e2e8f0;">Available credit</td><td style="padding: 8px 0; text-align: right; font-weight: 700; border-top: 1px solid #e2e8f0;">${money(availableCredit)}</td></tr>
-      </table>
-      <p style="margin: 20px 0 0; font-size: 13px; color: #64748b; line-height: 1.5;">Questions about this payment? Reply to this email or call us at (978) 594-1624.</p>
-    </div>
-  </div>`;
 }
 
 Deno.serve(async (req) => {
@@ -197,8 +160,8 @@ Deno.serve(async (req) => {
         .maybeSingle();
 
       const { data: resumenAfter } = await admin
-        .from("v_cxc_cliente_detalle")
-        .select("saldo")
+        .from("v_cxc_cliente_detalle_ext")
+        .select("saldo,score_base,limite_politica,credito_disponible")
         .eq("cliente_id", clienteId)
         .maybeSingle();
       const balanceAfter = Number(resumenAfter?.saldo || 0);
@@ -212,10 +175,11 @@ Deno.serve(async (req) => {
               to: cleanEmail,
               subject: `Payment received — ${money(monto)}`,
               html: buildPaymentReceiptEmail({
-                name: cliente?.negocio || cliente?.nombre || "",
+                customerName: cliente?.negocio || cliente?.nombre || "",
                 amount: monto,
                 balanceAfter,
                 reference: paymentIntentId,
+                paymentChannel: "Customer portal · Card",
                 creditScore: Number(resumenAfter?.score_base || 600),
                 creditLimit: Number(resumenAfter?.limite_politica || 0),
                 availableCredit: Number(resumenAfter?.credito_disponible || 0),

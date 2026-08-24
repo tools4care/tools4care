@@ -1,5 +1,6 @@
 import Stripe from "npm:stripe@^17.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildPaymentReceiptEmail } from "../_shared/paymentReceiptEmail.ts";
 
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -10,28 +11,6 @@ function response(body: unknown, status = 200) {
 
 function money(value: number) {
   return `$${Number(value || 0).toFixed(2)}`;
-}
-
-function receiptHtml(name: string, amount: number, balance: number, reference: string, score: number, limit: number, available: number) {
-  const date = new Date().toLocaleString("en-US", {
-    timeZone: "America/New_York",
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0f172a">
-    <div style="background:#172554;border-radius:20px;padding:28px 24px;color:#fff">
-      <p style="margin:0;font-size:12px;font-weight:800;color:#bfdbfe">TOOLS4CARE</p>
-      <h1 style="margin:6px 0 0;font-size:22px">Payment received</h1>
-      <p style="margin:18px 0 0;font-size:13px;color:#bfdbfe">Amount paid</p>
-      <p style="margin:2px 0 0;font-size:34px;font-weight:800">${money(amount)}</p>
-    </div>
-    <div style="padding:20px 4px">
-      <p>Hi ${name || "there"},</p>
-      <p>Your card payment has been applied to your Tools4Care account.</p>
-      <p><b>Date:</b> ${date} ET<br><b>Reference:</b> ${reference}<br><b>Remaining balance:</b> ${money(balance)}<br><b>Credit score:</b> ${score}<br><b>Credit limit:</b> ${money(limit)}<br><b>Available credit:</b> ${money(available)}</p>
-      <p style="font-size:13px;color:#64748b">Questions? Call (978) 594-1624.</p>
-    </div>
-  </div>`;
 }
 
 Deno.serve(async (req) => {
@@ -92,7 +71,16 @@ Deno.serve(async (req) => {
         body: {
           to: email,
           subject: `Payment received — ${money(amount)}`,
-          html: receiptHtml(customer?.negocio || customer?.nombre || "", amount, Number(summary?.saldo || 0), intent.id, Number(summary?.score_base || 600), Number(summary?.limite_politica || 0), Number(summary?.credito_disponible || 0)),
+          html: buildPaymentReceiptEmail({
+            customerName: customer?.negocio || customer?.nombre || "",
+            amount,
+            balanceAfter: Number(summary?.saldo || 0),
+            reference: intent.id,
+            paymentChannel: "Customer portal · Card",
+            creditScore: Number(summary?.score_base || 600),
+            creditLimit: Number(summary?.limite_politica || 0),
+            availableCredit: Number(summary?.credito_disponible || 0),
+          }),
         },
       });
       if (emailError || emailResult?.ok === false) {
