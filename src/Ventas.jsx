@@ -4003,13 +4003,32 @@ function clearSale() {
   // Once the sale is actually completed, the shown notebook requests are
   // considered fulfilled — mark them sold so the barber's card clears out
   // of the Visit Notebook's running list instead of lingering there.
-  async function markNotebookRequestsSold() {
-    const ids = notebookRequestSummary.map((item) => item.id).filter(Boolean);
-    if (!ids.length) return;
+  async function markNotebookRequestsSold(clientId = selectedClient?.id) {
+    if (!clientId || !van?.id) return 0;
     try {
-      await supabase.from("visit_notebook_items").update({ sold: true, picked: true }).in("id", ids);
+      // Re-read at completion time instead of trusting the reference panel's
+      // React state. Restored pending sales and slow client-selection queries
+      // can legitimately leave that panel empty even though open requests exist.
+      const { data: openRequests, error: loadError } = await supabase
+        .from("visit_notebook_items")
+        .select("id,visit_notebooks!inner(van_id)")
+        .eq("cliente_id", clientId)
+        .eq("sold", false)
+        .eq("visit_notebooks.van_id", van.id);
+      if (loadError) throw loadError;
+      const ids = (openRequests || []).map((item) => item.id).filter(Boolean);
+      if (!ids.length) return 0;
+      const { error: updateError } = await supabase
+        .from("visit_notebook_items")
+        .update({ sold: true, picked: true, updated_at: new Date().toISOString() })
+        .in("id", ids);
+      if (updateError) throw updateError;
+      setNotebookRequestSummary((current) => current.filter((item) => !ids.includes(item.id)));
+      return ids.length;
     } catch (err) {
       console.warn("Could not mark notebook requests as sold:", err?.message);
+      toast.warning("Sale saved, but the visit product list could not be cleared. Please retry from the visit notebook.", 7000);
+      return 0;
     }
   }
 
@@ -4573,6 +4592,9 @@ if (!saleIsOffline && selectedClient?.id && amountToCreditCheck > 0.0001) {
             }),
             // Pagos originales para referencia
             payments: payments.filter((p) => !p?.toAR && Number(p.monto) > 0),
+            // The sync worker clears every still-open visit request for this
+            // customer only after the offline sale reaches Supabase.
+            visit_notebook_client_id: selectedClient?.id || null,
             // Fecha real de la transacción (sin campo fecha_venta — no existe en BD)
             created_at: new Date().toISOString(),
           };
@@ -4607,7 +4629,8 @@ if (!saleIsOffline && selectedClient?.id && amountToCreditCheck > 0.0001) {
             removePendingFromLSById(currentPendingId);
             window.pendingSaleId = null;
           }
-          await markNotebookRequestsSold();
+          // Do not mark cloud requests fulfilled before an offline sale has
+          // actually synchronized. syncManager performs this step afterward.
           clearSale();
           return;
         } catch (offlineError) {

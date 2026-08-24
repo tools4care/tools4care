@@ -2,6 +2,25 @@
 import { supabase } from '../supabaseClient';
 import { obtenerVentasPendientes, marcarVentaSincronizada, obtenerPagosPendientes, marcarPagoSincronizado } from './offlineDB';
 
+async function fulfillVisitNotebookRequests(clientId, vanId) {
+  if (!clientId || !vanId) return 0;
+  const { data, error: loadError } = await supabase
+    .from('visit_notebook_items')
+    .select('id,visit_notebooks!inner(van_id)')
+    .eq('cliente_id', clientId)
+    .eq('sold', false)
+    .eq('visit_notebooks.van_id', vanId);
+  if (loadError) throw loadError;
+  const ids = (data || []).map((item) => item.id).filter(Boolean);
+  if (!ids.length) return 0;
+  const { error: updateError } = await supabase
+    .from('visit_notebook_items')
+    .update({ sold: true, picked: true, updated_at: new Date().toISOString() })
+    .in('id', ids);
+  if (updateError) throw updateError;
+  return ids.length;
+}
+
 /**
  * Sincroniza todas las ventas pendientes con Supabase
  */
@@ -85,6 +104,11 @@ export async function sincronizarVentasPendientes() {
             });
             if (registerError) throw registerError;
           }
+
+          await fulfillVisitNotebookRequests(
+            venta.visit_notebook_client_id || venta.cliente_id,
+            venta.van_id,
+          );
 
           await marcarVentaSincronizada(venta._offline_id);
           sincronizadas++;
@@ -202,6 +226,11 @@ export async function sincronizarVentasPendientes() {
             }
           }
         }
+
+        await fulfillVisitNotebookRequests(
+          venta.visit_notebook_client_id || venta.cliente_id,
+          venta.van_id,
+        );
 
         // ── Marcar como sincronizada ──
         // The sale row itself is correctly saved even if a stock update above
