@@ -292,7 +292,10 @@ function usePrecloseRows(vanId, diasAtras = 21) {
         const filtered = normalized.filter((r) => {
             const total = r.cash_expected + r.card_expected + r.transfer_expected + r.mix_unallocated + r.other_expected;
             const isValid = r.dia && /^\d{4}-\d{2}-\d{2}$/.test(r.dia);
-            const hasTransactions = total > 0;
+            // Closeouts are monetary records rounded to cents. Floating-point
+            // residue below half a cent renders as $0.00 and cannot produce a
+            // valid closeout, so it must not create a pending date.
+            const hasTransactions = Number.isFinite(total) && Math.round(total * 100) > 0;
 
             if (isValid && hasTransactions) return true;
 
@@ -1439,14 +1442,10 @@ export default function PreCierreVan() {
   // Cargar filas pendientes usando el hook personalizado
   const { rows: pendingRows, loading, error } = usePrecloseRows(van?.id, 21);
   
-  // Sincronizar filas pendientes con el estado principal
-  const [rows, setRows] = useState([]);
-  
-  useEffect(() => {
-    if (pendingRows.length !== rows.length) {
-      setRows(pendingRows);
-    }
-  }, [pendingRows, rows.length]);
+  // The hook is the single source of truth. Keeping a second copy that only
+  // synchronized when the row count changed left stale zero-dollar dates on
+  // screen after a closeout or refresh.
+  const rows = pendingRows;
 
   // Cargar datos iniciales
   useEffect(() => {
