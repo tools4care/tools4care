@@ -606,59 +606,6 @@ function PestañaVentas({ productoId, costoUnit = 0 }) {
 }
 
 /* ============================================================
-   ====================  HELPERS DE STOCK  ====================
-   ============================================================ */
-
-async function addStockSeleccionado(productoId, productoActual) {
-  const qty = Number(productoActual.cantidad_inicial || 0);
-  if (!qty || qty <= 0) return;
-
-  const esAlmacen = productoActual.ubicacion_inicial === "almacen";
-
-  if (esAlmacen) {
-    const { data: existente } = await supabase
-      .from("stock_almacen")
-      .select("id, cantidad")
-      .eq("producto_id", productoId)
-      .maybeSingle();
-
-    if (existente?.id) {
-      await supabase.from("stock_almacen").update({ cantidad: Number(existente.cantidad || 0) + qty }).eq("id", existente.id);
-    } else {
-      await supabase.from("stock_almacen").insert([{ producto_id: productoId, cantidad: qty }]);
-    }
-
-    try {
-      await supabase.from("movimientos_stock").insert([
-        { producto_id: productoId, tipo: "AJUSTE_POSITIVO", cantidad: qty, ubicacion: "almacen", van_id: null, motivo: "Alta desde formulario de producto", fecha: new Date().toISOString() },
-      ]);
-    } catch {}
-  } else {
-    const vanId = productoActual.van_id_inicial;
-    if (!vanId) return;
-
-    const { data: existente } = await supabase
-      .from("stock_van")
-      .select("id, cantidad")
-      .eq("producto_id", productoId)
-      .eq("van_id", vanId)
-      .maybeSingle();
-
-    if (existente?.id) {
-      await supabase.from("stock_van").update({ cantidad: Number(existente.cantidad || 0) + qty }).eq("id", existente.id);
-    } else {
-      await supabase.from("stock_van").insert([{ producto_id: productoId, van_id: vanId, cantidad: qty }]);
-    }
-
-    try {
-      await supabase.from("movimientos_stock").insert([
-        { producto_id: productoId, tipo: "AJUSTE_POSITIVO", cantidad: qty, ubicacion: "van", van_id: vanId, motivo: "Alta desde formulario de producto", fecha: new Date().toISOString() },
-      ]);
-    } catch {}
-  }
-}
-
-/* ============================================================
    ===================  COMPONENTE PRINCIPAL  =================
    ============================================================ */
 
@@ -1069,20 +1016,21 @@ export default function Productos() {
       }
       savedMessage = "Product updated successfully.";
     } else {
-      const { data, error } = await supabase.from("productos").insert([dataProducto]).select().maybeSingle();
+      const { data, error } = await supabase.rpc("create_product_with_initial_stock", {
+        p_product: dataProducto,
+        p_initial_quantity: Number(productoActual.cantidad_inicial || 0),
+        p_location: productoActual.ubicacion_inicial || ubicacionInicialDefault(),
+        p_van_id: productoActual.ubicacion_inicial === "van"
+          ? (productoActual.van_id_inicial || vanIdInicialDefault())
+          : null,
+      });
       if (error) {
         setMensaje(error.message?.toLowerCase().includes("unique") ? "Error: This code/UPC is already in use. Please use another one." : "Error: " + error.message);
         setGuardandoProducto(false); // 🆕 RESTABLECER ESTADO
         return;
       }
-      productoId = data.id;
+      productoId = data;
       savedMessage = "Product added successfully.";
-    }
-
-    try {
-      await addStockSeleccionado(productoId, productoActual);
-    } catch (e2) {
-      setMensaje((prev) => (prev ? prev + " " : "") + "Error adding stock: " + (e2?.message || e2));
     }
 
     setProductoActual((prev) =>
@@ -1103,33 +1051,13 @@ export default function Productos() {
     if (!productoActual?.id) return;
     const id = productoActual.id;
 
-    const { count: ventasCount, error: errDet } = await supabase
-      .from("detalle_ventas")
-      .select("*", { count: "exact", head: true })
-      .eq("producto_id", id);
-
-    if (errDet) {
-      setMensaje("Error checking dependencies: " + errDet.message);
-      return;
-    }
-
-    if ((ventasCount ?? 0) > 0) {
-      toast.warning(`Cannot delete: this product is used in ${ventasCount} sale(s).`);
-      return;
-    }
-
     const ok = await confirm("Permanently delete this product?", { confirmLabel: "Delete", danger: true });
     if (!ok) return;
 
-    await Promise.allSettled([
-      supabase.from("movimientos_stock").delete().eq("producto_id", id),
-      supabase.from("stock_almacen").delete().eq("producto_id", id),
-      supabase.from("stock_van").delete().eq("producto_id", id),
-    ]);
-
-    const { error } = await supabase.from("productos").delete().eq("id", id);
+    const { error } = await supabase.rpc("delete_unused_product", { p_product_id: id });
     if (error) {
-      setMensaje("Error: " + error.message);
+      if (error.message?.includes("used in")) toast.warning(error.message);
+      else setMensaje("Error: " + error.message);
       console.error(error);
       return;
     }
