@@ -272,6 +272,7 @@ function FinancialLedgerReport({ van }) {
   const [days, setDays] = useState([]);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState(null);
   const [searched, setSearched] = useState(false);
 
@@ -333,6 +334,79 @@ function FinancialLedgerReport({ van }) {
     URL.revokeObjectURL(url);
   };
 
+  const exportPdf = async () => {
+    if (!weeks.length || exportingPdf) return;
+    setExportingPdf(true);
+    try {
+      const { jsPDF, autoTable } = await loadPdfLibs();
+      const doc = new jsPDF({ orientation: "landscape" });
+      doc.setFillColor(5, 150, 105);
+      doc.rect(0, 0, 297, 28, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(18);
+      doc.text("Tools4Care - Income and Expense Report", 14, 13);
+      doc.setFontSize(10);
+      doc.text(`Period: ${fmtDate(from)} - ${fmtDate(to)}  |  VAN: ${van?.nombre_van || van?.nombre || "-"}`, 14, 21);
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}`, 14, 36);
+
+      const summary = [
+        ["TOTAL INCOME", fmtCurrency(totals.moneyIn)],
+        ["REFUNDS", fmtCurrency(totals.refunds)],
+        ["EXPENSES", fmtCurrency(totals.expenses)],
+        ["NET TOTAL", fmtCurrency(totals.net)],
+      ];
+      autoTable(doc, {
+        startY: 42,
+        head: [["Period summary", "Amount"]],
+        body: summary,
+        theme: "grid",
+        tableWidth: 100,
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: "bold" },
+        didParseCell: (data) => {
+          if (data.section === "body" && data.row.index === summary.length - 1) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = totals.net >= 0 ? [209, 250, 229] : [254, 226, 226];
+          }
+        },
+      });
+
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 9,
+        head: [["Week starting", "Income", "Refunds", "Expenses", "Net total", "Net A/R change", "Entries"]],
+        body: weeks.map((week) => [
+          fmtDate(week.week_start), fmtCurrency(week.money_in), fmtCurrency(week.refunds),
+          fmtCurrency(week.expenses), fmtCurrency(week.net_cash_movement),
+          fmtCurrency(week.net_ar_change), week.cash_entries,
+        ]),
+        foot: [[
+          "TOTAL", fmtCurrency(totals.moneyIn), fmtCurrency(totals.refunds),
+          fmtCurrency(totals.expenses), fmtCurrency(totals.net), fmtCurrency(totals.ar), totals.entries,
+        ]],
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [4, 120, 87], textColor: 255, fontStyle: "bold" },
+        footStyles: { fillColor: [209, 250, 229], textColor: [6, 78, 59], fontStyle: "bold" },
+      });
+
+      let noteY = doc.lastAutoTable.finalY + 10;
+      if (noteY > 195) {
+        doc.addPage();
+        noteY = 18;
+      }
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text("Net total = income - refunds - expenses. A/R change is shown separately because it is not necessarily money received.", 14, noteY);
+      doc.save(`Tools4Care_Income_Expenses_${from}_to_${to}.pdf`);
+    } catch (pdfError) {
+      setError(pdfError?.message || "Could not generate the PDF report.");
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const typeLabel = (type) => ({
     sale_payment: "Sale payment",
     ar_payment: "Direct A/R payment",
@@ -357,8 +431,12 @@ function FinancialLedgerReport({ van }) {
             {label}
           </button>
         ))}
+        <button type="button" onClick={exportPdf} disabled={!weeks.length || exportingPdf}
+          className="ml-auto flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
+          {exportingPdf ? <RefreshCw size={14} className="animate-spin"/> : <Download size={14}/>} Download PDF
+        </button>
         <button type="button" onClick={exportCsv} disabled={!weeks.length}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
+          className="flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
           <Download size={14}/> Export weekly CSV
         </button>
       </div>
