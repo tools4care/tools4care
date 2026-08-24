@@ -1,5 +1,6 @@
 // src/utils/offlineDB.js
 import localforage from 'localforage';
+import { normalizeOfflinePayment, normalizeOfflineSale } from '../lib/offlineQueue';
 
 // Configurar almacén local
 localforage.config({
@@ -16,17 +17,23 @@ function cacheEsValido(timestamp) {
   return (Date.now() - new Date(timestamp).getTime()) < CACHE_TTL_MS;
 }
 
+function createQueueId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+}
+
+let queueMigrationPromise = null;
+
 // ==================== VENTAS PENDIENTES ====================
 
 export async function guardarVentaOffline(venta) {
   try {
     const ventasPendientes = await obtenerVentasPendientes();
-    const nuevaVenta = {
+    const nuevaVenta = normalizeOfflineSale({
       ...venta,
-      _offline_id: Date.now(),
       _offline_timestamp: new Date().toISOString(),
       _sincronizada: false
-    };
+    }, createQueueId);
     ventasPendientes.push(nuevaVenta);
     await localforage.setItem('ventas_pendientes', ventasPendientes);
     return nuevaVenta;
@@ -55,6 +62,39 @@ export async function marcarVentaSincronizada(offlineId) {
   } catch (error) {
     console.error('Error marcando venta sincronizada:', error);
     return false;
+  }
+}
+
+export async function migrarColasOfflineLegacy() {
+  if (queueMigrationPromise) return queueMigrationPromise;
+  queueMigrationPromise = (async () => {
+    const [salesRaw, paymentsRaw] = await Promise.all([
+      localforage.getItem('ventas_pendientes'),
+      localforage.getItem('pagos_pendientes'),
+    ]);
+    const sales = Array.isArray(salesRaw) ? salesRaw : [];
+    const payments = Array.isArray(paymentsRaw) ? paymentsRaw : [];
+    const normalizedSales = sales.map((sale) => normalizeOfflineSale(sale, createQueueId));
+    const normalizedPayments = payments.map((payment) => normalizeOfflinePayment(payment, createQueueId));
+    const salesChanged = normalizedSales.some((sale, index) =>
+      sale.transaction_id !== sales[index]?.transaction_id ||
+      sale._offline_id !== sales[index]?._offline_id ||
+      sale._queue_schema_version !== sales[index]?._queue_schema_version
+    );
+    const paymentsChanged = normalizedPayments.some((payment, index) =>
+      payment.transaction_id !== payments[index]?.transaction_id ||
+      payment.payment_batch_id !== payments[index]?.payment_batch_id ||
+      payment._offline_id !== payments[index]?._offline_id ||
+      payment._queue_schema_version !== payments[index]?._queue_schema_version
+    );
+    if (salesChanged) await localforage.setItem('ventas_pendientes', normalizedSales);
+    if (paymentsChanged) await localforage.setItem('pagos_pendientes', normalizedPayments);
+    return { sales: normalizedSales, payments: normalizedPayments, salesChanged, paymentsChanged };
+  })();
+  try {
+    return await queueMigrationPromise;
+  } finally {
+    queueMigrationPromise = null;
   }
 }
 
@@ -352,12 +392,11 @@ export async function obtenerFechaUltimoBackup() {
 export async function guardarPagoOffline(pago) {
   try {
     const pagosPendientes = await obtenerPagosPendientes();
-    const nuevoPago = {
+    const nuevoPago = normalizeOfflinePayment({
       ...pago,
-      _offline_id: Date.now(),
       _offline_timestamp: new Date().toISOString(),
       _sincronizada: false,
-    };
+    }, createQueueId);
     pagosPendientes.push(nuevoPago);
     await localforage.setItem('pagos_pendientes', pagosPendientes);
     return nuevoPago;
@@ -385,6 +424,18 @@ export async function marcarPagoSincronizado(offlineId) {
     return true;
   } catch (error) {
     console.error('Error marcando pago sincronizado:', error);
+    return false;
+  }
+}
+
+export async function marcarPagosSincronizados(offlineIds) {
+  try {
+    const ids = new Set(offlineIds || []);
+    const pagos = await obtenerPagosPendientes();
+    await localforage.setItem('pagos_pendientes', pagos.filter((p) => !ids.has(p._offline_id)));
+    return true;
+  } catch (error) {
+    console.error('Error marcando lote de pagos sincronizado:', error);
     return false;
   }
 }

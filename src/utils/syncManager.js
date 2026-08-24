@@ -1,6 +1,13 @@
 // src/utils/syncManager.js
 import { supabase } from '../supabaseClient';
-import { obtenerVentasPendientes, marcarVentaSincronizada, obtenerPagosPendientes, marcarPagoSincronizado } from './offlineDB';
+import {
+  marcarPagosSincronizados,
+  marcarVentaSincronizada,
+  migrarColasOfflineLegacy,
+  obtenerPagosPendientes,
+  obtenerVentasPendientes,
+} from './offlineDB';
+import { buildOfflinePaymentBatchRpc, groupOfflinePayments } from '../lib/offlineQueue';
 
 async function fulfillVisitNotebookRequests(clientId, vanId) {
   if (!clientId || !vanId) return 0;
@@ -29,6 +36,7 @@ export async function sincronizarVentasPendientes() {
 
   try {
     // Obtener ventas pendientes de IndexedDB
+    await migrarColasOfflineLegacy();
     const ventasPendientes = await obtenerVentasPendientes();
     
     if (ventasPendientes.length === 0) {
@@ -50,8 +58,8 @@ export async function sincronizarVentasPendientes() {
     // Sincronizar cada venta
     for (const venta of ventasPendientes) {
       try {
-        // New offline sales carry a stable transaction_id and can be synced
-        // atomically. Legacy pending sales continue through the fallback below.
+        // All entries, including legacy ones, receive a persistent idempotency
+        // key before any network request. Only the atomic RPC is allowed.
         if (venta.transaction_id) {
           const total = Number(venta.total_venta ?? venta.total ?? 0);
           const totalPaid = Number(venta.total_pagado ?? 0);
@@ -116,138 +124,7 @@ export async function sincronizarVentasPendientes() {
           continue;
         }
 
-        // ── Insertar venta con todos los campos que usa el insert online ──
-        const { data: ventaData, error: ventaError } = await supabase
-          .from('ventas')
-          .insert({
-            cliente_id: venta.cliente_id,
-            van_id: venta.van_id,
-            usuario_id: venta.usuario_id,
-            store_cash_session_id: venta.store_cash_session_id || null,
-            // Totales — usar total_venta como columna principal
-            total_venta: venta.total_venta ?? venta.total ?? 0,
-            total: venta.total ?? venta.total_venta ?? 0,
-            total_pagado: venta.total_pagado ?? 0,
-            // Estado y método de pago
-            estado_pago: venta.estado_pago || 'pendiente',
-            metodo_pago: venta.metodo_pago || null,
-            // Desglose por forma de pago
-            pago_efectivo: venta.pago_efectivo ?? 0,
-            pago_tarjeta: venta.pago_tarjeta ?? 0,
-            pago_transferencia: venta.pago_transferencia ?? 0,
-            pago_otro: venta.pago_otro ?? 0,
-            // JSON de pago (si existe)
-            pago: venta.pago ?? null,
-            notas: venta.notas || null,
-            // Usar created_at original de la transacción offline
-            created_at: venta.created_at || venta._offline_timestamp || new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (ventaError) throw ventaError;
-
-        const ventaId = ventaData.id;
-
-        // ── Insertar items de la venta ──
-        if (venta.items && venta.items.length > 0) {
-          const { error: itemsError } = await supabase
-            .from('detalle_ventas')
-            .insert(
-              venta.items.map(item => {
-                const base = Number(item.precio_unit ?? item.precio_unitario ?? 0);
-                const pct  = Number(item.descuento_pct ?? 0);
-                const qty  = Number(item.cantidad ?? 1);
-                const finalUnit = pct > 0 ? base * (1 - pct / 100) : base;
-                // Always derive from precio_unitario + descuento — see the
-                // transaction_id path above for why a stored item.subtotal
-                // isn't trusted here either.
-                const subtotal = Number((finalUnit * qty).toFixed(2));
-                return {
-                  venta_id: ventaId,
-                  producto_id: item.producto_id,
-                  cantidad: qty,
-                  precio_unitario: base,
-                  descuento: pct,
-                  subtotal,
-                };
-              })
-            );
-
-          if (itemsError) {
-            // Roll back the orphaned venta so it stays in the pending queue and retries next sync
-            await supabase.from('ventas').delete().eq('id', ventaId);
-            throw new Error(`detalle_ventas insert failed: ${itemsError.message}`);
-          }
-        }
-
-        // ── Actualizar stock — decrementar_stock_van now rejects an oversell
-        // instead of silently clamping to 0 (see migration
-        // 20260709_fix_decrementar_stock_van_reject_insufficient.sql). The sale
-        // row itself is already saved at this point, so a stock failure here is
-        // reported (not silently swallowed) rather than rolled back.
-        const stockIssues = [];
-        for (const item of venta.items || []) {
-          try {
-            await supabase.rpc('decrementar_stock_van', {
-              p_van_id:      venta.van_id,
-              p_producto_id: item.producto_id,
-              p_cantidad:    item.cantidad,
-            });
-          } catch (stockErr) {
-            console.error(`⚠️ Stock update failed for producto ${item.producto_id} on venta ${ventaId}:`, stockErr?.message);
-            stockIssues.push({ producto_id: item.producto_id, error: stockErr?.message });
-          }
-        }
-
-        // ── Si había pagos en la venta, insertarlos también ──
-        if (venta.payments && venta.payments.length > 0 && venta.total_pagado > 0) {
-          for (const pago of venta.payments) {
-            if (!Number(pago.monto)) continue;
-            try {
-              const { error: rpcError } = await supabase.rpc('cxc_registrar_pago', {
-                p_cliente_id: venta.cliente_id,
-                p_monto: Number(pago.monto),
-                p_metodo: pago.forma || 'efectivo',
-                p_van_id: venta.van_id,
-                p_fecha: venta.created_at || new Date().toISOString(),
-              });
-              if (rpcError) {
-                console.warn(`⚠️ RPC pago falló, insertando directo:`, rpcError.message);
-                await supabase.from('pagos').insert([{
-                  cliente_id: venta.cliente_id,
-                  monto: Number(pago.monto),
-                  metodo_pago: pago.forma || 'efectivo',
-                  fecha_pago: venta.created_at || new Date().toISOString(),
-                }]);
-              }
-            } catch (pagoErr) {
-              console.warn(`⚠️ Error insertando pago de venta offline:`, pagoErr);
-            }
-          }
-        }
-
-        await fulfillVisitNotebookRequests(
-          venta.visit_notebook_client_id || venta.cliente_id,
-          venta.van_id,
-        );
-
-        // ── Marcar como sincronizada ──
-        // The sale row itself is correctly saved even if a stock update above
-        // failed, so it's still marked synced (retrying the insert would
-        // duplicate it — this legacy path has no transaction_id to dedupe on).
-        // The stock issue is surfaced via `errores`/`resultados` instead.
-        await marcarVentaSincronizada(venta._offline_id);
-
-        if (stockIssues.length > 0) {
-          errores++;
-          resultados.push({ id: venta._offline_id, success: true, ventaId, stockIssues });
-          console.error(`⚠️ Venta ${venta._offline_id} sincronizada con ${stockIssues.length} problema(s) de stock sin resolver — requiere reconciliación manual.`);
-        } else {
-          sincronizadas++;
-          resultados.push({ id: venta._offline_id, success: true, ventaId });
-          console.log(`✅ Venta ${venta._offline_id} sincronizada → ID ${ventaId} | ${venta.estado_pago} | $${venta.total_venta ?? venta.total}`);
-        }
+        throw new Error('Offline sale could not be assigned an idempotency key');
 
       } catch (error) {
         errores++;
@@ -290,6 +167,7 @@ export async function sincronizarPagosPendientes() {
   console.log('🔄 Iniciando sincronización de pagos pendientes...');
 
   try {
+    await migrarColasOfflineLegacy();
     const pagosPendientes = await obtenerPagosPendientes();
 
     if (pagosPendientes.length === 0) {
@@ -302,53 +180,20 @@ export async function sincronizarPagosPendientes() {
     let sincronizados = 0;
     let errores = 0;
 
-    for (const pago of pagosPendientes) {
+    const paymentGroups = groupOfflinePayments(pagosPendientes);
+    for (const group of paymentGroups) {
       try {
-        if (pago.store_cash_session_id) {
-          const { error: storePaymentError } = await supabase.rpc('record_store_ar_payment', {
-            p_cliente_id: pago.cliente_id,
-            p_location_id: pago.van_id,
-            p_session_id: pago.store_cash_session_id,
-            p_amount: pago.monto,
-            p_method: pago.metodo_pago,
-            p_reference: pago.referencia || null,
-            p_transaction_id: pago.transaction_id,
-            p_paid_at: pago.fecha_pago,
-          });
-          if (storePaymentError) throw storePaymentError;
-          await marcarPagoSincronizado(pago._offline_id);
-          sincronizados++;
-          console.log(`✅ Pago de tienda offline ${pago._offline_id} sincronizado con su turno de caja.`);
-          continue;
-        }
-
-        // Intentar via RPC cxc_registrar_pago primero
-        const { error: rpcError } = await supabase.rpc('cxc_registrar_pago', {
-          p_cliente_id: pago.cliente_id,
-          p_monto: pago.monto,
-          p_metodo: pago.metodo_pago,
-          p_van_id: pago.van_id,
-          p_fecha: pago.fecha_pago,
-        });
-
-        if (rpcError) {
-          // Fallback: insertar directamente en tabla pagos
-          const { error: insError } = await supabase.from('pagos').insert([{
-            cliente_id: pago.cliente_id,
-            monto: pago.monto,
-            metodo_pago: pago.metodo_pago,
-            fecha_pago: pago.fecha_pago,
-          }]);
-          if (insError) throw insError;
-        }
-
-        await marcarPagoSincronizado(pago._offline_id);
-        sincronizados++;
-        console.log(`✅ Pago offline ${pago._offline_id} sincronizado: $${pago.monto} (${pago._cliente_nombre || pago.cliente_id})`);
+        const rpcPayload = buildOfflinePaymentBatchRpc(group);
+        const { error: rpcError } = await supabase.rpc('record_split_ar_payment', rpcPayload);
+        if (rpcError) throw rpcError;
+        const removed = await marcarPagosSincronizados(group.parts.map((part) => part._offline_id));
+        if (!removed) throw new Error('Payment reached Supabase but could not be removed from the local queue');
+        sincronizados += group.parts.length;
+        console.log(`✅ Lote offline ${group.batchId} sincronizado: ${group.parts.length} pago(s).`);
 
       } catch (error) {
-        errores++;
-        console.error(`❌ Error sincronizando pago ${pago._offline_id}:`, error);
+        errores += group.parts.length;
+        console.error(`❌ Error sincronizando lote ${group.batchId}:`, error);
       }
     }
 
