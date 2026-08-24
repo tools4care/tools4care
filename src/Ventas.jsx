@@ -4950,7 +4950,6 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
         clienteId: selectedClient.id || null,
             ventaId: ventaId,
             vanId: van.id,
-            usuarioId: usuario.id,
             montoCredito: Number(pendingFromThisSale.toFixed(2)),
             saldoAnterior: Number(Math.max(0, balancePost - pendingFromThisSale).toFixed(2)),
             numCuotas: cuotasSeleccionadas,
@@ -4961,6 +4960,12 @@ if (pagoMinimoReq > 0 && paid + creditToOldDebtNow < pagoMinimoReq) {
           if (resultAcuerdo.ok) {
             createdAgreementPlan = resultAcuerdo.acuerdo.plan;
             setAgreementPlan(resultAcuerdo.acuerdo.plan);
+          } else {
+            toast.warning(
+              "Sale saved, but the payment agreement needs review: " +
+                (resultAcuerdo.error || "the agreement could not be created"),
+              8000
+            );
           }
         } catch (e) {
           console.warn('⚠️ Error creando acuerdo (no bloquea la venta):', e.message);

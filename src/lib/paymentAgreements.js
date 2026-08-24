@@ -234,7 +234,6 @@ export async function crearAcuerdo({
   clienteId,
   ventaId = null,
   vanId = null,
-  usuarioId = null,
   montoCredito,
   saldoAnterior = 0,
   numCuotas = null,
@@ -266,61 +265,30 @@ export async function crearAcuerdo({
     // Generar plan de pago por el total consolidado
     const plan = generarPlanPago(montoTotal, { numCuotas });
 
-    // 1) Insertar acuerdo
-    const { data: acuerdo, error: errAcuerdo } = await supabase
-      .from("acuerdos_pago")
-      .insert([
-        {
-          cliente_id: clienteId,
-          venta_id: ventaId,
-          van_id: vanId,
-          usuario_id: usuarioId,
-          monto_total: plan.monto_total,
-          num_cuotas: plan.num_cuotas,
-          dias_plazo: plan.dias_plazo,
-          fecha_limite: plan.fecha_limite,
-          excepcion_vendedor: excepcionVendedor,
-          excepcion_nota: excepcionNota,
-          acuerdo_padre_id: previos.length === 1 ? previos[0].id : null,
-        },
-      ])
-      .select()
-      .single();
-
-    if (errAcuerdo) throw errAcuerdo;
-
-    // 2) Insertar cuotas
     const cuotasInsert = plan.cuotas.map((c) => ({
-      acuerdo_id: acuerdo.id,
       numero_cuota: c.numero_cuota,
       monto: c.monto,
       fecha_vencimiento: c.fecha_vencimiento,
     }));
-
-    const { data: cuotas, error: errCuotas } = await supabase
-      .from("cuotas_acuerdo")
-      .insert(cuotasInsert)
-      .select();
-
-    if (errCuotas) {
-      // Rollback: eliminar acuerdo
-      await supabase.from("acuerdos_pago").delete().eq("id", acuerdo.id);
-      throw errCuotas;
-    }
-
-    // 3) Cerrar los acuerdos previos — quedan consolidados en el nuevo
-    if (previos.length > 0) {
-      const idsViejos = previos.map((a) => a.id);
-      await supabase
-        .from("acuerdos_pago")
-        .update({ estado: "renegociado", fue_renegociado: true })
-        .in("id", idsViejos);
-      await supabase
-        .from("cuotas_acuerdo")
-        .update({ estado: "cancelado" })
-        .in("acuerdo_id", idsViejos)
-        .in("estado", ["pendiente", "vencida", "parcial"]);
-    }
+    const { data: result, error: agreementError } = await supabase.rpc(
+      "create_payment_agreement_transactional",
+      {
+        p_cliente_id: clienteId,
+        p_venta_id: ventaId,
+        p_van_id: vanId,
+        p_monto_total: plan.monto_total,
+        p_num_cuotas: plan.num_cuotas,
+        p_dias_plazo: plan.dias_plazo,
+        p_fecha_limite: plan.fecha_limite,
+        p_excepcion_vendedor: excepcionVendedor,
+        p_excepcion_nota: excepcionNota,
+        p_cuotas: cuotasInsert,
+      }
+    );
+    if (agreementError) throw agreementError;
+    const acuerdo = result?.acuerdo;
+    const cuotas = result?.cuotas || cuotasInsert;
+    if (!acuerdo?.id) throw new Error("The agreement transaction did not return an agreement ID");
 
     console.log(
       `✅ Acuerdo ${previos.length > 0 ? "consolidado" : "creado"}: ${acuerdo.id} — ${plan.num_cuotas} cuotas de ${plan.monto_total}` +
@@ -336,7 +304,7 @@ export async function crearAcuerdo({
       },
       deudaPrevia,
       consolidado: deudaPrevia > 0,
-      acuerdosPrevios: previos.map((a) => a.id),
+      acuerdosPrevios: result?.acuerdos_previos || previos.map((a) => a.id),
     };
   } catch (err) {
     console.error("Error creando acuerdo:", err);
