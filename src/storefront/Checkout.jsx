@@ -290,12 +290,6 @@ function calcTax(taxableSubtotal, stateCode) {
   return taxableSubtotal * rate;
 }
 
-async function getOnlineVanId() {
-  const { data, error } = await supabase.from("vans").select("id, nombre_van").ilike("nombre_van", "%online%").maybeSingle();
-  if (error) return null;
-  return data?.id ?? null;
-}
-
 const LOCAL_CODES = [
   { code: "SAVE10", type: "percent", value: 10, active: true },
   { code: "WELCOME5", type: "amount", value: 5, active: true },
@@ -574,55 +568,21 @@ export default function Checkout() {
         setSuccess({ paymentIntent, orderId: oid, amounts });
         setPhase("success");
       };
-      const { data: order, error: e1 } = await supabase
-        .from("orders")
-        .insert({
+      const { data: finalized, error: finalizeError } = await supabase.functions.invoke("finalize-storefront-order", {
+        body: {
           payment_intent_id: paymentIntent.id,
-          amount_total: amounts.total,
-          amount_subtotal: amounts.subtotal,
-          amount_shipping: amounts.shipping,
-          amount_taxes: amounts.taxes,
-          amount_discount: amounts.discount || 0,
-          currency: paymentIntent.currency || "usd",
-          email: shipping?.email || null,
-          phone: phoneDigits(shipping?.phone) || null,
-          name: shipping?.name || null,
-          address_json: addressJson,
-          status: "pending",
-          promo_code: promo?.code || null,
-        })
-        .select("id")
-        .single();
-      if (e1) throw new Error(e1.message);
-      const orderId = order.id;
-      const rows = list.map((it) => ({
-        order_id: orderId,
-        producto_id: it.producto_id,
-        nombre: it.producto?.nombre,
-        qty: it.qty,
-        precio_unit: it.producto?.precio,
-        marca: it.producto?.marca ?? null,
-        codigo: it.producto?.codigo ?? null,
-        taxable: true,
-      }));
-      const { error: oiErr } = await supabase.from("order_items").insert(rows);
-      if (oiErr) throw oiErr;
-      try {
-        const onlineVanId = await getOnlineVanId();
-        if (onlineVanId) {
-          for (const it of list) {
-            const qty = Number(it.qty || 0);
-            if (qty > 0) {
-              await supabase.rpc("decrement_stock_van", { p_van_id: onlineVanId, p_producto_id: it.producto_id, p_delta: qty });
-            }
-          }
-        }
-      } catch {}
-      try {
-        await supabase.from("cart_items").delete().eq("cart_id", cid);
-      } catch {}
-      const { error: upErr } = await supabase.from("orders").update({ status: "paid" }).eq("id", orderId).neq("status", "paid");
-      if (upErr) throw upErr;
+          cart_id: cid,
+          shipping: {
+            name: shipping.name || null,
+            email: shipping.email || null,
+            phone: phoneDigits(shipping.phone) || null,
+            address_json: addressJson,
+          },
+        },
+      });
+      if (finalizeError) throw finalizeError;
+      if (!finalized?.order_id) throw new Error(finalized?.error || "Could not finalize the approved order.");
+      const orderId = finalized.order_id;
       await finalizeAndEmail(orderId);
     } catch (e) {
       setError(e.message || "Payment was approved, but we couldn't finalize the order.");
