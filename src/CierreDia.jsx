@@ -5,6 +5,7 @@ import { useVan } from "./hooks/VanContext";
 import { useUsuario } from "./UsuarioContext";
 import { useToast } from "./hooks/useToast";
 import { loadPdfLibs } from "./utils/lazyPdf";
+import { loadImageAsDataURL } from "./utils/pdfLogo";
 
 /* ======================= Utilidades ======================= */
 const NO_CLIENTE = "Quick sale / No client";
@@ -22,6 +23,28 @@ function normMetodo(s) {
 }
 
 function breakdownPago(item) {
+  const explicit = {
+    cash: Number(item?.pago_efectivo || 0),
+    card: Number(item?.pago_tarjeta || 0),
+    transfer: Number(item?.pago_transferencia || 0),
+    other: Number(item?.pago_otro || 0),
+  };
+  const explicitTotal = Object.values(explicit).reduce((sum, value) => sum + value, 0);
+  if (explicitTotal > 0) return explicit;
+
+  const amount = Number(item?.total_pagado ?? item?.monto ?? 0);
+  const method = String(item?.metodo_pago || item?.metodo || "").toLowerCase();
+  if (method.includes("cash") || method.includes("efectivo")) explicit.cash = amount;
+  else if (method.includes("card") || method.includes("tarjeta")) explicit.card = amount;
+  else if (
+    method.includes("transfer") || method.includes("zelle") ||
+    method.includes("venmo") || method.includes("cash app") ||
+    method.includes("cashapp") || method.includes("apple pay")
+  ) explicit.transfer = amount;
+  else explicit.other = amount;
+  return explicit;
+}
+
 async function calcularCierreCompleto(van_id, fecha) {
   // ... (código existente)
 
@@ -38,6 +61,9 @@ async function calcularCierreCompleto(van_id, fecha) {
   if (ventasError) throw ventasError;
 
   // 2️⃣ PAGOS DIRECTOS SOLO PARA DEUDAS (no asociados a ventas del día)
+  const nextDate = new Date(`${fecha}T00:00:00Z`);
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+  const fechaFinExclusiva = nextDate.toISOString().slice(0, 10);
   const { data: pagosDirectos, error: pagosError } = await supabase
     .from("pagos")
     .select(`
@@ -52,8 +78,8 @@ async function calcularCierreCompleto(van_id, fecha) {
       venta_id
     `)
     .eq("van_id", van_id)
-    .gte("fecha_pago", start)
-    .lte("fecha_pago", end)
+    .gte("fecha_pago", fecha)
+    .lt("fecha_pago", fechaFinExclusiva)
     .is("venta_id", null); // Solo pagos no asociados a ventas
 
   if (pagosError) throw pagosError;
