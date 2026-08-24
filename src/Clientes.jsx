@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
+import { serializeCanonicalAddress } from "./utils/address";
 import { useToast } from "./hooks/useToast";
 import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
@@ -1159,7 +1160,7 @@ const fetchPage = async (opts = {}) => {
         : `+${phoneDigits}`;
     const emailFinal = String(form.email || "").trim();
 
-    let direccionFinal = form.direccion || { calle: "", ciudad: "", estado: "", zip: "" };
+    const direccionFinal = serializeCanonicalAddress(form.direccion);
 
     const payload = {
       nombre: form.nombre,
