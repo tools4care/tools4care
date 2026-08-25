@@ -455,7 +455,11 @@ export default function Checkout() {
         };
         const res = await fetch(FN_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${supabaseAnonKey}` },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${supabaseAnonKey}`,
+            "x-ev-anon": getAnonId() || "",
+          },
           body: JSON.stringify({ amount: payload.amount, currency: "usd", metadata: payload.metadata, shipping: payload.shipping }),
         });
         if (!res.ok) {
