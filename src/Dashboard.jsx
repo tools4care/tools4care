@@ -2403,16 +2403,6 @@ export default function Dashboard() {
       const debtRows = debtResult.data || [];
       const rentalRows = rentalsResult.data || [];
 
-      setDailyActions({
-        loading: false,
-        pendingCloseouts,
-        debtClients: debtRows.length,
-        debtTotal: debtRows.reduce((sum, row) => sum + Number(row.saldo || 0), 0),
-        dueSubscriptions: (subscriptionsResult.data || []).length,
-        rentalsDue: rentalRows.length,
-        nextRental: rentalRows[0] || null,
-      });
-
       // Real last-activity per client, so a big-but-inactive ("frozen")
       // balance doesn't permanently outrank a smaller balance from a client
       // who is still active and actually reachable today. Without this, a
@@ -2421,13 +2411,19 @@ export default function Dashboard() {
       // occupied every slot forever.
       const debtClientIds = debtRows.map((r) => r.cliente_id).filter(Boolean);
       const lastActivityMap = new Map();
+      let clientMeta = new Map();
+      let routeRows = [];
       if (debtClientIds.length > 0) {
-        const [salesAct, paymentsAct] = await Promise.all([
+        const [salesAct, paymentsAct, clientMetaResult, routeResult] = await Promise.all([
           supabase.from("ventas").select("cliente_id, created_at, fecha")
             .eq("van_id", vanId).in("cliente_id", debtClientIds).neq("tipo", "devolucion"),
           supabase.from("pagos").select("cliente_id, fecha_pago")
             .eq("van_id", vanId).in("cliente_id", debtClientIds),
+          supabase.from("clientes").select("id, barberia_id").in("id", debtClientIds),
+          supabase.from("rutas_barberias").select("barberia_id, barberia_nombre").eq("van_id", vanId),
         ]);
+        clientMeta = new Map((clientMetaResult.data || []).map((row) => [row.id, row]));
+        routeRows = routeResult.data || [];
         const bump = (id, date) => {
           if (!date) return;
           const prev = lastActivityMap.get(id);
@@ -2437,7 +2433,28 @@ export default function Dashboard() {
         (paymentsAct.data || []).forEach((p) => bump(p.cliente_id, p.fecha_pago));
       }
 
-      const classified = debtRows.map((row) => {
+      // Route ownership is the primary signal. If a van has no configured
+      // route yet, fall back to recent activity on that van so the dashboard
+      // remains useful without leaking the other van's customers. Clients
+      // without a barber shop are included only when that van has activity.
+      const routeIds = new Set(routeRows.map((row) => row.barberia_id).filter(Boolean));
+      const routeScopedRows = debtRows.filter((row) => {
+        const meta = clientMeta.get(row.cliente_id);
+        if (routeIds.size > 0) return Boolean(meta?.barberia_id && routeIds.has(meta.barberia_id)) || (!meta?.barberia_id && lastActivityMap.has(row.cliente_id));
+        return lastActivityMap.has(row.cliente_id);
+      });
+
+      setDailyActions({
+        loading: false,
+        pendingCloseouts,
+        debtClients: routeScopedRows.length,
+        debtTotal: routeScopedRows.reduce((sum, row) => sum + Number(row.saldo || 0), 0),
+        dueSubscriptions: (subscriptionsResult.data || []).length,
+        rentalsDue: rentalRows.length,
+        nextRental: rentalRows[0] || null,
+      });
+
+      const classified = routeScopedRows.map((row) => {
         const saldo = Number(row.saldo || 0);
         const limit = Number(row.limite_politica || 0);
         const utilization = limit > 0 ? (saldo / limit) * 100 : null;
@@ -2446,9 +2463,8 @@ export default function Dashboard() {
         return { ...row, saldo, risk, age };
       });
 
-      // Split so long-dormant balances stay visible (never disappear — the
-      // point is to never lose track of who owes money) without crowding out
-      // clients who are still active and worth a reminder call today.
+      // Split route-scoped balances so long-dormant customers remain counted
+      // without crowding out customers who are active on this van today.
       const active = classified.filter((c) => c.age != null && c.age <= FROZEN_AFTER_DAYS);
       const frozen = classified.filter((c) => c.age == null || c.age > FROZEN_AFTER_DAYS);
 
@@ -3004,7 +3020,7 @@ export default function Dashboard() {
                   <DollarSign size={18} className="text-rose-600" />
                   Collect Today
                 </h2>
-                <p className="text-[11px] sm:text-xs text-gray-500">Active balances worth a call or reminder today</p>
+                <p className="text-[11px] sm:text-xs text-gray-500">Active balances on this van&apos;s route · worth a call or reminder today</p>
               </div>
               <button
                 onClick={() => navigate("/reportes?tab=ar_risk")}
