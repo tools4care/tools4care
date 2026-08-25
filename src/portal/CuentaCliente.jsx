@@ -44,6 +44,23 @@ function HistoryCard({ icon, title, subtitle, rows, loading, error, hasMore, loa
   );
 }
 
+function PaymentStatusTimeline() {
+  const steps = ["Stripe approved", "Applied to CxC", "Balance updated", "Receipt prepared"];
+  return (
+    <ol aria-label="Payment processing status" className="grid grid-cols-2 gap-3 rounded-2xl border border-emerald-100 bg-white p-4 sm:grid-cols-4">
+      {steps.map((label, index) => (
+        <li key={label} className="relative flex items-center gap-2 sm:block sm:text-center">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white sm:mx-auto">
+            <CheckCircle2 size={16} aria-hidden="true" />
+          </span>
+          <span className="text-xs font-bold text-slate-700 sm:mt-2 sm:block">{label}</span>
+          {index < steps.length - 1 && <span className="absolute left-8 top-4 hidden h-px w-[calc(100%-1.5rem)] bg-emerald-200 sm:block sm:left-[calc(50%+1.25rem)] sm:w-[calc(100%-2.5rem)]" aria-hidden="true" />}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function InvoiceDownloadButton({ purchase, client }) {
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
@@ -260,6 +277,7 @@ export function CuentaCliente({ session }) {
                   <CheckCircle2 size={22} />
                   <p className="text-sm font-bold">Your card payment was applied to your account.</p>
                 </div>
+                <PaymentStatusTimeline />
                 <button className="w-full rounded-xl bg-slate-900 py-3 text-sm font-black text-white" onClick={closePaymentModal}>Done</button>
               </div>
             ) : cardPaymentActive ? (
