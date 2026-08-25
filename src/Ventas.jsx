@@ -184,11 +184,12 @@ async function createStripeCheckoutSession(amount, description = "Pago de venta"
     const msg = data?.error || `HTTP ${res.status} creando Checkout Session`;
     throw new Error(msg);
   }
-  if (!data?.url || !data?.sessionId) {
+  const returnedSessionId = data?.sessionId || data?.session_id;
+  if (!data?.url || !returnedSessionId) {
     throw new Error("Respuesta inválida de create_checkout_session (faltan url/sessionId)");
   }
 
-  return { url: data.url, sessionId: data.sessionId };
+  return { url: data.url, sessionId: returnedSessionId };
 }
 
 async function checkStripeCheckoutStatus(sessionId) {
@@ -3384,6 +3385,10 @@ useEffect(() => {
     setQRPollingActive(true);
 
     // 4️⃣ Iniciar verificación
+    if (!sessionId) {
+      toast.error("Stripe creó el enlace, pero no devolvió el identificador de sesión. Intenta generar el QR nuevamente.");
+      return;
+    }
     startCheckoutPolling(sessionId, paymentIndex, shouldApplyFee, amount, feeAmount);
   }
 

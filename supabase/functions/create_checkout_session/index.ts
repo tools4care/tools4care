@@ -7,71 +7,54 @@ const CORS = {
   "Content-Type": "application/json",
 };
 
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: CORS });
+}
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS });
-  }
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: CORS });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+  if (req.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
 
   try {
-    const raw = await req.text();
-    const body = raw ? JSON.parse(raw) : {};
-    const session_id = String(body?.session_id || "").trim();
-    
-    if (!/^cs_[A-Za-z0-9_]+$/.test(session_id)) {
-      return new Response(JSON.stringify({ error: "Missing session_id" }), { status: 400, headers: CORS });
+    const body = await req.json().catch(() => ({}));
+    const amount = Number(body?.amount);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      return json({ ok: false, error: "Invalid amount. Send integer amount in cents." }, 400);
     }
 
-    const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!STRIPE_SECRET_KEY) {
-      return new Response(JSON.stringify({ error: "Missing STRIPE_SECRET_KEY" }), { status: 500, headers: CORS });
-    }
+    const secret = Deno.env.get("STRIPE_SECRET_KEY");
+    if (!secret) return json({ ok: false, error: "Missing STRIPE_SECRET_KEY" }, 500);
 
-    const stripe = new Stripe(STRIPE_SECRET_KEY, {
-      apiVersion: "2024-06-20",
-      httpClient: Stripe.createFetchHttpClient(),
+    const currency = String(body?.currency || "usd").toLowerCase();
+    const description = String(body?.description || "Pago de venta").trim().slice(0, 200) || "Pago de venta";
+    const success_url = String(body?.success_url || "https://checkout.stripe.com/success");
+    const cancel_url = String(body?.cancel_url || "https://checkout.stripe.com/cancel");
+    const stripe = new Stripe(secret, { apiVersion: "2024-06-20", httpClient: Stripe.createFetchHttpClient() });
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      success_url,
+      cancel_url,
+      line_items: [{
+        price_data: {
+          currency,
+          unit_amount: amount,
+          product_data: { name: description },
+        },
+        quantity: 1,
+      }],
+      automatic_tax: { enabled: false },
     });
 
-    // ✅ SIN EXPAND - Esto evita el error
-    const session = await stripe.checkout.sessions.retrieve(session_id);
-
-    const paymentStatus = session.payment_status;
-    const sessionStatus = session.status;
-    
-    const paid = paymentStatus === "paid" || sessionStatus === "complete";
-    
-    let status = "pending";
-    if (paid) {
-      status = "complete";
-    } else if (sessionStatus === "expired") {
-      status = "expired";
-    } else if (sessionStatus === "open") {
-      status = "open";
-    }
-
-    const amount = session.amount_total ?? 0;
-    const currency = session.currency ?? "usd";
-
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        status,
-        paid,
-        amount,
-        currency,
-        sessionId: session.id,
-        payment_status: paymentStatus,
-        session_status: sessionStatus,
-      }),
-      { status: 200, headers: CORS }
-    );
-  } catch (e) {
-    console.error("check_checkout_session error:", e);
-    return new Response(JSON.stringify({ error: e?.message || "Internal error" }), {
-      status: 500,
-      headers: CORS,
+    return json({
+      ok: true,
+      url: session.url,
+      sessionId: session.id,
+      session_id: session.id,
+      amount,
+      currency,
     });
+  } catch (error) {
+    console.error("create_checkout_session error:", error);
+    return json({ ok: false, error: error?.message || "Internal error" }, 500);
   }
 });
