@@ -193,6 +193,39 @@ Deno.serve(async (req) => {
           }).eq("id", session.id);
         }
       }
+
+      // Recovery path: Stripe can approve the card before the Android
+      // companion finishes its sync_result callback. Never ask the operator
+      // to charge again in that window. Read the same PaymentIntent and move
+      // the existing session forward idempotently.
+      if (["ready", "awaiting_consent", "created", "collecting", "processing"].includes(currentStatus)
+        && session.stripe_payment_intent_id) {
+        const intent: any = await stripe.paymentIntents.retrieve(session.stripe_payment_intent_id);
+        if (intent.status === "succeeded") {
+          let recoveredStatus = "reconciled";
+          if (session.context_type === "ar_payment") {
+            const { error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
+              p_session_id: session.id,
+              p_cliente_id: session.cliente_id,
+              p_van_id: session.van_id,
+              p_operator_id: session.operator_id,
+              p_monto: session.amount_cents / 100,
+              p_payment_intent_id: intent.id,
+            });
+            recoveredStatus = applyError ? "reconciliation_pending" : "reconciled";
+            if (applyError) currentFailure = applyError.message;
+          }
+          currentStatus = recoveredStatus;
+          await admin.from("terminal_payment_sessions").update({
+            status: recoveredStatus,
+            stripe_payment_intent_id: intent.id,
+            failure_message: currentFailure,
+            completed_at: new Date().toISOString(),
+            reconciled_at: recoveredStatus === "reconciled" ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString(),
+          }).eq("id", session.id);
+        }
+      }
       return json({
         ok: true, session_id: session.id, status: currentStatus,
         context_type: session.context_type, amount_cents: session.amount_cents,

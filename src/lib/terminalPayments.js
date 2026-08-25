@@ -165,7 +165,10 @@ export async function shareManualCardCheckout(url, customerName = "customer", sh
 }
 
 export async function waitForTerminalPayment(sessionId, {
-  timeoutMs = 30 * 1000,
+  // The Android companion may need a few seconds to return from the reader
+  // and finish its sync_result call. Keep polling the same idempotent session
+  // instead of asking the operator to start a second charge.
+  timeoutMs = 90 * 1000,
   intervalMs = 1800,
   onStatus,
 } = {}) {
