@@ -1250,22 +1250,76 @@ function VentasReport({ van, usuario }) {
 }
 
 /* ========================= A/R AGING REPORT ========================= */
-function ARAgingReport({ van }) {
+function ARAgingReport({ van, usuario }) {
+  const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [searched, setSearched] = useState(false);
+  const [vans, setVans] = useState([]);
+  const [vanFiltro, setVanFiltro] = useState("");
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    supabase.from("vans").select("id,nombre_van").order("nombre_van")
+      .then(({ data }) => setVans(data || []));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (van?.id && !vanFiltro) setVanFiltro(van.id);
+  }, [van?.id, vanFiltro]);
+
+  const effectiveVanId = isAdmin ? (vanFiltro || "ALL") : van?.id;
 
   const search = async () => {
-    if (!van?.id) return;
+    if (!effectiveVanId) return;
     setLoading(true); setError(null);
     try {
-      const { data: balances, error: balErr } = await supabase
+      // CxC balances are company-wide. For a van view, scope the customer
+      // population to that van's assigned route, while retaining customers
+      // with recent activity on the van when a route is not configured.
+      let scopedClientIds = null;
+      if (effectiveVanId !== "ALL") {
+        const [{ data: routeRows, error: routeErr }, { data: activityRows, error: activityErr }] = await Promise.all([
+          supabase.from("rutas_barberias").select("barberia_id").eq("van_id", effectiveVanId),
+          supabase.from("ventas").select("cliente_id").eq("van_id", effectiveVanId).neq("tipo", "devolucion").not("cliente_id", "is", null),
+        ]);
+        if (routeErr) throw routeErr;
+        if (activityErr) throw activityErr;
+        const routeShopIds = [...new Set((routeRows || []).map((r) => r.barberia_id).filter(Boolean))];
+        if (routeShopIds.length) {
+          const { data: routeClients, error: clientErr } = await supabase
+            .from("clientes").select("id").in("barberia_id", routeShopIds);
+          if (clientErr) throw clientErr;
+          scopedClientIds = new Set((routeClients || []).map((r) => r.id));
+          // Keep unassigned customers with actual sales on this van visible;
+          // do not leak customers assigned to another van's route.
+          const activityIds = [...new Set((activityRows || []).map((row) => row.cliente_id).filter(Boolean))];
+          if (activityIds.length) {
+            const { data: activityClients, error: activityClientErr } = await supabase
+              .from("clientes").select("id,barberia_id").in("id", activityIds);
+            if (activityClientErr) throw activityClientErr;
+            for (const row of activityClients || []) if (!row.barberia_id) scopedClientIds.add(row.id);
+          }
+        } else {
+          scopedClientIds = new Set((activityRows || []).map((r) => r.cliente_id).filter(Boolean));
+        }
+      }
+
+      let balanceQuery = supabase
         .from("v_cxc_cliente_detalle_ext")
         .select("cliente_id, cliente_nombre, saldo, limite_politica, credito_disponible, score_base, telefono, direccion, nombre_negocio")
         .gt("saldo", 0.01)
         .order("saldo", { ascending: false })
         .limit(250);
+      if (scopedClientIds) {
+        const ids = [...scopedClientIds];
+        if (!ids.length) {
+          setData([]); setSearched(true); return;
+        }
+        balanceQuery = balanceQuery.in("cliente_id", ids);
+      }
+      const { data: balances, error: balErr } = await balanceQuery;
       if (balErr) throw balErr;
 
       const clients = balances || [];
@@ -1274,19 +1328,20 @@ function ARAgingReport({ van }) {
       const payments = [];
 
       for (const group of chunkArray(ids, 80)) {
-        const [{ data: saleRows }, { data: paymentRows }] = await Promise.all([
-          supabase.from("ventas")
+        let salesQuery = supabase.from("ventas")
             .select("cliente_id, created_at, fecha, total_venta, total_pagado, numero_factura")
-            .eq("van_id", van.id)
             .in("cliente_id", group)
             .neq("tipo", "devolucion")
-            .order("created_at", { ascending: false }),
-          supabase.from("pagos")
+            .order("created_at", { ascending: false });
+        let paymentsQuery = supabase.from("pagos")
             .select("cliente_id, fecha_pago, monto, metodo_pago")
-            .eq("van_id", van.id)
             .in("cliente_id", group)
-            .order("fecha_pago", { ascending: false }),
-        ]);
+            .order("fecha_pago", { ascending: false });
+        if (effectiveVanId !== "ALL") {
+          salesQuery = salesQuery.eq("van_id", effectiveVanId);
+          paymentsQuery = paymentsQuery.eq("van_id", effectiveVanId);
+        }
+        const [{ data: saleRows }, { data: paymentRows }] = await Promise.all([salesQuery, paymentsQuery]);
         sales.push(...(saleRows || []));
         payments.push(...(paymentRows || []));
       }
@@ -1338,7 +1393,7 @@ function ARAgingReport({ van }) {
     }
   };
 
-  useEffect(() => { search(); }, [van?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { search(); }, [effectiveVanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const summary = useMemo(() => ({
     balance: data.reduce((s, r) => s + Number(r.saldo || 0), 0),
@@ -1408,8 +1463,20 @@ function ARAgingReport({ van }) {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
-        <p className="text-sm text-gray-600">Open customer balances ranked by collection priority.</p>
+      <div className="flex flex-wrap justify-between items-end gap-3 mb-6">
+        <div>
+          <p className="text-sm text-gray-600">Open customer balances ranked by collection priority.</p>
+          <p className="text-xs text-gray-400 mt-1">{effectiveVanId === "ALL" ? "All vans · route and activity history combined" : `Route scope: ${van?.nombre_van || van?.nombre || effectiveVanId}`}</p>
+        </div>
+        {isAdmin && vans.length > 0 && (
+          <label className="text-xs font-medium text-gray-600">
+            Van
+            <select value={vanFiltro} onChange={(e) => setVanFiltro(e.target.value)} className="block mt-1 border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
+              <option value="">All Vans</option>
+              {vans.map((v) => <option key={v.id} value={v.id}>{v.nombre_van || v.id}</option>)}
+            </select>
+          </label>
+        )}
         <button onClick={search} disabled={loading}
           className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
           <RefreshCw size={14} className={loading ? "animate-spin" : ""}/>
@@ -3587,20 +3654,22 @@ const WEEKDAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "
 function weekdayName(dayStr) {
   return new Date(`${dayStr}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" });
 }
-async function fetchAllVentasSince(cutoffIso) {
+async function fetchAllVentasSince(cutoffIso, vanId = "ALL") {
   const pageSize = 1000;
   let from = 0;
   let all = [];
   // A year-plus of company-wide sales can exceed PostgREST's per-request
   // row cap, so page through it instead of assuming one request covers it.
   while (true) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("ventas")
       .select("fecha,cliente_id,total_venta")
       .gte("fecha", cutoffIso)
       .neq("tipo", "devolucion")
       .order("fecha", { ascending: true })
       .range(from, from + pageSize - 1);
+    if (vanId && vanId !== "ALL") query = query.eq("van_id", vanId);
+    const { data, error } = await query;
     if (error) throw error;
     all = all.concat(data || []);
     if (!data || data.length < pageSize) break;
@@ -3609,7 +3678,8 @@ async function fetchAllVentasSince(cutoffIso) {
   return all;
 }
 
-function BarberiaVisitsReport() {
+function BarberiaVisitsReport({ van, usuario }) {
+  const isAdmin = usuario?.rol === "admin" || usuario?.rol === "supervisor";
   const [resumen, setResumen] = useState([]);
   const [weeklySeries, setWeeklySeries] = useState([]);
   const [pace, setPace] = useState({ perDay: 0, perWeek: 0, perMonth: 0 });
@@ -3617,13 +3687,27 @@ function BarberiaVisitsReport() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [growthCandidates, setGrowthCandidates] = useState([]);
+  const [vans, setVans] = useState([]);
+  const [vanFiltro, setVanFiltro] = useState("");
+  const effectiveVanId = isAdmin ? (vanFiltro || "ALL") : van?.id;
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    supabase.from("vans").select("id,nombre_van").order("nombre_van")
+      .then(({ data }) => setVans(data || []));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (van?.id && !vanFiltro) setVanFiltro(van.id);
+  }, [van?.id, vanFiltro]);
 
   async function cargar() {
+    if (!effectiveVanId) return;
     setLoading(true);
     try {
       const [{ data: clientesLinked }, ventasRows, { data: pendData }, { data: settingsRow }, { data: allShops }] = await Promise.all([
         supabase.from("clientes").select("id,barberia_id,barberias:barberia_id(nombre,es_negocio)").not("barberia_id", "is", null),
-        fetchAllVentasSince(`${VISIT_LEARNING_START}T00:00:00-04:00`),
+        fetchAllVentasSince(`${VISIT_LEARNING_START}T00:00:00-04:00`, effectiveVanId),
         supabase.from("barberias").select("id, nombre, direccion, duplicado_de").eq("revisar_duplicado", true),
         supabase.from("site_settings").select("barberia_visit_buffer_minutes").eq("id", 1).maybeSingle(),
         supabase.from("barberias").select("id,nombre,direccion,latitude,longitude,es_negocio"),
@@ -3786,7 +3870,7 @@ function BarberiaVisitsReport() {
     }
   }
 
-  useEffect(() => { cargar(); }, []);
+  useEffect(() => { cargar(); }, [effectiveVanId]);
 
   async function fusionar(flagged) {
     if (!flagged.target) return;
@@ -3925,6 +4009,21 @@ function BarberiaVisitsReport() {
 
   return (
     <div>
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-4 rounded-xl border border-teal-100 bg-teal-50/50 p-3">
+        <div>
+          <p className="text-sm font-semibold text-teal-900">Visit history by van</p>
+          <p className="text-xs text-teal-800/70">Only sales recorded on the selected van count as visits.</p>
+        </div>
+        {isAdmin && vans.length > 0 && (
+          <label className="text-xs font-medium text-gray-600">
+            Van
+            <select value={vanFiltro} onChange={(e) => setVanFiltro(e.target.value)} className="block mt-1 border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
+              <option value="">All Vans</option>
+              {vans.map((v) => <option key={v.id} value={v.id}>{v.nombre_van || v.id}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
       {/* ── SUGGESTED STOPS — grouped by the weekday you actually tend to
           run that part of the route, from real visit history. Proven shops
           falling behind cadence first within each day, then the closest
@@ -4244,13 +4343,13 @@ export default function Reportes() {
           {activeTab==="ledger"           && <FinancialLedgerReport   van={van}/>}
           {activeTab==="ventas"          && <VentasReport           van={van} usuario={usuario}/>}
           {activeTab==="pagos_breakdown" && <PaymentBreakdownReport van={van} usuario={usuario}/>}
-          {activeTab==="ar_risk"         && <ARAgingReport          van={van}/>}
+          {activeTab==="ar_risk"         && <ARAgingReport          van={van} usuario={usuario}/>}
           {activeTab==="discount_audit"  && <DiscountAuditReport    van={van} usuario={usuario}/>}
           {activeTab==="devoluciones"    && <DevolucionesReport     van={van} usuario={usuario}/>}
           {activeTab==="top_clientes"    && <TopClientesReport     van={van} usuario={usuario}/>}
           {activeTab==="productos"       && <ProductosReport       van={van} usuario={usuario}/>}
           {activeTab==="ganancias"       && <GananciasReport       van={van} usuario={usuario}/>}
-          {activeTab==="barberias"       && <BarberiaVisitsReport />}
+          {activeTab==="barberias"       && <BarberiaVisitsReport van={van} usuario={usuario}/>}
         </div>
       </div>
     </div>

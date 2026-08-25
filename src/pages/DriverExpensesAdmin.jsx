@@ -326,6 +326,8 @@ export default function DriverExpensesAdmin() {
         }
       />
 
+      <div className="flex flex-col">
+
       <div className="mb-4 grid gap-3 md:grid-cols-4">
         <StatCard icon={WalletCards} label="Filtered total" value={money(totals.amount)} tone="emerald" />
         <StatCard icon={Receipt} label="Expenses loaded" value={chartRows.length.toString()} tone="blue" />
@@ -381,7 +383,7 @@ export default function DriverExpensesAdmin() {
         </ChartCard>
       </div>
 
-      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <div className="order-first mb-4 rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-800 dark:text-slate-100">
           <Filter size={16} className="text-emerald-600" />
           Filters
@@ -567,6 +569,7 @@ export default function DriverExpensesAdmin() {
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
