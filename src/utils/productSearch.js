@@ -83,7 +83,12 @@ export function productQty(row) {
 export function scoreProductRow(row, term) {
   const normalized = normalizeSearchTerm(term).toLowerCase();
   const compact = compactSearchTerm(term).toLowerCase();
-  const variants = barcodeVariants(term);
+  // Numeric barcode variants ("3", "03", "003") are useful for a real
+  // barcode, but disastrous for text such as "fx3" or "level 3": they would
+  // match unrelated product codes containing that incidental digit.
+  const variants = isCodeLikeSearch(term)
+    ? barcodeVariants(term)
+    : [normalized, compact].filter(Boolean);
   const code = productCode(row);
   const name = productName(row);
   const brand = productBrand(row);

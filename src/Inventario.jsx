@@ -313,8 +313,12 @@ export default function Inventory() {
     if (!term.trim()) { setDbSearchResults(null); return; }
     setIsSearchingDB(true); setError("");
     try {
-      const variants = barcodeVariants(term);
       const codeLike = isCodeLikeSearch(term);
+      // Do not turn incidental digits in text searches ("fx3", "level 3")
+      // into broad numeric code matches such as every code containing "3".
+      const variants = codeLike
+        ? barcodeVariants(term)
+        : [term, term.replace(/\s+/g, "")].filter((value, index, list) => value && list.indexOf(value) === index);
       const codeFilters = variants.map((code) => `codigo.ilike.${code}%`).join(",");
       let productos = [];
       let pErr = null;

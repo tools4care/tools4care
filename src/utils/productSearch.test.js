@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCodeLikeSearch } from "./productSearch";
+import { isCodeLikeSearch, scoreProductRow } from "./productSearch";
 
 describe("isCodeLikeSearch", () => {
   it("does not treat a brand/product name with one incidental digit as a barcode", () => {
@@ -20,5 +20,12 @@ describe("isCodeLikeSearch", () => {
   it("ignores short or empty terms", () => {
     expect(isCodeLikeSearch("")).toBe(false);
     expect(isCodeLikeSearch("V05")).toBe(false);
+  });
+
+  it("does not let incidental digits create unrelated text matches", () => {
+    const unrelated = { productos: { codigo: "300123", nombre: "Modin Cream Anti", marca: "Modin" } };
+    expect(scoreProductRow(unrelated, "fx3")).toBe(null);
+    expect(scoreProductRow(unrelated, "level 3")).toBe(null);
+    expect(scoreProductRow({ productos: { codigo: "L3-001", nombre: "Level 3 Styling Gel", marca: "Level 3" } }, "level 3")).not.toBe(null);
   });
 });
