@@ -19,7 +19,7 @@ Deno.serve(async (req) => {
     const raw = await req.text();
     const body = raw ? JSON.parse(raw) : {};
     const session_id = String(body?.session_id || "").trim();
-    if (!session_id) {
+    if (!session_id || !/^cs_[A-Za-z0-9_]+$/.test(session_id)) {
       return new Response(JSON.stringify({ error: "Missing session_id" }), { status: 400, headers: CORS });
     }
 

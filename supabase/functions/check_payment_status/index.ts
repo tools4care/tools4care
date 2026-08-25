@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
     const body = raw ? JSON.parse(raw) : {};
     const paymentIntentId = body?.paymentIntentId;
 
-    if (!paymentIntentId) {
+    if (!paymentIntentId || typeof paymentIntentId !== "string" || !/^pi_[A-Za-z0-9]+$/.test(paymentIntentId)) {
       return new Response(JSON.stringify({ error: "Missing paymentIntentId" }), {
         status: 400,
         headers: CORS_HEADERS,
@@ -59,7 +59,6 @@ Deno.serve(async (req) => {
         amount: intent.amount,
         currency: intent.currency,
         created: intent.created,
-        latest_charge: intent.latest_charge,
       }),
       { status: 200, headers: CORS_HEADERS },
     );
