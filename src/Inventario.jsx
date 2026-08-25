@@ -258,7 +258,7 @@ export default function Inventory() {
           if (catalogError) throw catalogError;
           const catalogIds = (catalogRows || []).map((product) => product.id);
           let catalogStock = [];
-          if (catalogIds.length) {
+          if (catalogIds.length && count !== 0) {
             let stockQuery = supabase.from(tabla).select("id,producto_id,cantidad").in("producto_id", catalogIds);
             if (selected.tipo === "van") stockQuery = stockQuery.eq("van_id", selected.id);
             const { data: stockRows, error: stockError } = await stockQuery;
@@ -294,7 +294,7 @@ export default function Inventory() {
         }
       } catch (e) { setError(e?.message || String(e)); setHasMore(false); }
     })();
-  }, [selected.id, selected.tipo, offset, refresh, search, isOnline, initialCountMode]);
+  }, [selected.id, selected.tipo, offset, refresh, search, isOnline]);
 
   // ── Realtime ──────────────────────────────────────────────
   useEffect(() => {
