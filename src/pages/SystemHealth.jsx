@@ -30,6 +30,7 @@ import {
 } from "recharts";
 import PageHeader from "../components/ui/PageHeader";
 import { supabase } from "../supabaseClient";
+import { loadPdfLibs } from "../utils/lazyPdf";
 
 const CXC_API_BASE = import.meta.env.VITE_CXC_API_BASE || "https://cxc-api.onrender.com";
 const APP_URL =
@@ -86,6 +87,32 @@ function saveHistory(entry) {
   } catch {
     return [];
   }
+}
+
+function mergeHistory(...groups) {
+  const byTime = new Map();
+  groups.flat().filter(Boolean).forEach((entry) => {
+    if (entry.at) byTime.set(String(entry.at), entry);
+  });
+  return [...byTime.values()]
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+    .slice(0, HISTORY_LIMIT);
+}
+
+function summarizeHistory(history) {
+  const samples = history || [];
+  const total = samples.length;
+  const errors = samples.filter((entry) => entry.worstStatus === "error").length;
+  const warnings = samples.filter((entry) => entry.worstStatus === "warn").length;
+  const avg = samples.filter((entry) => Number.isFinite(Number(entry.averageResponseMs)));
+  return {
+    total,
+    errors,
+    warnings,
+    healthy: Math.max(0, total - errors - warnings),
+    availability: total ? ((total - errors) / total) * 100 : null,
+    averageResponseMs: avg.length ? avg.reduce((sum, entry) => sum + Number(entry.averageResponseMs), 0) / avg.length : null,
+  };
 }
 
 function statusRank(status) {
@@ -414,6 +441,8 @@ export default function SystemHealth() {
   const [lastRun, setLastRun] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshSeconds, setRefreshSeconds] = useState(60);
+  const [historyRange, setHistoryRange] = useState("30");
+  const [persistentHistory, setPersistentHistory] = useState(false);
 
   const staticChecks = useMemo(() => [
     {
@@ -598,7 +627,7 @@ export default function SystemHealth() {
     setLastRun(checkedAt);
     setLoading(false);
 
-    const nextHistory = saveHistory({
+    const nextEntry = {
       at: checkedAt.toISOString(),
       counts: nextChecks.reduce((acc, item) => {
         acc[item.status] = (acc[item.status] || 0) + 1;
@@ -616,9 +645,48 @@ export default function SystemHealth() {
         responseMs: Number.isFinite(item.responseMs) ? Math.round(item.responseMs) : null,
       })),
       worstStatus: nextChecks.reduce((worst, item) => statusRank(item.status) > statusRank(worst) ? item.status : worst, "ok"),
-    });
+    };
+    const nextHistory = saveHistory(nextEntry);
     setHistory(nextHistory);
+    // Persist only the compact summary, never URLs, response payloads, or
+    // customer data. If RLS/network is unavailable, local history remains
+    // the working fallback and monitoring continues normally.
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData?.session?.user?.id) {
+      const { error: persistError } = await supabase.from("system_health_checks").insert({
+        checked_at: nextEntry.at,
+        worst_status: nextEntry.worstStatus,
+        counts: nextEntry.counts,
+        average_response_ms: nextEntry.averageResponseMs,
+        services: nextEntry.services,
+        created_by: sessionData.session.user.id,
+      });
+      if (!persistError) setPersistentHistory(true);
+    }
   }, [checkWithTiming, staticChecks]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadStoredHistory() {
+      const { data, error } = await supabase
+        .from("system_health_checks")
+        .select("checked_at,worst_status,counts,average_response_ms,services")
+        .order("checked_at", { ascending: false })
+        .limit(HISTORY_LIMIT);
+      if (!active || error || !data?.length) return;
+      const stored = data.map((row) => ({
+        at: row.checked_at,
+        worstStatus: row.worst_status,
+        counts: row.counts || {},
+        averageResponseMs: row.average_response_ms == null ? null : Number(row.average_response_ms),
+        services: row.services || [],
+      }));
+      setHistory(mergeHistory(stored, getHistory()));
+      setPersistentHistory(true);
+    }
+    loadStoredHistory();
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     runChecks();
@@ -641,6 +709,39 @@ export default function SystemHealth() {
   const avgResponse = dynamicChecks.length
     ? dynamicChecks.reduce((sum, item) => sum + item.responseMs, 0) / dynamicChecks.length
     : null;
+  const rangeHistory = history.slice(0, Number(historyRange));
+  const historySummary = summarizeHistory(rangeHistory);
+
+  const exportHealthPdf = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs();
+    const doc = new jsPDF({ orientation: "portrait" });
+    const margin = 14;
+    const summary = historySummary;
+    doc.setProperties({ title: `Tools4Care System Health Report (${historyRange} checks)` });
+    doc.setFillColor(37, 99, 235); doc.rect(0, 0, doc.internal.pageSize.getWidth(), 30, "F");
+    doc.setTextColor(255, 255, 255); doc.setFontSize(15); doc.setFont(undefined, "bold");
+    doc.text("Tools4Care — System Health Report", margin, 12);
+    doc.setFontSize(9); doc.setFont(undefined, "normal");
+    doc.text(`${historyRange} most recent checks · Generated ${new Date().toLocaleString()}`, margin, 21);
+    doc.setTextColor(30, 41, 59); doc.setFontSize(11); doc.setFont(undefined, "bold");
+    doc.text("Operational summary", margin, 42);
+    doc.setFontSize(10); doc.setFont(undefined, "normal");
+    doc.text(`Availability (no error): ${summary.availability == null ? "n/a" : `${summary.availability.toFixed(1)}%`}`, margin, 51);
+    doc.text(`Healthy checks: ${summary.healthy} · Warnings: ${summary.warnings} · Errors: ${summary.errors}`, margin, 58);
+    doc.text(`Average response: ${formatMs(summary.averageResponseMs)}`, margin, 65);
+    autoTable(doc, {
+      startY: 74,
+      head: [["Time", "Overall", "Healthy", "Warnings", "Errors", "Avg response"]],
+      body: rangeHistory.map((entry) => [
+        new Date(entry.at).toLocaleString(), entry.worstStatus.toUpperCase(),
+        entry.counts?.ok || 0, entry.counts?.warn || 0, entry.counts?.error || 0,
+        formatMs(Number(entry.averageResponseMs)),
+      ]),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
+    });
+    doc.save(`Tools4Care_System_Health_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -708,6 +809,35 @@ export default function SystemHealth() {
         <DashboardLink href={LINKS.betterStack} label="Better Stack Monitors" />
         <DashboardLink href={LINKS.vercel} label="Vercel Analytics" />
         <DashboardLink href={LINKS.supabase} label="Supabase Dashboard" />
+      </div>
+
+      <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50/60 p-4 dark:border-blue-900/50 dark:bg-blue-950/20">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-black text-slate-900 dark:text-white">Operational report</h2>
+            <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              {persistentHistory ? "History is being saved to the secure system log." : "Using local history until the secure system log is reachable."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+              Range
+              <select value={historyRange} onChange={(event) => setHistoryRange(event.target.value)} className="ml-2 rounded-md border border-slate-200 bg-white px-2 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+                <option value="10">Last 10 checks</option>
+                <option value="30">Last 30 checks</option>
+              </select>
+            </label>
+            <button type="button" onClick={exportHealthPdf} disabled={!rangeHistory.length} className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
+              Export PDF
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-md bg-white/80 p-2 text-xs dark:bg-slate-900/60"><span className="block text-slate-500">Availability</span><strong className="text-slate-900 dark:text-white">{historySummary.availability == null ? "—" : `${historySummary.availability.toFixed(1)}%`}</strong></div>
+          <div className="rounded-md bg-white/80 p-2 text-xs dark:bg-slate-900/60"><span className="block text-slate-500">Healthy</span><strong className="text-emerald-700">{historySummary.healthy}</strong></div>
+          <div className="rounded-md bg-white/80 p-2 text-xs dark:bg-slate-900/60"><span className="block text-slate-500">Warnings</span><strong className="text-amber-700">{historySummary.warnings}</strong></div>
+          <div className="rounded-md bg-white/80 p-2 text-xs dark:bg-slate-900/60"><span className="block text-slate-500">Errors</span><strong className="text-red-700">{historySummary.errors}</strong></div>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
