@@ -31,6 +31,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
+      status: 405,
+      headers: { "content-type": "application/json", ...corsHeaders },
+    });
+  }
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -38,9 +44,23 @@ Deno.serve(async (req) => {
     const subject: string = body.subject ?? "Invoice";
     const htmlRaw: string | undefined = body.html;
 
-    if (!to || !htmlRaw) {
+    const email = String(to || "").trim();
+    const cleanSubject = String(subject || "Invoice").trim();
+    if (!email || !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email)) {
       return new Response(
-        JSON.stringify({ ok: false, error: "`to` and `html` are required" }),
+        JSON.stringify({ ok: false, error: "A single valid recipient email is required" }),
+        { status: 400, headers: { "content-type": "application/json", ...corsHeaders } },
+      );
+    }
+    if (!htmlRaw || String(htmlRaw).length > 300_000) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "`html` is required and must be under 300 KB" }),
+        { status: 400, headers: { "content-type": "application/json", ...corsHeaders } },
+      );
+    }
+    if (!cleanSubject || cleanSubject.length > 180 || /[\r\n]/.test(cleanSubject)) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "Invalid subject" }),
         { status: 400, headers: { "content-type": "application/json", ...corsHeaders } },
       );
     }
@@ -72,7 +92,7 @@ Deno.serve(async (req) => {
       password: SMTP_PASS,
     });
 
-    await client.send({ from: FROM, to, subject, html });
+    await client.send({ from: FROM, to: email, subject: cleanSubject, html });
     await client.close();
 
     console.log(`Email sent to ${to}`);
