@@ -43,6 +43,7 @@ export default function Inventory() {
   ]);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [offlineCacheDate, setOfflineCacheDate] = useState(null);
+  const [initialCountMode, setInitialCountMode] = useState(false);
   const [selected, setSelected] = useState({
     key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse",
   });
@@ -192,6 +193,14 @@ export default function Inventory() {
     setError(""); setDbSearchResults(null);
   }, [selected.key, selected.id, selected.tipo, refresh]);
 
+  useEffect(() => {
+    try {
+      setInitialCountMode(localStorage.getItem(`tools4care-initial-count-${selected.key}`) === "1");
+    } catch {
+      setInitialCountMode(false);
+    }
+  }, [selected.key]);
+
   // ── Load inventory (paginated, no search) ─────────────────
   useEffect(() => {
     if (search.trim()) return;
@@ -233,13 +242,51 @@ export default function Inventory() {
         const { data, error: sErr, count } = await query;
         if (sErr) throw sErr;
 
-        const rows = (data || []).map((s) => ({
+        let rows = (data || []).map((s) => ({
           id: s.id, producto_id: s.producto_id,
           cantidad: Number(s.cantidad || 0), productos: s.productos || null,
         }));
+        // A location with no stock rows has not been counted yet. Load the
+        // catalog as zero-quantity rows so the first physical count can be
+        // performed directly from this screen.
+        if (count === 0 || initialCountMode) {
+          const { data: catalogRows, error: catalogError, count: catalogCount } = await supabase
+            .from("productos")
+            .select("id,codigo,nombre,marca,size", { count: "exact" })
+            .order("nombre", { ascending: true })
+            .range(offset, offset + PAGE_SIZE - 1);
+          if (catalogError) throw catalogError;
+          const catalogIds = (catalogRows || []).map((product) => product.id);
+          let catalogStock = [];
+          if (catalogIds.length) {
+            let stockQuery = supabase.from(tabla).select("id,producto_id,cantidad").in("producto_id", catalogIds);
+            if (selected.tipo === "van") stockQuery = stockQuery.eq("van_id", selected.id);
+            const { data: stockRows, error: stockError } = await stockQuery;
+            if (stockError) throw stockError;
+            catalogStock = stockRows || [];
+          }
+          const stockMap = new Map(catalogStock.map((stock) => [stock.producto_id, stock]));
+          rows = (catalogRows || []).map((product) => {
+            const stock = stockMap.get(product.id);
+            return {
+              id: stock?.id || null,
+              producto_id: product.id,
+              cantidad: Number(stock?.cantidad || 0),
+              productos: product,
+              sinRegistro: !stock,
+            };
+          });
+          try { localStorage.setItem(`tools4care-initial-count-${selected.key}`, "1"); } catch { /* optional storage */ }
+          setInitialCountMode(true);
+          setHasMore(typeof catalogCount === "number" ? rows.length < catalogCount : rows.length === PAGE_SIZE);
+        } else if (count !== 0) {
+          setInitialCountMode(false);
+        }
         setInventory((prev) => (offset === 0 ? rows : [...prev, ...rows]));
         const loaded = offset + rows.length;
-        setHasMore(typeof count === "number" ? loaded < count : rows.length === PAGE_SIZE);
+        if (count !== 0) {
+          setHasMore(typeof count === "number" ? loaded < count : rows.length === PAGE_SIZE);
+        }
 
         if (selected.tipo === "van" && selected.id && offset === 0 && rows.length > 0) {
           setTimeout(() => guardarInventarioVan(selected.id,
@@ -247,7 +294,7 @@ export default function Inventory() {
         }
       } catch (e) { setError(e?.message || String(e)); setHasMore(false); }
     })();
-  }, [selected.id, selected.tipo, offset, refresh, search, isOnline]);
+  }, [selected.id, selected.tipo, offset, refresh, search, isOnline, initialCountMode]);
 
   // ── Realtime ──────────────────────────────────────────────
   useEffect(() => {
@@ -313,10 +360,17 @@ export default function Inventory() {
       if (iErr) throw iErr;
 
       const pMap = new Map(productos.map(p => [p.id, p]));
-      setDbSearchResults((inv || []).map(r => ({
-        id: r.id, producto_id: r.producto_id,
-        cantidad: Number(r.cantidad || 0), productos: pMap.get(r.producto_id) || null,
-      })));
+      const stockMap = new Map((inv || []).map((r) => [r.producto_id, r]));
+      setDbSearchResults(productos.map((product) => {
+        const stock = stockMap.get(product.id);
+        return {
+          id: stock?.id || null,
+          producto_id: product.id,
+          cantidad: Number(stock?.cantidad || 0),
+          productos: pMap.get(product.id) || product,
+          sinRegistro: !stock,
+        };
+      }));
     } catch (e) {
       if (searchId !== searchSeqRef.current) return;
       setError(e?.message || String(e)); setDbSearchResults([]);
@@ -334,7 +388,9 @@ export default function Inventory() {
     if (!term) { setDbSearchResults(null); setIsSearchingDB(false); return; }
     const codeLike = isCodeLikeSearch(term);
     const mem = filterProductRowsLocal(inventory, term, { limit: 100 });
-    if (mem.length > 0 && (!codeLike || hasExactCodeMatch(mem, term))) {
+    // Text searches must still query the full catalog; the loaded inventory
+    // page is not necessarily the complete product catalog.
+    if (codeLike && mem.length > 0 && hasExactCodeMatch(mem, term)) {
       setDbSearchResults(null);
       setIsSearchingDB(false);
       return;
@@ -496,6 +552,11 @@ export default function Inventory() {
               </span>
             )}
           </div>
+          {initialCountMode && !search.trim() && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+              Initial count mode: this location has no stock records yet. Products are shown at 0 so you can scan and enter the physical count.
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="mt-3 border-t border-slate-100 pt-3">
@@ -620,6 +681,9 @@ export default function Inventory() {
                         {p.size && (
                           <span className="bg-purple-50 text-purple-700 text-[10px] px-2 py-0.5 rounded-full">{p.size}</span>
                         )}
+                        {item.sinRegistro && (
+                          <span className="bg-amber-50 text-amber-700 text-[10px] px-2 py-0.5 rounded-full">Not counted yet</span>
+                        )}
                       </div>
                     </div>
                     {/* Cantidad editable — toca para corregir conteo */}
@@ -672,6 +736,7 @@ export default function Inventory() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Product</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Brand</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Size</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                     <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Qty</th>
                   </tr>
                 </thead>
@@ -686,6 +751,7 @@ export default function Inventory() {
                         <td className="px-4 py-3 font-semibold text-gray-900">{p.nombre || "—"}</td>
                         <td className="px-4 py-3 text-gray-600">{p.marca || "—"}</td>
                         <td className="px-4 py-3 text-gray-500 text-xs">{p.size || "—"}</td>
+                        <td className="px-4 py-3 text-xs text-amber-700">{item.sinRegistro ? "Not counted yet" : ""}</td>
                         <td className="px-4 py-3 text-right">
                           {editingQty?.producto_id === item.producto_id ? (
                             <input
