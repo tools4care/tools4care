@@ -9,6 +9,7 @@ const CORS = {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
     const STRIPE_SECRET = Deno.env.get("STRIPE_SECRET_KEY") ?? "";
@@ -17,6 +18,9 @@ Deno.serve(async (req) => {
 
     if (!STRIPE_SECRET || !SUPABASE_URL || !SERVICE_KEY) {
       throw new Error("Missing env vars: STRIPE_SECRET_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY");
+    }
+    if (req.headers.get("Authorization") !== `Bearer ${SERVICE_KEY}`) {
+      return json({ error: "Unauthorized" }, 401);
     }
 
     const stripe   = new Stripe(STRIPE_SECRET, { apiVersion: "2024-04-10" });
