@@ -165,6 +165,32 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    // The service-role client bypasses RLS, so enforce cart ownership here
+    // before reading its items. Anonymous storefront carts use x-ev-anon;
+    // signed-in carts use the authenticated user's id.
+    const authHeader = req.headers.get("Authorization");
+    let userId: string | null = null;
+    if (authHeader && Deno.env.get("SUPABASE_ANON_KEY")) {
+      const userClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user } } = await userClient.auth.getUser();
+      userId = user?.id || null;
+    }
+    const { data: cartOwner, error: ownerError } = await admin
+      .from("carts")
+      .select("user_id, anon_id")
+      .eq("id", cartId)
+      .maybeSingle();
+    if (ownerError || !cartOwner) {
+      return new Response(JSON.stringify({ error: "Cart not found" }), { status: 404, headers: CORS_HEADERS });
+    }
+    const anonId = req.headers.get("x-ev-anon") || "";
+    const ownsCart = (userId && cartOwner.user_id === userId) || (anonId && cartOwner.anon_id === anonId);
+    if (!ownsCart) {
+      return new Response(JSON.stringify({ error: "Cart access denied" }), { status: 403, headers: CORS_HEADERS });
+    }
+
     const { data: cartItems, error: ciErr } = await admin
       .from("cart_items")
       .select("producto_id, qty")
