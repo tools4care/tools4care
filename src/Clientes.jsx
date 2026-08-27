@@ -9,7 +9,6 @@ function titleCaseWords(value) {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim()
-    .toLocaleLowerCase()
     .replace(/(^|[\s'-])([\p{L}])/gu, (_, prefix, letter) => `${prefix}${letter.toLocaleUpperCase()}`);
 }
 import { useToast } from "./hooks/useToast";
