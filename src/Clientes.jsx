@@ -1134,6 +1134,14 @@ const fetchPage = async (opts = {}) => {
     }
 
     // Resto de campos
+    if (name === "nombre" || name === "negocio") {
+      setForm((f) => ({
+        ...f,
+        [name]: String(value ?? "").toLocaleUpperCase(),
+        ...(name === "negocio" ? { barberia_id: null } : {}),
+      }));
+      return;
+    }
     setForm((f) => ({ ...f, [name]: value ?? "", ...(name === "negocio" ? { barberia_id: null } : {}) }));
   }
 
