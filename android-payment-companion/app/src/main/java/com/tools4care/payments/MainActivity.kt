@@ -121,8 +121,15 @@ class MainActivity : AppCompatActivity() {
                     if (success) {
                         binding.payButton.text = "Payment complete"
                         binding.payButton.isEnabled = false
-                        binding.cancelButton.isEnabled = false
-                        binding.cancelButton.visibility = android.view.View.GONE
+                        // Keep an explicit fallback after approval. The
+                        // automatic return remains the primary path, but a
+                        // browser/Android task may refuse the HTTPS handoff.
+                        // This button must return, never cancel, an approved
+                        // payment.
+                        binding.cancelButton.text = "Return to Tools4Care"
+                        binding.cancelButton.isEnabled = true
+                        binding.cancelButton.visibility = android.view.View.VISIBLE
+                        binding.cancelButton.setOnClickListener { returnToTools4Care() }
                         // The companion was opened by Tools4Care through a custom
                         // URI. Remove its task after briefly showing approval;
                         // Android then reveals the exact Tools4Care screen that

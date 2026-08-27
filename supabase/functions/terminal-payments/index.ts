@@ -658,7 +658,9 @@ Deno.serve(async (req) => {
             intent_client_secret: stripeIntent.client_secret,
             intent_type: session.context_type === "card_setup" ? "setup" : "payment",
             stripe_location_id: terminalLocationId,
-            return_url: `${(Deno.env.get("PUBLIC_APP_URL") || "https://tools4care.vercel.app").replace(/\/$/, "")}/clientes?terminal_return=${session.id}`,
+            // Return to the screen that initiated the payment so Sales can
+            // recover the approved amount and keep it locked for saving.
+            return_url: `${(Deno.env.get("PUBLIC_APP_URL") || "https://tools4care.vercel.app").replace(/\/$/, "")}/ventas?terminal_return=${session.id}`,
             expires_at: session.companion_token_expires_at,
           },
         });

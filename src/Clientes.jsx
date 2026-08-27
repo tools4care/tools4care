@@ -1,6 +1,17 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import { serializeCanonicalAddress } from "./utils/address";
+
+// Keep customer-facing text consistent while preserving the user's spelling.
+// We title-case each word (e.g. "juan perez" → "Juan Perez") and leave
+// acronyms such as MA/ZIP untouched where those fields have their own rules.
+function titleCaseWords(value) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/(^|[\s'-])([\p{L}])/gu, (_, prefix, letter) => `${prefix}${letter.toLocaleUpperCase()}`);
+}
 import { useToast } from "./hooks/useToast";
 import { useVan } from "./hooks/VanContext";
 import { useSyncGlobal } from "./hooks/SyncContext";
@@ -1160,13 +1171,22 @@ const fetchPage = async (opts = {}) => {
         : `+${phoneDigits}`;
     const emailFinal = String(form.email || "").trim();
 
-    const direccionFinal = serializeCanonicalAddress(form.direccion);
+    const normalizedAddress = {
+      ...(form.direccion || {}),
+      // Street and city are human-facing; state remains uppercase and ZIP is
+      // numeric as enforced by the form controls.
+      calle: titleCaseWords(form.direccion?.calle),
+      ciudad: titleCaseWords(form.direccion?.ciudad),
+      estado: String(form.direccion?.estado || "").toUpperCase(),
+      zip: String(form.direccion?.zip || "").trim(),
+    };
+    const direccionFinal = serializeCanonicalAddress(normalizedAddress);
 
     const payload = {
-      nombre: form.nombre,
+      nombre: titleCaseWords(form.nombre),
       telefono: telefonoFinal,
       email: emailFinal,
-      negocio: form.negocio,
+      negocio: titleCaseWords(form.negocio),
       barberia_id: form.barberia_id || null,
       direccion: direccionFinal,
       notas: (form.notas || "").trim(),
