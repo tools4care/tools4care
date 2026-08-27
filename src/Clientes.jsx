@@ -1182,10 +1182,10 @@ const fetchPage = async (opts = {}) => {
     const direccionFinal = serializeCanonicalAddress(normalizedAddress);
 
     const payload = {
-      nombre: titleCaseWords(form.nombre),
+      nombre: titleCaseWords(form.nombre).toLocaleUpperCase(),
       telefono: telefonoFinal,
       email: emailFinal,
-      negocio: titleCaseWords(form.negocio),
+      negocio: titleCaseWords(form.negocio).toLocaleUpperCase(),
       barberia_id: form.barberia_id || null,
       direccion: direccionFinal,
       notas: (form.notas || "").trim(),
