@@ -1019,9 +1019,12 @@ export default function Productos() {
       const { data, error } = await supabase.rpc("create_product_with_initial_stock", {
         p_product: dataProducto,
         p_initial_quantity: Number(productoActual.cantidad_inicial || 0),
-        p_location: productoActual.ubicacion_inicial || ubicacionInicialDefault(),
-        p_van_id: productoActual.ubicacion_inicial === "van"
-          ? (productoActual.van_id_inicial || vanIdInicialDefault())
+        // The UI uses `van_<uuid>` keys so each van can be shown in the
+        // selector, while the transactional RPC accepts only `van` or
+        // `almacen` and receives the UUID separately.
+        p_location: String(productoActual.ubicacion_inicial || ubicacionInicialDefault()).startsWith("van_") ? "van" : "almacen",
+        p_van_id: String(productoActual.ubicacion_inicial || "").startsWith("van_")
+          ? (productoActual.van_id_inicial || String(productoActual.ubicacion_inicial).slice(4) || vanIdInicialDefault())
           : null,
       });
       if (error) {
