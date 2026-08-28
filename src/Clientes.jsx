@@ -697,6 +697,7 @@ export default function Clientes() {
 
   // Totales header (globales)
   const [totales, setTotales] = useState({ totalClients: 0, withDebt: 0, totalOutstanding: 0 });
+  const [totalesUpdatedAt, setTotalesUpdatedAt] = useState(null);
 
   // Detalles / modales
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
@@ -782,30 +783,22 @@ export default function Clientes() {
 
   /* -------------------- Totales globales (cards) -------------------- */
   async function cargarTotales() {
-    // Todo desde la vista
-    const { count: totalClients } = await supabase
-      .from(CLIENTS_VIEW)
-      .select("*", { count: "exact", head: true });
-
-    const { count: withDebt } = await supabase
-      .from(CLIENTS_VIEW)
-      .select("*", { count: "exact", head: true })
-      .gt("balance", 0);
-
-    const { data: saldosRows } = await supabase
-      .from(CLIENTS_VIEW)
-      .select("balance");
-
-    const totalOutstanding = (saldosRows || []).reduce(
-      (s, r) => s + Math.max(0, Number(r.balance || 0)),
-      0
-    );
-
-    setTotales({
-      totalClients: totalClients || 0,
-      withDebt: withDebt || 0,
-      totalOutstanding
-    });
+    // One server-side aggregate avoids three view scans and downloading all
+    // balances to the browser. Keep a fallback for older deployments.
+    const { data: aggregate, error: aggregateError } = await supabase.rpc("get_clientes_balance_totals");
+    const row = Array.isArray(aggregate) ? aggregate[0] : aggregate;
+    if (!aggregateError && row) {
+      setTotales({ totalClients: Number(row.total_clients || 0), withDebt: Number(row.clients_with_debt || 0), totalOutstanding: Number(row.total_outstanding || 0) });
+      setTotalesUpdatedAt(new Date());
+      return;
+    }
+    const [{ count: totalClients }, { count: withDebt }, { data: saldosRows }] = await Promise.all([
+      supabase.from(CLIENTS_VIEW).select("*", { count: "exact", head: true }),
+      supabase.from(CLIENTS_VIEW).select("*", { count: "exact", head: true }).gt("balance", 0),
+      supabase.from(CLIENTS_VIEW).select("balance"),
+    ]);
+    setTotales({ totalClients: totalClients || 0, withDebt: withDebt || 0, totalOutstanding: (saldosRows || []).reduce((s, r) => s + Math.max(0, Number(r.balance || 0)), 0) });
+    setTotalesUpdatedAt(new Date());
   }
 
 /* ⚡ OPTIMIZADO: Cargar página CON búsqueda completa de dirección */
@@ -1616,9 +1609,12 @@ const fetchPage = async (opts = {}) => {
               <div className="mt-0.5 text-lg font-black text-amber-800 sm:text-xl">{totales.withDebt}</div>
             </div>
             <div className="min-w-0 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5">
-              <div className="text-[9px] font-black uppercase tracking-wide text-rose-600 sm:text-[10px]">Outstanding</div>
+              <div className="text-[9px] font-black uppercase tracking-wide text-rose-600 sm:text-[10px]">Outstanding debt</div>
               <div className="mt-0.5 truncate text-base font-black text-rose-700 sm:text-xl">
                 {fmtSafe(totales.totalOutstanding)}
+              </div>
+              <div className="mt-0.5 text-[9px] font-medium text-rose-500" title="Sum of current positive customer balances">
+                Current balances{totalesUpdatedAt ? ` · ${totalesUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}
               </div>
             </div>
           </div>
