@@ -12,6 +12,9 @@ const TERMS_VERSION = "card-on-file-v1-2026-08-14";
 const TERMS_TEXT = "I authorize Tools4Care to securely save this payment method with Stripe for future payments that I approve.";
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const ALLOWED_ROLES = new Set(["admin", "supervisor", "vendedor"]);
+const isArPaymentContext = (contextType: unknown) =>
+  contextType === "ar_payment" || contextType === "ar_payment_deferred";
+const isDeferredArPaymentContext = (contextType: unknown) => contextType === "ar_payment_deferred";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: CORS });
@@ -174,8 +177,8 @@ Deno.serve(async (req) => {
           completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         }).eq("id", session.id);
       }
-      const deferArApply = session.context_type === "ar_payment" && String(session.context_id || "").startsWith("deferred-ar-");
-      if (!deferArApply && currentStatus === "reconciliation_pending" && session.context_type === "ar_payment" && session.stripe_payment_intent_id) {
+      const deferArApply = isDeferredArPaymentContext(session.context_type);
+      if (!deferArApply && currentStatus === "reconciliation_pending" && isArPaymentContext(session.context_type) && session.stripe_payment_intent_id) {
         const { error: retryError } = await admin.rpc("terminal_apply_ar_payment", {
           p_session_id: session.id, p_cliente_id: session.cliente_id, p_van_id: session.van_id,
           p_operator_id: session.operator_id, p_monto: session.amount_cents / 100,
@@ -204,7 +207,7 @@ Deno.serve(async (req) => {
         const intent: any = await stripe.paymentIntents.retrieve(session.stripe_payment_intent_id);
         if (intent.status === "succeeded") {
           let recoveredStatus = deferArApply ? "succeeded" : "reconciled";
-          if (session.context_type === "ar_payment" && !deferArApply) {
+          if (isArPaymentContext(session.context_type) && !deferArApply) {
             const { error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
               p_session_id: session.id,
               p_cliente_id: session.cliente_id,
@@ -243,7 +246,7 @@ Deno.serve(async (req) => {
         .eq("id", sessionId).maybeSingle();
       if (sessionError || !session) return json({ error: "Payment session not found" }, 404);
       if (session.tenant_id !== staff.tenant_id || session.operator_id !== staff.id) return json({ error: "Payment session access denied" }, 403);
-      if (session.context_type !== "ar_payment" || !session.stripe_payment_intent_id) return json({ error: "Invalid A/R payment session" }, 409);
+      if (!isArPaymentContext(session.context_type) || !session.stripe_payment_intent_id) return json({ error: "Invalid A/R payment session" }, 409);
       const { data: applied, error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
         p_session_id: session.id, p_cliente_id: session.cliente_id, p_van_id: session.van_id,
         p_operator_id: session.operator_id, p_monto: session.amount_cents / 100,
@@ -392,9 +395,9 @@ Deno.serve(async (req) => {
         savedMethodId = saved.id;
       }
 
-      const deferArApply = session.context_type === "ar_payment" && String(session.context_id || "").startsWith("deferred-ar-");
+      const deferArApply = isDeferredArPaymentContext(session.context_type);
       let finalStatus = deferArApply ? "succeeded" : "reconciliation_pending";
-      if (session.context_type === "ar_payment" && !deferArApply) {
+      if (isArPaymentContext(session.context_type) && !deferArApply) {
         const { error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
           p_session_id: session.id, p_cliente_id: session.cliente_id, p_van_id: session.van_id,
           p_operator_id: session.operator_id, p_monto: session.amount_cents / 100,
@@ -521,7 +524,7 @@ Deno.serve(async (req) => {
       const idempotencyKey = cleanText(payload.idempotency_key, 180);
 
       if (!deviceId || !idempotencyKey) return json({ error: "Missing required payment session fields" }, 400);
-      if (!["sale", "ar_payment", "card_setup"].includes(contextType)) return json({ error: "Invalid payment context" }, 400);
+      if (!["sale", "ar_payment", "ar_payment_deferred", "card_setup"].includes(contextType)) return json({ error: "Invalid payment context" }, 400);
       if (!clienteId && contextType !== "sale") return json({ error: "A customer is required for this payment type" }, 400);
       if (contextType !== "card_setup" && amountCents < 50) return json({ error: "Payment amount is too low" }, 400);
 
@@ -538,7 +541,7 @@ Deno.serve(async (req) => {
       const saveOffered = Boolean(clienteId && saveRequestedByClient && savedCardsEnabled);
       if (clienteId && (clienteError || !cliente || cliente.tenant_id !== staff.tenant_id)) return json({ error: "Customer not found" }, 404);
       if (contextType === "card_setup" && !savedCardsEnabled) return json({ error: "Saved cards are disabled" }, 403);
-      if (contextType === "ar_payment") {
+      if (isArPaymentContext(contextType)) {
         const { data: balanceRow, error: balanceError } = await admin.from("v_cxc_cliente_detalle_ext")
           .select("saldo").eq("cliente_id", clienteId).maybeSingle();
         if (balanceError) throw balanceError;
@@ -801,7 +804,7 @@ Deno.serve(async (req) => {
       }
 
       let finalStatus = "reconciliation_pending";
-      if (session.context_type === "ar_payment") {
+      if (isArPaymentContext(session.context_type)) {
         const { error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
           p_session_id: session.id,
           p_cliente_id: session.cliente_id,

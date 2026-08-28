@@ -3013,11 +3013,13 @@ let restante = pago;
     setTerminalPaymentBusy(true);
     setMensaje("Preparing secure Tap to Pay…");
     try {
-      const contextId = `deferred-ar-${globalThis.crypto?.randomUUID?.() || makeUUID()}`;
+      // context_id is a UUID column; the deferred behavior is encoded in the
+      // context type so PostgreSQL never receives a prefixed non-UUID value.
+      const contextId = globalThis.crypto?.randomUUID?.() || makeUUID();
       const created = await createTerminalPaymentSession({
         clienteId: cliente.id,
         vanId: van.id,
-        contextType: "ar_payment",
+        contextType: "ar_payment_deferred",
         contextId,
         amountCents: Math.round(amount * 100),
         offerSaveCard: true,
