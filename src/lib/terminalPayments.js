@@ -29,7 +29,10 @@ export async function callTerminalPayments(action, payload = {}) {
     "Content-Type": "application/json",
   };
   let lastError;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  // Short network interruptions are common when Android returns from the
+  // payment companion. Retry transport failures a few times; server
+  // responses are still never replayed automatically.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 20_000);
@@ -55,7 +58,7 @@ export async function callTerminalPayments(action, payload = {}) {
       if (error?.name === "AbortError") {
         lastError = new Error("Tap to Pay server timed out. Check the phone internet connection.");
       }
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 700));
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 900 * (attempt + 1)));
     }
   }
   throw lastError || new Error("Could not contact the Tap to Pay server.");
@@ -177,8 +180,21 @@ export async function waitForTerminalPayment(sessionId, {
   onStatus,
 } = {}) {
   const started = Date.now();
+  let lastTransportError = null;
   while (Date.now() - started < timeoutMs) {
-    const result = await callTerminalPayments("session_status", { session_id: sessionId });
+    let result;
+    try {
+      result = await callTerminalPayments("session_status", { session_id: sessionId });
+      lastTransportError = null;
+    } catch (error) {
+      // A payment may already be approved while the browser is briefly
+      // offline during the return from Android. Keep checking the same
+      // idempotent session instead of showing a failure or asking to retry.
+      if (error?.nonRetryable) throw error;
+      lastTransportError = error;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      continue;
+    }
     onStatus?.(result);
     if (["succeeded", "reconciliation_pending", "reconciled"].includes(result.status)) return result;
     if (["failed", "cancelled"].includes(result.status)) {
@@ -186,7 +202,10 @@ export async function waitForTerminalPayment(sessionId, {
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error("The Android payment companion did not respond within 30 seconds. Use Enter card securely or try Tap to Pay again.");
+  const message = lastTransportError
+    ? "Could not verify the approved Tap to Pay session because the phone connection was interrupted. Do not charge again; refresh Tools4Care and check the payment status."
+    : "The Android payment companion did not respond within 90 seconds. Do not charge again; refresh Tools4Care and check the payment status.";
+  throw new Error(message);
 }
 
 export function openTerminalCompanion(companionUrl) {
