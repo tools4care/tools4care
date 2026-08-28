@@ -201,7 +201,7 @@ class TerminalPaymentController(
             runCatching { api.syncResult() }
                 .onSuccess { result ->
                     val resultStatus = result.optString("status", "")
-                    if (bootstrap.intentType != "setup" && resultStatus != "reconciled") {
+                    if (bootstrap.intentType != "setup" && resultStatus !in setOf("succeeded", "reconciled")) {
                         onComplete(false, "Payment approved, but Tools4Care reconciliation is pending. Keep this screen open and retry synchronization.")
                         return@onSuccess
                     }
