@@ -156,7 +156,7 @@ Deno.serve(async (req) => {
       const staff = await requireStaff(req, admin);
       const sessionId = cleanText(payload.session_id, 40);
       const { data: session, error } = await admin.from("terminal_payment_sessions")
-        .select("id,status,operator_id,tenant_id,cliente_id,van_id,context_type,amount_cents,stripe_payment_intent_id,saved_payment_method_id,companion_token_expires_at,failure_message,completed_at")
+        .select("id,status,operator_id,tenant_id,cliente_id,van_id,context_type,context_id,amount_cents,stripe_payment_intent_id,saved_payment_method_id,companion_token_expires_at,failure_message,completed_at")
         .eq("id", sessionId).maybeSingle();
       if (error || !session) return json({ error: "Payment session not found" }, 404);
       if (session.tenant_id !== staff.tenant_id) return json({ error: "Payment session access denied" }, 403);
@@ -174,7 +174,8 @@ Deno.serve(async (req) => {
           completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         }).eq("id", session.id);
       }
-      if (currentStatus === "reconciliation_pending" && session.context_type === "ar_payment" && session.stripe_payment_intent_id) {
+      const deferArApply = session.context_type === "ar_payment" && String(session.context_id || "").startsWith("deferred-ar-");
+      if (!deferArApply && currentStatus === "reconciliation_pending" && session.context_type === "ar_payment" && session.stripe_payment_intent_id) {
         const { error: retryError } = await admin.rpc("terminal_apply_ar_payment", {
           p_session_id: session.id, p_cliente_id: session.cliente_id, p_van_id: session.van_id,
           p_operator_id: session.operator_id, p_monto: session.amount_cents / 100,
@@ -202,8 +203,8 @@ Deno.serve(async (req) => {
         && session.stripe_payment_intent_id) {
         const intent: any = await stripe.paymentIntents.retrieve(session.stripe_payment_intent_id);
         if (intent.status === "succeeded") {
-          let recoveredStatus = "reconciled";
-          if (session.context_type === "ar_payment") {
+          let recoveredStatus = deferArApply ? "succeeded" : "reconciled";
+          if (session.context_type === "ar_payment" && !deferArApply) {
             const { error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
               p_session_id: session.id,
               p_cliente_id: session.cliente_id,
@@ -232,6 +233,25 @@ Deno.serve(async (req) => {
         card_saved: Boolean(session.saved_payment_method_id),
         failure_message: currentFailure, completed_at: session.completed_at,
       });
+    }
+
+    if (action === "finalize_ar_payment") {
+      const staff = await requireStaff(req, admin);
+      const sessionId = cleanText(payload.session_id, 40);
+      const { data: session, error: sessionError } = await admin.from("terminal_payment_sessions")
+        .select("id,status,operator_id,tenant_id,cliente_id,van_id,context_type,amount_cents,stripe_payment_intent_id")
+        .eq("id", sessionId).maybeSingle();
+      if (sessionError || !session) return json({ error: "Payment session not found" }, 404);
+      if (session.tenant_id !== staff.tenant_id || session.operator_id !== staff.id) return json({ error: "Payment session access denied" }, 403);
+      if (session.context_type !== "ar_payment" || !session.stripe_payment_intent_id) return json({ error: "Invalid A/R payment session" }, 409);
+      const { data: applied, error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
+        p_session_id: session.id, p_cliente_id: session.cliente_id, p_van_id: session.van_id,
+        p_operator_id: session.operator_id, p_monto: session.amount_cents / 100,
+        p_payment_intent_id: session.stripe_payment_intent_id,
+      });
+      if (applyError) return json({ error: applyError.message }, 409);
+      await admin.from("terminal_payment_sessions").update({ status: "reconciled", reconciled_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", session.id);
+      return json({ ok: true, status: "reconciled", payment_id: applied?.[0]?.pago_id || null });
     }
 
     if (action === "create_manual_checkout") {
@@ -372,8 +392,9 @@ Deno.serve(async (req) => {
         savedMethodId = saved.id;
       }
 
-      let finalStatus = "reconciliation_pending";
-      if (session.context_type === "ar_payment") {
+      const deferArApply = session.context_type === "ar_payment" && String(session.context_id || "").startsWith("deferred-ar-");
+      let finalStatus = deferArApply ? "succeeded" : "reconciliation_pending";
+      if (session.context_type === "ar_payment" && !deferArApply) {
         const { error: applyError } = await admin.rpc("terminal_apply_ar_payment", {
           p_session_id: session.id, p_cliente_id: session.cliente_id, p_van_id: session.van_id,
           p_operator_id: session.operator_id, p_monto: session.amount_cents / 100,

@@ -76,6 +76,10 @@ export async function getSavedPaymentMethods(clienteId) {
   return Array.isArray(result?.payment_methods) ? result.payment_methods : [];
 }
 
+export async function finalizeTerminalArPayment(sessionId) {
+  return callTerminalPayments("finalize_ar_payment", { session_id: sessionId });
+}
+
 export function savePendingSaleCardPayment(value) {
   localStorage.setItem(PENDING_SALE_PAYMENT_KEY, JSON.stringify({ ...value, savedAt: new Date().toISOString() }));
 }

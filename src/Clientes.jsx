@@ -43,6 +43,7 @@ import {
   createTerminalPaymentSession,
   createManualCardCheckout,
   chargeSavedPaymentMethod,
+  finalizeTerminalArPayment,
   getSavedPaymentMethods,
   openManualCardCheckout,
   openTerminalCompanion,
@@ -3012,7 +3013,7 @@ let restante = pago;
     setTerminalPaymentBusy(true);
     setMensaje("Preparing secure Tap to Pay…");
     try {
-      const contextId = globalThis.crypto?.randomUUID?.() || makeUUID();
+      const contextId = `deferred-ar-${globalThis.crypto?.randomUUID?.() || makeUUID()}`;
       const created = await createTerminalPaymentSession({
         clienteId: cliente.id,
         vanId: van.id,
@@ -3023,7 +3024,7 @@ let restante = pago;
       });
       openTerminalCompanion(created.companion_url);
       const result = await waitForTerminalPayment(created.session_id);
-      if (result.status !== "reconciled") {
+      if (!["succeeded", "reconciled"].includes(result.status)) {
         throw new Error("Stripe approved the payment, but account reconciliation is still pending.");
       }
 
@@ -3325,7 +3326,7 @@ let restante = pago;
           baseMethod: part.method,
         }));
       const rawPaymentParts = terminalPaymentResult
-        ? additionalPaymentParts
+        ? [{ amount: round2(Number(terminalPaymentResult.amount || 0)), method: "Tap to Pay", reference: terminalPaymentResult.sessionId || null, baseMethod: "Card" }, ...additionalPaymentParts]
         : [
             {
               amount: round2(Number(monto || 0)),
@@ -3361,6 +3362,9 @@ let restante = pago;
       const appliedPaymentParts = rawPaymentParts.length === 1
         ? [{ ...rawPaymentParts[0], amount: pagoAplicado }]
         : rawPaymentParts;
+      const splitPaymentParts = terminalPaymentResult
+        ? appliedPaymentParts.filter((part) => part.baseMethod !== "Card")
+        : appliedPaymentParts;
 
       const paymentBatchId = paymentBatchRef.current || makeUUID();
       paymentBatchRef.current = paymentBatchId;
@@ -3381,7 +3385,7 @@ let restante = pago;
       // ── MODO OFFLINE: guardar en cola local ───────────────────
       if (!navigator.onLine) {
         const paidAt = new Date().toISOString();
-        for (const part of appliedPaymentParts) {
+        for (const part of splitPaymentParts) {
           await guardarPagoOffline({
             cliente_id: cliente.id,
             van_id: van.id,
@@ -3407,11 +3411,15 @@ let restante = pago;
       }
 
       const paidAt = new Date().toISOString();
-      const splitPayment = await supabase.rpc("record_split_ar_payment", {
+      if (terminalPaymentResult) {
+        const finalized = await finalizeTerminalArPayment(terminalPaymentResult.sessionId);
+        if (finalized?.status !== "reconciled") throw new Error("The approved card payment could not be finalized.");
+      }
+      const splitPayment = splitPaymentParts.length > 0 ? await supabase.rpc("record_split_ar_payment", {
         p_cliente_id: cliente.id,
         p_location_id: van.id,
         p_session_id: storeCashSession?.id || null,
-        p_parts: appliedPaymentParts.map((part) => ({
+        p_parts: splitPaymentParts.map((part) => ({
           amount: part.amount,
           method: part.method,
           reference: part.reference,
@@ -3419,7 +3427,7 @@ let restante = pago;
         })),
         p_transaction_id: paymentBatchId,
         p_paid_at: paidAt,
-      });
+      }) : { error: null };
       if (splitPayment.error) throw splitPayment.error;
 
       const saldoDespues = round2(Math.max(0, saldoActualUI - pagoAplicado));
@@ -4009,11 +4017,11 @@ let restante = pago;
                 </button>
                 <button
                   type="submit"
-                  disabled={guardando || cargandoSaldo || saldoActual <= 0 || totalPaymentAmount <= 0 || (Boolean(terminalPaymentResult) && extraPayments.length === 0)}
+                  disabled={guardando || cargandoSaldo || saldoActual <= 0 || totalPaymentAmount <= 0}
                   className="flex min-h-14 flex-[2] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-5 text-base font-black text-white shadow-lg transition-all hover:from-emerald-700 hover:to-green-700 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-400"
                 >
                   {terminalPaymentResult && extraPayments.length === 0 ? (
-                    <><ShieldCheck size={20} />Card payment already recorded</>
+                    <><Check size={20} />Record Payment</>
                   ) : terminalPaymentResult ? (
                     <><Check size={20} />Record additional payment</>
                   ) : guardando ? (
