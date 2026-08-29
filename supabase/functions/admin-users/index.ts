@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
           email: cleanEmail,
           options: {
             shouldCreateUser: false,
-            emailRedirectTo: `${publicAppUrl}/portal`,
+            emailRedirectTo: `${publicAppUrl}/auth/callback?next=%2Fportal`,
           },
         });
 

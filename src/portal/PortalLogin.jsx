@@ -16,7 +16,9 @@ export function PortalLogin() {
     const { error: otpError } = await supabase.auth.signInWithOtp({
       email: email.trim().toLowerCase(),
       options: {
-        emailRedirectTo: `${window.location.origin}/portal`,
+        // Route through the shared callback so Supabase redirect allow-lists
+        // cannot fall back to the POS login page.
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=%2Fportal`,
         data: { account_type: "portal_customer" },
       },
     });
