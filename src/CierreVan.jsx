@@ -460,7 +460,7 @@ function normalizeCloseoutMethod(raw) {
     value.includes("applepay")
   ) return "transfer";
   if (value.includes("cash") || value.includes("efectivo")) return "cash";
-  if (value.includes("card") || value.includes("tarjeta")) return "card";
+  if (value.includes("card") || value.includes("tarjeta") || value.includes("stripe_terminal") || value.includes("card_present") || value.includes("terminal")) return "card";
   return "other";
 }
 
