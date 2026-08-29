@@ -45,7 +45,7 @@ function CardForm({ onSuccess, onCancel }) {
         }
       }
       throw lastError || new Error("Payment confirmation is still pending.");
-    } catch (reconcileError) {
+    } catch {
       setError(`Your card may already be charged, but confirmation is still pending. Do not pay again. Use Back to return and refresh your account, or try Check payment status.`);
     } finally {
       setLoading(false);

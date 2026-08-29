@@ -157,6 +157,10 @@ export function CuentaCliente({ session }) {
   const refreshRef = useRef(false);
 
   useEffect(() => {
+    setSelectedInvoices((current) => current.filter((id) => compras.rows.some((row) => row.id === id)));
+  }, [compras.rows]);
+
+  useEffect(() => {
     if (!paymentModalOpen) return undefined;
 
     const previousOverflow = document.body.style.overflow;
@@ -228,10 +232,6 @@ export function CuentaCliente({ session }) {
   const creditStatus = getCreditStatus(balance, availableCredit);
   const loadedPurchaseTotal = compras.rows.reduce((sum, row) => sum + safeAmount(row.total_venta ?? row.total), 0);
   const creditUsedPercent = creditLimit > 0 ? Math.min(100, Math.max(0, Math.round((balance / creditLimit) * 100))) : 0;
-
-  useEffect(() => {
-    setSelectedInvoices((current) => current.filter((id) => compras.rows.some((row) => row.id === id)));
-  }, [compras.rows]);
 
   async function downloadSelectedInvoices() {
     if (!selectedInvoices.length || bulkStatus === "loading") return;
