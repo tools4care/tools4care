@@ -136,9 +136,38 @@ function formatPaymentStatus(value) {
   return value ? String(value) : "Recorded";
 }
 
+function maskDate(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function maskedDateToIso(value) {
+  const match = String(value || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return "";
+  const [, month, day, year] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) return "";
+  return `${year}-${month}-${day}`;
+}
+
+function recentMonths(count = 18) {
+  const now = new Date();
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - index, 1);
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    return { value, label: date.toLocaleDateString("en-US", { month: "long", year: "numeric" }) };
+  });
+}
+
 export function CuentaCliente({ session }) {
   const { cliente, resumen, loading, error, unlinked, refresh } = usePortalCliente(session);
-  const pagos = usePagosCliente(cliente?.id);
+  const [paymentMonth, setPaymentMonth] = useState("");
+  const months = recentMonths();
+  const paymentDateFrom = paymentMonth ? `${paymentMonth}-01` : "";
+  const paymentDateTo = paymentMonth ? new Date(Number(paymentMonth.slice(0, 4)), Number(paymentMonth.slice(5, 7)), 0).toISOString().slice(0, 10) : "";
+  const pagos = usePagosCliente(cliente?.id, paymentDateFrom, paymentDateTo);
   const [invoiceFrom, setInvoiceFrom] = useState("");
   const [invoiceTo, setInvoiceTo] = useState("");
   const [invoiceFromDraft, setInvoiceFromDraft] = useState("");
@@ -295,12 +324,12 @@ export function CuentaCliente({ session }) {
           <RefreshCw className={refreshing ? "animate-spin" : ""} size={16} /> {refreshing ? "Refreshing…" : "Refresh account"}
         </button>
 
-        <HistoryCard icon={<WalletCards size={20} />} title="Payments" subtitle="Payments applied to your account" {...pagos} emptyText="No payments have been recorded yet." renderRow={(row) => (
+        <HistoryCard icon={<WalletCards size={20} />} title="Payments" subtitle={paymentMonth ? `Showing payments for ${months.find((month) => month.value === paymentMonth)?.label || paymentMonth}` : "Payments applied to your account"} {...pagos} headerExtra={<div className="mt-4 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3"><label className="text-xs font-bold text-slate-600">Month<select value={paymentMonth} onChange={(e) => setPaymentMonth(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"><option value="">All months</option>{months.map((month) => <option key={month.value} value={month.value}>{month.label}</option>)}</select></label>{paymentMonth && <button className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700" onClick={() => setPaymentMonth("")}>Clear</button>}</div>} emptyText="No payments have been recorded yet." renderRow={(row) => (
           <div key={row.id} className="flex justify-between gap-4 py-3"><div><p className="font-bold">{formatPaymentMethod(row.metodo_pago)}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha_pago)}</p>{row.referencia && <p className="mt-1 text-xs text-slate-400">Ref. {row.referencia}</p>}</div><p className="font-black text-emerald-700">{fmtMoney(row.monto)}</p></div>
         )} />
 
         <HistoryCard icon={<ReceiptText size={20} />} title="Purchases & invoices" subtitle="Filter by date, select invoices, and download PDF copies" {...compras} emptyText="No purchases have been recorded yet."
-          headerExtra={<div className="mt-4 space-y-3"><div className="grid grid-cols-2 gap-2"><label className="text-xs font-bold text-slate-500">From<input type="date" value={invoiceFromDraft} onChange={(e) => setInvoiceFromDraft(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700" /></label><label className="text-xs font-bold text-slate-500">To<input type="date" value={invoiceToDraft} onChange={(e) => setInvoiceToDraft(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700" /></label></div><div className="flex flex-wrap gap-2"><button className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white" onClick={() => { setInvoiceFrom(invoiceFromDraft); setInvoiceTo(invoiceToDraft); setSelectedInvoices([]); }}>Apply dates</button><button className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-black text-slate-700" onClick={() => { setInvoiceFromDraft(""); setInvoiceToDraft(""); setInvoiceFrom(""); setInvoiceTo(""); setSelectedInvoices([]); }}>Clear</button>{selectedInvoices.length > 0 && <button className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800" onClick={downloadSelectedInvoices}>{bulkStatus === "loading" ? "Preparing PDFs…" : `Download ${selectedInvoices.length} PDF${selectedInvoices.length > 1 ? "s" : ""}`}</button>}</div>{bulkStatus === "done" && <p className="text-xs font-bold text-emerald-700">Invoices downloaded.</p>}{bulkStatus && bulkStatus !== "loading" && bulkStatus !== "done" && <p className="text-xs font-bold text-red-600">{bulkStatus}</p>}</div>}
+          headerExtra={<div className="mt-4 space-y-3 rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Enter dates as <strong>MM/DD/YYYY</strong>.</p><div className="grid grid-cols-2 gap-2"><label className="text-xs font-bold text-slate-500">From<input type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={invoiceFromDraft} onChange={(e) => setInvoiceFromDraft(maskDate(e.target.value))} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700" /></label><label className="text-xs font-bold text-slate-500">To<input type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={invoiceToDraft} onChange={(e) => setInvoiceToDraft(maskDate(e.target.value))} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700" /></label></div><div className="flex flex-wrap gap-2"><button className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white" onClick={() => { const from = invoiceFromDraft ? maskedDateToIso(invoiceFromDraft) : ""; const to = invoiceToDraft ? maskedDateToIso(invoiceToDraft) : ""; if ((invoiceFromDraft && !from) || (invoiceToDraft && !to) || (from && to && from > to)) { setBulkStatus("Please enter a valid date range."); return; } setBulkStatus(""); setInvoiceFrom(from); setInvoiceTo(to); setSelectedInvoices([]); }}>Apply dates</button><button className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700" onClick={() => { setInvoiceFromDraft(""); setInvoiceToDraft(""); setInvoiceFrom(""); setInvoiceTo(""); setSelectedInvoices([]); setBulkStatus(""); }}>Clear</button>{selectedInvoices.length > 0 && <button className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800" onClick={downloadSelectedInvoices}>{bulkStatus === "loading" ? "Preparing PDFs…" : `Download ${selectedInvoices.length} PDF${selectedInvoices.length > 1 ? "s" : ""}`}</button>}</div>{bulkStatus === "done" && <p className="text-xs font-bold text-emerald-700">Invoices downloaded.</p>}{bulkStatus && bulkStatus !== "loading" && bulkStatus !== "done" && <p className="text-xs font-bold text-red-600">{bulkStatus}</p>}</div>}
           renderRow={(row) => (
           <div key={row.id} className="flex items-start justify-between gap-4 py-3">
             <div className="flex min-w-0 items-start gap-3"><input type="checkbox" aria-label="Select invoice" checked={selectedInvoices.includes(row.id)} onChange={() => setSelectedInvoices((current) => current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id])} className="mt-1.5 h-4 w-4 rounded border-slate-300 text-blue-600" /><div><p className="truncate font-bold">{row.numero_factura ? `Invoice ${row.numero_factura}` : "Purchase"}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha || row.created_at)}</p><InvoiceDownloadButton purchase={row} client={cliente} /></div></div>

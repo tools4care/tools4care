@@ -42,8 +42,8 @@ function usePortalHistory({ table, columns, dateColumn, clienteId, dateFrom = ""
   return { rows, loading, error, hasMore, loadMore: () => load(false), refresh: () => load(true) };
 }
 
-export function usePagosCliente(clienteId) {
-  return usePortalHistory({ table: "pagos", columns: "id,monto,metodo_pago,fecha_pago,referencia", dateColumn: "fecha_pago", clienteId });
+export function usePagosCliente(clienteId, dateFrom = "", dateTo = "") {
+  return usePortalHistory({ table: "pagos", columns: "id,monto,metodo_pago,fecha_pago,referencia", dateColumn: "fecha_pago", clienteId, dateFrom, dateTo });
 }
 
 export function useComprasCliente(clienteId, dateFrom = "", dateTo = "") {
