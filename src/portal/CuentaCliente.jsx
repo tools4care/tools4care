@@ -115,8 +115,13 @@ function formatPaymentMethod(value) {
   const raw = String(value || "").trim().toLowerCase();
   if (raw.includes("stripe_terminal") || raw.includes("card") || raw.includes("tarjeta")) return "Card";
   if (raw.includes("cash") || raw.includes("efectivo")) return "Cash";
-  if (raw.includes("transfer") || raw.includes("zelle") || raw.includes("venmo") || raw.includes("cashapp") || raw.includes("cash app") || raw.includes("apple pay")) return "Bank transfer / digital payment";
+  if (raw.includes("cashapp") || raw.includes("cash app")) return "Cash App";
+  if (raw.includes("venmo")) return "Venmo";
+  if (raw.includes("zelle")) return "Zelle";
+  if (raw.includes("apple pay") || raw.includes("applepay")) return "Apple Pay";
+  if (raw.includes("transfer") || raw.includes("transferencia")) return "Bank transfer";
   if (raw.includes("check") || raw.includes("cheque")) return "Check";
+  if (raw.includes("otro") || raw.includes("other")) return "Other";
   return value ? String(value) : "Payment";
 }
 
