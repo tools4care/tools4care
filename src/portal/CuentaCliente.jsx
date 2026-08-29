@@ -21,7 +21,7 @@ import { usePortalCliente } from "./usePortalCliente";
 import { usePortalPaymentOptions } from "./usePortalPaymentOptions";
 import { PortalCardPayment } from "./PortalCardPayment";
 
-function HistoryCard({ icon, title, subtitle, rows, loading, error, hasMore, loadMore, renderRow, emptyText }) {
+function HistoryCard({ icon, title, subtitle, rows, loading, error, hasMore, loadMore, renderRow, emptyText, headerExtra }) {
   return (
     <section className="bg-white rounded-2xl shadow-md p-4 sm:p-5">
       <div className="flex items-start gap-3">
@@ -31,6 +31,7 @@ function HistoryCard({ icon, title, subtitle, rows, loading, error, hasMore, loa
           <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
       </div>
+      {headerExtra}
       {error && <p className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {!loading && !error && rows.length === 0 && <div className="mt-5 rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-500">{emptyText}</div>}
       <div className="mt-3 divide-y divide-slate-100">{rows.map(renderRow)}</div>
@@ -138,7 +139,13 @@ function formatPaymentStatus(value) {
 export function CuentaCliente({ session }) {
   const { cliente, resumen, loading, error, unlinked, refresh } = usePortalCliente(session);
   const pagos = usePagosCliente(cliente?.id);
-  const compras = useComprasCliente(cliente?.id);
+  const [invoiceFrom, setInvoiceFrom] = useState("");
+  const [invoiceTo, setInvoiceTo] = useState("");
+  const [invoiceFromDraft, setInvoiceFromDraft] = useState("");
+  const [invoiceToDraft, setInvoiceToDraft] = useState("");
+  const [selectedInvoices, setSelectedInvoices] = useState([]);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const compras = useComprasCliente(cliente?.id, invoiceFrom, invoiceTo);
   const paymentOptions = usePortalPaymentOptions();
   const [refreshing, setRefreshing] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -222,6 +229,27 @@ export function CuentaCliente({ session }) {
   const loadedPurchaseTotal = compras.rows.reduce((sum, row) => sum + safeAmount(row.total_venta ?? row.total), 0);
   const creditUsedPercent = creditLimit > 0 ? Math.min(100, Math.max(0, Math.round((balance / creditLimit) * 100))) : 0;
 
+  useEffect(() => {
+    setSelectedInvoices((current) => current.filter((id) => compras.rows.some((row) => row.id === id)));
+  }, [compras.rows]);
+
+  async function downloadSelectedInvoices() {
+    if (!selectedInvoices.length || bulkStatus === "loading") return;
+    setBulkStatus("loading");
+    try {
+      const { buildFacturaPDF, ensureDetalleVentas } = await import("../lib/invoiceEmail");
+      const selected = compras.rows.filter((row) => selectedInvoices.includes(row.id));
+      for (const purchase of selected) {
+        const invoice = await ensureDetalleVentas({ ...purchase, total: purchase.total_venta ?? purchase.total, cliente_nombre: cliente?.nombre, cliente_email: cliente?.email, cliente_telefono: cliente?.telefono, cliente_direccion: cliente?.direccion });
+        const doc = await buildFacturaPDF(invoice);
+        doc.save(`${purchase.numero_factura || `invoice-${purchase.id.slice(0, 8)}`}.pdf`);
+      }
+      setBulkStatus("done");
+    } catch (downloadError) {
+      setBulkStatus(downloadError.message || "Invoice download failed.");
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 sm:py-8">
       <div className="mx-auto max-w-3xl space-y-4">
@@ -271,9 +299,11 @@ export function CuentaCliente({ session }) {
           <div key={row.id} className="flex justify-between gap-4 py-3"><div><p className="font-bold">{formatPaymentMethod(row.metodo_pago)}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha_pago)}</p>{row.referencia && <p className="mt-1 text-xs text-slate-400">Ref. {row.referencia}</p>}</div><p className="font-black text-emerald-700">{fmtMoney(row.monto)}</p></div>
         )} />
 
-        <HistoryCard icon={<ReceiptText size={20} />} title="Purchases & invoices" subtitle="Download a PDF copy whenever you need it" {...compras} emptyText="No purchases have been recorded yet." renderRow={(row) => (
+        <HistoryCard icon={<ReceiptText size={20} />} title="Purchases & invoices" subtitle="Filter by date, select invoices, and download PDF copies" {...compras} emptyText="No purchases have been recorded yet."
+          headerExtra={<div className="mt-4 space-y-3"><div className="grid grid-cols-2 gap-2"><label className="text-xs font-bold text-slate-500">From<input type="date" value={invoiceFromDraft} onChange={(e) => setInvoiceFromDraft(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700" /></label><label className="text-xs font-bold text-slate-500">To<input type="date" value={invoiceToDraft} onChange={(e) => setInvoiceToDraft(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700" /></label></div><div className="flex flex-wrap gap-2"><button className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white" onClick={() => { setInvoiceFrom(invoiceFromDraft); setInvoiceTo(invoiceToDraft); setSelectedInvoices([]); }}>Apply dates</button><button className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-black text-slate-700" onClick={() => { setInvoiceFromDraft(""); setInvoiceToDraft(""); setInvoiceFrom(""); setInvoiceTo(""); setSelectedInvoices([]); }}>Clear</button>{selectedInvoices.length > 0 && <button className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800" onClick={downloadSelectedInvoices}>{bulkStatus === "loading" ? "Preparing PDFs…" : `Download ${selectedInvoices.length} PDF${selectedInvoices.length > 1 ? "s" : ""}`}</button>}</div>{bulkStatus === "done" && <p className="text-xs font-bold text-emerald-700">Invoices downloaded.</p>}{bulkStatus && bulkStatus !== "loading" && bulkStatus !== "done" && <p className="text-xs font-bold text-red-600">{bulkStatus}</p>}</div>}
+          renderRow={(row) => (
           <div key={row.id} className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0"><p className="truncate font-bold">{row.numero_factura ? `Invoice ${row.numero_factura}` : "Purchase"}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha || row.created_at)}</p><InvoiceDownloadButton purchase={row} client={cliente} /></div>
+            <div className="flex min-w-0 items-start gap-3"><input type="checkbox" aria-label="Select invoice" checked={selectedInvoices.includes(row.id)} onChange={() => setSelectedInvoices((current) => current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id])} className="mt-1.5 h-4 w-4 rounded border-slate-300 text-blue-600" /><div><p className="truncate font-bold">{row.numero_factura ? `Invoice ${row.numero_factura}` : "Purchase"}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha || row.created_at)}</p><InvoiceDownloadButton purchase={row} client={cliente} /></div></div>
             <div className="text-right"><p className="font-black">{fmtMoney(row.total_venta ?? row.total)}</p><p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">{formatPaymentStatus(row.estado_pago)}</p></div>
           </div>
         )} />

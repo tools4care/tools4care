@@ -24,6 +24,33 @@ function CardForm({ onSuccess, onCancel }) {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [confirmedIntentId, setConfirmedIntentId] = useState("");
+
+  async function reconcilePayment(paymentIntentId) {
+    setLoading(true);
+    setError("");
+    try {
+      // The endpoint is idempotent. Retrying is safe if the browser briefly
+      // loses connection after Stripe has already approved the card.
+      let lastError;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await callPortalPayments("confirm_payment", { paymentIntentId });
+          onSuccess();
+          return;
+        } catch (retryError) {
+          lastError = retryError;
+          if (String(retryError.message || "").includes("not complete yet")) break;
+          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
+      }
+      throw lastError || new Error("Payment confirmation is still pending.");
+    } catch (reconcileError) {
+      setError(`Your card may already be charged, but confirmation is still pending. Do not pay again. Use Back to return and refresh your account, or try Check payment status.`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -39,21 +66,18 @@ function CardForm({ onSuccess, onCancel }) {
       setLoading(false);
       return;
     }
-    if (paymentIntent?.status !== "succeeded") {
-      setError("The payment did not complete. Please try again.");
+    if (!paymentIntent?.id) {
+      setError("Stripe did not return a payment reference. Please try again.");
       setLoading(false);
       return;
     }
-    try {
-      await callPortalPayments("confirm_payment", { paymentIntentId: paymentIntent.id });
-      onSuccess();
-    } catch {
-      setError(
-        `Your card was charged, but we couldn't update your balance automatically. ` +
-        `Contact support with reference ${paymentIntent.id} and we'll fix it right away.`,
-      );
+    setConfirmedIntentId(paymentIntent.id);
+    if (paymentIntent.status !== "succeeded") {
+      setError("Payment is processing. Do not submit again; check the status shortly.");
       setLoading(false);
+      return;
     }
+    await reconcilePayment(paymentIntent.id);
   }
 
   return (
@@ -63,14 +87,13 @@ function CardForm({ onSuccess, onCancel }) {
         <PaymentElement onReady={() => setReady(true)} />
       </div>
       {error && <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-      {ready && (
+      {confirmedIntentId && error && <button type="button" onClick={() => reconcilePayment(confirmedIntentId)} disabled={loading} className="w-full rounded-xl border border-blue-300 bg-blue-50 py-3 text-sm font-black text-blue-800 disabled:opacity-60">Check payment status</button>}
+      {(ready || error) && (
         <div className="flex gap-2 pt-1">
-          <button type="button" onClick={onCancel} disabled={loading} className="flex-1 rounded-xl border border-slate-300 py-3 text-sm font-black text-slate-700 disabled:opacity-60">
-            Back
+          <button type="button" onClick={onCancel} disabled={loading} className={`${confirmedIntentId ? "w-full" : "flex-1"} rounded-xl border border-slate-300 py-3 text-sm font-black text-slate-700 disabled:opacity-60`}>
+            Back to account
           </button>
-          <button disabled={!stripe || loading} className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-black text-white disabled:opacity-60">
-            {loading ? "Processing…" : "Pay now"}
-          </button>
+          {!confirmedIntentId && <button disabled={!stripe || loading} className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-black text-white disabled:opacity-60">{loading ? "Processing…" : "Pay now"}</button>}
         </div>
       )}
     </form>
