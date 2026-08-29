@@ -1,5 +1,5 @@
 // React JSX transform handled by @vitejs/plugin-react — no explicit import needed here
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
@@ -39,6 +39,7 @@ import { SyncToast } from "./components/SyncToast";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { isOnlineLocation, isStoreLocation } from "./lib/locationTypes";
+import { supabase } from "./supabaseClient";
 
 
 const Suplidores = lazyRetry(() => import("./Suplidores"), "Suplidores");
@@ -83,8 +84,44 @@ function PrivateRoute({ children }) {
     );
   }
   
-  if (!usuario) return <Navigate to="/login" />;
+  if (!usuario) return <PortalAwareRedirect />;
   return children;
+}
+
+// A portal magic link can occasionally land on the app root when the auth
+// provider falls back to its configured Site URL. Do not send portal users
+// into the staff login in that case; identify them from auth metadata (and
+// the customer link as a backwards-compatible fallback) and route to portal.
+function PortalAwareRedirect() {
+  const [destination, setDestination] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const user = data?.session?.user;
+      let isPortal = user?.user_metadata?.account_type === "portal_customer";
+      if (!isPortal && user?.id) {
+        const { data: link } = await supabase
+          .from("cliente_usuarios")
+          .select("cliente_id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        isPortal = Boolean(link?.cliente_id);
+      }
+      if (active) setDestination(isPortal ? "/portal" : "/login");
+    })();
+    return () => { active = false; };
+  }, []);
+
+  if (!destination) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-600" />
+      </div>
+    );
+  }
+  return <Navigate to={destination} replace />;
 }
 
 function PrivateRouteWithVan({ children }) {
@@ -102,7 +139,7 @@ function PrivateRouteWithVan({ children }) {
     );
   }
   
-  if (!usuario) return <Navigate to="/login" />;
+  if (!usuario) return <PortalAwareRedirect />;
   if (!van) return <Navigate to="/van" />;
 
   if (isOnlineLocation(van)) return <Navigate to="/online" replace />;
