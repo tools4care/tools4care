@@ -109,6 +109,27 @@ function getCreditStatus(balance, availableCredit) {
   return { label: "Credit limit reached", classes: "bg-amber-100 text-amber-900", dot: "bg-amber-500" };
 }
 
+// Database values remain stable for accounting; translate only at the portal
+// presentation layer so customers always see English labels.
+function formatPaymentMethod(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw.includes("stripe_terminal") || raw.includes("card") || raw.includes("tarjeta")) return "Card";
+  if (raw.includes("cash") || raw.includes("efectivo")) return "Cash";
+  if (raw.includes("transfer") || raw.includes("zelle") || raw.includes("venmo") || raw.includes("cashapp") || raw.includes("cash app") || raw.includes("apple pay")) return "Bank transfer / digital payment";
+  if (raw.includes("check") || raw.includes("cheque")) return "Check";
+  return value ? String(value) : "Payment";
+}
+
+function formatPaymentStatus(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "pagado" || raw === "paid") return "Paid";
+  if (raw === "parcial" || raw === "partial") return "Partial";
+  if (raw === "pendiente" || raw === "pending") return "Pending";
+  if (raw === "cancelado" || raw === "cancelled" || raw === "canceled") return "Cancelled";
+  if (raw === "reembolsado" || raw === "refunded") return "Refunded";
+  return value ? String(value) : "Recorded";
+}
+
 export function CuentaCliente({ session }) {
   const { cliente, resumen, loading, error, unlinked, refresh } = usePortalCliente(session);
   const pagos = usePagosCliente(cliente?.id);
@@ -242,13 +263,13 @@ export function CuentaCliente({ session }) {
         </button>
 
         <HistoryCard icon={<WalletCards size={20} />} title="Payments" subtitle="Payments applied to your account" {...pagos} emptyText="No payments have been recorded yet." renderRow={(row) => (
-          <div key={row.id} className="flex justify-between gap-4 py-3"><div><p className="font-bold capitalize">{row.metodo_pago || "Payment"}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha_pago)}</p>{row.referencia && <p className="mt-1 text-xs text-slate-400">Ref. {row.referencia}</p>}</div><p className="font-black text-emerald-700">{fmtMoney(row.monto)}</p></div>
+          <div key={row.id} className="flex justify-between gap-4 py-3"><div><p className="font-bold">{formatPaymentMethod(row.metodo_pago)}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha_pago)}</p>{row.referencia && <p className="mt-1 text-xs text-slate-400">Ref. {row.referencia}</p>}</div><p className="font-black text-emerald-700">{fmtMoney(row.monto)}</p></div>
         )} />
 
         <HistoryCard icon={<ReceiptText size={20} />} title="Purchases & invoices" subtitle="Download a PDF copy whenever you need it" {...compras} emptyText="No purchases have been recorded yet." renderRow={(row) => (
           <div key={row.id} className="flex items-start justify-between gap-4 py-3">
             <div className="min-w-0"><p className="truncate font-bold">{row.numero_factura ? `Invoice ${row.numero_factura}` : "Purchase"}</p><p className="text-xs text-slate-500">{fmtDateEt(row.fecha || row.created_at)}</p><InvoiceDownloadButton purchase={row} client={cliente} /></div>
-            <div className="text-right"><p className="font-black">{fmtMoney(row.total_venta ?? row.total)}</p><p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">{row.estado_pago || "recorded"}</p></div>
+            <div className="text-right"><p className="font-black">{fmtMoney(row.total_venta ?? row.total)}</p><p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">{formatPaymentStatus(row.estado_pago)}</p></div>
           </div>
         )} />
 
