@@ -201,8 +201,11 @@ class TerminalPaymentController(
             runCatching { api.syncResult() }
                 .onSuccess { result ->
                     val resultStatus = result.optString("status", "")
-                    if (bootstrap.intentType != "setup" && resultStatus !in setOf("succeeded", "reconciled")) {
-                        onComplete(false, "Payment approved, but Tools4Care reconciliation is pending. Keep this screen open and retry synchronization.")
+                    if (bootstrap.intentType != "setup" && resultStatus !in setOf("succeeded", "reconciled", "reconciliation_pending")) {
+                        // Stripe has already approved the charge. A temporary
+                        // reconciliation/API failure must never turn this
+                        // into "Try again" (which risks a double charge).
+                        onComplete(true, "Payment approved. Tools4Care will finish reconciliation when you return.")
                         return@onSuccess
                     }
                     val saved = result.optBoolean("card_saved", false)
@@ -214,7 +217,7 @@ class TerminalPaymentController(
                     }
                     onComplete(true, message)
                 }
-                .onFailure { onComplete(false, "Payment was approved, but Tools4Care reconciliation is pending: ${it.message}") }
+                .onFailure { onComplete(true, "Payment approved. Tools4Care will finish reconciliation when you return.") }
         }
     }
 }
