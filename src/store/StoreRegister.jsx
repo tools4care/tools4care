@@ -69,7 +69,7 @@ function Metric({ label, value, detail, tone = "slate" }) {
 function ReconciliationField({ label, system, value, onChange, help, min }) {
   const numeric = value === "" ? null : Number(value);
   const difference = numeric == null || !Number.isFinite(numeric) ? null : numeric - Number(system || 0);
-  const variance = difference != null ? describeVariance(difference) : null;
+  const variance = difference != null ? describeVariance(difference, 0.009, system) : null;
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -563,7 +563,7 @@ export default function StoreRegister() {
                   <input type="number" min="0" step="0.01" value={countedCash} onChange={(e) => setCountedCash(e.target.value)} className="mt-2 w-full rounded-xl border-2 border-slate-200 px-4 py-4 text-2xl font-black outline-none focus:border-blue-500" placeholder="$0.00" required />
                 </label>
                 {liveVariance !== null && Number.isFinite(liveVariance) && (() => {
-                  const v = describeVariance(liveVariance);
+                  const v = describeVariance(liveVariance, 0.009, summary?.expected_cash);
                   const tone = v.isBalanced ? "border-emerald-200 bg-emerald-50 text-emerald-800" : v.isOver ? "border-amber-200 bg-amber-50 text-amber-800" : "border-rose-200 bg-rose-50 text-rose-800";
                   return <div className={`mt-3 rounded-xl border p-3 text-center font-black ${tone}`}>{v.isBalanced ? "Balanced" : `${v.label}: ${v.text}`}</div>;
                 })()}
@@ -602,7 +602,7 @@ export default function StoreRegister() {
                     <td className="whitespace-nowrap px-5 py-3">{dateTime(row.closed_at)}</td>
                     <td className="px-5 py-3 text-right font-bold tabular-nums">{row.expected_cash == null ? "—" : money(row.expected_cash)}</td>
                     <td className="px-5 py-3 text-right font-bold tabular-nums">{row.counted_cash == null ? "—" : money(row.counted_cash)}</td>
-                    <td className={`px-5 py-3 text-right font-black tabular-nums ${row.variance == null || describeVariance(row.variance).isBalanced ? "text-emerald-700" : describeVariance(row.variance).isOver ? "text-amber-700" : "text-rose-700"}`}>{row.variance == null ? "—" : describeVariance(row.variance).isBalanced ? money(0) : describeVariance(row.variance).text}</td>
+                    <td className={`px-5 py-3 text-right font-black tabular-nums ${row.variance == null || describeVariance(row.variance, 0.009, row.system).isBalanced ? "text-emerald-700" : describeVariance(row.variance, 0.009, row.system).isOver ? "text-amber-700" : "text-rose-700"}`}>{row.variance == null ? "—" : describeVariance(row.variance, 0.009, row.system).isBalanced ? money(0) : `${describeVariance(row.variance, 0.009, row.system).label} ${describeVariance(row.variance, 0.009, row.system).text}`}</td>
                     <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${row.status === "open" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span>{row.closeout_report_status === "adjusted" && <div className="mt-1 text-[10px] font-black text-rose-600">Adjusted after close</div>}{row.closeout_print_status === "pending" && row.closeout_report_id && <div className="mt-1 text-[10px] font-bold text-amber-600">Print / reprint pending</div>}{row.reopened_at && <div className="mt-1 text-[10px] font-bold text-amber-600">Reopened</div>}</td>
                     <td className="px-5 py-3"><div className="flex flex-wrap gap-2">{row.status === "open" && row.id !== managedSession?.id && (row.cashier_id === usuario?.id || privileged) && <button onClick={() => setReviewSessionId(row.id)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800">Review & Close</button>}{row.closeout_report_id && <button type="button" onClick={() => loadCloseoutReport(row)} disabled={reportLoading} className="flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800 disabled:opacity-50"><Eye size={14} />View / Print</button>}{privileged && row.status === "closed" && <button onClick={() => { setReopenId(row.id); setReopenReason(""); }} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Reopen</button>}</div></td>
                   </tr>
@@ -631,7 +631,7 @@ export default function StoreRegister() {
                 <div className="overflow-hidden rounded-2xl border border-slate-200">
                   <div className="grid grid-cols-[1fr_0.8fr_0.8fr_0.7fr] bg-slate-100 px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500"><span>Method</span><span className="text-right">System</span><span className="text-right">Verified</span><span className="text-right">Difference</span></div>
                   {closeoutPaymentRows(closedReport).map((row) => {
-                    const v = describeVariance(row.variance);
+                    const v = describeVariance(row.variance, 0.009, row.system);
                     return (
                       <div key={row.key} className="grid grid-cols-[1fr_0.8fr_0.8fr_0.7fr] border-t border-slate-100 px-4 py-3 text-sm">
                         <span className="font-black text-slate-800">{row.label}</span>

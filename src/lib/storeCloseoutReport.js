@@ -30,8 +30,12 @@ export function closeoutHasVariance(variances, tolerance = 0.009) {
 // variance is signed: positive = counted/declared more than the system
 // expected (over), negative = counted less (short). Always show the
 // direction explicitly instead of a bare (and sometimes negative) amount.
-export function describeVariance(value, tolerance = 0.009) {
+export function describeVariance(value, tolerance = 0.009, expected = null) {
   const v = amount(value);
+  const expectedAmount = expected == null ? null : amount(expected);
+  if (expectedAmount != null && expectedAmount < -tolerance) {
+    return { label: "Deficit", isOver: false, isShort: true, isBalanced: false, text: `-${currency(Math.abs(expectedAmount))}` };
+  }
   if (Math.abs(v) <= tolerance) {
     return { label: "Balanced", isOver: false, isShort: false, isBalanced: true, text: currency(0) };
   }
@@ -54,7 +58,7 @@ export function buildStoreCloseoutThermalHtml(report, { reprint = false } = {}) 
   const closed = report?.closed_at ? new Date(report.closed_at).toLocaleString("en-US") : "—";
   const statusLabel = report?.status === "adjusted" ? "ADJUSTED AFTER CLOSE" : report?.status === "reopened" ? "REOPENED" : "FINAL";
   const methodRows = rows.map((row) => {
-    const v = describeVariance(row.variance);
+    const v = describeVariance(row.variance, 0.009, row.system);
     return `
     <tr>
       <td>${escapeHtml(row.label)}</td>
@@ -118,7 +122,7 @@ ${report?.card_batch_reference ? `<div><b>Card batch:</b> ${escapeHtml(report.ca
 <div class="bold">Expected cash <span style="float:right">${currency(summary.expected_cash)}</span></div>
 <div class="bold">Counted cash <span style="float:right">${currency(report?.declared_totals?.cash)}</span></div>
 ${(() => {
-  const cashVariance = describeVariance(report?.variances?.cash);
+  const cashVariance = describeVariance(report?.variances?.cash, 0.009, summary?.expected_cash);
   return `<div class="bold ${cashVariance.isBalanced ? "" : "warn"}">Cash difference <span style="float:right">${cashVariance.isBalanced ? cashVariance.text : `${cashVariance.text} ${cashVariance.label}`}</span></div>`;
 })()}
 
@@ -192,7 +196,7 @@ export async function downloadStoreCloseoutPdf(report) {
     startY: doc.lastAutoTable.finalY + 8,
     head: [["Method", "System", "Counted / verified", "Difference"]],
     body: rows.map((row) => {
-      const v = describeVariance(row.variance);
+      const v = describeVariance(row.variance, 0.009, row.system);
       return [row.label, currency(row.system), currency(row.declared), v.isBalanced ? v.text : `${v.text} (${v.label})`];
     }),
     theme: "grid",
