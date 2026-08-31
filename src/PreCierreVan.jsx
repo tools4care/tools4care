@@ -448,7 +448,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     if (!emailInput.trim()) return;
     setSendingEmail(true);
     try {
-      const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
+      const gastosValidos = localGastos.filter((g) => Number(g.monto) > 0);
       const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
       const dateRange = fechas.length ? `${formatUS(fechas[0])} – ${formatUS(fechas[fechas.length - 1])}` : "—";
 
@@ -607,7 +607,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF({ orientation: "landscape" });
 
-    const gastosTotal = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+    const gastosTotal = localGastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
     const totalVentas = cierreRecord
       ? Number(cierreRecord.total_ventas || 0)
       : ventas.reduce((s, v) => s + Number(v.total_venta || 0), 0);
@@ -669,7 +669,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       variance,
       cxc,
       salesCount: ventas.length,
-      gastos,
+      gastos: localGastos,
       topCustomers,
       largeTransactions,
       observaciones,
