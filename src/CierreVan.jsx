@@ -189,8 +189,24 @@ const getPaymentMethodLabel = (method) => {
 };
 
 const getReconcileState = (expected, counted) => {
-  const diff = Number(counted || 0) - Number(expected || 0);
+  const expectedAmount = Number(expected || 0);
+  const diff = Number(counted || 0) - expectedAmount;
   const absDiff = Math.abs(diff);
+  // When expenses exceed cash income, the expected amount itself is a
+  // deficit. Do not label counted cash as "Over" against a negative target;
+  // show the deficit explicitly while preserving normal reconciliation logic
+  // for all non-negative expected amounts.
+  if (expectedAmount < -0.005) {
+    return {
+      diff,
+      absDiff: Math.abs(expectedAmount),
+      label: "Deficit",
+      tone: "rose",
+      badgeClass: "bg-rose-100 text-rose-700 border-rose-200",
+      textClass: "text-rose-700",
+      panelClass: "bg-rose-50 border-rose-200",
+    };
+  }
   if (absDiff < 0.005) {
     return {
       diff,
@@ -1877,7 +1893,7 @@ useEffect(() => {
         <div className="flex items-center justify-between gap-2 text-xs font-bold">
           <span className={state.textClass}>{state.label}</span>
           <span className={state.textClass}>
-            {state.diff > 0 ? "+" : state.diff < 0 ? "-" : ""}
+            {state.label === "Deficit" ? "-" : state.diff > 0 ? "+" : state.diff < 0 ? "-" : ""}
             {fmtCurrency(state.absDiff)}
           </span>
         </div>
