@@ -147,8 +147,22 @@ const fmtCurrency = (n) => {
 // Reads a signed cash discrepancy (positive = counted more than expected,
 // negative = counted less) and returns how to label/color/show it so the
 // direction is never ambiguous — "Over" (surplus) vs "Short" (missing cash).
-function describeDiscrepancy(diferencia) {
+function describeDiscrepancy(diferencia, expected = null) {
   const rounded = Math.round(Number(diferencia || 0) * 100) / 100;
+  const expectedAmount = expected == null ? null : Number(expected || 0);
+  // A negative net target means expenses exceeded the income for the close.
+  // Keep this distinct from an ordinary counted-vs-expected surplus so the
+  // aggregate summary, email, and PDF cannot incorrectly say "Over".
+  if (expectedAmount != null && expectedAmount < -0.005) {
+    const deficit = Math.abs(expectedAmount);
+    return {
+      isBalanced: false, isOver: false, isShort: true,
+      label: "Deficit", text: `-$${deficit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      badge: `⚠️ Deficit: -$${deficit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      classes: { bg: "bg-red-50", border: "border-red-200", text: "text-red-800", accent: "text-red-600" },
+      hex: { bg: "#fef2f2", border: "#fecaca", text: "#991b1b" },
+    };
+  }
   if (Math.abs(rounded) < 0.005) {
     return {
       isBalanced: true, isOver: false, isShort: false,
@@ -1264,7 +1278,7 @@ useEffect(() => {
       const totalReal = cashReal + cardReal + transferReal + otherReal;
       const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
       const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
-      const discrepancyInfo = describeDiscrepancy(totales.diferencia);
+      const discrepancyInfo = describeDiscrepancy(totales.diferencia, totales.totalCajaNeto);
 
       const gastosRows = gastosValidos.map((g) => `
         <tr>
@@ -1764,7 +1778,10 @@ useEffect(() => {
     gastos,
   ]);
 
-  const discrepancy = useMemo(() => describeDiscrepancy(totales.diferencia), [totales.diferencia]);
+  const discrepancy = useMemo(
+    () => describeDiscrepancy(totales.diferencia, totales.totalCajaNeto),
+    [totales.diferencia, totales.totalCajaNeto]
+  );
 
   /* ========================= Combined Transactions List ========================= */
   const transaccionesCompletas = useMemo(() => {
