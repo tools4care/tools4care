@@ -539,7 +539,7 @@ function normMetodo(m) {
   if (!m) return "otro";
   const s = m.toLowerCase();
   if (s.includes("cash app") || s.includes("cashapp") || s.includes("venmo") || s.includes("zelle") || s.includes("paypal") || s.includes("wire") || s.includes("transfer")) return "transferencia";
-  if (s.includes("card") || s.includes("tarjeta") || s.includes("credit") || s.includes("debit")) return "tarjeta";
+  if (s.includes("card") || s.includes("tarjeta") || s.includes("credit") || s.includes("debit") || s.includes("stripe") || s.includes("terminal")) return "tarjeta";
   if (s.includes("cash") || s.includes("efectivo")) return "efectivo";
   return "otro";
 }
@@ -2872,7 +2872,7 @@ function normMetodoDisplay(m) {
   if (s.includes("apple pay") || s.includes("applepay")) return "Apple Pay";
   if (s.includes("transfer"))   return "Transfer";
   if (s.includes("cash") || s.includes("efectivo")) return "Cash";
-  if (s.includes("card") || s.includes("tarjeta"))  return "Card";
+  if (s.includes("card") || s.includes("tarjeta") || s.includes("stripe") || s.includes("terminal"))  return "Card";
   if (s.includes("check") || s.includes("cheque"))  return m;
   return m;
 }
@@ -3122,7 +3122,9 @@ function PaymentBreakdownReport({ van, usuario }) {
           const isCheck = mp.includes("check") || mp.includes("cheque");
           const isTransfer = isZ || isCA || isV || isAP || mp.includes("transfer");
           const isCash = (mp.includes("cash") || mp.includes("efectivo")) && !isCA;
-          const isCard = mp.includes("card") || mp.includes("tarjeta");
+          // Tap to Pay and Stripe portal payments are card payments even
+          // though their stored method is `stripe_terminal`/`stripe`.
+          const isCard = mp.includes("card") || mp.includes("tarjeta") || mp.includes("stripe") || mp.includes("terminal");
           if (metodo === "efectivo" && !isCash) return;
           if (metodo === "tarjeta" && !isCard) return;
           if (isCheck && !["all", "cheque"].includes(metodo)) return;
