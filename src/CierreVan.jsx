@@ -1278,7 +1278,8 @@ useEffect(() => {
       const totalReal = cashReal + cardReal + transferReal + otherReal;
       const gastosValidos = gastos.filter((g) => Number(g.monto) > 0);
       const gastosTotal = gastosValidos.reduce((s, g) => s + Number(g.monto), 0);
-      const discrepancyInfo = describeDiscrepancy(totales.diferencia, totales.totalCajaNeto);
+      const statusExpected = totales.efectivoNeto < -0.005 ? totales.efectivoNeto : totales.totalCajaNeto;
+      const discrepancyInfo = describeDiscrepancy(totales.diferencia, statusExpected);
 
       const gastosRows = gastosValidos.map((g) => `
         <tr>
@@ -1778,10 +1779,13 @@ useEffect(() => {
     gastos,
   ]);
 
-  const discrepancy = useMemo(
-    () => describeDiscrepancy(totales.diferencia, totales.totalCajaNeto),
-    [totales.diferencia, totales.totalCajaNeto]
-  );
+  const discrepancy = useMemo(() => {
+    // Cash is the limiting resource for a closeout: when cash expenses
+    // exceed cash income, the aggregate status must be a deficit rather than
+    // an apparent surplus caused by card/transfer totals.
+    const statusExpected = totales.efectivoNeto < -0.005 ? totales.efectivoNeto : totales.totalCajaNeto;
+    return describeDiscrepancy(totales.diferencia, statusExpected);
+  }, [totales.diferencia, totales.totalCajaNeto, totales.efectivoNeto]);
 
   /* ========================= Combined Transactions List ========================= */
   const transaccionesCompletas = useMemo(() => {
