@@ -27,8 +27,8 @@ android {
         applicationId = "com.tools4care.payments"
         minSdk = 30
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.2.1-pilot"
+        versionCode = 7
+        versionName = "0.2.2-pilot"
 
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
