@@ -3732,12 +3732,14 @@ function BarberiaVisitsReport({ van, usuario }) {
         shopClientCount.set(c.barberia_id, (shopClientCount.get(c.barberia_id) || 0) + 1);
       }
       const shopCoords = new Map((allShops || []).map((s) => [s.id, s]));
+      const shopAddress = new Map((allShops || []).map((s) => [s.id, s.direccion]));
 
       // One entry per shop+day the shop was actually visited, with the
       // earliest/latest sale timestamp that day (used for the time estimate).
       const shopDays = new Map(); // barberia_id -> Map(day -> {min,max})
       const shopNombre = new Map();
       const shopRevenue = new Map(); // barberia_id -> total $ sold since VISIT_LEARNING_START
+      const shopSaleCount = new Map();
       const shopWeekdayCounts = new Map(); // barberia_id -> Map(weekday -> count) — which day this shop usually gets visited on
       for (const row of ventasRows) {
         const info = clienteShop.get(row.cliente_id);
@@ -3750,6 +3752,7 @@ function BarberiaVisitsReport({ van, usuario }) {
         const prev = days.get(day);
         days.set(day, prev ? { min: Math.min(prev.min, t), max: Math.max(prev.max, t) } : { min: t, max: t });
         shopRevenue.set(info.barberia_id, (shopRevenue.get(info.barberia_id) || 0) + Number(row.total_venta || 0));
+        shopSaleCount.set(info.barberia_id, (shopSaleCount.get(info.barberia_id) || 0) + 1);
         if (!prev) {
           // Only count each shop+day once toward the weekday tally, not once per sale that day.
           const wd = weekdayName(day);
@@ -3785,10 +3788,14 @@ function BarberiaVisitsReport({ van, usuario }) {
         });
         const avgMinutes = Math.round(estimatedMinutesPerVisit.reduce((s, m) => s + m, 0) / estimatedMinutesPerVisit.length);
         const totalRevenue = shopRevenue.get(barberiaId) || 0;
+        const saleCount = shopSaleCount.get(barberiaId) || 0;
         const avgRevenuePerVisit = totalRevenue / sortedDays.length;
         resumenData.push({
           barberia_id: barberiaId,
           barberia_nombre: shopNombre.get(barberiaId),
+          direccion: shopAddress.get(barberiaId) || null,
+          linked_clients: shopClientCount.get(barberiaId) || 0,
+          sale_count: saleCount,
           total_visits: sortedDays.length,
           last_visit_date: lastDay,
           days_since_last_visit: daysSince,
@@ -3796,6 +3803,7 @@ function BarberiaVisitsReport({ van, usuario }) {
           avg_estimated_minutes: avgMinutes,
           total_revenue: totalRevenue,
           avg_revenue_per_visit: avgRevenuePerVisit,
+          avg_sale: saleCount > 0 ? totalRevenue / saleCount : 0,
           revenue_per_minute: avgMinutes > 0 ? avgRevenuePerVisit / avgMinutes : null,
           dominant_weekday: dominantWeekday(barberiaId),
         });
@@ -3935,6 +3943,7 @@ function BarberiaVisitsReport({ van, usuario }) {
       due: established.filter((r) => r.status === "due").length,
       ok: established.filter((r) => r.status === "ok").length,
       totalRevenue: totalRevenueAll,
+      linkedClients: resumen.reduce((s, r) => s + Number(r.linked_clients || 0), 0),
       avgRevenuePerVisit: resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0)
         ? totalRevenueAll / resumen.reduce((s, r) => s + Number(r.total_visits || 0), 0)
         : 0,
@@ -4074,18 +4083,19 @@ function BarberiaVisitsReport({ van, usuario }) {
         a client is saved with one.
       </p>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-2">
         <SummaryCard label="Overdue" value={totals.overdue} icon={AlertTriangle} color={totals.overdue ? "red" : "green"} />
         <SummaryCard label="Due soon" value={totals.due} icon={Clock} color={totals.due ? "amber" : "green"} />
         <SummaryCard label="On track" value={totals.ok} icon={CheckCircle2} color="green" />
         <SummaryCard label="Avg time per visit" value={`~${totals.avgMinutes} min`} icon={MapPin} color="blue" />
+        <SummaryCard label="Linked clients" value={totals.linkedClients} icon={Users} color="purple" />
       </div>
       <div className="grid grid-cols-2 gap-3 mb-2">
         <SummaryCard label="Revenue tracked" value={fmtCurrency(totals.totalRevenue)} icon={DollarSign} color="green" />
         <SummaryCard label="Avg $ / visit" value={fmtCurrency(totals.avgRevenuePerVisit)} icon={TrendingUp} color="blue" />
       </div>
       <p className="text-[11px] text-gray-400 mb-6">
-        {totals.shops} shops tracked · {totals.visits} total visits since {fmtDate(VISIT_LEARNING_START)} · {oneTime.length} visited only once so far (below)
+        {totals.shops} shops · {totals.linkedClients} linked clients · {totals.visits} total visits since {fmtDate(VISIT_LEARNING_START)} · {oneTime.length} visited only once so far (below)
       </p>
 
       {/* ── VISIT PACE — how often shops are actually getting visited, at a glance ── */}
@@ -4191,14 +4201,17 @@ function BarberiaVisitsReport({ van, usuario }) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
-                      <th className="py-2 pr-3">Barbershop</th>
+                      <th className="py-2 pr-3">Barbershop / address</th>
                       <th className="py-2 pr-3">Status</th>
                       <th className="py-2 pr-3">Last visit</th>
                       <th className="py-2 pr-3" title="Calendar days since the last recorded sale at this shop">Days since last visit</th>
                       <th className="py-2 pr-3" title="Average number of days between this shop's visits">Usual cadence</th>
                       <th className="py-2 pr-3">Avg time / visit</th>
                       <th className="py-2 pr-3">Total visits</th>
+                      <th className="py-2 pr-3">Clients</th>
+                      <th className="py-2 pr-3">Sales</th>
                       <th className="py-2 pr-3" title="Average revenue on a visit day at this shop">Avg $ / visit</th>
+                      <th className="py-2 pr-3" title="Average sale value at this shop">Avg sale</th>
                       <th className="py-2 pr-3" title="Avg $ per visit divided by time spent on site — the real yield of a stop here">$ / minute</th>
                     </tr>
                   </thead>
@@ -4207,7 +4220,10 @@ function BarberiaVisitsReport({ van, usuario }) {
                       const style = STATUS_STYLE[r.status];
                       return (
                         <tr key={r.barberia_id} className="border-b border-gray-100 last:border-0">
-                          <td className="py-2.5 pr-3 font-semibold text-gray-800">{r.barberia_nombre}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-gray-800 min-w-[180px]">
+                            <div>{r.barberia_nombre}</div>
+                            <div className="text-[11px] font-normal text-gray-400 truncate max-w-[240px]">{r.direccion || "Address not recorded"}</div>
+                          </td>
                           <td className="py-2.5 pr-3">
                             <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${style.pill}`}>
                               {style.label}
@@ -4222,7 +4238,10 @@ function BarberiaVisitsReport({ van, usuario }) {
                             {r.avg_estimated_minutes != null ? `~${Math.round(r.avg_estimated_minutes)} min` : "—"}
                           </td>
                           <td className="py-2.5 pr-3 text-gray-600">{r.total_visits}</td>
+                          <td className="py-2.5 pr-3 text-gray-600">{r.linked_clients}</td>
+                          <td className="py-2.5 pr-3 text-gray-600">{r.sale_count}</td>
                           <td className="py-2.5 pr-3 font-semibold text-gray-700">{fmtCurrency(r.avg_revenue_per_visit)}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-gray-700">{fmtCurrency(r.avg_sale)}</td>
                           <td className="py-2.5 pr-3 font-semibold text-teal-700">
                             {r.revenue_per_minute != null ? `${fmtCurrency(r.revenue_per_minute)}/min` : "—"}
                           </td>
@@ -4280,8 +4299,8 @@ export default function Reportes() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-slate-100 p-2 sm:p-4">
-      <div className="w-full max-w-7xl mx-auto">
+    <div className="min-h-screen min-w-0 overflow-x-hidden bg-gradient-to-br from-gray-50 to-slate-100 p-2 sm:p-4">
+      <div className="w-full min-w-0 max-w-7xl mx-auto">
 
         {/* Header */}
         <div className="mb-5 bg-white border border-slate-200 rounded-xl shadow-sm p-5">
@@ -4327,7 +4346,7 @@ export default function Reportes() {
         </div>
 
         {/* Tab Content */}
-        <div id={`report-panel-${activeTab}`} role="tabpanel" className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm sm:p-6">
+        <div id={`report-panel-${activeTab}`} role="tabpanel" className="min-w-0 max-w-full overflow-x-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm sm:p-6">
           <div className="flex items-start gap-2 mb-5 pb-4 border-b border-gray-100">
             {(() => {
               const t=TABS.find(x=>x.id===activeTab);
