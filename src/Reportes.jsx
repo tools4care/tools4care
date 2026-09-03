@@ -3694,6 +3694,7 @@ function BarberiaVisitsReport({ van, usuario }) {
   const effectiveVanId = isAdmin ? (vanFiltro || "ALL") : van?.id;
   const [quickFilter, setQuickFilter] = useState("all");
   const [doneVisits, setDoneVisits] = useState({});
+  const [plannedVisits, setPlannedVisits] = useState({});
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -3893,11 +3894,23 @@ function BarberiaVisitsReport({ van, usuario }) {
     try { setDoneVisits(JSON.parse(localStorage.getItem(visitDoneStorageKey) || "{}")); }
     catch { setDoneVisits({}); }
   }, [visitDoneStorageKey]);
+  const visitPlanStorageKey = `tools4care-visits-planned-${effectiveVanId || "all"}-${todayKey}`;
+  useEffect(() => {
+    try { setPlannedVisits(JSON.parse(localStorage.getItem(visitPlanStorageKey) || "{}")); }
+    catch { setPlannedVisits({}); }
+  }, [visitPlanStorageKey, todayKey]);
 
   function markVisitDone(shopId) {
     setDoneVisits((current) => {
       const next = { ...current, [shopId]: new Date().toISOString() };
       localStorage.setItem(visitDoneStorageKey, JSON.stringify(next));
+      return next;
+    });
+  }
+  function planVisit(shopId) {
+    setPlannedVisits((current) => {
+      const next = { ...current, [shopId]: new Date().toISOString() };
+      localStorage.setItem(visitPlanStorageKey, JSON.stringify(next));
       return next;
     });
   }
@@ -4012,6 +4025,12 @@ function BarberiaVisitsReport({ van, usuario }) {
     return { todayCount, weekCount, monthCount, revenue, avgVisit: controlRows.length ? revenue / controlRows.length : 0, avgTime, estimatedTime: 45, scheduled, completion: scheduled ? (todayCount / scheduled) * 100 : 0 };
   }, [controlRows, todayKey, doneVisits]);
   const smartAlerts = controlRows.filter((r) => r.critical || r.warning);
+  const decisionInsights = useMemo(() => {
+    const highestYield = [...controlRows].sort((a, b) => Number(b.revenue_per_minute || 0) - Number(a.revenue_per_minute || 0))[0];
+    const nextStop = controlRows.find((r) => r.status === "overdue" || r.status === "due");
+    const planned = controlRows.filter((r) => plannedVisits[r.barberia_id]).length;
+    return { highestYield, nextStop, planned };
+  }, [controlRows, plannedVisits]);
 
   const sortedEstablished = useMemo(() => {
     const list = [...established];
@@ -4113,7 +4132,7 @@ function BarberiaVisitsReport({ van, usuario }) {
 
       {smartAlerts.length > 0 && <section className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 p-4">
         <div className="mb-3 flex items-center justify-between gap-2"><div><h3 className="flex items-center gap-2 text-sm font-black text-rose-900"><AlertTriangle size={16}/> Compliance alerts</h3><p className="mt-1 text-xs text-rose-700">Weekly stops past 8 days and biweekly stops past 16 days need attention.</p></div><span className="rounded-full bg-rose-600 px-2.5 py-1 text-xs font-black text-white">{smartAlerts.length}</span></div>
-        <div className="grid gap-2 md:grid-cols-2">{smartAlerts.map((r) => <div key={r.barberia_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-100 bg-white p-3"><div><p className="font-black text-slate-900">{r.barberia_nombre}</p><p className="text-xs text-slate-500">{r.critical ? "CRITICAL OVERDUE" : "REVIEW SOON"} · {r.daysSince} days since last visit</p></div><button type="button" onClick={() => setQuickFilter("overdue")} className="min-h-10 rounded-lg bg-rose-600 px-3 py-2 text-xs font-black text-white hover:bg-rose-700">Plan visit</button></div>)}</div>
+        <div className="grid gap-2 md:grid-cols-2">{smartAlerts.map((r) => <div key={r.barberia_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-100 bg-white p-3"><div><p className="font-black text-slate-900">{r.barberia_nombre}</p><p className="text-xs text-slate-500">{r.critical ? "CRITICAL OVERDUE" : "REVIEW SOON"} · {r.daysSince} days since last visit</p></div><button type="button" onClick={() => planVisit(r.barberia_id)} className={`min-h-10 rounded-lg px-3 py-2 text-xs font-black ${plannedVisits[r.barberia_id] ? "bg-blue-100 text-blue-700" : "bg-rose-600 text-white hover:bg-rose-700"}`}>{plannedVisits[r.barberia_id] ? "Visit planned" : "Plan visit"}</button></div>)}</div>
       </section>}
 
       <section className="mb-6 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
@@ -4124,6 +4143,8 @@ function BarberiaVisitsReport({ van, usuario }) {
         </div>
         <aside className="hidden min-h-[430px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 lg:block"><div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-sm font-black text-white"><MapPin size={16} className="text-teal-300"/> Today&apos;s route map</div><iframe title="Today's route map" className="h-[385px] w-full opacity-90" loading="lazy" src="https://www.google.com/maps?q=barbershops&output=embed" /></aside>
       </section>
+      <aside className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 lg:hidden"><div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-sm font-black text-white"><MapPin size={16} className="text-teal-300"/> Route map</div><iframe title="Route map" className="h-[260px] w-full opacity-90" loading="lazy" src="https://www.google.com/maps?q=barbershops&output=embed" /></aside>
+      <section className="mb-6 grid gap-3 sm:grid-cols-3"><div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Go first</p><p className="mt-1 font-black text-slate-900">{decisionInsights.nextStop?.barberia_nombre || "No urgent stops"}</p><p className="mt-1 text-xs text-slate-500">{decisionInsights.nextStop ? `${decisionInsights.nextStop.daysSince} days since last visit` : "Route is on track"}</p></div><div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Best yield</p><p className="mt-1 font-black text-slate-900">{decisionInsights.highestYield?.barberia_nombre || "—"}</p><p className="mt-1 text-xs text-emerald-700">{decisionInsights.highestYield ? `${fmtCurrency(decisionInsights.highestYield.revenue_per_minute)}/minute` : "No history yet"}</p></div><div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Planned today</p><p className="mt-1 font-black text-slate-900">{decisionInsights.planned} stops</p><p className="mt-1 text-xs text-slate-500">Saved on this device</p></div></section>
       {/* ── SUGGESTED STOPS — grouped by the weekday you actually tend to
           run that part of the route, from real visit history. Proven shops
           falling behind cadence first within each day, then the closest
@@ -4131,7 +4152,7 @@ function BarberiaVisitsReport({ van, usuario }) {
           turn-by-turn (no live van location to sequence against) — pick
           from the top of each day's list. ── */}
       {suggestedStopsByDay.length > 0 && (
-        <div className="mb-6 rounded-xl border-2 border-teal-200 bg-teal-50/50 p-4">
+        <div className="hidden mb-6 rounded-xl border-2 border-teal-200 bg-teal-50/50 p-4">
           <h3 className="text-sm font-bold text-teal-900 mb-1">Suggested stops by day</h3>
           <p className="text-xs text-teal-800/80 mb-3">
             Grouped by the weekday you already run near that spot. Overdue/due shops first in each day
@@ -4172,23 +4193,23 @@ function BarberiaVisitsReport({ van, usuario }) {
         a client is saved with one.
       </p>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-2">
+      <div className="hidden grid grid-cols-2 sm:grid-cols-5 gap-3 mb-2">
         <SummaryCard label="Overdue" value={totals.overdue} icon={AlertTriangle} color={totals.overdue ? "red" : "green"} />
         <SummaryCard label="Due soon" value={totals.due} icon={Clock} color={totals.due ? "amber" : "green"} />
         <SummaryCard label="On track" value={totals.ok} icon={CheckCircle2} color="green" />
         <SummaryCard label="Avg time per visit" value={`~${totals.avgMinutes} min`} icon={MapPin} color="blue" />
         <SummaryCard label="Linked clients" value={totals.linkedClients} icon={Users} color="purple" />
       </div>
-      <div className="grid grid-cols-2 gap-3 mb-2">
+      <div className="hidden grid grid-cols-2 gap-3 mb-2">
         <SummaryCard label="Revenue tracked" value={fmtCurrency(totals.totalRevenue)} icon={DollarSign} color="green" />
         <SummaryCard label="Avg $ / visit" value={fmtCurrency(totals.avgRevenuePerVisit)} icon={TrendingUp} color="blue" />
       </div>
-      <p className="text-[11px] text-gray-400 mb-6">
+      <p className="hidden text-[11px] text-gray-400 mb-6">
         {totals.shops} shops · {totals.linkedClients} linked clients · {totals.visits} total visits since {fmtDate(VISIT_LEARNING_START)} · {oneTime.length} visited only once so far (below)
       </p>
 
       {/* ── VISIT PACE — how often shops are actually getting visited, at a glance ── */}
-      <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
+      <div className="hidden mb-6 rounded-xl border border-gray-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h3 className="text-sm font-bold text-gray-700">Visit pace</h3>
           <div className="flex gap-4 text-xs">
