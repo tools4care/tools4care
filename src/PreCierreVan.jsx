@@ -908,7 +908,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                       {(() => {
                         const raw   = (v.metodo_pago || "").toLowerCase();
                         const meta  = PAYMENT_METHODS[raw];
-                        const label = meta ? `${meta.icon} ${meta.label}` : (v.metodo_pago || "—");
+                        const label = `${meta?.icon || "💰"} ${displayCloseoutMethod(v.metodo_pago)}`;
                         const baseChip = raw === "transferencia"
                           ? "bg-purple-100 text-purple-800"
                           : raw === "efectivo"  ? "bg-green-100 text-green-800"
@@ -970,7 +970,7 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                         </td>
                         <td className="px-3 py-2 font-medium text-gray-900">{p.clientes?.nombre || "—"}</td>
                         <td className="px-3 py-2">
-                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">{p.metodo || "—"}</span>
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">{displayCloseoutMethod(p.metodo)}</span>
                         </td>
                         <td className="px-3 py-2 font-bold text-purple-700">{fmtCurrency(p.monto)}</td>
                       </tr>
