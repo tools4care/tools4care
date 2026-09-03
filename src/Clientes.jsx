@@ -3022,13 +3022,22 @@ let restante = pago;
       });
       openTerminalCompanion(created.companion_url);
       const result = await waitForTerminalPayment(created.session_id);
-      if (!["succeeded", "reconciled"].includes(result.status)) {
-        throw new Error("Stripe approved the payment, but account reconciliation is still pending.");
+      // A successful Stripe charge can briefly arrive before the first
+      // reconciliation finishes. Finalize the same idempotent session instead
+      // of treating that state as a failed payment or asking the operator to
+      // charge the card again.
+      let reconciledResult = result;
+      if (result.status === "reconciliation_pending") {
+        setMensaje("Payment approved. Finishing the balance update…");
+        reconciledResult = await finalizeTerminalArPayment(created.session_id);
+      }
+      if (!["succeeded", "reconciled"].includes(reconciledResult?.status)) {
+        throw new Error("Stripe approved the payment, but account reconciliation is still pending. Do not charge again; refresh and check the payment history.");
       }
 
       setMetodo("Card");
       setMonto(String(amount));
-      setTerminalPaymentResult({ sessionId: created.session_id, amount, cardSaved: result.card_saved });
+      setTerminalPaymentResult({ sessionId: created.session_id, amount, cardSaved: reconciledResult.card_saved ?? result.card_saved });
       setMensaje(
         `✅ Tap to Pay approved and recorded — ${fmtSafe(amount)}.` +
         (result.card_saved ? " Card saved with customer authorization." : ""),
