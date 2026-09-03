@@ -17,6 +17,7 @@
 import Stripe from "npm:stripe@^17.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildPaymentReceiptEmail } from "../_shared/paymentReceiptEmail.ts";
+import { formatCustomerDisplayName } from "../_shared/customerDisplay.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -113,7 +114,7 @@ Deno.serve(async (req) => {
           tenant_id: cliente.tenant_id || "",
           user_id: user.id,
         },
-        description: `Tools4Care balance payment — ${cliente.negocio || cliente.nombre || clienteId}`,
+        description: `Tools4Care balance payment — ${formatCustomerDisplayName(cliente, clienteId)}`,
         // No receipt_email here on purpose — we send our own branded
         // "Payment received" email in confirm_payment below instead of
         // Stripe's generic receipt template.
@@ -175,7 +176,7 @@ Deno.serve(async (req) => {
               to: cleanEmail,
               subject: `Payment received — ${money(monto)}`,
               html: buildPaymentReceiptEmail({
-                customerName: cliente?.negocio || cliente?.nombre || "",
+                customerName: formatCustomerDisplayName(cliente),
                 amount: monto,
                 balanceAfter,
                 reference: paymentIntentId,

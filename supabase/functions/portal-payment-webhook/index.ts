@@ -1,6 +1,7 @@
 import Stripe from "npm:stripe@^17.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildPaymentReceiptEmail } from "../_shared/paymentReceiptEmail.ts";
+import { formatCustomerDisplayName } from "../_shared/customerDisplay.ts";
 
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -72,7 +73,7 @@ Deno.serve(async (req) => {
           to: email,
           subject: `Payment received — ${money(amount)}`,
           html: buildPaymentReceiptEmail({
-            customerName: customer?.negocio || customer?.nombre || "",
+            customerName: formatCustomerDisplayName(customer),
             amount,
             balanceAfter: Number(summary?.saldo || 0),
             reference: intent.id,

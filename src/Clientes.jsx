@@ -3081,7 +3081,7 @@ let restante = pago;
         sendEmail: shareLink,
       });
       if (shareLink) {
-        const mode = await shareManualCardCheckout(created.url, cliente.negocio || cliente.nombre, created.short_url, amount);
+        const mode = await shareManualCardCheckout(created.url, [cliente.nombre, cliente.negocio].filter(Boolean).join(" — ") || "customer", created.short_url, amount);
         const emailNote = created.email_queued ? " Email delivery was also queued." : "";
         setMensaje((mode === "copied" ? "Secure Stripe link copied. Waiting for payment…" : "Secure Stripe link shared. Waiting for payment…") + emailNote);
       } else {

@@ -1,5 +1,6 @@
 import Stripe from "npm:stripe@^17.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { formatCustomerDisplayName } from "../_shared/customerDisplay.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -288,7 +289,7 @@ Deno.serve(async (req) => {
         .select("stripe_customer_id").eq("cliente_id", clienteId).maybeSingle();
       if (!link) {
         const customer = await stripe.customers.create({
-          name: cliente.negocio || cliente.nombre || undefined,
+          name: formatCustomerDisplayName(cliente, undefined),
           email: cliente.email || undefined,
           phone: cliente.telefono || undefined,
           metadata: { tools4care_cliente_id: clienteId, tools4care_tenant_id: staff.tenant_id || "legacy" },
@@ -323,7 +324,7 @@ Deno.serve(async (req) => {
         mode: "payment", customer: link.stripe_customer_id, payment_method_types: ["card"],
         line_items: [{ quantity: 1, price_data: {
           currency: "usd", unit_amount: amountCents,
-          product_data: { name: `Tools4Care payment — ${cliente.negocio || cliente.nombre || "Customer"}` },
+          product_data: { name: `Tools4Care payment — ${formatCustomerDisplayName(cliente)}` },
         } }],
         success_url: `${appUrl}/payment-success?manual_checkout={CHECKOUT_SESSION_ID}`,
         cancel_url: `${appUrl}/payment-cancelled`,
@@ -339,7 +340,7 @@ Deno.serve(async (req) => {
       let emailQueued = false;
       if (sendEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
         const shortUrl = `${appUrl}/pay/${checkout.id}`;
-        const customerName = cliente.negocio || cliente.nombre || "Customer";
+        const customerName = formatCustomerDisplayName(cliente);
         const safeName = String(customerName).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
         const emailPromise = admin.functions.invoke("send-order-email", { body: {
           to: cleanEmail,
@@ -566,7 +567,7 @@ Deno.serve(async (req) => {
       let link: { stripe_customer_id: string } | null = null;
       if (terminalTestMode && clienteId) {
         const testCustomer = await stripe.customers.create({
-          name: cliente?.negocio || cliente?.nombre || undefined,
+          name: formatCustomerDisplayName(cliente, undefined),
           email: cliente.email || undefined,
           phone: cliente.telefono || undefined,
           metadata: { tools4care_cliente_id: clienteId, tools4care_environment: "terminal_test" },
@@ -582,7 +583,7 @@ Deno.serve(async (req) => {
       }
       if (!link && clienteId) {
         const stripeCustomer = await stripe.customers.create({
-          name: cliente?.negocio || cliente?.nombre || undefined,
+          name: formatCustomerDisplayName(cliente, undefined),
           email: cliente.email || undefined,
           phone: cliente.telefono || undefined,
           metadata: { tools4care_cliente_id: clienteId, tools4care_tenant_id: staff.tenant_id || "legacy" },
@@ -613,7 +614,7 @@ Deno.serve(async (req) => {
         ...(link?.stripe_customer_id ? { customer: link.stripe_customer_id } : {}),
         payment_method_types: ["card_present"],
         capture_method: "automatic",
-        description: `Tools4Care ${contextType} — ${cliente?.negocio || cliente?.nombre || "Walk-in Customer"}`,
+        description: `Tools4Care ${contextType} — ${formatCustomerDisplayName(cliente, "Walk-in Customer")}`,
         metadata: stripeMetadata,
       }, { idempotencyKey });
       const setupIntent = contextType === "card_setup" ? await stripe.setupIntents.create({
@@ -673,7 +674,7 @@ Deno.serve(async (req) => {
           ok: true,
           session: {
             id: session.id,
-            customer_name: cliente?.negocio || cliente?.nombre || "Customer",
+            customer_name: formatCustomerDisplayName(cliente),
             amount_cents: session.amount_cents,
             currency: session.currency,
             save_requested: session.save_requested,

@@ -1,6 +1,7 @@
 import Stripe from "npm:stripe@^17.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildPaymentReceiptEmail } from "../_shared/paymentReceiptEmail.ts";
+import { formatCustomerDisplayName } from "../_shared/customerDisplay.ts";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -92,7 +93,7 @@ Deno.serve(async (req) => {
       admin.auth.admin.getUserById(session.operator_id),
       admin.from("v_cxc_cliente_detalle_ext").select("saldo,score_base,limite_politica,credito_disponible").eq("cliente_id", session.cliente_id).maybeSingle(),
     ]);
-    const customerName = customer?.negocio || customer?.nombre || "Customer";
+    const customerName = formatCustomerDisplayName(customer);
     const subject = `Tools4Care payment received — ${customerName} — ${money(session.amount_cents)}`;
     const html = buildPaymentReceiptEmail({
       customerName,

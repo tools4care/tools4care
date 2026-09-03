@@ -275,7 +275,7 @@ export function CuentaCliente({ session }) {
 
         <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-950 via-blue-950 to-blue-700 p-5 text-white shadow-lg sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><p className="text-sm text-blue-100">Welcome back</p><h2 className="text-xl font-black">{cliente?.negocio || cliente?.nombre}</h2></div>
+            <div><p className="text-sm text-blue-100">Welcome back</p><h2 className="text-xl font-black">{[cliente?.nombre, cliente?.negocio].filter(Boolean).join(" — ")}</h2></div>
             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black ${creditStatus.classes}`}><span className={`h-2 w-2 rounded-full ${creditStatus.dot}`} />{creditStatus.label}</span>
           </div>
           <div className="mt-7">

@@ -3496,7 +3496,7 @@ useEffect(() => {
         amountCents: Math.round(chargedAmount * 100),
       });
       if (shareLink) {
-        const mode = await shareManualCardCheckout(created.url, selectedClient.negocio || selectedClient.nombre, created.short_url, chargedAmount);
+        const mode = await shareManualCardCheckout(created.url, [selectedClient.nombre, selectedClient.negocio].filter(Boolean).join(" — ") || "customer", created.short_url, chargedAmount);
         toast.info(mode === "copied" ? "Secure Stripe link copied. Waiting for payment…" : "Secure Stripe link shared. Waiting for payment…");
       } else {
         openManualCardCheckout(created.url);
