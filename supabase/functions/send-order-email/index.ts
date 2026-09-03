@@ -10,7 +10,7 @@ if (typeof (Deno as any).writeAll !== "function") {
   };
 }
 
-import { SmtpClient } from "https://deno.land/x/smtp@v0.7.0/mod.ts";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -97,18 +97,20 @@ Deno.serve(async (req) => {
 
     const html = stripPseudoHeaders(String(htmlRaw));
 
-    const client = new SmtpClient();
-    await client.connectTLS({
-      hostname: SMTP_HOST,
-      port: SMTP_PORT,
-      username: SMTP_USER,
-      password: SMTP_PASS,
+    const client = new SMTPClient({
+      connection: {
+        hostname: SMTP_HOST,
+        port: SMTP_PORT,
+        tls: true,
+        auth: { username: SMTP_USER, password: SMTP_PASS },
+      },
     });
 
     await client.send({
       from: FROM,
       to: email,
       subject: cleanSubject,
+      content: "Tools4Care report attached.",
       html,
       attachments: attachments.map((attachment: any) => ({
         filename: String(attachment.filename).slice(0, 180),
