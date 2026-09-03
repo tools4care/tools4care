@@ -20,7 +20,7 @@ import {
   ShoppingCart, AlertTriangle, Users, Package, TrendingUp,
   RotateCcw, Download, RefreshCw, DollarSign, FileText, Search,
   CreditCard, Filter, ShieldCheck, Wallet, ReceiptText, MapPin, Clock,
-  ChevronDown, CheckCircle2,
+  ChevronDown, CheckCircle2, Phone, Navigation, CalendarDays, Route, Target,
 } from "lucide-react";
 
 /* ========================= Helpers ========================= */
@@ -3692,6 +3692,8 @@ function BarberiaVisitsReport({ van, usuario }) {
   const [vans, setVans] = useState([]);
   const [vanFiltro, setVanFiltro] = useState("");
   const effectiveVanId = isAdmin ? (vanFiltro || "ALL") : van?.id;
+  const [quickFilter, setQuickFilter] = useState("all");
+  const [doneVisits, setDoneVisits] = useState({});
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -3708,7 +3710,7 @@ function BarberiaVisitsReport({ van, usuario }) {
     setLoading(true);
     try {
       const [{ data: clientesLinked }, ventasRows, { data: pendData }, { data: settingsRow }, { data: allShops }] = await Promise.all([
-        supabase.from("clientes").select("id,barberia_id,barberias:barberia_id(nombre,es_negocio)").not("barberia_id", "is", null),
+        supabase.from("clientes").select("id,barberia_id,nombre,telefono,barberias:barberia_id(nombre,es_negocio)").not("barberia_id", "is", null),
         fetchAllVentasSince(`${VISIT_LEARNING_START}T00:00:00-04:00`, effectiveVanId),
         supabase.from("barberias").select("id, nombre, direccion, duplicado_de").eq("revisar_duplicado", true),
         supabase.from("site_settings").select("barberia_visit_buffer_minutes").eq("id", 1).maybeSingle(),
@@ -3728,8 +3730,10 @@ function BarberiaVisitsReport({ van, usuario }) {
       // How many linked barbers (= clients) each shop has, used as a rough
       // revenue-potential proxy for shops with no sales history yet.
       const shopClientCount = new Map();
+      const shopPhone = new Map();
       for (const c of clientesLinked || []) {
         shopClientCount.set(c.barberia_id, (shopClientCount.get(c.barberia_id) || 0) + 1);
+        if (c.telefono && !shopPhone.has(c.barberia_id)) shopPhone.set(c.barberia_id, c.telefono);
       }
       const shopCoords = new Map((allShops || []).map((s) => [s.id, s]));
       const shopAddress = new Map((allShops || []).map((s) => [s.id, s.direccion]));
@@ -3794,6 +3798,7 @@ function BarberiaVisitsReport({ van, usuario }) {
           barberia_id: barberiaId,
           barberia_nombre: shopNombre.get(barberiaId),
           direccion: shopAddress.get(barberiaId) || null,
+          telefono: shopPhone.get(barberiaId) || null,
           linked_clients: shopClientCount.get(barberiaId) || 0,
           sale_count: saleCount,
           total_visits: sortedDays.length,
@@ -3882,6 +3887,21 @@ function BarberiaVisitsReport({ van, usuario }) {
 
   useEffect(() => { cargar(); }, [effectiveVanId]);
 
+  const todayKey = getToday();
+  const visitDoneStorageKey = `tools4care-visits-done-${effectiveVanId || "all"}-${todayKey}`;
+  useEffect(() => {
+    try { setDoneVisits(JSON.parse(localStorage.getItem(visitDoneStorageKey) || "{}")); }
+    catch { setDoneVisits({}); }
+  }, [visitDoneStorageKey]);
+
+  function markVisitDone(shopId) {
+    setDoneVisits((current) => {
+      const next = { ...current, [shopId]: new Date().toISOString() };
+      localStorage.setItem(visitDoneStorageKey, JSON.stringify(next));
+      return next;
+    });
+  }
+
   async function fusionar(flagged) {
     if (!flagged.target) return;
     setBusyId(flagged.id);
@@ -3953,6 +3973,46 @@ function BarberiaVisitsReport({ van, usuario }) {
   const [showOneTime, setShowOneTime] = useState(false);
   const [sortMode, setSortMode] = useState("overdue"); // overdue | revenuePerMinute | revenuePerVisit
 
+  const controlRows = useMemo(() => {
+    const now = new Date(`${todayKey}T12:00:00`);
+    return [...resumen].map((r) => {
+      const cadenceDays = r.avg_days_between_visits != null
+        ? (Number(r.avg_days_between_visits) <= 10 ? 7 : Number(r.avg_days_between_visits) <= 20 ? 14 : Math.round(Number(r.avg_days_between_visits)))
+        : 14;
+      const daysSince = Number(r.days_since_last_visit ?? 999);
+      const completedToday = r.last_visit_date === todayKey || Boolean(doneVisits[r.barberia_id]);
+      const critical = cadenceDays <= 10 && daysSince > 8;
+      const warning = cadenceDays > 10 && cadenceDays <= 20 && daysSince > 16;
+      const status = completedToday ? "completed" : critical || warning || daysSince > cadenceDays ? "overdue" : daysSince >= cadenceDays - 2 ? "due" : "ok";
+      const last = r.last_visit_date ? new Date(`${r.last_visit_date}T12:00:00`) : null;
+      const daysFromToday = last ? Math.round((now - last) / 86400000) : 999;
+      return { ...r, cadenceDays, completedToday, critical, warning, status, daysFromToday };
+    }).sort((a, b) => {
+      const rank = { overdue: 0, due: 1, ok: 2, completed: 3 };
+      return (rank[a.status] - rank[b.status]) || (Number(b.avg_revenue_per_visit || 0) - Number(a.avg_revenue_per_visit || 0));
+    });
+  }, [resumen, todayKey, doneVisits]);
+  const filteredControlRows = useMemo(() => controlRows.filter((r) => {
+    if (quickFilter === "today") return r.completedToday;
+    if (quickFilter === "overdue") return r.status === "overdue";
+    if (quickFilter === "next7") return r.status === "due" || (r.status === "ok" && r.daysFromToday >= Math.max(0, r.cadenceDays - 7));
+    return true;
+  }), [controlRows, quickFilter]);
+  const visitKpis = useMemo(() => {
+    const today = todayKey;
+    const weekStart = new Date(`${today}T12:00:00`); weekStart.setDate(weekStart.getDate() - 6);
+    const monthStart = new Date(`${today}T12:00:00`); monthStart.setDate(1);
+    const inRange = (date, start) => date && new Date(`${date}T12:00:00`) >= start;
+    const todayCount = controlRows.filter((r) => r.last_visit_date === today || Boolean(doneVisits[r.barberia_id])).length;
+    const weekCount = controlRows.filter((r) => inRange(r.last_visit_date, weekStart)).length;
+    const monthCount = controlRows.filter((r) => inRange(r.last_visit_date, monthStart)).length;
+    const revenue = controlRows.reduce((s, r) => s + Number(r.total_revenue || 0), 0);
+    const avgTime = controlRows.length ? controlRows.reduce((s, r) => s + Number(r.avg_estimated_minutes || 0), 0) / controlRows.length : 0;
+    const scheduled = controlRows.length;
+    return { todayCount, weekCount, monthCount, revenue, avgVisit: controlRows.length ? revenue / controlRows.length : 0, avgTime, estimatedTime: 45, scheduled, completion: scheduled ? (todayCount / scheduled) * 100 : 0 };
+  }, [controlRows, todayKey, doneVisits]);
+  const smartAlerts = controlRows.filter((r) => r.critical || r.warning);
+
   const sortedEstablished = useMemo(() => {
     const list = [...established];
     if (sortMode === "revenuePerMinute") {
@@ -4016,6 +4076,7 @@ function BarberiaVisitsReport({ van, usuario }) {
     overdue: { label: "Overdue", pill: "bg-red-100 text-red-700", text: "text-red-600" },
     due: { label: "Due soon", pill: "bg-amber-100 text-amber-700", text: "text-amber-600" },
     ok: { label: "On track", pill: "bg-emerald-100 text-emerald-700", text: "text-gray-700" },
+    completed: { label: "Completed", pill: "bg-blue-100 text-blue-700", text: "text-blue-600" },
   };
 
   return (
@@ -4035,6 +4096,34 @@ function BarberiaVisitsReport({ van, usuario }) {
           </label>
         )}
       </div>
+      <section className="mb-6 rounded-2xl border border-slate-200 bg-slate-950 p-4 text-white shadow-lg sm:p-5">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div><p className="text-[11px] font-black uppercase tracking-[0.2em] text-teal-300">Route command center</p><h3 className="mt-1 text-xl font-black">Today&apos;s visit decisions</h3><p className="mt-1 text-xs text-slate-300">Prioritized by compliance risk and route value.</p></div>
+          <div className="rounded-xl bg-white/10 px-3 py-2 text-right"><p className="text-[10px] uppercase text-slate-300">Route completion</p><p className="text-2xl font-black text-teal-300">{visitKpis.completion.toFixed(0)}%</p></div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[
+            ["Activity", `${visitKpis.todayCount} today · ${visitKpis.weekCount} week · ${visitKpis.monthCount} month`, "Visits completed"],
+            ["Revenue", fmtCurrency(visitKpis.revenue), `${fmtCurrency(visitKpis.avgVisit)} avg / stop`],
+            ["Time", `${Math.round(visitKpis.avgTime)} min`, `Plan ${visitKpis.estimatedTime} min`],
+            ["Compliance", `${visitKpis.todayCount} / ${visitKpis.scheduled}`, "Stops completed / scheduled"],
+          ].map(([label, value, note]) => <div key={label} className="rounded-xl border border-white/10 bg-white/10 p-3"><p className="text-[10px] font-black uppercase tracking-wide text-slate-300">{label}</p><p className="mt-1 text-base font-black sm:text-lg">{value}</p><p className="mt-1 text-[11px] text-slate-300">{note}</p></div>)}
+        </div>
+      </section>
+
+      {smartAlerts.length > 0 && <section className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 p-4">
+        <div className="mb-3 flex items-center justify-between gap-2"><div><h3 className="flex items-center gap-2 text-sm font-black text-rose-900"><AlertTriangle size={16}/> Compliance alerts</h3><p className="mt-1 text-xs text-rose-700">Weekly stops past 8 days and biweekly stops past 16 days need attention.</p></div><span className="rounded-full bg-rose-600 px-2.5 py-1 text-xs font-black text-white">{smartAlerts.length}</span></div>
+        <div className="grid gap-2 md:grid-cols-2">{smartAlerts.map((r) => <div key={r.barberia_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-100 bg-white p-3"><div><p className="font-black text-slate-900">{r.barberia_nombre}</p><p className="text-xs text-slate-500">{r.critical ? "CRITICAL OVERDUE" : "REVIEW SOON"} · {r.daysSince} days since last visit</p></div><button type="button" onClick={() => setQuickFilter("overdue")} className="min-h-10 rounded-lg bg-rose-600 px-3 py-2 text-xs font-black text-white hover:bg-rose-700">Plan visit</button></div>)}</div>
+      </section>}
+
+      <section className="mb-6 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+        <div className="min-w-0">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-base font-black text-slate-900">Route stops</h3><p className="text-xs text-slate-500">Call, navigate, or mark the stop completed from one row.</p></div><div className="flex flex-wrap gap-1.5">{[["all","All"],["today","Visited today"],["overdue","Overdue"],["next7","Next 7 days"]].map(([id,label]) => <button key={id} type="button" onClick={() => setQuickFilter(id)} className={`min-h-10 rounded-lg border px-2.5 py-2 text-xs font-black ${quickFilter === id ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{label}</button>)}</div></div>
+          <div className="space-y-3">{filteredControlRows.map((r) => { const style = STATUS_STYLE[r.status]; return <article key={r.barberia_id} className={`rounded-2xl border bg-white p-4 shadow-sm ${r.critical ? "border-rose-300 ring-1 ring-rose-100" : "border-slate-200"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h4 className="truncate text-base font-black text-slate-900">{r.barberia_nombre}</h4><span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${style.pill}`}>{style.label}</span></div><p className="mt-1 truncate text-xs text-slate-500">{r.direccion || "Address not recorded"}</p><div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-500"><span className="rounded-full bg-slate-100 px-2 py-1 font-bold">{r.cadenceDays === 7 ? "Weekly" : "Biweekly"}</span><span>{r.daysSince}d since last</span><span className="font-bold text-emerald-700">{fmtCurrency(r.avg_revenue_per_visit)} / visit</span></div></div><div className="text-right"><p className="text-lg font-black text-emerald-700">{fmtCurrency(r.total_revenue)}</p><p className="text-[11px] text-slate-400">{r.sale_count} sales · {r.total_visits} visits</p></div></div><div className="mt-4 flex flex-wrap gap-2"><a href={r.telefono ? `tel:${r.telefono}` : undefined} className={`inline-flex min-h-11 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-black ${r.telefono ? "border-slate-200 text-slate-700 hover:bg-slate-50" : "pointer-events-none border-slate-100 text-slate-300"}`}><Phone size={14}/> Call</a><a href={r.direccion ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.direccion)}` : undefined} target="_blank" rel="noreferrer" className={`inline-flex min-h-11 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-black ${r.direccion ? "border-slate-200 text-slate-700 hover:bg-slate-50" : "pointer-events-none border-slate-100 text-slate-300"}`}><Navigation size={14}/> Map</a><button type="button" onClick={() => markVisitDone(r.barberia_id)} disabled={r.completedToday} className={`inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black ${r.completedToday ? "bg-blue-100 text-blue-700" : "bg-teal-600 text-white hover:bg-teal-700"}`}><CheckCircle2 size={14}/>{r.completedToday ? "Visit completed" : "Register visit"}</button></div></article>; })}</div>
+          {filteredControlRows.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">No stops match this filter.</div>}
+        </div>
+        <aside className="hidden min-h-[430px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 lg:block"><div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-sm font-black text-white"><MapPin size={16} className="text-teal-300"/> Today&apos;s route map</div><iframe title="Today's route map" className="h-[385px] w-full opacity-90" loading="lazy" src="https://www.google.com/maps?q=barbershops&output=embed" /></aside>
+      </section>
       {/* ── SUGGESTED STOPS — grouped by the weekday you actually tend to
           run that part of the route, from real visit history. Proven shops
           falling behind cadence first within each day, then the closest
@@ -4197,7 +4286,7 @@ function BarberiaVisitsReport({ van, usuario }) {
                   </button>
                 ))}
               </div>
-              <div className="overflow-x-auto">
+              <div className="hidden overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400 border-b">
