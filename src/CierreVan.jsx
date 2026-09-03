@@ -1290,11 +1290,13 @@ useEffect(() => {
         </tr>`).join("");
 
       let pdfDownloadUrl = "";
+      let pdfDataUri = "";
       try {
         const { jsPDF, autoTable } = await loadPdfLibs();
-        const doc = new jsPDF({ orientation: "landscape" });
+        const doc = new jsPDF({ orientation: "portrait" });
         buildCloseoutPdf(doc, autoTable);
         const pdfBlob = doc.output("blob");
+        pdfDataUri = doc.output("datauristring");
         const safeLocation = String(closeoutCopy.name).replace(/[^a-z0-9_-]+/gi, "-");
         const path = `${van?.id || (closeoutCopy.store ? "store" : "van")}/closeout-${safeLocation}-${fechasSeleccionadas[0] || "report"}-${Date.now()}.pdf`;
         const { error: uploadError } = await supabase.storage
@@ -1399,11 +1401,16 @@ useEffect(() => {
       `;
 
       const { data, error } = await supabase.functions.invoke("send-order-email", {
-        body: {
-          to: reportEmail.trim(),
-          subject: `${closeoutCopy.reportTitle} — ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} — ${closeoutCopy.name}`,
-          html,
-        },
+          body: {
+            to: reportEmail.trim(),
+            subject: `${closeoutCopy.reportTitle} — ${fechasSeleccionadas.map((f) => formatUS(f)).join(", ")} — ${closeoutCopy.name}`,
+            html,
+            attachments: [{
+              filename: `${closeoutCopy.filenamePrefix}_${fechasSeleccionadas[0] || "report"}_${closeoutCopy.name}.pdf`,
+              contentBase64: pdfDataUri.split(",")[1] || "",
+              contentType: "application/pdf",
+            }],
+          },
       });
       if (error) throw new Error(error.message || "Failed to send email");
       if (!data?.ok) throw new Error(data?.error || "Failed to send email");
@@ -1434,7 +1441,7 @@ useEffect(() => {
 
     try {
       const { jsPDF, autoTable } = await loadPdfLibs();
-      const doc = new jsPDF({ orientation: "landscape" });
+      const doc = new jsPDF({ orientation: "portrait" });
       buildCloseoutPdf(doc, autoTable);
       doc.save(
         `${closeoutCopy.filenamePrefix}_${fechasSeleccionadas[0]}_${

@@ -8,7 +8,7 @@ import { getCloseoutLocationCopy } from "./lib/closeoutLocationCopy";
 import { useUsuario } from "./UsuarioContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { loadPdfLibs } from "./utils/lazyPdf";
-import { renderCloseoutPdfReport } from "./lib/closeoutPdfReport";
+import { renderCloseoutPdfReport, displayCloseoutMethod } from "./lib/closeoutPdfReport";
 import {
   DollarSign, FileText, Download, RefreshCw, CheckCircle, AlertCircle,
   Calculator, Calendar, TrendingUp, AlertTriangle, X, Plus, Minus, Send, MoreHorizontal, CreditCard,
@@ -506,14 +506,14 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
                   <tr>
                     <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#6b7280;">${new Date(v.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })}</td>
                     <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${v.clientes?.nombre || "—"}</td>
-                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${v.metodo_pago || "—"}</td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${displayCloseoutMethod(v.metodo_pago)}</td>
                     <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:bold;">${fmtCurrency(v.total_pagado || v.total_venta)}</td>
                   </tr>`).join("")}
                 ${pagos.map((p) => `
                   <tr style="background:#faf5ff;">
                     <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#6b7280;">${new Date(p.created_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })}</td>
                     <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${p.clientes?.nombre || "—"} <em style="color:#9ca3af;font-size:10px;">(payment)</em></td>
-                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${p.metodo || "—"}</td>
+                    <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">${displayCloseoutMethod(p.metodo)}</td>
                     <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:bold;color:#7c3aed;">${fmtCurrency(p.monto)}</td>
                   </tr>`).join("")}
               </tbody>
@@ -552,11 +552,18 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
         </div>
       `;
 
+      const pdfDoc = await handlePDF(false);
+      const pdfDataUri = pdfDoc.output("datauristring");
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {
           to: emailInput.trim(),
           subject: `${closeoutCopy.reportTitle} — ${dateRange} — ${closeoutCopy.name}`,
           html,
+          attachments: [{
+            filename: `${closeoutCopy.filenamePrefix}_${fechas[0] || "report"}_${closeoutCopy.name}.pdf`,
+            contentBase64: pdfDataUri.split(",")[1] || "",
+            contentType: "application/pdf",
+          }],
         },
       });
       if (error) throw new Error(error.message || "Failed to send");
@@ -603,9 +610,9 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
     win.document.close();
   };
 
-  const handlePDF = async () => {
+  const handlePDF = async (save = true) => {
     const { jsPDF, autoTable } = await loadPdfLibs();
-    const doc = new jsPDF({ orientation: "landscape" });
+    const doc = new jsPDF({ orientation: "portrait" });
 
     const gastosTotal = localGastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
     const totalVentas = cierreRecord
@@ -675,7 +682,8 @@ function CierrePreviewModal({ van, usuario, previewData, onClose }) {
       observaciones,
     });
 
-    doc.save(`${closeoutCopy.filenamePrefix}_${fechas[0] || "report"}_${closeoutCopy.name}.pdf`);
+    if (save) doc.save(`${closeoutCopy.filenamePrefix}_${fechas[0] || "report"}_${closeoutCopy.name}.pdf`);
+    return doc;
   };
 
   if (!previewData) return null;

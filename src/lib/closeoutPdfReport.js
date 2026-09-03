@@ -12,6 +12,15 @@ export const fmtCurrency = (n) => {
   })}`;
 };
 
+export const displayCloseoutMethod = (value) => {
+  const s = String(value || "").trim().toLowerCase();
+  if (s.includes("cash") || s.includes("efectivo")) return "Cash";
+  if (s.includes("card") || s.includes("tarjeta") || s.includes("stripe") || s.includes("terminal")) return "Card";
+  if (s.includes("transfer") || s.includes("zelle") || s.includes("venmo") || s.includes("cash app") || s.includes("cashapp") || s.includes("paypal") || s.includes("apple")) return "Transfer";
+  if (s.includes("check") || s.includes("cheque")) return "Check";
+  return value ? "Other" : "—";
+};
+
 /**
  * @param {import('jspdf').jsPDF} doc
  * @param {Function} autoTable
@@ -434,7 +443,7 @@ export function renderCloseoutPdfReport(doc, autoTable, input) {
           t.created_at ? new Date(t.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "",
           t.cliente || "Walk-in",
           t.tipo === "payment" ? "A/R payment" : "Sale",
-          t.subMetodo || t.metodo || "",
+          displayCloseoutMethod(t.subMetodo || t.metodo),
           fmtCurrency(t.monto),
         ])
       : [["", "No transactions", "", "", "$0.00"]],
