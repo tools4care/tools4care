@@ -27,13 +27,6 @@ function stripPseudoHeaders(raw: string): string {
     .trimStart();
 }
 
-function decodeBase64(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -110,12 +103,17 @@ Deno.serve(async (req) => {
       from: FROM,
       to: email,
       subject: cleanSubject,
-      content: "Tools4Care report attached.",
-      html,
+      // Send raw UTF-8 MIME parts so mail clients do not expose quoted-
+      // printable tokens such as =20 and =2E in the visible HTML.
+      mimeContent: [
+        { mimeType: 'text/plain; charset="utf-8"', content: "Tools4Care report attached.", transferEncoding: "8bit" },
+        { mimeType: 'text/html; charset="utf-8"', content: html, transferEncoding: "8bit" },
+      ],
       attachments: attachments.map((attachment: any) => ({
         filename: String(attachment.filename).slice(0, 180),
-        content: decodeBase64(String(attachment.contentBase64)),
+        content: String(attachment.contentBase64),
         contentType: String(attachment.contentType || "application/octet-stream").slice(0, 100),
+        encoding: "base64",
       })),
     });
     await client.close();
