@@ -27,12 +27,8 @@ begin
 
   patched := replace(
     patched,
-    '  IF v_origin.cliente_id IS DISTINCT FROM p_cliente_id THEN
-    RAISE EXCEPTION ''Customer does not match the original sale'';
-  END IF;',
-    '  IF v_origin.cliente_id IS NOT NULL AND v_origin.cliente_id IS DISTINCT FROM p_cliente_id THEN
-    RAISE EXCEPTION ''Customer does not match the original sale'';
-  END IF;'
+    'IF v_origin.cliente_id IS DISTINCT FROM p_cliente_id THEN',
+    'IF v_origin.cliente_id IS NOT NULL AND v_origin.cliente_id IS DISTINCT FROM p_cliente_id THEN'
   );
 
   if patched = fn then
