@@ -263,6 +263,31 @@ function chunkArray(arr, size = 80) {
 // risk logic instead of a second, driftable copy.
 
 /* ========================= FINANCIAL LEDGER ========================= */
+const LEDGER_CATEGORY_LABELS = {
+  combustible: "Fuel",
+  pago_empleado: "Employee Payment / Wages",
+  mantenimiento: "Maintenance",
+  peajes: "Tolls",
+  comida: "Meals",
+  estacionamiento: "Parking",
+  materiales: "Supplies / Materials",
+  otro: "Other",
+};
+
+function ledgerExpenseCategoryLabel(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return LEDGER_CATEGORY_LABELS[key] || (key ? key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Other");
+}
+
+function ledgerDescriptionLabel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  const separator = raw.match(/\s+-\s+|\s+—\s+/);
+  if (!separator) return raw;
+  const [category, ...rest] = raw.split(separator[0]);
+  return [ledgerExpenseCategoryLabel(category), ...rest].filter(Boolean).join(" - ");
+}
+
 function FinancialLedgerReport({ van }) {
   const [from, setFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 6);
@@ -352,7 +377,7 @@ function FinancialLedgerReport({ van }) {
         }
         if (entry.event_type === "expense") {
           const category = String(entry.description || "Other").split(/\s+-\s+|\s+—\s+/)[0] || "Other";
-          expenseCategories.set(category, (expenseCategories.get(category) || 0) + Math.abs(amount));
+          expenseCategories.set(ledgerExpenseCategoryLabel(category), (expenseCategories.get(ledgerExpenseCategoryLabel(category)) || 0) + Math.abs(amount));
         }
       });
       const categoryRows = [...expenseCategories.entries()]
@@ -364,7 +389,7 @@ function FinancialLedgerReport({ van }) {
         .map((entry) => [
           fmtDate(entry.business_date),
           typeLabel(entry.event_type),
-          String(entry.description || "-").slice(0, 42),
+              ledgerDescriptionLabel(entry.description).slice(0, 42),
           entry.amount >= 0 ? `+${fmtCurrency(entry.amount)}` : `-${fmtCurrency(Math.abs(entry.amount))}`,
         ]);
 
@@ -599,7 +624,7 @@ function FinancialLedgerReport({ van }) {
               <div className={`w-2 h-2 rounded-full flex-shrink-0 ${e.affects_cash ? Number(e.amount) >= 0 ? "bg-green-500" : "bg-red-500" : "bg-blue-400"}`} />
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-slate-800">{typeLabel(e.event_type)}</div>
-                <div className="text-xs text-slate-500 truncate">{fmtDateTime(e.occurred_at)} · {e.description || e.source_table}</div>
+                <div className="text-xs text-slate-500 truncate">{fmtDateTime(e.occurred_at)} · {ledgerDescriptionLabel(e.description || e.source_table)}</div>
               </div>
               <div className="text-right">
                 <div className={`font-bold ${Number(e.amount) >= 0 ? "text-green-700" : "text-red-600"}`}>{Number(e.amount) > 0 ? "+" : ""}{fmtCurrency(e.amount)}</div>
@@ -885,13 +910,13 @@ function CierreDiarioReport({ van }) {
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
         </div>
         <button onClick={search} disabled={loading}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
           {loading ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
           Search
         </button>
         {searched && rows.length > 0 && (
           <button onClick={exportPDF}
-            className="bg-white border border-indigo-300 text-indigo-700 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-indigo-50">
+            className="bg-white border border-blue-300 text-blue-700 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-blue-50">
             <Download size={14}/> Export PDF
           </button>
         )}
