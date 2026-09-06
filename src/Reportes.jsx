@@ -2359,11 +2359,23 @@ function TopClientesReport({ van, usuario }) {
         .from("ventas")
         .select(`total_venta, total_pagado, estado_pago, created_at, cliente_id, clientes:cliente_id(id, nombre, telefono)`)
         .eq("van_id", van.id)
+        .eq("tipo", "venta")
         .gte("created_at", start)
         .lte("created_at", end);
       if (!isAdminTop && usuario?.id) qTop = qTop.eq("usuario_id", usuario.id);
       const { data: ventas, error: err } = await qTop;
       if (err) throw err;
+
+      // The period difference (sales minus payments in the selected range) is
+      // not the customer's current balance. A customer may have paid later,
+      // as happened with Gallery Legend. Read the canonical live A/R balance
+      // separately so the report never labels a settled customer as owing.
+      const clientIds = [...new Set((ventas || []).map((v) => v.cliente_id).filter(Boolean))];
+      const { data: balanceRows, error: balanceError } = clientIds.length
+        ? await supabase.from("v_cxc_cliente_detalle_ext").select("cliente_id, saldo").in("cliente_id", clientIds)
+        : { data: [], error: null };
+      if (balanceError) throw balanceError;
+      const balancesByClient = new Map((balanceRows || []).map((row) => [row.cliente_id, Number(row.saldo || 0)]));
 
       const map = {};
       (ventas || []).forEach(v => {
@@ -2377,7 +2389,8 @@ function TopClientesReport({ van, usuario }) {
       });
       setData(Object.values(map).map(c => ({
         ...c,
-        balance:        c.totalCompras - c.totalPagado,
+        balance:        Math.max(0, Number((balancesByClient.get(c.id) || 0).toFixed(2))),
+        periodBalance:  Number((c.totalCompras - c.totalPagado).toFixed(2)),
         daysSinceLast:  c.lastPurchase ? Math.floor((new Date()-new Date(c.lastPurchase))/86400000) : 999,
       })));
       setSearched(true);
@@ -2438,7 +2451,7 @@ function TopClientesReport({ van, usuario }) {
     doc.text(`Period: ${fmtDate(from)} - ${fmtDate(to)} | Generated: ${new Date().toLocaleString()}`, 14, 36);
     autoTable(doc, {
       startY:44,
-      head:[["#","Client","Phone","Purchases","Total","Balance","Last Purchase"]],
+      head:[["#","Client","Phone","Purchases","Total","Current Balance","Last Purchase"]],
       body: sorted.map((c,i)=>[i+1, c.nombre||"—", c.telefono||"—", c.count, fmtCurrency(c.totalCompras), fmtCurrency(c.balance), fmtDate(c.lastPurchase)]),
       styles:{fontSize:8}, headStyles:{fillColor:[37,99,235],textColor:255},
     });
@@ -2488,7 +2501,7 @@ function TopClientesReport({ van, usuario }) {
         <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
           <table className="min-w-full text-sm divide-y divide-gray-200">
             <thead className="bg-gray-50">
-              <tr>{["#","Client","Phone","Purchases","Total","Balance","Last Purchase","Days Inactive"].map(h=>(
+              <tr>{["#","Client","Phone","Purchases","Total","Current Balance","Last Purchase","Days Inactive"].map(h=>(
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
               ))}</tr>
             </thead>
