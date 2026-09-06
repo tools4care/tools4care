@@ -4152,13 +4152,17 @@ async function handleProcessReturn() {
       .map(it => `• ${it.nombre} x${it.cantidad} = ${fmt(it.cantidad * it.precio_cobrado)}`)
       .join('\n');
 
-    const isCredit = returnType === "credit" && selectedClient?.id;
+    // A store-credit exchange must always be represented by a customer account
+    // so the credit can be applied to the replacement sale and reconciled in
+    // A/R. For a walk-in, the account is created below only after confirmation.
+    const wantsStoreCredit = returnType === "credit";
+    const isCredit = wantsStoreCredit;
     const paidOnOriginal = getMoneyAppliedToSale(selectedInvoice);
     const moneyAlreadyRefunded = Math.max(0, Number(selectedInvoice.total_reembolsado || 0));
     const moneyStillRefundable = Math.max(0, Number((paidOnOriginal - moneyAlreadyRefunded).toFixed(2)));
     let debtReduction = 0;
     let storeCreditCreated = 0;
-    if (isCredit) {
+    if (isCredit && selectedClient?.id) {
       const account = await getCxcCliente(selectedClient.id);
       const currentDebt = Math.max(0, Number(account?.saldo || 0));
       debtReduction = Math.min(currentDebt, totalRefund);
@@ -4190,6 +4194,32 @@ async function handleProcessReturn() {
       return;
     }
 
+    // Walk-in exchanges have no customer row to hold the credit. Create a
+    // clearly labelled temporary account only after the user confirms, so a
+    // cancelled return never leaves an orphan customer or ledger entry.
+    let returnClient = selectedClient;
+    if (isCredit && !returnClient?.id) {
+      const saleRef = String(selectedInvoice.id || "").slice(0, 8).toUpperCase();
+      const dateRef = new Date().toISOString().slice(0, 10);
+      const { data: createdClient, error: createClientError } = await supabase
+        .from("clientes")
+        .insert([{
+          nombre: `WALK-IN EXCHANGE ${dateRef} #${saleRef}`,
+          negocio: "",
+          telefono: "",
+          email: "",
+          direccion: "",
+          notas: `Temporary account created for store-credit exchange of receipt ${saleRef}. Keep for audit; do not use for unrelated sales.`,
+        }])
+        .select("*")
+        .single();
+      if (createClientError || !createdClient) {
+        throw createClientError || new Error("Could not create the temporary exchange account.");
+      }
+      returnClient = createdClient;
+      setSelectedClient(createdClient);
+    }
+
     let returnCashSession = null;
     if (storeMode) {
       returnCashSession = await resolveOpenStoreCashSession(supabase, van.id, usuario.id);
@@ -4204,7 +4234,7 @@ async function handleProcessReturn() {
       {
         p_transaction_id: returnTransactionId,
         p_venta_origen_id: selectedInvoice.id,
-        p_cliente_id: selectedClient?.id || null,
+        p_cliente_id: returnClient?.id || null,
         p_van_id: van.id,
         p_usuario_id: usuario.id,
         p_tipo_devolucion: isCredit ? "credit" : "refund",
@@ -4254,7 +4284,7 @@ async function handleProcessReturn() {
         deudaReducida: finalDebtReduction,
         creditoFavorCreado: finalStoreCredit,
       },
-      nota: selectedClient?.nombre || null,
+      nota: returnClient?.nombre || null,
     });
 
     if (isCredit) {
@@ -4263,7 +4293,7 @@ async function handleProcessReturn() {
         finalStoreCredit > 0 ? `${fmt(finalStoreCredit)} saved as customer credit` : null,
       ].filter(Boolean).join(" and ");
       toast.return(`✅ Return processed — ${resultParts}. No money leaves the business.`, 8000);
-    } else if (selectedClient?.id) {
+    } else if (returnClient?.id) {
       toast.return(`✅ Return processed — refund ${fmt(finalTotal)} via ${refundMethod}.`, 6000);
     } else {
       toast.return(`✅ Walk-in return processed — refund ${fmt(finalTotal)} via ${refundMethod}.`, 6000);
@@ -4275,8 +4305,8 @@ async function handleProcessReturn() {
     setReturnReason("");
     reloadInventory();
     
-    if (selectedClient?.id) {
-      runCreditAgent(selectedClient.id);
+    if (returnClient?.id) {
+      runCreditAgent(returnClient.id);
     }
 
   } catch (err) {
@@ -5348,22 +5378,19 @@ function renderReturnDetails() {
               {returnType === "cash" && <span className="text-[10px] font-bold text-green-600">✓ Selected</span>}
             </button>
 
-            {/* A/R reduction — only when there's a client */}
+            {/* Store credit / exchange — walk-ins receive a temporary account */}
             <button
-              onClick={() => selectedClient?.id ? setReturnType("credit") : null}
-              disabled={!selectedClient?.id}
+              onClick={() => setReturnType("credit")}
               className={`flex flex-col items-center gap-1.5 px-3 rounded-xl border-2 transition-all ${storeMode ? "py-5 min-h-32" : "py-3"} ${
-                !selectedClient?.id
-                  ? "border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed"
-                  : returnType === "credit"
+                returnType === "credit"
                   ? "border-blue-500 bg-blue-50 shadow-md"
                   : "border-gray-200 bg-white hover:border-gray-300"
               }`}
             >
-              <span className="text-2xl">📉</span>
-              <span className="font-bold text-sm text-gray-900">Reduce A/R</span>
+              <span className="text-2xl">🎁</span>
+              <span className="font-bold text-sm text-gray-900">Exchange / Store Credit</span>
               <span className="text-[10px] text-gray-500 text-center">
-                {selectedClient?.id ? "Reduce debt — no money returned" : "Requires a customer account"}
+                {selectedClient?.id ? "Reduce A/R or save credit — no cash returned" : "Creates a temporary walk-in account and saves credit"}
               </span>
               {returnType === "credit" && <span className="text-[10px] font-bold text-blue-600">✓ Selected</span>}
             </button>
