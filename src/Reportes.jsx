@@ -339,66 +339,145 @@ function FinancialLedgerReport({ van }) {
     setExportingPdf(true);
     try {
       const { jsPDF, autoTable } = await loadPdfLibs();
-      const doc = new jsPDF({ orientation: "landscape" });
-      doc.setFillColor(5, 150, 105);
-      doc.rect(0, 0, 297, 28, "F");
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(18);
-      doc.text("Tools4Care - Income and Expense Report", 14, 13);
-      doc.setFontSize(10);
-      doc.text(`Period: ${fmtDate(from)} - ${fmtDate(to)}  |  VAN: ${van?.nombre_van || van?.nombre || "-"}`, 14, 21);
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "letter" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 14;
+      const paymentTotals = { cash: 0, card: 0, transfer: 0, check: 0, other: 0 };
+      const expenseCategories = new Map();
+      entries.forEach((entry) => {
+        const amount = Number(entry.amount || 0);
+        if (["sale_payment", "ar_payment"].includes(entry.event_type) && amount > 0) {
+          const key = paymentTotals[entry.payment_method] == null ? "other" : entry.payment_method;
+          paymentTotals[key] += amount;
+        }
+        if (entry.event_type === "expense") {
+          const category = String(entry.description || "Other").split(/\s+-\s+|\s+—\s+/)[0] || "Other";
+          expenseCategories.set(category, (expenseCategories.get(category) || 0) + Math.abs(amount));
+        }
+      });
+      const categoryRows = [...expenseCategories.entries()]
+        .sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([category, amount]) => [category, fmtCurrency(amount), totals.expenses ? `${((amount / totals.expenses) * 100).toFixed(1)}%` : "0.0%"]);
+      const entryRows = [...entries]
+        .sort((a, b) => Math.abs(Number(b.amount || 0)) - Math.abs(Number(a.amount || 0)))
+        .slice(0, 15)
+        .map((entry) => [
+          fmtDate(entry.business_date),
+          typeLabel(entry.event_type),
+          String(entry.description || "-").slice(0, 42),
+          entry.amount >= 0 ? `+${fmtCurrency(entry.amount)}` : `-${fmtCurrency(Math.abs(entry.amount))}`,
+        ]);
 
-      doc.setTextColor(15, 23, 42);
-      doc.setFontSize(10);
-      doc.text(`Generated: ${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}`, 14, 36);
+      const addFooter = () => {
+        const pageCount = doc.getNumberOfPages();
+        for (let page = 1; page <= pageCount; page += 1) {
+          doc.setPage(page);
+          doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+          doc.text(`Tools4Care Financial Ledger | Page ${page} of ${pageCount}`, margin, 272);
+          doc.text("Source: canonical financial ledger (cash movement and non-cash A/R shown separately)", pageWidth - margin, 272, { align: "right" });
+        }
+      };
+
+      doc.setFillColor(5, 150, 105);
+      doc.rect(0, 0, pageWidth, 31, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(18); doc.setFont(undefined, "bold");
+      doc.text("Tools4Care - Financial Ledger", margin, 14);
+      doc.setFontSize(10); doc.setFont(undefined, "normal");
+      doc.text(`Income, expenses and A/R activity | ${fmtDate(from)} - ${fmtDate(to)}`, margin, 22);
+      doc.text(`Location: ${van?.nombre_van || van?.nombre || "-"}`, pageWidth - margin, 22, { align: "right" });
+
+      doc.setTextColor(15, 23, 42); doc.setFontSize(8);
+      doc.text(`Generated: ${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}`, margin, 38);
 
       const summary = [
-        ["TOTAL INCOME", fmtCurrency(totals.moneyIn)],
-        ["REFUNDS", fmtCurrency(totals.refunds)],
-        ["EXPENSES", fmtCurrency(totals.expenses)],
-        ["NET TOTAL", fmtCurrency(totals.net)],
+        ["Money received", fmtCurrency(totals.moneyIn)],
+        ["Money refunds", fmtCurrency(totals.refunds)],
+        ["Operating expenses", fmtCurrency(totals.expenses)],
+        ["Net cash movement", fmtCurrency(totals.net)],
+        ["Net A/R change", fmtCurrency(totals.ar)],
       ];
       autoTable(doc, {
-        startY: 42,
-        head: [["Period summary", "Amount"]],
+        startY: 44,
+        head: [["Executive summary", "Amount"]],
         body: summary,
-        theme: "grid",
-        tableWidth: 100,
-        styles: { fontSize: 10 },
+        theme: "grid", tableWidth: 182,
+        styles: { fontSize: 9, cellPadding: 3 },
         headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: "bold" },
         didParseCell: (data) => {
-          if (data.section === "body" && data.row.index === summary.length - 1) {
+          if (data.section === "body" && data.row.index === 3) {
             data.cell.styles.fontStyle = "bold";
             data.cell.styles.fillColor = totals.net >= 0 ? [209, 250, 229] : [254, 226, 226];
           }
         },
       });
 
+      let nextY = doc.lastAutoTable.finalY + 8;
       autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 9,
-        head: [["Week starting", "Income", "Refunds", "Expenses", "Net total", "Net A/R change", "Entries"]],
+        startY: nextY,
+        head: [["Payment channel", "Amount received"]],
+        body: [["Cash", paymentTotals.cash], ["Card", paymentTotals.card], ["Transfer", paymentTotals.transfer], ["Checks", paymentTotals.check], ["Other", paymentTotals.other]].map(([label, amount]) => [label, fmtCurrency(amount)]),
+        theme: "striped", tableWidth: 88,
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: "bold" },
+      });
+      const paymentBottom = doc.lastAutoTable.finalY;
+      autoTable(doc, {
+        startY: nextY,
+        margin: { left: 112, right: margin },
+        head: [["Expense category", "Amount", "% of expenses"]],
+        body: categoryRows.length ? categoryRows : [["No expenses", fmtCurrency(0), "0.0%"]],
+        theme: "striped", styles: { fontSize: 8, cellPadding: 2.5 },
+        headStyles: { fillColor: [180, 83, 9], textColor: 255, fontStyle: "bold" },
+      });
+      nextY = Math.max(paymentBottom, doc.lastAutoTable.finalY) + 8;
+
+      autoTable(doc, {
+        startY: nextY,
+        head: [["Week", "Received", "Refunds", "Expenses", "Net cash", "Net A/R"]],
         body: weeks.map((week) => [
           fmtDate(week.week_start), fmtCurrency(week.money_in), fmtCurrency(week.refunds),
           fmtCurrency(week.expenses), fmtCurrency(week.net_cash_movement),
-          fmtCurrency(week.net_ar_change), week.cash_entries,
+          fmtCurrency(week.net_ar_change),
         ]),
         foot: [[
           "TOTAL", fmtCurrency(totals.moneyIn), fmtCurrency(totals.refunds),
-          fmtCurrency(totals.expenses), fmtCurrency(totals.net), fmtCurrency(totals.ar), totals.entries,
+          fmtCurrency(totals.expenses), fmtCurrency(totals.net), fmtCurrency(totals.ar),
         ]],
-        styles: { fontSize: 9 },
+        styles: { fontSize: 8, cellPadding: 2.5 },
         headStyles: { fillColor: [4, 120, 87], textColor: 255, fontStyle: "bold" },
         footStyles: { fillColor: [209, 250, 229], textColor: [6, 78, 59], fontStyle: "bold" },
       });
 
-      let noteY = doc.lastAutoTable.finalY + 10;
-      if (noteY > 195) {
+      doc.addPage();
+      doc.setTextColor(15, 23, 42); doc.setFontSize(13); doc.setFont(undefined, "bold");
+      doc.text("Daily movement detail", margin, 18);
+      doc.setFontSize(8); doc.setFont(undefined, "normal"); doc.setTextColor(71, 85, 105);
+      doc.text("Use this section to reconcile each day. Net A/R is non-cash account movement and is not added to money received.", margin, 25);
+      autoTable(doc, {
+        startY: 31,
+        head: [["Date", "Received", "Refunds", "Expenses", "Net cash", "Cash", "Card", "Transfer", "A/R change"]],
+        body: days.map((d) => [fmtDate(d.business_date), fmtCurrency(d.money_in), fmtCurrency(d.refunds), fmtCurrency(d.expenses), fmtCurrency(d.net_cash_movement), fmtCurrency(d.cash), fmtCurrency(d.card), fmtCurrency(d.transfer), fmtCurrency(d.net_ar_change)]),
+        styles: { fontSize: 7.5, cellPadding: 2.2 }, headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: "bold" },
+        foot: [["TOTAL", fmtCurrency(totals.moneyIn), fmtCurrency(totals.refunds), fmtCurrency(totals.expenses), fmtCurrency(totals.net), "", "", "", fmtCurrency(totals.ar)]],
+        footStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: "bold" },
+      });
+
+      if (entryRows.length) {
         doc.addPage();
-        noteY = 18;
+        doc.setFontSize(13); doc.setFont(undefined, "bold"); doc.setTextColor(15, 23, 42);
+        doc.text("Largest ledger entries", margin, 18);
+        doc.setFontSize(8); doc.setFont(undefined, "normal"); doc.setTextColor(71, 85, 105);
+        doc.text("Entries are shown for audit context; the daily and weekly totals remain the authoritative summary.", margin, 25);
+        autoTable(doc, {
+          startY: 31,
+          head: [["Date", "Event", "Description", "Amount"]], body: entryRows,
+          styles: { fontSize: 8, cellPadding: 2.5 }, headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold" },
+          columnStyles: { 2: { cellWidth: 105 }, 3: { halign: "right" } },
+        });
       }
-      doc.setFontSize(8);
-      doc.setTextColor(71, 85, 105);
-      doc.text("Net total = income - refunds - expenses. A/R change is shown separately because it is not necessarily money received.", 14, noteY);
+
+      addFooter();
       doc.save(`Tools4Care_Income_Expenses_${from}_to_${to}.pdf`);
     } catch (pdfError) {
       setError(pdfError?.message || "Could not generate the PDF report.");
