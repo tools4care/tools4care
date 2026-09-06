@@ -15,12 +15,19 @@ export function readSalePaymentMetadata(sale) {
 export function getReturnLineUnit(item) {
   const quantity = Number(item?.cantidad || 0);
   const storedSubtotal = Number(item?.subtotal);
-  if (quantity > 0 && Number.isFinite(storedSubtotal) && storedSubtotal >= 0) {
-    return storedSubtotal / quantity;
-  }
-
   const base = Number(item?.precio_unitario || 0);
   const discount = Math.min(100, Math.max(0, Number(item?.descuento || 0)));
+
+  if (quantity > 0 && Number.isFinite(storedSubtotal) && storedSubtotal >= 0) {
+    const subtotalUnit = storedSubtotal / quantity;
+    // Legacy invoices stored subtotal at the pre-discount price while newer
+    // transactional invoices store the already-discounted subtotal. Detect
+    // the legacy shape without changing the newer records.
+    const looksPreDiscount = base > 0 && discount > 0
+      && Math.abs(subtotalUnit - base) <= 0.01;
+    return looksPreDiscount ? base * (1 - discount / 100) : subtotalUnit;
+  }
+
   return base * (1 - discount / 100);
 }
 
