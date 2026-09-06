@@ -2538,38 +2538,32 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-3 mt-6">
-            <button
-              onClick={handleGenerarPDF}
-              disabled={cargando || fechasSeleccionadas.length === 0}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Download size={18} />
-              <span>Generate PDF Report</span>
-            </button>
-
+          {/* Primary close action: keep it prominent and reachable on phones. */}
+          <div className="sticky bottom-2 z-20 -mx-1 mt-6 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur sm:static sm:mx-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <button
               onClick={handleCierreVan}
               disabled={
                 cargando ||
-                (Math.abs(totales.diferencia) >= NOTE_REQUIRED_DISCREPANCY &&
-                  !observaciones.trim())
+                fechasSeleccionadas.length === 0 ||
+                (Math.abs(totales.diferencia) >= NOTE_REQUIRED_DISCREPANCY && !observaciones.trim())
               }
-              className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label={fechasSeleccionadas.length === 1 ? "Close selected day" : "Close all selected dates"}
+              className="order-1 flex min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 px-5 py-3 text-base font-black text-white shadow-lg shadow-emerald-200 transition-all hover:-translate-y-0.5 hover:from-green-700 hover:to-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:order-1"
             >
-              {cargando ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  <span>Closing...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle size={18} />
-                  <span>Close All Dates</span>
-                </>
-              )}
+              {cargando ? <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-white" /> : <CheckCircle size={20} />}
+              <span>{cargando ? "Closing…" : fechasSeleccionadas.length === 1 ? "Close Day" : `Close ${fechasSeleccionadas.length} Selected Dates`}</span>
             </button>
+
+            <button
+              onClick={handleGenerarPDF}
+              disabled={cargando || fechasSeleccionadas.length === 0}
+              className="order-2 flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 sm:order-2 sm:flex-none"
+            >
+              <Download size={18} />
+              <span>Generate PDF Report</span>
+            </button>
+            </div>
           </div>
         </div>
 
