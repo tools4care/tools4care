@@ -354,9 +354,13 @@ export function usePendingSalesCloud() {
 
     if (updateErr) {
       console.error('Error completando venta pendiente:', updateErr);
-      fetchPendingSales({ silent: true });
+      await fetchPendingSales({ silent: false });
+      throw updateErr;
     } else {
       console.log(`✅ Venta pendiente ${id} completada → venta real ${ventaId}`);
+      // Re-read the server after the optimistic removal. This covers devices
+      // whose realtime channel was asleep while the sale was completed.
+      await fetchPendingSales({ silent: true });
     }
   }, [fetchPendingSales]);
 

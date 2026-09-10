@@ -2484,7 +2484,9 @@ export default function Dashboard() {
 
   function getNombreCliente(id) {
     const c = clientes.find((x) => x.id === id);
-    return c ? c.nombre : (id ? id.slice(0, 8) + "…" : "");
+    // A sale without a customer id is an intentional quick/walk-in sale.
+    // Never render an empty cell (or a UUID fragment) in Recent Sales.
+    return c ? c.nombre : (id ? `Customer ${id.slice(0, 8)}…` : "Walk-in / Quick Sale");
   }
 
   async function cargarDatos(vanId, days) {
@@ -2510,7 +2512,27 @@ export default function Dashboard() {
       setVentas([]);
       setVentasSerie([]);
     } else {
-      setVentas(ventasData || []);
+      const sales = ventasData || [];
+      setVentas(sales);
+
+      // Recent Sales is loaded by van/date, while the original customer list
+      // can be cached or subject to RLS/pagination. Hydrate exactly the
+      // customer ids present in this result so every sale has a name without
+      // downloading the whole customer table again.
+      const customerIds = [...new Set(sales.map((sale) => sale.cliente_id).filter(Boolean))];
+      if (customerIds.length) {
+        const { data: salesCustomers, error: customersError } = await supabase
+          .from("clientes")
+          .select("id, nombre")
+          .in("id", customerIds);
+        if (!customersError && Array.isArray(salesCustomers)) {
+          setClientes((current) => {
+            const byId = new Map(current.map((customer) => [customer.id, customer]));
+            salesCustomers.forEach((customer) => byId.set(customer.id, { ...byId.get(customer.id), ...customer }));
+            return [...byId.values()];
+          });
+        }
+      }
 
       const mapTotal = {};
       const mapCount = {};

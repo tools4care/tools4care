@@ -1500,18 +1500,38 @@ useEffect(() => {
   useEffect(() => {
     if (isOffline) return;
     const pending = getPendingSaleCardPayment();
-    if (!pending || (pending.clienteId && selectedClient?.id && pending.clienteId !== selectedClient.id)) return;
+    const returnSessionId = searchParams.get("terminal_return");
+    // The Android companion returns to /ventas?terminal_return=… . In some
+    // Android/browser combinations the original tab is recreated and its
+    // local marker is lost, so seed a recovery marker from the signed return
+    // URL. This only reads the idempotent session status; it never creates a
+    // second payment.
+    let recovery = pending;
+    if (!recovery && returnSessionId) {
+      recovery = {
+        sessionId: returnSessionId,
+        paymentIndex: 0,
+        clienteId: selectedClient?.id || null,
+        baseAmount: 0,
+        chargedAmount: 0,
+      };
+      savePendingSaleCardPayment(recovery);
+    }
+    if (returnSessionId) setSearchParams({}, { replace: true });
+    if (!recovery || (recovery.clienteId && selectedClient?.id && recovery.clienteId !== selectedClient.id)) return;
     let active = true;
-    setTerminalPaymentIndex(pending.paymentIndex ?? 0);
-    waitForTerminalPayment(pending.sessionId, { timeoutMs: 90_000 }).then((result) => {
+    setTerminalPaymentIndex(recovery.paymentIndex ?? 0);
+    waitForTerminalPayment(recovery.sessionId, { timeoutMs: 120_000 }).then((result) => {
       if (!active) return;
-      const index = Number.isInteger(pending.paymentIndex) ? pending.paymentIndex : 0;
+      const index = Number.isInteger(recovery.paymentIndex) ? recovery.paymentIndex : 0;
+      const approvedAmount = Number(result.amount_cents || 0) / 100;
+      const baseAmount = Number(recovery.baseAmount || 0) || approvedAmount;
       setPayments((current) => current.map((payment, i) => i === index ? {
-        ...payment, forma: "tarjeta", monto: Number(pending.baseAmount || payment.monto || 0),
-        referencia: pending.sessionId, terminalSessionId: pending.sessionId, terminalStatus: result.status,
+        ...payment, forma: "tarjeta", monto: baseAmount,
+        referencia: recovery.sessionId, terminalSessionId: recovery.sessionId, terminalStatus: result.status,
       } : payment));
       clearPendingSaleCardPayment();
-      toast.success(`Tap to Pay confirmed — ${fmt(Number(pending.chargedAmount || pending.baseAmount || 0))}. Amount locked; save the sale to finish.`);
+      toast.success(`Tap to Pay confirmed — ${fmt(Number(recovery.chargedAmount || baseAmount || approvedAmount))}. Amount locked; save the sale to finish.`);
     }).catch((error) => {
       if (!active) return;
       const message = error?.message || "Could not restore the Tap to Pay result.";
@@ -1526,7 +1546,7 @@ useEffect(() => {
   // `toast` is an object recreated by the ToastProvider on every render. It
   // must not be a dependency here or each polling state update starts another
   // recovery loop and duplicates the same cancellation toast.
-  }, [isOffline, selectedClient?.id]);
+  }, [isOffline, selectedClient?.id, searchParams, setSearchParams]);
 
   // ---- ACUERDOS DE PAGO
 const [acuerdosResumen, setAcuerdosResumen] = useState(null);
@@ -5472,7 +5492,7 @@ function renderPendingSalesModal() {
 
             <button
               className="text-white hover:bg-white/20 w-8 h-8 rounded-full transition-colors flex items-center justify-center disabled:opacity-50"
-              onClick={() => refreshPendingSales()}
+              onClick={() => refreshPendingSales({ silent: false })}
               disabled={cloudPendingLoading}
               title="Refresh"
             >
