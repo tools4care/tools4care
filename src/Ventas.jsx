@@ -2713,7 +2713,7 @@ useEffect(() => {
 
       const productoIds = [...new Set((detallesData || []).map(d => d.producto_id).filter(Boolean))];
       const { data: productosData } = productoIds.length > 0
-        ? await supabase.from("productos").select("id, nombre").in("id", productoIds)
+        ? await supabase.from("productos").select("id, nombre, codigo").in("id", productoIds)
         : { data: [] };
       const productosMap = new Map((productosData || []).map(p => [p.id, p]));
 
@@ -2755,7 +2755,11 @@ useEffect(() => {
             descuento: d.descuento,
             subtotal: d.subtotal,
             producto_id: d.producto_id,
-            productos: { id: d.producto_id, nombre: productosMap.get(d.producto_id)?.nombre || "Deleted product" },
+            productos: {
+              id: d.producto_id,
+              nombre: productosMap.get(d.producto_id)?.nombre || "Deleted product",
+              codigo: productosMap.get(d.producto_id)?.codigo || "",
+            },
           }));
         const totalReembolsado = reembolsosPorVenta.get(venta.id) || 0;
         return {
@@ -2784,6 +2788,8 @@ useEffect(() => {
           // Product names
           const names = (v.detalle_ventas || []).map(d => (d.productos?.nombre || "").toLowerCase()).join(" ");
           if (names.includes(tl)) return true;
+          const codes = (v.detalle_ventas || []).map(d => (d.productos?.codigo || "").toLowerCase()).join(" ");
+          if (codes.includes(tl)) return true;
           return false;
         });
       }
@@ -3893,6 +3899,20 @@ function clearSale() {
     setTimeout(() => productSearchRef.current?.focus(), 150);
   }, []); // productSearchRef es estable (useRef)
 
+  // Return mode has its own scanner flow. A scanned receipt/product code must
+  // never leak into the sales cart search; it opens the return receipt finder.
+  async function handleReturnBarcodeScanned(code) {
+    const value = String(code || "").trim();
+    if (!value) return;
+    setShowScanner(false);
+    setWalkinDevolucion(true);
+    setSelectedClient(null);
+    setSelectedInvoice(null);
+    setInvoiceSearch("");
+    setWalkinSearch(value);
+    await loadWalkinSales(value);
+  }
+
  // Verifica si los productos del pendiente tienen stock suficiente en la van
   async function checkPendingCartStock(cartItems, vanId) {
     if (!cartItems?.length || !vanId) return;
@@ -4028,7 +4048,9 @@ function clearSale() {
     // No pending sale — proceed normally
     setSelectedClient(c);
     if (c?.id) loadNotebookRequests(c.id);
-    if (canUseCloud && navigator.onLine) runCreditAgent(c.id);
+    // Return mode only needs the customer's sale history; avoid credit-agent
+    // calls and limit calculations that belong to the sales flow.
+    if (canUseCloud && navigator.onLine && appMode !== "devolucion") runCreditAgent(c.id);
   }
 
   async function handleSelectPendingSale(sale, fallbackClient = null) {
@@ -5269,8 +5291,7 @@ function renderReturnDetails() {
         </button>
       </div>
 
-      {storeMode && (
-        <div className="grid grid-cols-3 gap-2 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-[10px] uppercase font-bold text-slate-500">Money refundable</div>
             <div className="text-base font-black text-slate-900 mt-1">{fmt(refundableMoney)}</div>
@@ -5283,8 +5304,7 @@ function renderReturnDetails() {
             <div className="text-[10px] uppercase font-bold text-orange-700">This return</div>
             <div className="text-base font-black text-orange-800 mt-1">{fmt(totalReturn)}</div>
           </div>
-        </div>
-      )}
+      </div>
 
       <div className="space-y-2 mb-4">
         <p className="text-sm text-gray-600 font-semibold">Select products to return:</p>
@@ -5920,6 +5940,52 @@ function renderStepClient() {
       </div>
     );
   }
+
+  function renderReturnWorkspace() {
+    const returnClients = (Array.isArray(clients) ? clients : []).slice(0, 8);
+    const selectedName = selectedClient
+      ? [selectedClient.nombre, selectedClient.apellido].filter(Boolean).join(" ") || selectedClient.negocio || "Customer"
+      : "";
+    return (
+      <div className="min-h-[70vh] rounded-3xl bg-gradient-to-br from-orange-50 via-white to-slate-50 p-3 sm:p-5 lg:p-7">
+        <div className="mx-auto max-w-6xl space-y-5">
+          <header className="rounded-2xl bg-slate-950 p-4 text-white shadow-xl sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-orange-400/20 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-orange-200"><span className="h-2 w-2 rounded-full bg-orange-400" /> Return workspace</div>
+                <h1 className="text-2xl font-black tracking-tight sm:text-3xl">Returns & adjustments</h1>
+                <p className="mt-1 max-w-2xl text-sm text-slate-300">Find the original sale, select only the items being returned, and choose where the value goes. Credit limits and sales controls are hidden here.</p>
+              </div>
+              <button type="button" onClick={() => { setAppMode("venta"); setWalkinDevolucion(false); setSelectedInvoice(null); setSelectedClient(null); setClientSalesHistory([]); setReturnQuantities({}); }} className="min-h-11 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold hover:bg-white/20">Exit returns</button>
+            </div>
+            <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <button type="button" onClick={() => setShowScanner(true)} className="min-h-14 rounded-xl bg-orange-500 px-4 py-3 text-left font-bold shadow-lg hover:bg-orange-400"><span className="block text-lg">▦ Scan receipt / product</span><span className="block text-xs font-medium text-orange-950/70">Use a receipt or product code</span></button>
+              <button type="button" onClick={() => { setWalkinDevolucion(true); setSelectedClient(null); setSelectedInvoice(null); setWalkinSearch(""); loadWalkinSales(""); }} className="min-h-14 rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-left font-bold hover:bg-white/20"><span className="block text-lg">🧾 Search all receipts</span><span className="block text-xs font-medium text-slate-300">Includes walk-in sales</span></button>
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3"><div className="text-xs font-bold uppercase tracking-wide text-slate-400">Current step</div><div className="mt-1 text-sm font-black">{selectedInvoice ? "Select return outcome" : selectedClient ? "Choose an original sale" : "Find customer or receipt"}</div></div>
+            </div>
+          </header>
+
+          {!selectedInvoice && !walkinDevolucion && <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <div className="mb-3 flex items-center justify-between"><div><h2 className="text-lg font-black text-slate-900">Find a customer</h2><p className="text-xs text-slate-500">Search by name, business, phone, email, or address.</p></div>{clientLoading && <span className="text-xs font-semibold text-orange-600">Searching…</span>}</div>
+            <input type="search" value={clientSearch} onChange={(e) => { setClientSearch(e.target.value); setSelectedClient(null); setSelectedInvoice(null); }} placeholder="Search customer, business, phone or email…" className="min-h-12 w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 text-base outline-none focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100" autoFocus />
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">{returnClients.map((client) => { const display = [client.nombre, client.apellido].filter(Boolean).join(" ") || client.negocio || "Unnamed customer"; return <button key={client.id} type="button" onClick={() => handleClientSelect(client)} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-orange-300 hover:bg-orange-50"><div className="font-bold text-slate-900">{display}</div><div className="mt-1 truncate text-xs text-slate-500">{client.negocio || client.telefono || client.email || "Customer account"}</div></button>; })}</div>
+            {!clientLoading && clientSearch.trim().length >= 2 && returnClients.length === 0 && <div className="py-5 text-center text-sm text-slate-500">No customer found. Try the receipt search for a walk-in.</div>}
+          </section>}
+
+          {selectedClient && !selectedInvoice && !walkinDevolucion && <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><span className="font-black text-orange-950">{selectedName}</span><span className="ml-2 text-orange-700">· Select an original sale below</span></div><button type="button" onClick={() => { setSelectedClient(null); setClientSearch(""); setClientSalesHistory([]); }} className="rounded-lg border border-orange-200 bg-white px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-100">Change customer</button></div></div>}
+
+          {walkinDevolucion && !selectedInvoice && <section className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm sm:p-5"><div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-black text-slate-900">Receipt finder</h2><p className="text-xs text-slate-500">Search invoice number, receipt ID, date, product, or customer.</p></div><button type="button" onClick={() => { setWalkinDevolucion(false); setWalkinSearch(""); setClientSalesHistory([]); }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">Back to customer search</button></div><input type="search" value={walkinSearch} onChange={(e) => { setWalkinSearch(e.target.value); loadWalkinSales(e.target.value); }} placeholder="Invoice #, receipt ID, date, product or customer…" className="min-h-12 w-full rounded-xl border-2 border-orange-200 bg-orange-50/40 px-4 text-base outline-none focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100" autoFocus />{walkinLoading && <div className="py-5 text-center text-sm font-semibold text-orange-600">Searching receipts…</div>}{!walkinLoading && clientSalesHistory.length === 0 && <div className="py-6 text-center text-sm text-slate-500">No eligible sales found.</div>}{!walkinLoading && clientSalesHistory.length > 0 && <div className="mt-3 grid max-h-[28rem] gap-2 overflow-y-auto">{clientSalesHistory.map((sale) => { const original = Number(sale.total ?? sale.total_venta ?? 0); const returned = Number(sale.total_devuelto || 0); const fullyReturned = returned >= original || sale.detalle_ventas?.every((d) => (d.cantidad_disponible ?? d.cantidad) <= 0); const customer = sale._client ? ([sale._client.nombre, sale._client.apellido].filter(Boolean).join(" ") || sale._client.negocio || "Customer") : "Walk-in customer"; return <button key={sale.id} type="button" disabled={fullyReturned} onClick={() => { if (fullyReturned) return; setSelectedClient(sale._client || null); setSelectedInvoice(sale); }} className={`flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left ${fullyReturned ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-50" : "border-slate-200 bg-white hover:border-orange-300 hover:bg-orange-50"}`}><div className="min-w-0"><div className="font-mono text-xs font-black text-slate-800">{sale.numero_factura || `#${sale.id.slice(0, 8)}…`}</div><div className="mt-1 text-xs font-semibold text-blue-700">{customer}</div><div className="truncate text-xs text-slate-500">{new Date(sale.created_at).toLocaleString()} · {(sale.detalle_ventas || []).map((d) => d.productos?.nombre).filter(Boolean).join(", ") || "No product detail"}</div></div><div className="shrink-0 text-right"><div className="font-black text-slate-900">{fmt(original)}</div>{returned > 0 && <div className="text-[11px] font-semibold text-orange-600">Returned {fmt(returned)}</div>}<div className={`text-[10px] font-bold uppercase ${fullyReturned ? "text-slate-500" : "text-emerald-600"}`}>{fullyReturned ? "Fully returned" : "Available"}</div></div></button>; })}</div>}</section>}
+
+          {selectedClient && !walkinDevolucion && renderClientInvoiceList()}
+          {selectedInvoice && renderReturnDetails()}
+          {!selectedInvoice && <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><h2 className="text-sm font-black uppercase tracking-wide text-slate-700">Return outcomes</h2><div className="mt-3 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border border-blue-200 bg-blue-50 p-3"><div className="font-bold text-blue-900">Refund money</div><div className="mt-1 text-xs text-blue-700">Return funds using the selected payment method.</div></div><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><div className="font-bold text-emerald-900">Store credit</div><div className="mt-1 text-xs text-emerald-700">Keep value with the customer for a future purchase.</div></div><div className="rounded-xl border border-purple-200 bg-purple-50 p-3"><div className="font-bold text-purple-900">Reduce A/R</div><div className="mt-1 text-xs text-purple-700">Apply the return against an unpaid balance.</div></div></div></section>}
+          {showScanner && <Suspense fallback={null}><BarcodeScanner onScan={handleReturnBarcodeScanned} onClose={() => setShowScanner(false)} isActive={showScanner} /></Suspense>}
+        </div>
+      </div>
+    );
+  }
+
+  if (appMode === "devolucion") return renderReturnWorkspace();
 
   return (
     <div className="space-y-4">
