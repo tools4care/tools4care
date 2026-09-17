@@ -84,6 +84,21 @@ async function descargarPDFFactura(factura) {
   doc.save(`Invoice_${factura.numero_factura || factura.id}.pdf`);
 }
 
+function isReturnDocument(factura) {
+  return String(factura?.tipo || "").toLowerCase() === "devolucion";
+}
+
+function displayInvoiceStatus(status, type) {
+  if (type === "devolucion") return "Return";
+  return {
+    pagado: "Paid",
+    pendiente: "Pending",
+    parcial: "Partial",
+    reembolsado: "Refunded",
+    credito_tienda: "Store credit",
+  }[String(status || "").toLowerCase()] || status || "Unknown";
+}
+
 /* ===================== MAIN ===================== */
 export default function Facturas() {
   const location = useLocation();
@@ -140,6 +155,8 @@ export default function Facturas() {
     cantidadTotal: 0,
     cantidadPagadas: 0,
     cantidadPendientes: 0,
+    totalDevoluciones: 0,
+    cantidadDevoluciones: 0,
   });
 
   // Cargar lista de vans para el selector de admin
@@ -171,7 +188,7 @@ export default function Facturas() {
   }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda]);
 
   async function cargarEstadisticas() {
-    let query = supabase.from("facturas_ext").select("total, estado_pago");
+    let query = supabase.from("facturas_ext").select("total, estado_pago, tipo");
 
     if (usuario?.rol === "admin") {
       if (vanFiltro) query = query.eq("van_id", vanFiltro);
@@ -189,19 +206,23 @@ export default function Facturas() {
     const { data } = await query;
 
     if (data) {
-      const totalGeneral = data.reduce((sum, f) => sum + Number(f.total || 0), 0);
-      const pagadas = data.filter(f => f.estado_pago === "pagado");
+      const sales = data.filter((f) => f.tipo !== "devolucion");
+      const returns = data.filter((f) => f.tipo === "devolucion");
+      const totalGeneral = sales.reduce((sum, f) => sum + Number(f.total || 0), 0);
+      const pagadas = sales.filter(f => f.estado_pago === "pagado");
       const totalPagado = pagadas.reduce((sum, f) => sum + Number(f.total || 0), 0);
-      const pendientes = data.filter(f => f.estado_pago !== "pagado");
+      const pendientes = sales.filter(f => f.estado_pago !== "pagado");
       const totalPendiente = pendientes.reduce((sum, f) => sum + Number(f.total || 0), 0);
 
       setEstadisticas({
         totalGeneral,
         totalPagado,
         totalPendiente,
-        cantidadTotal: data.length,
+        cantidadTotal: sales.length,
         cantidadPagadas: pagadas.length,
         cantidadPendientes: pendientes.length,
+        totalDevoluciones: returns.reduce((sum, f) => sum + Number(f.total || 0), 0),
+        cantidadDevoluciones: returns.length,
       });
     }
   }
@@ -590,7 +611,7 @@ export default function Facturas() {
           </div>
 
           {/* Estadísticas Visuales */}
-          <div className="mb-2 grid grid-cols-3 gap-2 sm:gap-4">
+          <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4">
             <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 p-3 text-white shadow-md transition-shadow hover:shadow-lg sm:rounded-2xl sm:p-5">
               <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4 scale-[2]">
                 <IconDollar />
@@ -630,6 +651,17 @@ export default function Facturas() {
                 </div>
                 <div className="mb-1 truncate text-base font-black sm:text-2xl lg:text-3xl">${estadisticas.totalPendiente.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 <div className="text-[10px] opacity-80 sm:text-sm">{estadisticas.cantidadPendientes} pending</div>
+              </div>
+            </div>
+
+            <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-rose-500 to-red-600 p-3 text-white shadow-md transition-shadow hover:shadow-lg sm:rounded-2xl sm:p-5">
+              <div className="relative z-10">
+                <div className="mb-1 flex items-center justify-between">
+                  <div className="truncate text-[10px] font-semibold uppercase opacity-90 sm:text-sm sm:normal-case">Returns</div>
+                  <span className="text-lg">↩</span>
+                </div>
+                <div className="mb-1 truncate text-base font-black sm:text-2xl lg:text-3xl">-${estadisticas.totalDevoluciones.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] opacity-80 sm:text-sm">{estadisticas.cantidadDevoluciones} return documents</div>
               </div>
             </div>
           </div>
@@ -764,6 +796,7 @@ export default function Facturas() {
                           <div className="font-mono text-sm font-semibold text-blue-600 group-hover:text-blue-700">
                             {f.numero_factura || f.id?.slice(0, 8)}
                           </div>
+                          {isReturnDocument(f) && <span className="mt-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-rose-700">Return</span>}
                         </td>
                         <td className="p-4">
                           <div className="font-medium text-gray-800">
@@ -777,7 +810,7 @@ export default function Facturas() {
                         <td className="p-4 font-medium text-gray-800">{f.cliente_nombre_c || "-"}</td>
                         <td className="p-4 text-right">
                           <div className="font-bold text-xl text-gray-900 group-hover:text-blue-600 transition-colors">
-                            ${Number(f.total || 0).toFixed(2)}
+                            {isReturnDocument(f) ? "-" : ""}${Number(f.total || 0).toFixed(2)}
                           </div>
                         </td>
                         <td className="p-4">
@@ -793,7 +826,9 @@ export default function Facturas() {
                                 : "bg-amber-500 text-white"
                             }`}
                           >
-                            {f.estado_pago === "pagado" ? (
+                            {isReturnDocument(f) ? (
+                              "↩ Return"
+                            ) : f.estado_pago === "pagado" ? (
                               <>
                                 <IconCheck />
                                 Paid
@@ -836,6 +871,7 @@ export default function Facturas() {
                       <div className="font-mono text-sm font-bold text-blue-600 mb-1">
                         #{f.numero_factura || f.id?.slice(0, 8)}
                       </div>
+                      {isReturnDocument(f) && <span className="mb-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-rose-700">Return</span>}
                       <div className="font-semibold text-gray-900 mb-1">{f.cliente_nombre_c || "-"}</div>
                       <div className="flex items-center gap-2 text-xs text-gray-500">
                         <IconCalendar />
@@ -848,7 +884,7 @@ export default function Facturas() {
                         <IconDollar />
                         <span className="font-semibold">Total</span>
                       </div>
-                      <span className="text-2xl font-bold">${Number(f.total || 0).toFixed(2)}</span>
+                      <span className="text-2xl font-bold">{isReturnDocument(f) ? "-" : ""}${Number(f.total || 0).toFixed(2)}</span>
                     </div>
 
                     {f.nombre_van && (
@@ -928,6 +964,13 @@ export default function Facturas() {
                       year: 'numeric'
                     }) : "-"}
                   </div>
+                </div>
+                <div className={`rounded-xl border p-4 ${isReturnDocument(facturaSeleccionada) ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}>
+                  <div className="mb-1 text-xs font-semibold uppercase text-slate-500">Document type</div>
+                  <div className={`font-bold ${isReturnDocument(facturaSeleccionada) ? "text-rose-700" : "text-emerald-700"}`}>
+                    {isReturnDocument(facturaSeleccionada) ? "Return / adjustment" : "Sale invoice"}
+                  </div>
+                  {isReturnDocument(facturaSeleccionada) && facturaSeleccionada.venta_origen_id && <div className="mt-1 text-xs text-slate-500">Linked to original sale: {facturaSeleccionada.venta_origen_id.slice(0, 8)}…</div>}
                 </div>
               </div>
 
