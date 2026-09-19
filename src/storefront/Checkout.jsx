@@ -490,11 +490,16 @@ export default function Checkout() {
             carrier: shipping.method,
           },
         };
+        // Use the signed-in session token when available. Sending the public
+        // anon key here makes the server see an authenticated cart as anonymous
+        // and correctly reject it with "Cart access denied".
+        const { data: sessionData } = await supabase.auth.getSession();
+        const authToken = sessionData?.session?.access_token || supabaseAnonKey;
         const res = await fetch(FN_URL, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${supabaseAnonKey}`,
+            Authorization: `Bearer ${authToken}`,
             "x-ev-anon": getAnonId() || "",
           },
           body: JSON.stringify({ amount: payload.amount, currency: "usd", metadata: payload.metadata, shipping: payload.shipping }),
