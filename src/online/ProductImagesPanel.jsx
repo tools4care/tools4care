@@ -16,6 +16,7 @@ export default function ProductImagesPanel({ open, productoId, productName, onCl
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -47,47 +48,42 @@ export default function ProductImagesPanel({ open, productoId, productName, onCl
   }
 
   async function handleUpload(e) {
-    const file = e.target.files?.[0];
-    if (!file || !productoId) return;
+    await uploadFiles(e.target.files);
+  }
+
+  async function uploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter((file) => file.type?.startsWith("image/"));
+    if (!files.length || !productoId) return;
 
     setErr("");
     setLoading(true);
     try {
-      const key = `products/${productoId}/${Date.now()}-${slugify(file.name)}`;
+      let nextSort = ((rows || []).reduce((m, r) => Math.max(m, Number(r.sort_order ?? 0)), 0) || 0) + 1;
+      let makePrimary = (rows || []).length === 0;
+      const failures = [];
 
-      // 1) Subir al bucket (asegúrate de tener un bucket público llamado product-images)
-      const { error: upErr } = await supabase
-        .storage
-        .from("product-images")
-        .upload(key, file, { upsert: false, cacheControl: "3600" });
-      if (upErr) throw upErr;
+      // Upload sequentially so gallery order follows the selected file order.
+      for (const [index, file] of files.entries()) {
+        try {
+          const key = `products/${productoId}/${Date.now()}-${index}-${slugify(file.name)}`;
+          const { error: upErr } = await supabase.storage.from("product-images").upload(key, file, { upsert: false, cacheControl: "3600" });
+          if (upErr) throw upErr;
+          const { data: pub } = supabase.storage.from("product-images").getPublicUrl(key);
+          if (!pub?.publicUrl) throw new Error("No se pudo obtener la URL pública");
+          const { error: insErr } = await supabase.from("product_images").insert({
+            producto_id: productoId,
+            url: pub.publicUrl,
+            sort_order: nextSort++,
+            is_primary: makePrimary,
+          });
+          if (insErr) throw insErr;
+          makePrimary = false;
+        } catch (uploadError) {
+          failures.push(`${file.name}: ${uploadError?.message || "upload failed"}`);
+        }
+      }
 
-      // 2) Obtener URL pública
-      const { data: pub, error: pubErr } = supabase
-        .storage
-        .from("product-images")
-        .getPublicUrl(key);
-      if (pubErr) throw pubErr;
-
-      const publicUrl = pub?.publicUrl;
-      if (!publicUrl) throw new Error("No se pudo obtener la URL pública");
-
-      // 3) sort_order siguiente + primera imagen como principal
-      const nextSort =
-        ((rows || []).reduce(
-          (m, r) => Math.max(m, Number(r.sort_order ?? 0)),
-          0
-        ) || 0) + 1;
-      const makePrimary = (rows || []).length === 0;
-
-      // 4) Insertar fila
-      const { error: insErr } = await supabase.from("product_images").insert({
-        producto_id: productoId,
-        url: publicUrl,
-        sort_order: nextSort,
-        is_primary: makePrimary,
-      });
-      if (insErr) throw insErr;
+      if (failures.length) setErr(`${failures.length} image(s) could not be uploaded. ${failures.join(" ")}`);
 
       await fetchRows();
     } catch (e) {
@@ -95,6 +91,7 @@ export default function ProductImagesPanel({ open, productoId, productName, onCl
     } finally {
       setLoading(false);
       if (fileRef.current) fileRef.current.value = "";
+      setDragOver(false);
     }
   }
 
@@ -184,11 +181,17 @@ export default function ProductImagesPanel({ open, productoId, productName, onCl
             )}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-              <label className="flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-5 text-center transition hover:border-blue-400 hover:bg-blue-50">
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} disabled={loading} />
+              <label
+                className={`flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-5 text-center transition ${dragOver ? "border-blue-500 bg-blue-100" : "border-blue-200 bg-blue-50/60 hover:border-blue-400 hover:bg-blue-50"}`}
+                onDragOver={(e) => { e.preventDefault(); if (!loading) setDragOver(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+                onDrop={(e) => { e.preventDefault(); if (!loading) uploadFiles(e.dataTransfer.files); }}
+              >
+                <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleUpload} disabled={loading} />
                 <span className="text-4xl text-blue-500">＋</span>
-                <span className="mt-3 font-black text-blue-800">Upload product photo</span>
-                <span className="mt-1 text-xs text-blue-600">JPG, PNG or WebP</span>
+                <span className="mt-3 font-black text-blue-800">Upload product photos</span>
+                <span className="mt-1 text-xs text-blue-600">Choose multiple files or drag and drop them here</span>
+                <span className="mt-1 text-[11px] text-blue-500">JPG, PNG, WebP · first image becomes the cover</span>
               </label>
               {rows.map((r) => (
                 <div
