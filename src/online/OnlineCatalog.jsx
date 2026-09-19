@@ -390,6 +390,9 @@ export default function OnlineCatalog() {
   const [viewMode, setViewMode] = useState("list");
   const [selectedId, setSelectedId] = useState(null);
   const [page, setPage] = useState(1);
+  // "all" | "online" | "deals" | "hidden" — which of the stats tiles
+  // below the list is currently filtering it.
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const [imgOpen, setImgOpen] = useState(false);
   const [imgPid, setImgPid] = useState(null);
@@ -587,16 +590,24 @@ export default function OnlineCatalog() {
     deals: rows.filter((r) => r.is_deal).length,
     hidden: rows.filter((r) => !r.visible && !r.visible_online).length,
   }), [rows]);
+  // Which rows the statusFilter tile currently shows — same buckets as the
+  // stats above, so the tile counts always match what clicking them filters to.
+  const filteredRows = useMemo(() => {
+    if (statusFilter === "online") return rows.filter((r) => r.visible_online);
+    if (statusFilter === "deals") return rows.filter((r) => r.is_deal);
+    if (statusFilter === "hidden") return rows.filter((r) => !r.visible && !r.visible_online);
+    return rows;
+  }, [rows, statusFilter]);
   const selectedProduct = rows.find((row) => row.id === selectedId) || null;
   const siblingProducts = useMemo(() => {
     if (!selectedProduct?.variant_group_id) return [];
     return rows.filter((r) => r.variant_group_id === selectedProduct.variant_group_id && r.id !== selectedProduct.id);
   }, [rows, selectedProduct]);
   const pageSize = 50;
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const visibleRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
 
-  useEffect(() => setPage(1), [q]);
+  useEffect(() => setPage(1), [q, statusFilter]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -616,18 +627,25 @@ export default function OnlineCatalog() {
             <OnlineCatalogActions onlineVanId={onlineVan} onChanged={reload} />
           </div>
 
-          {/* Stats bar */}
+          {/* Stats bar — click a tile to filter the list below by that status */}
           <div className="mt-4 grid grid-cols-4 gap-2">
             {[
-              { label: "Total", value: stats.total, color: "text-gray-800" },
-              { label: "Live online", value: stats.online, color: "text-emerald-600" },
-              { label: "Deals", value: stats.deals, color: "text-amber-600" },
-              { label: "Hidden", value: stats.hidden, color: "text-gray-400" },
+              { key: "all", label: "Total", value: stats.total, color: "text-gray-800" },
+              { key: "online", label: "Live online", value: stats.online, color: "text-emerald-600" },
+              { key: "deals", label: "Deals", value: stats.deals, color: "text-amber-600" },
+              { key: "hidden", label: "Hidden", value: stats.hidden, color: "text-gray-400" },
             ].map((s) => (
-              <div key={s.label} className="bg-gray-50 rounded-xl p-2.5 border text-center">
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => setStatusFilter(s.key)}
+                className={`bg-gray-50 rounded-xl p-2.5 border text-center transition-colors ${
+                  statusFilter === s.key ? "ring-2 ring-blue-400 border-blue-300 bg-blue-50" : "hover:bg-gray-100"
+                }`}
+              >
                 <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
                 <div className="text-[10px] text-gray-400 leading-tight">{s.label}</div>
-              </div>
+              </button>
             ))}
           </div>
 
