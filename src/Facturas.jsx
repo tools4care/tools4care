@@ -188,7 +188,9 @@ export default function Facturas() {
   }, [pagina, porPagina, fechaInicio, fechaFin, estadoFiltro, busqueda]);
 
   async function cargarEstadisticas() {
-    let query = supabase.from("facturas_ext").select("total, estado_pago, tipo");
+    // `*` keeps the page compatible while the type-exposing view migration is
+    // rolling out; older views simply return no `tipo` and are treated as sales.
+    let query = supabase.from("facturas_ext").select("*");
 
     if (usuario?.rol === "admin") {
       if (vanFiltro) query = query.eq("van_id", vanFiltro);
