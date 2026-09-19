@@ -338,6 +338,7 @@ export default function Checkout() {
   const [items, setItems] = useState([]);
   const [shipping, setShipping] = useState({ name: "", email: "", phone: "", address1: "", address2: "", city: "", state: "MA", zip: "", country: "US", method: "standard" });
   const [shippingSettings, setShippingSettings] = useState(DEFAULT_SHIPPING_SETTINGS);
+  const [shippingConfigAvailable, setShippingConfigAvailable] = useState(false);
   const [distanceMiles, setDistanceMiles] = useState(null);
   const [zipLookupLoading, setZipLookupLoading] = useState(false);
   const [promoInput, setPromoInput] = useState("");
@@ -353,7 +354,10 @@ export default function Checkout() {
     let cancelled = false;
     (async () => {
       const { data, error: settingsError } = await supabase.from("online_shipping_settings").select("*").eq("id", true).maybeSingle();
-      if (!cancelled && !settingsError) setShippingSettings(normalizeShippingSettings(data));
+      if (!cancelled && !settingsError && data) {
+        setShippingSettings(normalizeShippingSettings(data));
+        setShippingConfigAvailable(true);
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -733,7 +737,7 @@ export default function Checkout() {
                 {[
                   ...(shippingSettings.pickup_enabled ? [{ key: "pickup", label: "Pickup in store", note: "Free" }] : []),
                   { key: "standard", label: "Standard (3–7 days)", note: `Free over $${fmt(shippingSettings.standard_free_threshold)}` },
-                  ...(shippingSettings.local_delivery_enabled ? [{ key: "local", label: "Local delivery", note: distanceMiles == null ? (zipLookupLoading ? "Checking ZIP…" : "Enter ZIP for distance") : `${distanceMiles.toFixed(1)} mi from ${shippingSettings.origin_name}` }] : []),
+                  ...(shippingConfigAvailable && shippingSettings.local_delivery_enabled ? [{ key: "local", label: "Local delivery", note: distanceMiles == null ? (zipLookupLoading ? "Checking ZIP…" : "Enter ZIP for distance") : `${distanceMiles.toFixed(1)} mi from ${shippingSettings.origin_name}` }] : []),
                   { key: "express", label: "Express (1–2 days)", note: null },
                 ].map((m) => {
                   const localUnavailable = m.key === "local" && distanceMiles == null;

@@ -22,9 +22,9 @@ values (true)
 on conflict (id) do nothing;
 
 alter table public.online_shipping_settings enable row level security;
-drop policy if exists "online shipping settings authenticated read" on public.online_shipping_settings;
-create policy "online shipping settings authenticated read"
-  on public.online_shipping_settings for select to authenticated using (true);
+drop policy if exists "online shipping settings public read" on public.online_shipping_settings;
+create policy "online shipping settings public read"
+  on public.online_shipping_settings for select to anon, authenticated using (true);
 drop policy if exists "online shipping settings authenticated write" on public.online_shipping_settings;
 create policy "online shipping settings authenticated write"
   on public.online_shipping_settings for all to authenticated using (public.is_admin()) with check (public.is_admin());
