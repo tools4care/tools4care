@@ -3,6 +3,7 @@ import { lazy, Suspense, useState } from "react";
 
 const AgregarStockModal = lazy(() => import("../AgregarStockModal"));
 const ModalTraspasoStock = lazy(() => import("../ModalTraspasoStock"));
+const OnlineNewProductModal = lazy(() => import("./OnlineNewProductModal"));
 
 const WAREHOUSE_LOCATION = { key: "warehouse", id: null, nombre: "Central Warehouse", tipo: "warehouse" };
 
@@ -10,6 +11,7 @@ const WAREHOUSE_LOCATION = { key: "warehouse", id: null, nombre: "Central Wareho
 export default function OnlineCatalogActions({ onlineVanId, onChanged }) {
   const [addOpen, setAddOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [newProductOpen, setNewProductOpen] = useState(false);
   const ready = !!onlineVanId;
 
   const onlineLocation = { key: `van_${onlineVanId}`, id: onlineVanId, nombre: "VAN Online", tipo: "van" };
@@ -17,6 +19,14 @@ export default function OnlineCatalogActions({ onlineVanId, onChanged }) {
   return (
     <>
       <div className="flex flex-wrap gap-2">
+        <button
+          className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 font-bold disabled:opacity-50"
+          onClick={() => setNewProductOpen(true)}
+          disabled={!ready}
+          title={ready ? undefined : "Resolving Online location…"}
+        >
+          + New product
+        </button>
         <button
           className="px-3 py-2 rounded-lg bg-blue-600 text-white disabled:opacity-50"
           onClick={() => setAddOpen(true)}
@@ -56,6 +66,11 @@ export default function OnlineCatalogActions({ onlineVanId, onChanged }) {
             ubicacionActual={WAREHOUSE_LOCATION}
             onSuccess={onChanged}
           />
+        </Suspense>
+      )}
+      {ready && newProductOpen && (
+        <Suspense fallback={null}>
+          <OnlineNewProductModal onlineVanId={onlineVanId} open onClose={() => setNewProductOpen(false)} onCreated={onChanged} />
         </Suspense>
       )}
     </>
