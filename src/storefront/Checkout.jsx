@@ -10,6 +10,7 @@ import {
 } from "@stripe/react-stripe-js";
 import { supabase, supabaseUrl, supabaseAnonKey } from "../supabaseClient";
 import { getAnonId } from "../utils/anon";
+import { DEFAULT_SHIPPING_SETTINGS, geocodeUsZip, haversineMiles, localDeliveryQuote, normalizeShippingSettings } from "../lib/onlineShipping";
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 const FN_URL = `${supabaseUrl}/functions/v1/create_payment_intent`;
@@ -253,12 +254,6 @@ async function fetchCartItems(cartId) {
   return result;
 }
 
-const SHIPPING_METHODS = [
-  { key: "pickup", label: "Pickup in store", calc: () => 0, note: "Free" },
-  { key: "standard", label: "Standard (3–7 days)", calc: (sub) => (sub >= 75 ? 0 : 6.99), note: "Free over $75" },
-  { key: "express", label: "Express (1–2 days)", calc: () => 14.99, note: null },
-];
-
 // Average combined state + local sales tax rate per state (approximate —
 // actual rate varies by city/county). Covers all 50 states + DC + PR so
 // checkout never silently charges $0 tax outside a handful of states.
@@ -279,10 +274,12 @@ const STATE_TAX = {
   DC: 0.0600, PR: 0.1050,
 };
 
-function calcShipping(methodKey, subtotal, freeShippingOverride = false) {
+function calcShipping(methodKey, subtotal, freeShippingOverride = false, settings = DEFAULT_SHIPPING_SETTINGS, distanceMiles = null) {
   if (freeShippingOverride) return 0;
-  const m = SHIPPING_METHODS.find((x) => x.key === methodKey) || SHIPPING_METHODS[1];
-  return Number(m.calc(subtotal) || 0);
+  if (methodKey === "pickup") return 0;
+  if (methodKey === "express") return Number(settings.express_fee || 0);
+  if (methodKey === "local") return localDeliveryQuote(distanceMiles, settings).fee ?? Number(settings.zone_30_50_fee || 0);
+  return subtotal >= Number(settings.standard_free_threshold) ? 0 : Number(settings.standard_fee || 0);
 }
 
 function calcTax(taxableSubtotal, stateCode) {
@@ -340,6 +337,9 @@ export default function Checkout() {
   const [cartId, setCartId] = useState(null);
   const [items, setItems] = useState([]);
   const [shipping, setShipping] = useState({ name: "", email: "", phone: "", address1: "", address2: "", city: "", state: "MA", zip: "", country: "US", method: "standard" });
+  const [shippingSettings, setShippingSettings] = useState(DEFAULT_SHIPPING_SETTINGS);
+  const [distanceMiles, setDistanceMiles] = useState(null);
+  const [zipLookupLoading, setZipLookupLoading] = useState(false);
   const [promoInput, setPromoInput] = useState("");
   const [promo, setPromo] = useState(null);
   const [promoError, setPromoError] = useState("");
@@ -348,6 +348,39 @@ export default function Checkout() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error: settingsError } = await supabase.from("online_shipping_settings").select("*").eq("id", true).maybeSingle();
+      if (!cancelled && !settingsError) setShippingSettings(normalizeShippingSettings(data));
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const zip = String(shipping.zip || "").trim();
+    if (!/^\d{5}/.test(zip)) { setDistanceMiles(null); return undefined; }
+    setZipLookupLoading(true);
+    const timer = setTimeout(async () => {
+      const point = await geocodeUsZip(zip);
+      if (!cancelled) {
+        setDistanceMiles(point ? haversineMiles(shippingSettings.origin_lat, shippingSettings.origin_lng, point.lat, point.lng) : null);
+        setZipLookupLoading(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [shipping.zip, shippingSettings.origin_lat, shippingSettings.origin_lng]);
+
+  useEffect(() => {
+    if (shipping.method === "local" && !shippingSettings.local_delivery_enabled) {
+      setShipping((current) => ({ ...current, method: "standard" }));
+    }
+    if (shipping.method === "pickup" && !shippingSettings.pickup_enabled) {
+      setShipping((current) => ({ ...current, method: "standard" }));
+    }
+  }, [shipping.method, shippingSettings.local_delivery_enabled, shippingSettings.pickup_enabled]);
 
   useEffect(() => {
     (async () => {
@@ -396,8 +429,8 @@ export default function Checkout() {
   const subAfterDiscount = useMemo(() => Math.max(0, subtotal - discount), [subtotal, discount]);
   const freeShippingOverride = promo?.freeShipping === true;
   const shippingCost = useMemo(
-    () => (items.length ? calcShipping(shipping.method, subAfterDiscount, freeShippingOverride) : 0),
-    [items.length, shipping.method, subAfterDiscount, freeShippingOverride]
+    () => (items.length ? calcShipping(shipping.method, subAfterDiscount, freeShippingOverride, shippingSettings, distanceMiles) : 0),
+    [items.length, shipping.method, subAfterDiscount, freeShippingOverride, shippingSettings, distanceMiles]
   );
   const taxes = useMemo(() => calcTax(subAfterDiscount, shipping.state), [subAfterDiscount, shipping.state]);
   const total = useMemo(() => Math.max(0, subAfterDiscount + shippingCost + taxes), [subAfterDiscount, shippingCost, taxes]);
@@ -697,17 +730,27 @@ export default function Checkout() {
             <div className="space-y-2">
               <div className="font-medium text-sm">Shipping method</div>
               <div className="grid gap-2">
-                {SHIPPING_METHODS.map((m) => (
-                  <label key={m.key} className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""}`}>
+                {[
+                  ...(shippingSettings.pickup_enabled ? [{ key: "pickup", label: "Pickup in store", note: "Free" }] : []),
+                  { key: "standard", label: "Standard (3–7 days)", note: `Free over $${fmt(shippingSettings.standard_free_threshold)}` },
+                  ...(shippingSettings.local_delivery_enabled ? [{ key: "local", label: "Local delivery", note: distanceMiles == null ? (zipLookupLoading ? "Checking ZIP…" : "Enter ZIP for distance") : `${distanceMiles.toFixed(1)} mi from ${shippingSettings.origin_name}` }] : []),
+                  { key: "express", label: "Express (1–2 days)", note: null },
+                ].map((m) => {
+                  const localUnavailable = m.key === "local" && distanceMiles == null;
+                  const amount = calcShipping(m.key, subAfterDiscount, freeShippingOverride, shippingSettings, distanceMiles);
+                  return (
+                  <label key={m.key} className={`flex items-center justify-between border rounded-lg px-3 py-2 ${localUnavailable ? "opacity-60 cursor-not-allowed" : "cursor-pointer"} ${shipping.method === m.key ? "ring-2 ring-blue-500 border-blue-300" : ""}`}>
                     <div className="flex items-center gap-2">
-                      <input type="radio" name="shipmethod" checked={shipping.method === m.key} onChange={() => setShipping({ ...shipping, method: m.key })} />
+                      <input type="radio" name="shipmethod" checked={shipping.method === m.key} disabled={localUnavailable} onChange={() => setShipping({ ...shipping, method: m.key })} />
                       <span>{m.label}</span>
                       {m.note && <span className="text-xs text-emerald-700">({m.note})</span>}
                     </div>
-                    <b>${fmt(m.calc(subAfterDiscount))}</b>
+                    <b>${fmt(amount)}</b>
                   </label>
-                ))}
+                  );
+                })}
               </div>
+              {shipping.method === "local" && distanceMiles != null && <div className="text-xs text-slate-500">Delivery zone: {localDeliveryQuote(distanceMiles, shippingSettings).zone}</div>}
             </div>
             <div className="mt-2">
               <div className="font-medium text-sm mb-1">Promo code</div>

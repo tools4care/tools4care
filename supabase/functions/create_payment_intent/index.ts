@@ -34,11 +34,41 @@ type ShippingInput = {
 };
 
 // =================== REGLAS DE PRECIO (deben calzar con Checkout.jsx) ===================
-const SHIPPING_METHODS: Record<string, (sub: number) => number> = {
-  pickup: () => 0,
-  standard: (sub) => (sub >= 75 ? 0 : 6.99),
-  express: () => 14.99,
+const DEFAULT_SHIPPING_SETTINGS = {
+  origin_lat: 42.5195, origin_lng: -70.8967, free_delivery_radius_miles: 30,
+  local_delivery_fee: 0, zone_30_50_fee: 9.99, zone_50_100_fee: 14.99,
+  outside_zone_fee: 19.99, standard_fee: 6.99, standard_free_threshold: 75,
+  express_fee: 14.99,
 };
+
+function normalizeShippingSettings(row: any) {
+  const out: any = { ...DEFAULT_SHIPPING_SETTINGS };
+  for (const key of Object.keys(DEFAULT_SHIPPING_SETTINGS)) {
+    const value = Number(row?.[key]);
+    if (Number.isFinite(value) && value >= 0) out[key] = value;
+  }
+  return out;
+}
+
+function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const r = (v: number) => (v * Math.PI) / 180;
+  const a = r(lat1), b = r(lng1), c = r(lat2), d = r(lng2);
+  const h = Math.sin((c - a) / 2) ** 2 + Math.cos(a) * Math.cos(c) * Math.sin((d - b) / 2) ** 2;
+  return 3958.7613 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+async function distanceFromZip(zip: string, settings: any) {
+  const normalized = String(zip || "").match(/^\d{5}/)?.[0];
+  if (!normalized) return null;
+  try {
+    const response = await fetch(`https://api.zippopotam.us/us/${normalized}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const place = data?.places?.[0];
+    const lat = Number(place?.latitude), lng = Number(place?.longitude);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? haversineMiles(settings.origin_lat, settings.origin_lng, lat, lng) : null;
+  } catch { return null; }
+}
 
 // Must stay in sync with the same table in src/storefront/Checkout.jsx.
 // Average combined state + local sales tax rate per state (approximate).
@@ -165,6 +195,9 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const { data: shippingSettingsRow } = await admin.from("online_shipping_settings").select("*").eq("id", true).maybeSingle();
+    const shippingSettings = normalizeShippingSettings(shippingSettingsRow);
+
     // The service-role client bypasses RLS, so enforce cart ownership here
     // before reading its items. Anonymous storefront carts use x-ev-anon;
     // signed-in carts use the authenticated user's id.
@@ -231,8 +264,19 @@ Deno.serve(async (req) => {
     const subAfterDiscount = Math.max(0, subtotal - discount);
     const freeShippingOverride = freeShippingOverrideRequested && promo?.freeShipping === true;
 
-    const shippingCalc = SHIPPING_METHODS[shippingMethodKey] || SHIPPING_METHODS.standard;
-    const shippingCost = freeShippingOverride ? 0 : Number(shippingCalc(subAfterDiscount) || 0);
+    const distanceMiles = shippingMethodKey === "local" ? await distanceFromZip(String(shippingIn?.address?.postal_code || ""), shippingSettings) : null;
+    let shippingCost = shippingSettings.standard_fee;
+    if (shippingMethodKey === "pickup") shippingCost = 0;
+    else if (shippingMethodKey === "express") shippingCost = shippingSettings.express_fee;
+    else if (shippingMethodKey === "standard") shippingCost = subAfterDiscount >= shippingSettings.standard_free_threshold ? 0 : shippingSettings.standard_fee;
+    else if (shippingMethodKey === "local") {
+      if (distanceMiles == null) shippingCost = shippingSettings.zone_30_50_fee;
+      else if (distanceMiles <= shippingSettings.free_delivery_radius_miles) shippingCost = shippingSettings.local_delivery_fee;
+      else if (distanceMiles <= 50) shippingCost = shippingSettings.zone_30_50_fee;
+      else if (distanceMiles <= 100) shippingCost = shippingSettings.zone_50_100_fee;
+      else shippingCost = shippingSettings.outside_zone_fee;
+    }
+    if (freeShippingOverride) shippingCost = 0;
 
     const taxRate = STATE_TAX[stateCode] || 0;
     const taxes = subAfterDiscount * taxRate;
@@ -256,6 +300,8 @@ Deno.serve(async (req) => {
       taxes_cents: Math.round(taxes * 100),
       free_shipping_override: freeShippingOverride ? "1" : "0",
       promo_code: promo?.code || "",
+      shipping_method: shippingMethodKey,
+      delivery_distance_miles: distanceMiles == null ? "" : distanceMiles.toFixed(2),
     };
 
     const currency = (body?.currency ?? "usd").toLowerCase();

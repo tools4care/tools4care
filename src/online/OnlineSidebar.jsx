@@ -47,6 +47,16 @@ const NAV = [
       </svg>
     ),
   },
+  {
+    to: "/online/shipping",
+    label: "Shipping",
+    icon: (
+      <svg width="17" height="17" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+        <path d="M3 6h11v10H3zM14 10h4l3 3v3h-7z" />
+        <circle cx="7" cy="19" r="2" /><circle cx="18" cy="19" r="2" />
+      </svg>
+    ),
+  },
 ];
 
 export default function OnlineSidebar({ mobile = false, onNavigate }) {

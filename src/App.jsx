@@ -31,6 +31,7 @@ const OnlineDashboard = lazyRetry(() => import("./online/OnlineDashboard"), "Onl
 const Orders = lazyRetry(() => import("./admin/Orders"), "Orders");
 const OnlineCatalog = lazyRetry(() => import("./online/OnlineCatalog"), "OnlineCatalog");
 const OnlineDiscounts = lazyRetry(() => import("./online/Discounts"), "OnlineDiscounts");
+const ShippingSettings = lazyRetry(() => import("./online/ShippingSettings"), "ShippingSettings");
 
 import { NetworkIndicator } from "./components/NetworkIndicator";
 import { SyncProvider, useSyncGlobal } from "./hooks/SyncContext";
@@ -263,6 +264,7 @@ export default function App() {
             <Route path="orders" element={<Orders />} />
             <Route path="catalog" element={<OnlineCatalog />} />
             <Route path="discounts" element={<OnlineDiscounts />} />
+            <Route path="shipping" element={<ShippingSettings />} />
             <Route path="inventory" element={<Navigate to="/online/catalog" replace />} />
           </Route>
 
