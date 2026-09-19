@@ -388,6 +388,7 @@ export default function OnlineCatalog() {
   const [onlineVan, setOnlineVan] = useState(null);
   const [expandedDeals, setExpandedDeals] = useState(new Set());
   const [viewMode, setViewMode] = useState("list");
+  const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [page, setPage] = useState(1);
 
@@ -403,12 +404,12 @@ export default function OnlineCatalog() {
       if (!v) v = await getOnlineVanId();
       setOnlineVan(v);
 
-      // 1) Stock del VAN Online con cantidad > 0
+      // 1) All products assigned to VAN Online. Keep zero-stock rows visible
+      // so the catalog manager can publish, hide, or replenish them.
       const { data: stock, error: stErr } = await supabase
         .from("stock_van")
         .select("producto_id, cantidad, productos ( id, codigo, nombre, marca, precio )")
         .eq("van_id", v)
-        .gt("cantidad", 0)
         .order("producto_id", { ascending: true });
       if (stErr) throw stErr;
 
@@ -587,16 +588,22 @@ export default function OnlineCatalog() {
     deals: rows.filter((r) => r.is_deal).length,
     hidden: rows.filter((r) => !r.visible && !r.visible_online).length,
   }), [rows]);
+  const filteredRows = useMemo(() => {
+    if (visibilityFilter === "online") return rows.filter((r) => r.visible_online);
+    if (visibilityFilter === "admin") return rows.filter((r) => r.visible && !r.visible_online);
+    if (visibilityFilter === "hidden") return rows.filter((r) => !r.visible && !r.visible_online);
+    return rows;
+  }, [rows, visibilityFilter]);
   const selectedProduct = rows.find((row) => row.id === selectedId) || null;
   const siblingProducts = useMemo(() => {
     if (!selectedProduct?.variant_group_id) return [];
     return rows.filter((r) => r.variant_group_id === selectedProduct.variant_group_id && r.id !== selectedProduct.id);
   }, [rows, selectedProduct]);
   const pageSize = 50;
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const visibleRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
 
-  useEffect(() => setPage(1), [q]);
+  useEffect(() => setPage(1), [q, visibilityFilter]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -610,7 +617,7 @@ export default function OnlineCatalog() {
                 🛍️ Online Catalog
               </h1>
               <p className="text-xs text-gray-500 mt-0.5">
-                Products with stock in <span className="font-semibold text-gray-700">VAN Online</span>
+                Products assigned to <span className="font-semibold text-gray-700">VAN Online</span> (including zero stock)
               </p>
             </div>
             <OnlineCatalogActions onlineVanId={onlineVan} onChanged={reload} />
@@ -661,6 +668,20 @@ export default function OnlineCatalog() {
               )}
               Refresh
             </button>
+            <label className="flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 text-xs font-bold text-gray-600">
+              <span className="whitespace-nowrap">Show</span>
+              <select
+                value={visibilityFilter}
+                onChange={(e) => setVisibilityFilter(e.target.value)}
+                className="min-w-[150px] bg-transparent py-1 text-xs font-bold text-gray-800 outline-none"
+                aria-label="Filter catalog visibility"
+              >
+                <option value="all">All catalog products</option>
+                <option value="online">Visible online</option>
+                <option value="admin">Admin only</option>
+                <option value="hidden">Hidden</option>
+              </select>
+            </label>
             <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1">
               <button
                 type="button"
@@ -688,7 +709,7 @@ export default function OnlineCatalog() {
           <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"/> Live online</div>
           <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"/> Admin only</div>
           <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300"/> Hidden</div>
-          <div className="text-gray-400">{stats.total} item{stats.total !== 1 ? "s" : ""} · VAN: {onlineVan ? onlineVan.slice(0, 8) + "…" : "—"}</div>
+          <div className="text-gray-400">Showing {filteredRows.length} of {stats.total} item{stats.total !== 1 ? "s" : ""} · VAN: {onlineVan ? onlineVan.slice(0, 8) + "…" : "—"}</div>
         </div>
 
         {/* ─── Product rows ─── */}
@@ -698,10 +719,10 @@ export default function OnlineCatalog() {
               <div key={i} className="bg-white rounded-2xl border h-24 animate-pulse" />
             ))}
           </div>
-        ) : rows.length === 0 ? (
+        ) : filteredRows.length === 0 ? (
           <div className="bg-white rounded-2xl border p-12 text-center">
             <div className="text-4xl mb-3">📭</div>
-            <div className="text-gray-500">No products found.</div>
+            <div className="text-gray-500">No products match this catalog filter.</div>
           </div>
         ) : viewMode === "list" ? (
           <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
@@ -995,10 +1016,10 @@ export default function OnlineCatalog() {
           </div>
         )}
 
-        {rows.length > pageSize && (
+        {filteredRows.length > pageSize && (
           <div className="mt-4 flex items-center justify-between rounded-2xl border bg-white px-4 py-3">
             <span className="text-xs font-semibold text-gray-500">
-              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)} of {rows.length}
+              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredRows.length)} of {filteredRows.length}
             </span>
             <div className="flex items-center gap-2">
               <button type="button" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Previous</button>
