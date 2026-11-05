@@ -43,10 +43,10 @@ export function classifyArRisk({ saldo, age, score, utilization }) {
   return { risk: "Low", reason: "Current or low-dollar balance." };
 }
 
-export function buildCollectionMessage(row) {
+export function buildCollectionMessage(row, businessName = "Tools4Care") {
   const name = row?.cliente_nombre || "there";
   const amount = `$${Number(row?.saldo || 0).toFixed(2)}`;
-  return `Hi ${name}, this is Tools4Care. Our records show an open balance of ${amount}. Please let us know when you can take care of it. Thank you.`;
+  return `Hi ${name}, this is ${businessName}. Our records show an open balance of ${amount}. Please let us know when you can take care of it. Thank you.`;
 }
 
 export function phoneLink(phone, type = "sms", body = "") {

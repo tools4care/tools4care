@@ -1077,6 +1077,13 @@ function GuestContactModal({ onConfirm, onSkip }) {
 export default function Sales() {
   const { van } = useVan();
   const { usuario } = useUsuario();
+  // Tenant pilot accounts don't have card payments enabled yet (one shared
+  // platform Stripe key, no per-tenant Stripe Connect) — only the platform
+  // owner's own business (tenant_id null) can take cards.
+  const isTenantUser = Boolean(usuario?.tenant_id);
+  const availablePaymentMethods = isTenantUser
+    ? PAYMENT_METHODS.filter((m) => m.key !== "tarjeta")
+    : PAYMENT_METHODS;
   const { maxDescuentoPct, puedeCancelarVentas, isAdmin } = usePermisos();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -5444,7 +5451,7 @@ function renderReturnDetails() {
                 className={`w-full border-2 border-orange-200 rounded-xl bg-white font-semibold ${storeMode ? "p-4 text-base" : "p-2.5 text-sm"}`}
               >
                 <option value="efectivo">Cash</option>
-                <option value="tarjeta">Card</option>
+                {!isTenantUser && <option value="tarjeta">Card</option>}
                 <option value="transferencia">Transfer / Zelle / Venmo / Cash App</option>
                 <option value="otro">Other</option>
               </select>
@@ -7453,7 +7460,7 @@ function renderStepPayment() {
                       disabled={Boolean(p.terminalSessionId && ["succeeded", "reconciliation_pending", "reconciled"].includes(p.terminalStatus))}
                       className="w-full border border-gray-300 bg-white rounded-xl px-3 py-3 font-medium text-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all disabled:bg-emerald-50 disabled:border-emerald-300 disabled:text-emerald-800"
                     >
-                      {PAYMENT_METHODS.map((fp) => (
+                      {availablePaymentMethods.map((fp) => (
                         <option key={fp.key} value={fp.key}>{fp.label}</option>
                       ))}
                     </select>

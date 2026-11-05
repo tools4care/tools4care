@@ -9,9 +9,9 @@ import { createTenant as createTenantRequest } from '../lib/adminApi'
 /**
  * Creates a new tenant: auth user + tenants row + magic-link email.
  *
- * @param {{ businessName: string, ownerName: string, email: string, phone: string, plan: string }} params
+ * @param {{ businessName: string, ownerName: string, email: string, phone: string, address: string, logoUrl: string, plan: string }} params
  * @returns {{ userId: string, email: string }}
  */
-export async function createTenant({ businessName, ownerName, email, phone, plan }) {
-  return createTenantRequest({ businessName, ownerName, email, phone, plan })
+export async function createTenant({ businessName, ownerName, email, phone, address, logoUrl, plan }) {
+  return createTenantRequest({ businessName, ownerName, email, phone, address, logoUrl, plan })
 }

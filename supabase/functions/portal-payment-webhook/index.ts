@@ -45,6 +45,11 @@ Deno.serve(async (req) => {
   const clienteId = String(intent.metadata?.cliente_id || "");
   const amount = Number(intent.amount_received || 0) / 100;
   if (!clienteId || amount <= 0) return response({ error: "Invalid portal payment metadata" }, 400);
+  // Defense in depth: portal-payments' create_intent already refuses tenant
+  // accounts, so no tenant PaymentIntent should ever reach this webhook.
+  if (intent.metadata?.tenant_id) {
+    return response({ received: true, ignored: "tenant card payments are disabled" });
+  }
 
   const admin = createClient(
     Deno.env.get("SUPABASE_URL")!,

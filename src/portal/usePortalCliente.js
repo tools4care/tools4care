@@ -17,7 +17,7 @@ export function usePortalCliente(session) {
         return;
       }
       const [{ data: cliente, error: clienteError }, { data: resumen, error: resumenError }] = await Promise.all([
-        supabase.from("clientes").select("id,nombre,negocio,email,telefono,direccion,limite_manual").eq("id", link.cliente_id).maybeSingle(),
+        supabase.from("clientes").select("id,nombre,negocio,email,telefono,direccion,limite_manual,tenant_id").eq("id", link.cliente_id).maybeSingle(),
         supabase.from("v_cxc_cliente_detalle").select("cliente_id,saldo,limite_politica,credito_disponible,score_base").eq("cliente_id", link.cliente_id).maybeSingle(),
       ]);
       if (clienteError) throw clienteError;

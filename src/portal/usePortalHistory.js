@@ -47,5 +47,5 @@ export function usePagosCliente(clienteId, dateFrom = "", dateTo = "") {
 }
 
 export function useComprasCliente(clienteId, dateFrom = "", dateTo = "") {
-  return usePortalHistory({ table: "ventas", columns: "id,total,total_venta,total_pagado,fecha,created_at,numero_factura,estado_pago", dateColumn: "fecha", clienteId, dateFrom, dateTo });
+  return usePortalHistory({ table: "ventas", columns: "id,total,total_venta,total_pagado,fecha,created_at,numero_factura,estado_pago,tenant_id", dateColumn: "fecha", clienteId, dateFrom, dateTo });
 }

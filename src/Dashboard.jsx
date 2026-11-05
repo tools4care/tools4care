@@ -33,6 +33,7 @@ import { useToast } from "./hooks/useToast";
 import SyncStatusWidget from "./components/SyncStatusWidget";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import { classifyArRisk, buildCollectionMessage, phoneLink, daysSince } from "./lib/arRisk";
+import { resolveTenantBrand } from "./lib/tenantBrand";
 import { loadVanReorderRecommendations } from "./lib/reorderRecommendations";
 import { VISIT_LEARNING_START, median, cadenceForGap } from "./lib/barberCadence";
 const BackupManagerModal = lazy(() => import("./components/BackupManagerModal"));
@@ -2139,6 +2140,15 @@ export default function Dashboard() {
 
   const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [businessName, setBusinessName] = useState("Tools4Care");
+
+  useEffect(() => {
+    let alive = true;
+    resolveTenantBrand(usuario?.tenant_id).then((brand) => {
+      if (alive) setBusinessName(brand.nombre);
+    });
+    return () => { alive = false; };
+  }, [usuario?.tenant_id]);
 
   const [rangeDays, setRangeDays] = useState(14);
   const [ventasSerie, setVentasSerie] = useState([]);
@@ -3066,9 +3076,9 @@ export default function Dashboard() {
                     </div>
                     <p className="font-bold text-sm text-rose-700 shrink-0">{fmtMoney(c.saldo)}</p>
                     <div className="flex gap-1 shrink-0">
-                      {phoneLink(c.telefono, "sms", buildCollectionMessage(c)) && (
+                      {phoneLink(c.telefono, "sms", buildCollectionMessage(c, businessName)) && (
                         <a
-                          href={phoneLink(c.telefono, "sms", buildCollectionMessage(c))}
+                          href={phoneLink(c.telefono, "sms", buildCollectionMessage(c, businessName))}
                           className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
                           title="Send payment reminder"
                         >

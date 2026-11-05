@@ -12,6 +12,7 @@ import {
 import { loadPdfLibs } from "./utils/lazyPdf";
 import { CHART_TOOLTIP_STYLE, CHART_LEGEND_STYLE } from "./lib/chartTheme";
 import { daysSince, classifyArRisk, buildCollectionMessage, phoneLink } from "./lib/arRisk";
+import { resolveTenantBrand } from "./lib/tenantBrand";
 import { paginateRows, REPORT_PAGE_SIZES } from "./lib/pagination";
 import { VISIT_LEARNING_START } from "./lib/barberCadence";
 import { haversineKm, kmToMiles } from "./lib/geo";
@@ -1362,6 +1363,15 @@ function ARAgingReport({ van, usuario }) {
   const [searched, setSearched] = useState(false);
   const [vans, setVans] = useState([]);
   const [vanFiltro, setVanFiltro] = useState("");
+  const [businessName, setBusinessName] = useState("Tools4Care");
+
+  useEffect(() => {
+    let alive = true;
+    resolveTenantBrand(usuario?.tenant_id).then((brand) => {
+      if (alive) setBusinessName(brand.nombre);
+    });
+    return () => { alive = false; };
+  }, [usuario?.tenant_id]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -1666,9 +1676,9 @@ function ARAgingReport({ van, usuario }) {
                   {/* Sticky so Remind/Call stay visible without scrolling through all 11 columns first */}
                   <td className="sticky right-0 z-10 bg-white group-hover:bg-rose-50 px-4 py-2.5 shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.15)]">
                     <div className="flex flex-nowrap gap-1.5">
-                      {phoneLink(r.telefono, "sms", buildCollectionMessage(r)) && (
+                      {phoneLink(r.telefono, "sms", buildCollectionMessage(r, businessName)) && (
                         <a
-                          href={phoneLink(r.telefono, "sms", buildCollectionMessage(r))}
+                          href={phoneLink(r.telefono, "sms", buildCollectionMessage(r, businessName))}
                           className="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-xs font-bold hover:bg-emerald-200 whitespace-nowrap"
                         >
                           Reminder

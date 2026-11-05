@@ -328,13 +328,15 @@ Deno.serve(async (req) => {
       }
 
       case "create_tenant": {
-        const { businessName, ownerName, email, phone, plan } = payload || {};
+        const { businessName, ownerName, email, phone, address, logoUrl, plan } = payload || {};
         if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
 
         const cleanBusinessName = String(businessName || "").trim();
         const cleanOwnerName = String(ownerName || "").trim();
         const cleanEmail = String(email || "").trim().toLowerCase();
         const cleanPhone = String(phone || "").trim();
+        const cleanAddress = String(address || "").trim();
+        const cleanLogoUrl = String(logoUrl || "").trim();
         const allowedPlans = new Set(["basic", "pro", "enterprise"]);
         if (!cleanBusinessName || !cleanEmail) {
           return json({ error: "businessName and email are required" }, 400);
@@ -381,6 +383,8 @@ Deno.serve(async (req) => {
           owner_name: cleanOwnerName || null,
           email: cleanEmail,
           phone: cleanPhone || null,
+          address: cleanAddress || null,
+          logo_url: cleanLogoUrl || null,
           plan,
           slug,
           status: "pending",
@@ -482,7 +486,7 @@ Deno.serve(async (req) => {
         if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
         const { data, error } = await admin
           .from("tenants")
-          .select("id,business_name,owner_name,email,phone,plan,status,active,created_at,invitation_sent_at,onboarding_completed_at,initial_location_id,owner_user_id")
+          .select("id,business_name,owner_name,email,phone,address,logo_url,plan,status,active,created_at,invitation_sent_at,onboarding_completed_at,initial_location_id,owner_user_id")
           .order("created_at", { ascending: false });
         if (error) return json({ error: error.message }, 400);
 
@@ -513,7 +517,7 @@ Deno.serve(async (req) => {
 
       case "update_tenant": {
         if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
-        const { tenantId, businessName, ownerName, phone, plan } = payload || {};
+        const { tenantId, businessName, ownerName, phone, address, logoUrl, plan } = payload || {};
         if (!tenantId) return json({ error: "tenantId is required" }, 400);
         const cleanBusinessName = (businessName || "").trim();
         const cleanOwnerName = (ownerName || "").trim();
@@ -530,6 +534,8 @@ Deno.serve(async (req) => {
             business_name: cleanBusinessName,
             owner_name: cleanOwnerName,
             phone: (phone || "").trim(),
+            address: (address || "").trim() || null,
+            logo_url: (logoUrl || "").trim() || null,
             plan: plan || "basic",
             updated_at: new Date().toISOString(),
           })
