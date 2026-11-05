@@ -63,6 +63,10 @@ export function completeTenantOnboarding() {
   return callAdminUsers("complete_tenant_onboarding", {});
 }
 
+export function getTenantBillingPortalUrl() {
+  return callAdminUsers("billing_portal_session", {});
+}
+
 export function updateTenant(tenantId, { businessName, ownerName, phone, address, logoUrl, plan }) {
   return callAdminUsers("update_tenant", { tenantId, businessName, ownerName, phone, address, logoUrl, plan });
 }

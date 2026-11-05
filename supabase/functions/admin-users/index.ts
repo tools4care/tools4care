@@ -10,9 +10,10 @@
 //          get_location_access | reset_password | create_tenant |
 //          list_tenants | resend_tenant_invite | set_tenant_status |
 //          update_tenant | delete_tenant | get_customer_portal_status |
-//          activate_customer_portal
+//          activate_customer_portal | billing_portal_session
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Stripe from "npm:stripe@^17.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,9 +62,58 @@ Deno.serve(async (req) => {
         .eq("id", user.id)
         .maybeSingle();
       if (!member?.tenant_id) return json({ error: "Tenant membership not found" }, 404);
+      const { data: tenant } = await admin
+        .from("tenants")
+        .select("id,business_name,email,owner_user_id,stripe_subscription_id")
+        .eq("id", member.tenant_id)
+        .maybeSingle();
+      if (!tenant || tenant.owner_user_id !== user.id) return json({ error: "Tenant membership not found" }, 404);
+
+      // Start the $39.99/mo Basic subscription (14-day trial) the moment the
+      // owner actually activates the account, not when the admin provisioned
+      // it — provisioning and first login can be days apart, which would
+      // otherwise burn trial days the tenant never got to use.
+      const billingUpdate: Record<string, unknown> = {};
+      if (!tenant.stripe_subscription_id) {
+        const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+        const priceId = Deno.env.get("STRIPE_TENANT_BASIC_PRICE_ID");
+        if (stripeKey && priceId) {
+          try {
+            const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+            const customer = await stripe.customers.create({
+              email: tenant.email,
+              name: tenant.business_name,
+              metadata: { tools4care_tenant_id: tenant.id },
+            });
+            const subscription = await stripe.subscriptions.create({
+              customer: customer.id,
+              items: [{ price: priceId }],
+              trial_period_days: 14,
+              metadata: { tools4care_tenant_id: tenant.id },
+            });
+            billingUpdate.stripe_customer_id = customer.id;
+            billingUpdate.stripe_subscription_id = subscription.id;
+            billingUpdate.subscription_status = subscription.status;
+            billingUpdate.trial_ends_at = subscription.trial_end
+              ? new Date(subscription.trial_end * 1000).toISOString()
+              : null;
+            billingUpdate.current_period_end = new Date(subscription.current_period_end * 1000).toISOString();
+          } catch (billingError) {
+            // Never block account activation over a billing hiccup — log it
+            // and let the tenant in; tenant-billing-webhook or a retry of
+            // this same action (stripe_subscription_id still null) can
+            // pick it up.
+            console.error("complete_tenant_onboarding: Stripe subscription failed", billingError);
+          }
+        } else {
+          console.error("complete_tenant_onboarding: STRIPE_TENANT_BASIC_PRICE_ID not configured");
+        }
+      }
+
       const { error } = await admin
         .from("tenants")
         .update({
+          ...billingUpdate,
           status: "active",
           active: true,
           onboarding_completed_at: new Date().toISOString(),
@@ -73,6 +123,35 @@ Deno.serve(async (req) => {
         .eq("owner_user_id", user.id);
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true, tenantId: member.tenant_id });
+    }
+
+    // Lets a tenant owner open Stripe's hosted Billing Portal to update
+    // their payment method, see invoices, or cancel — self-service, no
+    // custom cancel UI needed here.
+    if (action === "billing_portal_session") {
+      const { data: member } = await admin
+        .from("usuarios")
+        .select("tenant_id")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!member?.tenant_id) return json({ error: "Tenant membership not found" }, 404);
+      const { data: tenant } = await admin
+        .from("tenants")
+        .select("stripe_customer_id, owner_user_id")
+        .eq("id", member.tenant_id)
+        .maybeSingle();
+      if (!tenant || tenant.owner_user_id !== user.id) return json({ error: "Tenant membership not found" }, 404);
+      if (!tenant.stripe_customer_id) return json({ error: "Billing has not started for this account yet" }, 400);
+
+      const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+      if (!stripeKey) return json({ error: "Missing STRIPE_SECRET_KEY" }, 500);
+      const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+      const siteUrl = (Deno.env.get("PUBLIC_APP_URL") || Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
+      const portalSession = await stripe.billingPortal.sessions.create({
+        customer: tenant.stripe_customer_id,
+        return_url: siteUrl ? `${siteUrl}/dashboard` : undefined,
+      });
+      return json({ url: portalSession.url });
     }
 
     // ── 3. All administrative actions require an admin profile ─────────
