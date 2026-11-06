@@ -739,6 +739,19 @@ Deno.serve(async (req) => {
 
           if (vanIds.length) await del("location_settings", (q) => q.in("location_id", vanIds));
 
+          // Store Register leaves rows keyed by location_id on these tables
+          // the moment a cashier opens a session there — delete_tenant never
+          // covered them, so deleting a test tenant that had touched Store
+          // Register failed on vans' FK from store_cash_sessions.
+          if (vanIds.length) {
+            await del("store_cash_session_events", (q) => q.in("location_id", vanIds));
+            await del("store_cash_movements", (q) => q.in("location_id", vanIds));
+            await del("store_cash_sessions", (q) => q.in("location_id", vanIds));
+            await del("store_cash_closeout_reports", (q) => q.in("location_id", vanIds));
+            await del("store_inventory_confirmations", (q) => q.in("location_id", vanIds));
+            await del("store_registers", (q) => q.in("location_id", vanIds));
+          }
+
           await del("vans", (q) => q.eq("tenant_id", tenantId));
 
           for (const uid of usuarioIds) {
