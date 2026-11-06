@@ -67,6 +67,14 @@ export function getTenantBillingPortalUrl() {
   return callAdminUsers("billing_portal_session", {});
 }
 
+export function getBusinessInfo() {
+  return callAdminUsers("get_business_info", {});
+}
+
+export function updateBusinessInfo({ businessName, address, phone, logoUrl }) {
+  return callAdminUsers("update_business_info", { businessName, address, phone, logoUrl });
+}
+
 export function updateTenant(tenantId, { businessName, ownerName, phone, address, logoUrl, plan }) {
   return callAdminUsers("update_tenant", { tenantId, businessName, ownerName, phone, address, logoUrl, plan });
 }

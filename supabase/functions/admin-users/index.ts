@@ -10,7 +10,8 @@
 //          get_location_access | reset_password | create_tenant |
 //          list_tenants | resend_tenant_invite | set_tenant_status |
 //          update_tenant | delete_tenant | get_customer_portal_status |
-//          activate_customer_portal | billing_portal_session
+//          activate_customer_portal | billing_portal_session |
+//          get_business_info | update_business_info
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "npm:stripe@^17.0.0";
@@ -152,6 +153,45 @@ Deno.serve(async (req) => {
         return_url: siteUrl ? `${siteUrl}/dashboard` : undefined,
       });
       return json({ url: portalSession.url });
+    }
+
+    // Self-service business info (invoice header) for the tenant's own
+    // owner or supervisor — lower-risk than billing, so not owner-only.
+    if (action === "get_business_info" || action === "update_business_info") {
+      const { data: member } = await admin
+        .from("usuarios")
+        .select("tenant_id, rol")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!member?.tenant_id || !["admin", "supervisor"].includes(String(member.rol || "").toLowerCase())) {
+        return json({ error: "Tenant membership not found" }, 404);
+      }
+
+      if (action === "get_business_info") {
+        const { data: tenant, error } = await admin
+          .from("tenants")
+          .select("business_name, address, phone, email, logo_url")
+          .eq("id", member.tenant_id)
+          .maybeSingle();
+        if (error || !tenant) return json({ error: error?.message || "Tenant not found" }, 404);
+        return json({ tenant });
+      }
+
+      const { businessName, address, phone, logoUrl } = payload || {};
+      const cleanBusinessName = String(businessName || "").trim();
+      if (!cleanBusinessName) return json({ error: "businessName is required" }, 400);
+      const { error } = await admin
+        .from("tenants")
+        .update({
+          business_name: cleanBusinessName,
+          address: String(address || "").trim() || null,
+          phone: String(phone || "").trim() || null,
+          logo_url: String(logoUrl || "").trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", member.tenant_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
     }
 
     // ── 3. All administrative actions require an admin profile ─────────

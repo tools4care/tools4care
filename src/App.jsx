@@ -67,6 +67,7 @@ const GlobalSearch = lazyRetry(() => import('./components/GlobalSearch'), "Globa
 
 // 🧾 Tax / Impuestos
 const TaxConfig = lazyRetry(() => import('./pages/TaxConfig'), "TaxConfig");
+const BusinessSettings = lazyRetry(() => import('./pages/BusinessSettings'), "BusinessSettings");
 const BusinessInfoAdmin = lazyRetry(() => import('./pages/BusinessInfoAdmin'), "BusinessInfoAdmin");
 const CreateTenantManual = lazyRetry(() => import('./admin/CreateTenantManual'), "CreateTenantManual");
 const ListaEmergencia = lazyRetry(() => import('./ListaEmergencia'), "ListaEmergencia");
@@ -383,6 +384,7 @@ export default function App() {
 
             {/* 🧾 TAX / IMPUESTOS */}
             <Route path="tax" element={<AdminRoute><TaxConfig /></AdminRoute>} />
+            <Route path="business-settings" element={<PrivilegedRoute><BusinessSettings /></PrivilegedRoute>} />
             <Route path="business-info" element={<AdminRoute><BusinessInfoAdmin /></AdminRoute>} />
 
             {/* 🏢 NUEVO TENANT (ADMIN) */}
