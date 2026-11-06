@@ -44,6 +44,13 @@ Deno.serve(async (req) => {
     const subject: string = body.subject ?? "Invoice";
     const htmlRaw: string | undefined = body.html;
     const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+    // Lets a tenant's invoice show up as coming from their own business
+    // ("Barber King via Tools4Care") while the message still sends through
+    // Tools4Care's own verified SMTP account — a tenant's own domain in the
+    // From address would fail SPF/DKIM and land in spam. Replies go to the
+    // tenant's own inbox via replyTo instead.
+    const fromNameRaw: string | undefined = body.fromName;
+    const replyToRaw: string | undefined = body.replyTo;
 
     const email = String(to || "").trim();
     const cleanSubject = String(subject || "Invoice").trim();
@@ -77,7 +84,15 @@ Deno.serve(async (req) => {
     const SMTP_PASS = Deno.env.get("SMTP_PASS")!;
     const FROM_ADDR = Deno.env.get("EMAIL_FROM") || SMTP_USER;
     const FROM_NAME = Deno.env.get("EMAIL_FROM_NAME") || "Tools4care";
-    const FROM = `${FROM_NAME} <${FROM_ADDR}>`;
+
+    const cleanFromName = String(fromNameRaw || "").replace(/[\r\n<>"]/g, "").trim().slice(0, 78);
+    const displayName = cleanFromName && cleanFromName.toLowerCase() !== FROM_NAME.toLowerCase()
+      ? `${cleanFromName} via ${FROM_NAME}`
+      : FROM_NAME;
+    const FROM = `${displayName} <${FROM_ADDR}>`;
+
+    const cleanReplyTo = String(replyToRaw || "").trim();
+    const replyTo = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(cleanReplyTo) ? cleanReplyTo : undefined;
 
     if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
       return new Response(
@@ -102,6 +117,7 @@ Deno.serve(async (req) => {
     await client.send({
       from: FROM,
       to: email,
+      ...(replyTo ? { replyTo } : {}),
       subject: cleanSubject,
       // Send raw UTF-8 MIME parts so mail clients do not expose quoted-
       // printable tokens such as =20 and =2E in the visible HTML.

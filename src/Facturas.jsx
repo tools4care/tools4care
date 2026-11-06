@@ -398,12 +398,15 @@ export default function Facturas() {
         .join('<div style="page-break-after:always;height:24px;"></div>');
 
       const count = withDetail.length;
-      const subjectBrand = invoicesWithPdf[0]?.empresa?.nombre || "Tools4Care";
+      const batchBrand = invoicesWithPdf[0]?.empresa;
+      const subjectBrand = batchBrand?.nombre || "Tools4Care";
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {
           to: bulkEmailTarget.trim(),
           subject: `${subjectBrand} — ${count} Invoice${count !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
           html,
+          fromName: batchBrand?.nombre,
+          replyTo: batchBrand?.email,
         },
       });
       if (error) throw new Error(error.message || "Failed to send email");
@@ -451,6 +454,8 @@ export default function Facturas() {
           to: singleEmailTarget.trim(),
           subject: `${empresa.nombre} Invoice ${f.numero_factura || f.id?.slice(0, 8)} — ${f.cliente_nombre_c || ""}`,
           html,
+          fromName: empresa.nombre,
+          replyTo: empresa.email,
         },
       });
       if (error) throw new Error(error.message || "Failed to send");

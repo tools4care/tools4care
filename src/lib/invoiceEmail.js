@@ -582,7 +582,7 @@ export async function sendInvoiceEmailForVenta(ventaId, toEmail) {
   const invoiceNum = factura.numero_factura || factura.id?.slice(0, 8) || "";
 
   const { data, error } = await supabase.functions.invoke("send-order-email", {
-    body: { to, subject: `${empresa.nombre} Invoice ${invoiceNum}`, html },
+    body: { to, subject: `${empresa.nombre} Invoice ${invoiceNum}`, html, fromName: empresa.nombre, replyTo: empresa.email },
   });
   if (error) return { ok: false, error: error.message || "Failed to send" };
   if (!data?.ok) return { ok: false, error: data?.error || "Failed to send" };
