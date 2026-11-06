@@ -93,6 +93,7 @@ export default function Sidebar() {
     { key: "alquileres",    to: "/alquileres",    icon: <Wrench        {...iconProps} />, gradient: "from-emerald-500 to-teal-600",  text: "Equipment Rentals" },
     { key: "suplidores",    to: "/suplidores",    icon: <UserCircle    {...iconProps} />, gradient: "from-indigo-400 to-blue-600",   text: "Suppliers" },
     ...(storeMode && isAdmin ? [{ key: "tax", to: "/tax", icon: <Gear {...iconProps} />, gradient: "from-slate-500 to-slate-700", text: "Store Settings" }] : []),
+    ...(usuario?.tenant_id && (isAdmin || isSupervisor) ? [{ key: "business", to: "/business-settings", icon: <Gear {...iconProps} />, gradient: "from-slate-500 to-slate-700", text: "Business Settings" }] : []),
   ];
 
   // Essentials is a core route available to every role (it is already always
@@ -100,10 +101,10 @@ export default function Sidebar() {
   // explicit module allowlist does not yet contain the new key.
   const serviceKeys = new Set(["suscripciones", "alquileres"]);
   const financeKeys = new Set(["facturas", "cxc", "reportes"]);
-  const opsKeys = new Set(["inventario", "cierres", "suplidores", "emergencia", "tax"]);
-  const storeKeys = new Set(["dashboard", "ventas", "register", "returns", "productos", "clientes", "inventario", "facturas", "cxc", "emergencia", "reportes", "cierres", "suplidores", "tax"]);
+  const opsKeys = new Set(["inventario", "cierres", "suplidores", "emergencia", "tax", "business"]);
+  const storeKeys = new Set(["dashboard", "ventas", "register", "returns", "productos", "clientes", "inventario", "facturas", "cxc", "emergencia", "reportes", "cierres", "suplidores", "tax", "business"]);
   const visibleItems = allMenuItems.filter(item =>
-    (!storeMode || storeKeys.has(item.key)) && (item.key === "emergencia" || item.key === "returns" || item.key === "tax" || puedeVerModulo(item.key))
+    (!storeMode || storeKeys.has(item.key)) && (item.key === "emergencia" || item.key === "returns" || item.key === "tax" || item.key === "business" || puedeVerModulo(item.key))
   );
   const services = visibleItems.filter(item => serviceKeys.has(item.key));
   const finance = visibleItems.filter(item => financeKeys.has(item.key));

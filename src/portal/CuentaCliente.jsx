@@ -381,9 +381,11 @@ export function CuentaCliente({ session }) {
             ) : (
               <>
                 <div className="mt-5 grid gap-3">
-                  <button onClick={() => openCardAmountStep(balance)} className="flex min-h-16 items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition active:scale-[0.99] hover:bg-slate-100">
-                    <span><span className="block font-black text-slate-900">Pay with card</span><span className="text-sm text-slate-500">Instant — applied automatically</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white"><CreditCard size={18} /></span>
-                  </button>
+                  {!cliente?.tenant_id && (
+                    <button onClick={() => openCardAmountStep(balance)} className="flex min-h-16 items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition active:scale-[0.99] hover:bg-slate-100">
+                      <span><span className="block font-black text-slate-900">Pay with card</span><span className="text-sm text-slate-500">Instant — applied automatically</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white"><CreditCard size={18} /></span>
+                    </button>
+                  )}
                   {paymentOptions.cashApp.map((option) => (
                     <a key={option.handle} href={option.url} target="_blank" rel="noreferrer" className="flex min-h-16 items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 transition active:scale-[0.99] hover:bg-emerald-100">
                       <span><span className="block font-black text-emerald-950">Pay with Cash App</span><span className="text-sm text-emerald-700">{option.handle}</span></span><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-xl font-black text-white">$</span>

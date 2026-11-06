@@ -43,8 +43,8 @@ export function resetPassword({ id, email, password }) {
   return callAdminUsers("reset_password", { id, email, password });
 }
 
-export function createTenant({ businessName, ownerName, email, phone, plan }) {
-  return callAdminUsers("create_tenant", { businessName, ownerName, email, phone, plan });
+export function createTenant({ businessName, ownerName, email, phone, address, logoUrl, plan }) {
+  return callAdminUsers("create_tenant", { businessName, ownerName, email, phone, address, logoUrl, plan });
 }
 
 export function listTenants() {
@@ -63,8 +63,20 @@ export function completeTenantOnboarding() {
   return callAdminUsers("complete_tenant_onboarding", {});
 }
 
-export function updateTenant(tenantId, { businessName, ownerName, phone, plan }) {
-  return callAdminUsers("update_tenant", { tenantId, businessName, ownerName, phone, plan });
+export function getTenantBillingPortalUrl() {
+  return callAdminUsers("billing_portal_session", {});
+}
+
+export function getBusinessInfo() {
+  return callAdminUsers("get_business_info", {});
+}
+
+export function updateBusinessInfo({ businessName, address, phone, logoUrl }) {
+  return callAdminUsers("update_business_info", { businessName, address, phone, logoUrl });
+}
+
+export function updateTenant(tenantId, { businessName, ownerName, phone, address, logoUrl, plan }) {
+  return callAdminUsers("update_tenant", { tenantId, businessName, ownerName, phone, address, logoUrl, plan });
 }
 
 export function deleteTenant(tenantId, confirmBusinessName) {

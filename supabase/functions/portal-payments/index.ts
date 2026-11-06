@@ -84,6 +84,10 @@ Deno.serve(async (req) => {
         .eq("id", clienteId)
         .maybeSingle();
       if (clienteError || !cliente) return json({ error: "Customer not found" }, 404);
+      // Tenant pilot accounts share the platform's single Stripe key with no
+      // per-tenant Stripe Connect yet — card payments stay platform-owner
+      // only (tenant_id null) until that exists.
+      if (cliente.tenant_id) return json({ error: "Card payments are not enabled for this account" }, 403);
 
       const { data: resumen, error: resumenError } = await admin
         .from("v_cxc_cliente_detalle_ext")
@@ -130,6 +134,11 @@ Deno.serve(async (req) => {
       const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
       if (intent.metadata?.cliente_id !== clienteId) {
         return json({ error: "This payment does not belong to your account" }, 403);
+      }
+      // Defense in depth: create_intent already refuses tenant accounts, so
+      // no tenant PaymentIntent should ever reach this point.
+      if (intent.metadata?.tenant_id) {
+        return json({ error: "Card payments are not enabled for this account" }, 403);
       }
       if (intent.status !== "succeeded") {
         return json({ error: `Payment is not complete yet (status: ${intent.status})` }, 400);

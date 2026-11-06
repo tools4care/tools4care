@@ -41,6 +41,8 @@ import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { isOnlineLocation, isStoreLocation } from "./lib/locationTypes";
 import { supabase } from "./supabaseClient";
+import { useTenantBilling } from "./hooks/useTenantBilling";
+import { getTenantBillingPortalUrl } from "./lib/adminApi";
 
 
 const Suplidores = lazyRetry(() => import("./Suplidores"), "Suplidores");
@@ -65,6 +67,7 @@ const GlobalSearch = lazyRetry(() => import('./components/GlobalSearch'), "Globa
 
 // 🧾 Tax / Impuestos
 const TaxConfig = lazyRetry(() => import('./pages/TaxConfig'), "TaxConfig");
+const BusinessSettings = lazyRetry(() => import('./pages/BusinessSettings'), "BusinessSettings");
 const BusinessInfoAdmin = lazyRetry(() => import('./pages/BusinessInfoAdmin'), "BusinessInfoAdmin");
 const CreateTenantManual = lazyRetry(() => import('./admin/CreateTenantManual'), "CreateTenantManual");
 const ListaEmergencia = lazyRetry(() => import('./ListaEmergencia'), "ListaEmergencia");
@@ -183,8 +186,60 @@ function PrivilegedRoute({ children }) {
   return children;
 }
 
+// Full-screen block for a suspended tenant — one failed-payment cycle's
+// grace period (subscription "past_due") still keeps them in; only once
+// Stripe gives up retrying (tenants.status flips to "suspended" by
+// tenant-billing-webhook) do they lose access. Platform staff (tenant_id
+// null) never see this.
+function SuspendedTenantScreen({ businessName }) {
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState("");
+
+  async function openBillingPortal() {
+    setOpening(true);
+    setError("");
+    try {
+      const { url } = await getTenantBillingPortalUrl();
+      if (url) window.location.href = url;
+      else setError("Could not open the billing portal.");
+    } catch (err) {
+      setError(err.message || "Could not open the billing portal.");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+      <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm">
+        <h1 className="text-lg font-black text-slate-900">Account suspended</h1>
+        <p className="mt-2 text-sm text-slate-600">
+          {businessName || "This account"}'s Tools4Care subscription is past due and access has been paused.
+          Update your payment method to resume immediately.
+        </p>
+        <button
+          type="button"
+          onClick={openBillingPortal}
+          disabled={opening}
+          className="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {opening ? "Opening..." : "Update payment method"}
+        </button>
+        {error && <p className="mt-3 text-sm font-semibold text-red-600">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
 function LayoutInterior() {
   const { syncing, ventasPendientes, syncError, lastSync, sincronizarAhora } = useSyncGlobal();
+  const { usuario } = useUsuario();
+  const { tenant } = useTenantBilling(usuario?.tenant_id);
+
+  if (tenant?.status === "suspended") {
+    return <SuspendedTenantScreen businessName={tenant.business_name} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex lg:flex-row flex-col">
       <NetworkIndicator
@@ -329,6 +384,7 @@ export default function App() {
 
             {/* 🧾 TAX / IMPUESTOS */}
             <Route path="tax" element={<AdminRoute><TaxConfig /></AdminRoute>} />
+            <Route path="business-settings" element={<PrivilegedRoute><BusinessSettings /></PrivilegedRoute>} />
             <Route path="business-info" element={<AdminRoute><BusinessInfoAdmin /></AdminRoute>} />
 
             {/* 🏢 NUEVO TENANT (ADMIN) */}

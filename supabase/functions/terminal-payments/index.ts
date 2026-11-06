@@ -58,6 +58,13 @@ async function requireStaff(req: Request, admin: any) {
   if (error || !staff || staff.activo === false || !ALLOWED_ROLES.has(String(staff.rol || "").toLowerCase())) {
     throw Object.assign(new Error("Staff payment access required"), { status: 403 });
   }
+  // Tenant pilot accounts share the platform's single Stripe key with no
+  // per-tenant Stripe Connect yet — card payments stay platform-owner only
+  // (tenant_id null) until that exists. feature_status falls back to
+  // "disabled" on any error, so this also just quietly hides the UI for them.
+  if (staff.tenant_id) {
+    throw Object.assign(new Error("Card payments are not enabled for this account"), { status: 403 });
+  }
   return staff;
 }
 
@@ -83,6 +90,11 @@ async function requireCompanionSession(admin: any, token: string) {
   }
   if (["cancelled", "failed", "reconciled"].includes(session.status)) {
     throw Object.assign(new Error(`Payment session is ${session.status}`), { status: 409 });
+  }
+  // Defense in depth: requireStaff already blocks tenants from ever creating
+  // a session, so this should be unreachable, but never resume one if it is.
+  if (session.tenant_id) {
+    throw Object.assign(new Error("Card payments are not enabled for this account"), { status: 403 });
   }
   return session;
 }

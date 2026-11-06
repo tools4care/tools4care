@@ -5,6 +5,7 @@ import {
   formatAddress, formatPhone, fetchSaleTaxParts, buildFullInvoiceHTML,
   normalizeDetalleRows, fetchDetalleFromVenta, buildFacturaPDF, uploadFacturaPDF,
 } from "./lib/invoiceEmail";
+import { resolveTenantBrand } from "./lib/tenantBrand";
 import { useUsuario } from "./UsuarioContext";
 import { useVan } from "./hooks/VanContext";
 import { useLocation } from "react-router-dom";
@@ -380,24 +381,28 @@ export default function Facturas() {
       }));
 
       // 2. Build one full-invoice HTML per selected invoice, with a PDF link
+      //    and each invoice's own tenant branding (a batch is normally all
+      //    one tenant, but resolve per-invoice since nothing here enforces that).
       const invoicesWithPdf = await Promise.all(withDetail.map(async (f) => {
         const taxInfo = await fetchSaleTaxParts(f.id, Number(f.total || 0));
+        const empresa = await resolveTenantBrand(f.tenant_id);
         try {
-          return { factura: f, pdfUrl: await uploadFacturaPDF(f), taxAmount: taxInfo.tax };
+          return { factura: f, pdfUrl: await uploadFacturaPDF(f), taxAmount: taxInfo.tax, empresa };
         } catch (error) {
           console.warn("Could not create invoice PDF link:", error?.message || error);
-          return { factura: f, pdfUrl: "", taxAmount: taxInfo.tax };
+          return { factura: f, pdfUrl: "", taxAmount: taxInfo.tax, empresa };
         }
       }));
       const html = invoicesWithPdf
-        .map(({ factura, pdfUrl, taxAmount }) => buildFullInvoiceHTML(factura, { pdfUrl, taxAmount }))
+        .map(({ factura, pdfUrl, taxAmount, empresa }) => buildFullInvoiceHTML(factura, { pdfUrl, taxAmount, empresa }))
         .join('<div style="page-break-after:always;height:24px;"></div>');
 
       const count = withDetail.length;
+      const subjectBrand = invoicesWithPdf[0]?.empresa?.nombre || "Tools4Care";
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {
           to: bulkEmailTarget.trim(),
-          subject: `Tools4Care — ${count} Invoice${count !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
+          subject: `${subjectBrand} — ${count} Invoice${count !== 1 ? "s" : ""} — ${new Date().toLocaleDateString("en-US")}`,
           html,
         },
       });
@@ -437,13 +442,14 @@ export default function Facturas() {
         console.warn("Could not create invoice PDF link:", error?.message || error);
       }
       const taxInfo = await fetchSaleTaxParts(f.id, Number(f.total || 0));
+      const empresa = await resolveTenantBrand(f.tenant_id);
 
-      const html = buildFullInvoiceHTML(f, { pdfUrl, taxAmount: taxInfo.tax });
+      const html = buildFullInvoiceHTML(f, { pdfUrl, taxAmount: taxInfo.tax, empresa });
 
       const { data, error } = await supabase.functions.invoke("send-order-email", {
         body: {
           to: singleEmailTarget.trim(),
-          subject: `Tools4Care Invoice ${f.numero_factura || f.id?.slice(0, 8)} — ${f.cliente_nombre_c || ""}`,
+          subject: `${empresa.nombre} Invoice ${f.numero_factura || f.id?.slice(0, 8)} — ${f.cliente_nombre_c || ""}`,
           html,
         },
       });

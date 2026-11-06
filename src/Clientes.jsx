@@ -2712,6 +2712,9 @@ function ModalAbonar({ cliente, resumen, onClose, refresh, setResumen }) {
   const { usuario } = useUsuario();
   const { storeMode } = useStoreMode();
   const { toast } = useToast();
+  // Tenant pilot accounts don't have card payments enabled yet (one shared
+  // platform Stripe key, no per-tenant Stripe Connect).
+  const isTenantUser = Boolean(usuario?.tenant_id);
 
   // Snapshot de saldo al abrir (evita saltos)
   const [saldoBase, setSaldoBase] = useState(Number(resumen?.balance ?? cliente?.balance ?? 0));
@@ -3551,7 +3554,7 @@ let restante = pago;
                         }}
                       >
                         <option value="Cash">💵 Cash</option>
-                        <option value="Card">💳 Card</option>
+                        {!isTenantUser && <option value="Card">💳 Card</option>}
                         <option value="Transfer">🏦 Transfer</option>
                         <option value="Check">🧾 Check</option>
                       </select>
@@ -3722,7 +3725,7 @@ let restante = pago;
                               className="min-h-12 rounded-xl border-2 border-emerald-200 bg-white px-3 font-semibold outline-none focus:border-emerald-500"
                             >
                               <option value="Cash">💵 Cash</option>
-                              <option value="Card">💳 Card</option>
+                              {!isTenantUser && <option value="Card">💳 Card</option>}
                               <option value="Transfer">🏦 Transfer</option>
                               <option value="Check">🧾 Check</option>
                             </select>

@@ -47,6 +47,9 @@ Deno.serve(async (req) => {
   const { data: session, error: sessionError } = await admin.from("terminal_payment_sessions")
     .select("*").eq("id", sessionId).maybeSingle();
   if (sessionError || !session) return json({ error: "Payment session not found" }, 404);
+  // Defense in depth: terminal-payments already refuses to create a session
+  // for a tenant account, so this should be unreachable.
+  if (session.tenant_id) return json({ error: "Card payments are not enabled for this account" }, 403);
 
   let finalStatus = session.status;
   let applied = false;

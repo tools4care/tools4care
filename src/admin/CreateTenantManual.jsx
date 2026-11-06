@@ -9,7 +9,7 @@ const PLANS = [
   { value: "enterprise", label: "Enterprise" },
 ];
 
-const EMPTY_FORM = { businessName: "", ownerName: "", email: "", phone: "", plan: "basic" };
+const EMPTY_FORM = { businessName: "", ownerName: "", email: "", phone: "", address: "", logoUrl: "", plan: "basic" };
 
 function fmtDate(value) {
   if (!value) return "—";
@@ -73,6 +73,8 @@ export default function CreateTenantManual() {
         ownerName: form.ownerName.trim(),
         email: form.email.trim().toLowerCase(),
         phone: form.phone.trim(),
+        address: form.address.trim(),
+        logoUrl: form.logoUrl.trim(),
       });
       setResult(response);
       setStatus("success");
@@ -121,6 +123,8 @@ export default function CreateTenantManual() {
       ownerName: tenant.owner_name || "",
       email: tenant.email || "",
       phone: tenant.phone || "",
+      address: tenant.address || "",
+      logoUrl: tenant.logo_url || "",
       plan: tenant.plan || "basic",
     });
     setEditError("");
@@ -140,6 +144,8 @@ export default function CreateTenantManual() {
         businessName: editForm.businessName.trim(),
         ownerName: editForm.ownerName.trim(),
         phone: editForm.phone.trim(),
+        address: editForm.address.trim(),
+        logoUrl: editForm.logoUrl.trim(),
         plan: editForm.plan,
       });
       setEditingTenant(null);
@@ -205,6 +211,14 @@ export default function CreateTenantManual() {
           <label className="block">
             <span className="mb-1.5 block text-sm font-bold text-slate-700">Phone</span>
             <input name="phone" type="tel" value={form.phone} onChange={handleChange} disabled={status === "loading"} className="h-12 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
+          </label>
+          <label className="block md:col-span-2">
+            <span className="mb-1.5 block text-sm font-bold text-slate-700">Business address</span>
+            <input name="address" value={form.address} onChange={handleChange} disabled={status === "loading"} placeholder="Appears on this client's invoices" className="h-12 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
+          </label>
+          <label className="block md:col-span-2">
+            <span className="mb-1.5 block text-sm font-bold text-slate-700">Logo URL</span>
+            <input name="logoUrl" type="url" value={form.logoUrl} onChange={handleChange} disabled={status === "loading"} placeholder="Optional — leave blank for a text-only invoice header" className="h-12 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
           </label>
           <label className="block md:col-span-2">
             <span className="mb-1.5 block text-sm font-bold text-slate-700">Plan</span>
@@ -313,6 +327,14 @@ export default function CreateTenantManual() {
               <label className="block">
                 <span className="mb-1.5 block text-sm font-bold text-slate-700">Phone</span>
                 <input name="phone" type="tel" value={editForm.phone} onChange={handleEditChange} disabled={editStatus === "loading"} className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-slate-700">Business address</span>
+                <input name="address" value={editForm.address} onChange={handleEditChange} disabled={editStatus === "loading"} placeholder="Appears on this client's invoices" className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-slate-700">Logo URL</span>
+                <input name="logoUrl" type="url" value={editForm.logoUrl} onChange={handleEditChange} disabled={editStatus === "loading"} placeholder="Optional" className="h-11 w-full rounded-xl border-2 border-slate-200 px-4 outline-none focus:border-blue-500" />
               </label>
               <label className="block">
                 <span className="mb-1.5 block text-sm font-bold text-slate-700">Plan</span>

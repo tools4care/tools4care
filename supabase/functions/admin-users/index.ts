@@ -10,9 +10,11 @@
 //          get_location_access | reset_password | create_tenant |
 //          list_tenants | resend_tenant_invite | set_tenant_status |
 //          update_tenant | delete_tenant | get_customer_portal_status |
-//          activate_customer_portal
+//          activate_customer_portal | billing_portal_session |
+//          get_business_info | update_business_info
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Stripe from "npm:stripe@^17.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,9 +63,58 @@ Deno.serve(async (req) => {
         .eq("id", user.id)
         .maybeSingle();
       if (!member?.tenant_id) return json({ error: "Tenant membership not found" }, 404);
+      const { data: tenant } = await admin
+        .from("tenants")
+        .select("id,business_name,email,owner_user_id,stripe_subscription_id")
+        .eq("id", member.tenant_id)
+        .maybeSingle();
+      if (!tenant || tenant.owner_user_id !== user.id) return json({ error: "Tenant membership not found" }, 404);
+
+      // Start the $39.99/mo Basic subscription (14-day trial) the moment the
+      // owner actually activates the account, not when the admin provisioned
+      // it — provisioning and first login can be days apart, which would
+      // otherwise burn trial days the tenant never got to use.
+      const billingUpdate: Record<string, unknown> = {};
+      if (!tenant.stripe_subscription_id) {
+        const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+        const priceId = Deno.env.get("STRIPE_TENANT_BASIC_PRICE_ID");
+        if (stripeKey && priceId) {
+          try {
+            const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+            const customer = await stripe.customers.create({
+              email: tenant.email,
+              name: tenant.business_name,
+              metadata: { tools4care_tenant_id: tenant.id },
+            });
+            const subscription = await stripe.subscriptions.create({
+              customer: customer.id,
+              items: [{ price: priceId }],
+              trial_period_days: 14,
+              metadata: { tools4care_tenant_id: tenant.id },
+            });
+            billingUpdate.stripe_customer_id = customer.id;
+            billingUpdate.stripe_subscription_id = subscription.id;
+            billingUpdate.subscription_status = subscription.status;
+            billingUpdate.trial_ends_at = subscription.trial_end
+              ? new Date(subscription.trial_end * 1000).toISOString()
+              : null;
+            billingUpdate.current_period_end = new Date(subscription.current_period_end * 1000).toISOString();
+          } catch (billingError) {
+            // Never block account activation over a billing hiccup — log it
+            // and let the tenant in; tenant-billing-webhook or a retry of
+            // this same action (stripe_subscription_id still null) can
+            // pick it up.
+            console.error("complete_tenant_onboarding: Stripe subscription failed", billingError);
+          }
+        } else {
+          console.error("complete_tenant_onboarding: STRIPE_TENANT_BASIC_PRICE_ID not configured");
+        }
+      }
+
       const { error } = await admin
         .from("tenants")
         .update({
+          ...billingUpdate,
           status: "active",
           active: true,
           onboarding_completed_at: new Date().toISOString(),
@@ -73,6 +124,74 @@ Deno.serve(async (req) => {
         .eq("owner_user_id", user.id);
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true, tenantId: member.tenant_id });
+    }
+
+    // Lets a tenant owner open Stripe's hosted Billing Portal to update
+    // their payment method, see invoices, or cancel — self-service, no
+    // custom cancel UI needed here.
+    if (action === "billing_portal_session") {
+      const { data: member } = await admin
+        .from("usuarios")
+        .select("tenant_id")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!member?.tenant_id) return json({ error: "Tenant membership not found" }, 404);
+      const { data: tenant } = await admin
+        .from("tenants")
+        .select("stripe_customer_id, owner_user_id")
+        .eq("id", member.tenant_id)
+        .maybeSingle();
+      if (!tenant || tenant.owner_user_id !== user.id) return json({ error: "Tenant membership not found" }, 404);
+      if (!tenant.stripe_customer_id) return json({ error: "Billing has not started for this account yet" }, 400);
+
+      const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+      if (!stripeKey) return json({ error: "Missing STRIPE_SECRET_KEY" }, 500);
+      const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+      const siteUrl = (Deno.env.get("PUBLIC_APP_URL") || Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
+      const portalSession = await stripe.billingPortal.sessions.create({
+        customer: tenant.stripe_customer_id,
+        return_url: siteUrl ? `${siteUrl}/dashboard` : undefined,
+      });
+      return json({ url: portalSession.url });
+    }
+
+    // Self-service business info (invoice header) for the tenant's own
+    // owner or supervisor — lower-risk than billing, so not owner-only.
+    if (action === "get_business_info" || action === "update_business_info") {
+      const { data: member } = await admin
+        .from("usuarios")
+        .select("tenant_id, rol")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!member?.tenant_id || !["admin", "supervisor"].includes(String(member.rol || "").toLowerCase())) {
+        return json({ error: "Tenant membership not found" }, 404);
+      }
+
+      if (action === "get_business_info") {
+        const { data: tenant, error } = await admin
+          .from("tenants")
+          .select("business_name, address, phone, email, logo_url")
+          .eq("id", member.tenant_id)
+          .maybeSingle();
+        if (error || !tenant) return json({ error: error?.message || "Tenant not found" }, 404);
+        return json({ tenant });
+      }
+
+      const { businessName, address, phone, logoUrl } = payload || {};
+      const cleanBusinessName = String(businessName || "").trim();
+      if (!cleanBusinessName) return json({ error: "businessName is required" }, 400);
+      const { error } = await admin
+        .from("tenants")
+        .update({
+          business_name: cleanBusinessName,
+          address: String(address || "").trim() || null,
+          phone: String(phone || "").trim() || null,
+          logo_url: String(logoUrl || "").trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", member.tenant_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
     }
 
     // ── 3. All administrative actions require an admin profile ─────────
@@ -328,13 +447,15 @@ Deno.serve(async (req) => {
       }
 
       case "create_tenant": {
-        const { businessName, ownerName, email, phone, plan } = payload || {};
+        const { businessName, ownerName, email, phone, address, logoUrl, plan } = payload || {};
         if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
 
         const cleanBusinessName = String(businessName || "").trim();
         const cleanOwnerName = String(ownerName || "").trim();
         const cleanEmail = String(email || "").trim().toLowerCase();
         const cleanPhone = String(phone || "").trim();
+        const cleanAddress = String(address || "").trim();
+        const cleanLogoUrl = String(logoUrl || "").trim();
         const allowedPlans = new Set(["basic", "pro", "enterprise"]);
         if (!cleanBusinessName || !cleanEmail) {
           return json({ error: "businessName and email are required" }, 400);
@@ -381,6 +502,8 @@ Deno.serve(async (req) => {
           owner_name: cleanOwnerName || null,
           email: cleanEmail,
           phone: cleanPhone || null,
+          address: cleanAddress || null,
+          logo_url: cleanLogoUrl || null,
           plan,
           slug,
           status: "pending",
@@ -482,7 +605,7 @@ Deno.serve(async (req) => {
         if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
         const { data, error } = await admin
           .from("tenants")
-          .select("id,business_name,owner_name,email,phone,plan,status,active,created_at,invitation_sent_at,onboarding_completed_at,initial_location_id,owner_user_id")
+          .select("id,business_name,owner_name,email,phone,address,logo_url,plan,status,active,created_at,invitation_sent_at,onboarding_completed_at,initial_location_id,owner_user_id")
           .order("created_at", { ascending: false });
         if (error) return json({ error: error.message }, 400);
 
@@ -513,7 +636,7 @@ Deno.serve(async (req) => {
 
       case "update_tenant": {
         if (!caller?.platform_admin) return json({ error: "Platform administrator required" }, 403);
-        const { tenantId, businessName, ownerName, phone, plan } = payload || {};
+        const { tenantId, businessName, ownerName, phone, address, logoUrl, plan } = payload || {};
         if (!tenantId) return json({ error: "tenantId is required" }, 400);
         const cleanBusinessName = (businessName || "").trim();
         const cleanOwnerName = (ownerName || "").trim();
@@ -530,6 +653,8 @@ Deno.serve(async (req) => {
             business_name: cleanBusinessName,
             owner_name: cleanOwnerName,
             phone: (phone || "").trim(),
+            address: (address || "").trim() || null,
+            logo_url: (logoUrl || "").trim() || null,
             plan: plan || "basic",
             updated_at: new Date().toISOString(),
           })
