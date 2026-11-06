@@ -7,6 +7,10 @@ ALTER TABLE public.tenants
   ADD COLUMN IF NOT EXISTS address text,
   ADD COLUMN IF NOT EXISTS logo_url text;
 
+-- CREATE OR REPLACE VIEW only allows appending columns at the end — it
+-- cannot change the ordinal position of an existing column (errors with
+-- 42P16). tenant_id is therefore appended last, not inserted after
+-- cliente_id, so every already-existing column keeps its original slot.
 create or replace view facturas_ext
 with (security_invoker = true)
 as
@@ -14,7 +18,6 @@ as
     v.van_id,
     v.usuario_id,
     v.cliente_id,
-    v.tenant_id,
     v.fecha,
     v.total,
     v.estado_pago,
@@ -30,6 +33,7 @@ as
     c.nombre AS cliente_nombre_c,
     c.email AS cliente_email,
     c.telefono AS cliente_telefono,
-    c.direccion AS cliente_direccion
+    c.direccion AS cliente_direccion,
+    v.tenant_id
    FROM ventas v
      LEFT JOIN clientes c ON c.id = v.cliente_id;
